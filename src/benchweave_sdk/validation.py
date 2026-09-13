@@ -29,7 +29,7 @@ def contract_documents() -> dict[str, Any]:
             elif child.name.endswith(".json"):
                 documents[key] = json.loads(child.read_text(encoding="utf-8"))
 
-    for name in ("otdp-v0.3.0", "registry-v1.0.0"):
+    for name in ("otdp-v0.3.0", "registry-v1.0.0", "plugin-ui-v0.1.0"):
         visit(root.joinpath(name), name)
     return documents
 
