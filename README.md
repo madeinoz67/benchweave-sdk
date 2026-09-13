@@ -6,11 +6,97 @@ Build an external device plugin without importing gateway internals. Python 3.13
 
 1. Install the built SDK wheel in your development environment (`uv pip install path/to/benchweave_sdk-0.1.0-py3-none-any.whl`).
 2. Run `benchweave-sdk new plugins/acme/model100 --package benchweave_acme_model100`. Replace `acme/model100` with your manufacturer/device name; the independent project contains `src/benchweave_acme_model100/` and `tests/`.
-3. Replace the explicitly synthetic protocol with verified device behaviour, then update its descriptor. The generated AI-GUIDE.md describes the design, build, test, review and release steps.
+3. Change into the generated project (`cd plugins/acme/model100`). Replace the explicitly synthetic protocol with verified device behaviour, then update its descriptor. The generated AI-GUIDE.md describes the design, build, test, review and release steps.
 4. Install the plugin with test dependencies, run its tests, and run `benchweave-sdk check src/benchweave_acme_model100/descriptor.json`. Record all applicable S01–S18, C01–C12 and M01–M14 obligations and evidence; basic SDK checks do not cover all of them.
 5. Build with `uv build`, prepare registry metadata and reviewed evidence, and approve the release before publication or hardware qualification. `benchweave-sdk inventory` helps generate hashes, not a complete registry manifest.
 
 The generated runtime has no dependency on this SDK. Its test extra pins the SDK version; while unpublished, install the built SDK wheel explicitly before resolving that extra. Generate and retain a plugin dependency lock in its repository. A template is not qualified firmware or a real instrument driver.
+
+## Directory structure
+
+In a plugin collection, each device plugin is an independent project at `plugins/<manufacturer>/<name>/`. The SDK itself stays in `packages/sdk/`. An external plugin repository can use that device project as its repository root; it does not need the enclosing `plugins/<manufacturer>/` directories. The project directory and Python import package have different roles: `acme/model100` organises the collection, while `benchweave_acme_model100` is the import name selected by `--package`.
+
+Create a project from the collection root:
+
+```sh
+benchweave-sdk new plugins/acme/model100 --package benchweave_acme_model100 --with-ui
+cd plugins/acme/model100
+```
+
+The destination must not already exist. Omit `--with-ui` for a plugin without presentation metadata.
+
+```text
+plugins/acme/model100/                 # independent plugin project
+├── pyproject.toml                     # build configuration and test dependencies
+├── README.md
+├── AI-GUIDE.md                        # generated development workflow
+├── UI-GUIDE.md                        # generated only with --with-ui
+├── docs/                              # author-supplied device documentation
+│   ├── compatibility.md               # supported models/firmware and limitations
+│   └── qualification.md               # supervised hardware test plan/evidence
+├── firmware/                          # optional author-supplied firmware material
+│   ├── README.md                      # official sources, versions and checksums
+│   └── release-notes/                 # relevant vendor changes and upgrade constraints
+├── src/
+│   └── benchweave_acme_model100/       # import package; included in the wheel
+│       ├── __init__.py
+│       ├── adapter.py                 # SDK-facing adapter and create_plugin
+│       ├── protocol.py                # device protocol implementation
+│       ├── descriptor.json            # OTDP device/operation contract
+│       ├── protocol.md                # protocol evidence, initially synthetic
+│       ├── vectors.json               # exact exchanges, initially synthetic
+│       ├── config/                    # optional configuration for a headless plugin
+│       │   ├── settings.schema.json   # author-supplied complete-settings schema
+│       │   └── presets/
+│       │       └── default.json       # author-supplied configuration preset
+│       ├── presentation.json          # --with-ui: envelope and resource root
+│       ├── binding-catalogue.json     # --with-ui: descriptor-aligned targets
+│       └── ui/                        # --with-ui: presentation resource root
+│           ├── manifest.json          # generated readings page; no plot required
+│           ├── settings/              # author-supplied, when configuration exists
+│           │   └── settings.schema.json
+│           ├── presets/               # author-supplied complete configurations
+│           │   └── default.json
+│           └── assets/                # author-supplied declared static resources
+└── tests/
+    ├── test_plugin.py                 # generated mock/conformance tests
+    ├── test_configuration.py          # author-supplied schema/preset checks
+    ├── test_presentation.py           # author-supplied UI binding/asset checks
+    └── fixtures/                      # author-supplied exchanges by model/firmware
+```
+
+Only `ui/manifest.json` is generated inside `ui/`. The `docs/`, `firmware/`, `config/`, optional UI asset directories and additional test files are recommended author-supplied extensions. Add only the features the device plugin supports. `default.json` is an example filename, not an automatically selected or applied configuration.
+
+| Optional feature | Recommended location | Behaviour and ownership |
+| --- | --- | --- |
+| Device configuration without UI | `src/<package>/config/settings.schema.json` and `config/presets/` | Validate complete settings offline with `check-preset`; application requires an approved device procedure. |
+| Device configuration shown in UI | `src/<package>/ui/settings/` and `ui/presets/` | Keep one authoritative copy inside the UI resource root and declare it in the manifest; do not duplicate it under `config/`. |
+| Specialised pages and optional graphs | `src/<package>/ui/manifest.json` and `ui/assets/` | Declare bindings, plot metadata and supported panel IDs. A page need not have a graph. Browser rendering remains separate work. |
+| Data collection | Descriptor action/measurement contracts, adapter code and `tests/fixtures/` | Declare supported acquisition and dataset bindings. The gateway owns execution and retained data; live datasets are not packaged here. |
+| Firmware compatibility | `docs/compatibility.md`, descriptor firmware constraints and firmware-specific test fixtures | State supported firmware versions and retain evidence. The descriptor remains the runtime compatibility contract. |
+| Firmware reference material | `firmware/README.md` and `firmware/release-notes/` | Record vendor sources, exact version/checksum information and upgrade constraints. This directory has no SDK discovery or flashing behaviour. Redistribute vendor images only when permitted and explicitly required by the release. |
+| Hardware qualification | `docs/qualification.md` | Record the supervised test plan, tested versions and evidence. Synthetic tests do not establish hardware qualification. |
+
+A preset contains complete settings and compatibility/provenance metadata, not collected measurements. A plugin can have configuration without UI, UI without configuration, and firmware compatibility declarations without shipping firmware images.
+
+Keep distributable resources inside `src/<package>/` so the generated Hatch wheel configuration includes them. Generate and retain `uv.lock` for development dependencies, and supply the appropriate licence and release evidence before distribution; these are not scaffolded. Build outputs belong in `dist/`. Gateway configuration, credentials, live readings and retained datasets belong to the deployment/runtime stores, outside the plugin source package.
+
+### Path resolution and validation
+
+Run these commands from the plugin project root after installing its development dependencies:
+
+```sh
+benchweave-sdk check src/benchweave_acme_model100/descriptor.json
+benchweave-sdk check-ui src/benchweave_acme_model100/presentation.json \
+  --descriptor src/benchweave_acme_model100/descriptor.json \
+  --resources src/benchweave_acme_model100 \
+  --catalogue src/benchweave_acme_model100/binding-catalogue.json \
+  --firmware 1.0.0
+pytest
+uv build
+```
+
+Here `--resources` points to the **package root**. The generated envelope's `resource_root: "ui"` selects its `ui/` subdirectory. Manifest asset paths such as `settings/settings.schema.json` and `presets/default.json` are relative to that UI root. Resource paths must remain inside the root and cannot traverse symlinks; use canonical local paths. Keep descriptor, manifest and asset byte hashes current after editing resources. The binding catalogue must be aligned with the descriptor and verified by the host during admission; a packaged candidate catalogue does not grant device capabilities.
 
 ## Optional plugin pages and presets
 
