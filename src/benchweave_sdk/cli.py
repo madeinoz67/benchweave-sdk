@@ -162,6 +162,34 @@ def check_preset_command(
     _render_report(report)
 
 
+@cli.command("sync-standards")
+@click.argument("bundle", type=click.Path(path_type=Path))
+@click.option("--check", "check_only", is_flag=True, help="Verify the vendored tree only")
+@_domain_errors
+def sync_standards_command(bundle: Path, check_only: bool) -> None:
+    """Import a standards bundle into the SDK's vendored tree and lock."""
+    from .standards_sync import sync
+
+    report = sync(
+        bundle,
+        sdk_root=Path(__file__).resolve().parents[2],
+        check_only=check_only,
+    )
+    summary = ", ".join(
+        f"{label}: {len(rows)}"
+        for label, rows in (
+            ("added", report.added),
+            ("changed", report.changed),
+            ("deprecated", report.deprecated),
+            ("removed", report.removed),
+        )
+    )
+    ConsoleOutput().message(
+        f"Standards {'verified' if check_only else 'synced'} ({summary}).",
+        style="green",
+    )
+
+
 def _renderer_origin(renderer_url: str | None) -> str | None:
     if renderer_url is None:
         return None
