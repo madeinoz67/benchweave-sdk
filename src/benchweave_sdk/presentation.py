@@ -9,11 +9,22 @@ import json
 import os
 import stat
 import sys
+from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
 from typing import Any
 
 from .validation import contract_documents, validate_descriptor
+
+
+@dataclass(frozen=True, slots=True)
+class ValidatedPreviewInputs:
+    """Parsed inputs proven to match the existing presentation validator."""
+
+    envelope: dict[str, Any]
+    manifest: dict[str, Any]
+    binding_catalogue: dict[str, Any]
+    resource_root: Path
 
 
 @cache
@@ -110,7 +121,7 @@ def validate_presentation(
     )
 
 
-def check_ui(
+def _load_ui_candidate(
     envelope_path: Path,
     descriptor_path: Path,
     root: Path,
@@ -119,7 +130,7 @@ def check_ui(
     firmware: str | None,
     features: frozenset[str],
     panels: frozenset[str],
-) -> Any:
+) -> tuple[Any, ValidatedPreviewInputs]:
     contract = _contract()
     envelope_raw = read_file(envelope_path)
     envelope = contract.parse_document(envelope_raw)
@@ -146,17 +157,68 @@ def check_ui(
                 raw = read_file(base / name, min(16 * 1024 * 1024, 64 * 1024 * 1024 - total))
                 resources[name] = raw
                 total += len(raw)
-        return validate_presentation(
+        catalogue = contract.parse_document(read_file(catalogue_path))
+        report = validate_presentation(
             envelope_raw,
             descriptor_raw=read_file(descriptor_path),
             resources=resources,
-            binding_catalogue=contract.parse_document(read_file(catalogue_path)),
+            binding_catalogue=catalogue,
             supported_features=features,
             supported_panels=panels,
             firmware=firmware,
         )
+        return report, ValidatedPreviewInputs(envelope, manifest, catalogue, base)
     except (KeyError, TypeError) as exc:
         raise ValueError("Malformed presentation resource references") from exc
+
+
+def check_ui(
+    envelope_path: Path,
+    descriptor_path: Path,
+    root: Path,
+    catalogue_path: Path,
+    *,
+    firmware: str | None,
+    features: frozenset[str],
+    panels: frozenset[str],
+) -> Any:
+    report, _ = _load_ui_candidate(
+        envelope_path,
+        descriptor_path,
+        root,
+        catalogue_path,
+        firmware=firmware,
+        features=features,
+        panels=panels,
+    )
+    return report
+
+
+def load_validated_preview_inputs(
+    envelope_path: Path,
+    descriptor_path: Path,
+    root: Path,
+    catalogue_path: Path,
+    *,
+    firmware: str | None,
+    features: frozenset[str],
+    panels: frozenset[str],
+) -> ValidatedPreviewInputs:
+    report, candidate = _load_ui_candidate(
+        envelope_path,
+        descriptor_path,
+        root,
+        catalogue_path,
+        firmware=firmware,
+        features=features,
+        panels=panels,
+    )
+    if not report.valid:
+        finding = report.findings[0]
+        raise ValueError(
+            f"preview_invalid_presentation: {finding.code}: {finding.path}: {finding.message}"
+        )
+    return candidate
 
 
 def create_ui_resources(destination: Path, package: str) -> None:
