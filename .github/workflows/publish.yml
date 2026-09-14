@@ -1,0 +1,48 @@
+name: publish
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prove-publishable:
+    name: Build and install-smoke the SDK distribution
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # No submodules, no PyPI publish, nothing attached: this lane PROVES
+      # publishability. Release attachment stays the main repository's
+      # package.yml job, which owns the published release assets.
+      # NOTE(Task 8): the compatibility-matrix staleness gate
+      # (`matrix --check`) slots in beside the self-check below when Task 8
+      # lands — not implemented yet.
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.13"
+
+      - name: Sync environment
+        run: uv sync
+
+      - name: Standards self-check
+        run: uv run benchweave-sdk sync-standards --check
+
+      - name: Build wheel and sdist
+        # hatch_build verifies the vendored tree against the lock during the
+        # build, so a stale tree cannot reach a distribution at all.
+        run: uv build
+
+      - name: Install smoke (wheel outside the checkout)
+        run: |
+          set -euo pipefail
+          uv venv /tmp/sdk-smoke
+          uv pip install --python /tmp/sdk-smoke/bin/python dist/*.whl
+          /tmp/sdk-smoke/bin/benchweave-sdk --version
+          /tmp/sdk-smoke/bin/benchweave-sdk new /tmp/example --with-ui
+          /tmp/sdk-smoke/bin/benchweave-sdk check /tmp/example/src/example_plugin/descriptor.json

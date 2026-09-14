@@ -1,0 +1,43 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  sdk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Deliberately NO submodules: this lane proves the SDK repository is
+      # self-contained and never reads the gateway checkout.
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.13"
+
+      - name: Sync environment
+        run: uv sync
+
+      - name: Lint
+        run: |
+          uv run ruff check .
+          uv run mypy src
+
+      - name: Standards self-check
+        # lock <-> vendored tree <-> stamps with no bundle: the committed
+        # state alone. There is deliberately no separate docs-publishing
+        # workflow in this repository; that lane is carried by the main
+        # repository's ui/gates jobs. NOTE(Task 8): the compatibility-matrix
+        # staleness gate (`matrix --check`) slots in beside this step when
+        # Task 8 lands — not implemented yet.
+        run: uv run benchweave-sdk sync-standards --check
+
+      - name: CLI entry point
+        run: uv run benchweave-sdk --version
