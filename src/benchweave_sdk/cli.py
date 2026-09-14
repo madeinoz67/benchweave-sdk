@@ -2,149 +2,287 @@
 
 from __future__ import annotations
 
-import argparse
-import json
+import sys
 import webbrowser
+from collections.abc import Callable, Sequence
+from functools import wraps
 from pathlib import Path
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+import click
 
 from . import __version__
+from .console import ConsoleOutput
 from .packaging import inventory
 from .scaffold import create_project
 from .validation import validate_descriptor
 
 
-def _run_preview(args: argparse.Namespace) -> None:
+def _domain_errors[**P, R](function: Callable[P, R]) -> Callable[P, R]:
+    @wraps(function)
+    def guarded(*args: P.args, **kwargs: P.kwargs) -> R:
+        try:
+            return function(*args, **kwargs)
+        except (ValueError, OSError, RuntimeError) as exc:
+            raise click.ClickException(str(exc)) from exc
+
+    return guarded
+
+
+def _presentation_options[R](function: Callable[..., R]) -> Callable[..., R]:
+    options = (
+        click.option("--descriptor", required=True, type=click.Path(path_type=Path)),
+        click.option(
+            "--resources",
+            required=True,
+            type=click.Path(path_type=Path),
+            help="Package resource root",
+        ),
+        click.option("--catalogue", required=True, type=click.Path(path_type=Path)),
+        click.option("--firmware"),
+        click.option("--feature", multiple=True),
+        click.option("--panel", multiple=True),
+    )
+    decorated = function
+    for option in reversed(options):
+        decorated = option(decorated)
+    return decorated
+
+
+@click.group()
+@click.version_option(__version__)
+def cli() -> None:
+    """Software-only SDK commands; no publication or hardware access."""
+
+
+@cli.command("new")
+@click.argument("directory", type=click.Path(path_type=Path))
+@click.option("--package", "package_name", default="example_plugin", show_default=True)
+@click.option("--with-ui", is_flag=True, help="Add optional read-only UI resources")
+@_domain_errors
+def new_command(directory: Path, package_name: str, with_ui: bool) -> None:
+    """Create a synthetic external plugin project."""
+    create_project(directory, package_name)
+    if with_ui:
+        from .presentation import create_ui_resources
+
+        create_ui_resources(directory, package_name)
+    ConsoleOutput().message(
+        f"Created synthetic plugin at {directory}; review before hardware or publication.",
+        style="green",
+    )
+
+
+@cli.command("check")
+@click.argument("descriptor", type=click.Path(path_type=Path))
+@_domain_errors
+def check_command(descriptor: Path) -> None:
+    """Run offline descriptor schema and basic semantic checks."""
+    import json
+
+    validate_descriptor(json.loads(descriptor.read_text(encoding="utf-8")))
+    ConsoleOutput().message(
+        "Descriptor schema and basic S01/S02 checks passed; "
+        "full conformance and hardware evidence remain separate.",
+        style="green",
+    )
+
+
+@cli.command("inventory")
+@click.argument("directory", type=click.Path(path_type=Path))
+@_domain_errors
+def inventory_command(directory: Path) -> None:
+    """Print hashes for a prepared bundle; not a release manifest."""
+    ConsoleOutput().document(inventory(directory))
+
+
+def _render_report(report: object) -> None:
+    output = ConsoleOutput()
+    findings = [(row.code, row.path, row.message) for row in report.findings]  # type: ignore[attr-defined]
+    findings.extend(("panel_unavailable", str(page), "") for page in report.unavailable_pages)  # type: ignore[attr-defined]
+    if findings:
+        output.findings(findings)
+    if not report.valid:  # type: ignore[attr-defined]
+        raise click.ClickException("Presentation validation failed.")
+    output.message(
+        "Offline presentation checks passed; not admission or approval to apply settings.",
+        style="green",
+    )
+
+
+@cli.command("check-ui")
+@click.argument("envelope", type=click.Path(path_type=Path))
+@_presentation_options
+@_domain_errors
+def check_ui_command(
+    envelope: Path,
+    descriptor: Path,
+    resources: Path,
+    catalogue: Path,
+    firmware: str | None,
+    feature: tuple[str, ...],
+    panel: tuple[str, ...],
+) -> None:
+    """Validate a presentation candidate offline."""
+    from .presentation import check_ui
+
+    report = check_ui(
+        envelope,
+        descriptor,
+        resources,
+        catalogue,
+        firmware=firmware,
+        features=frozenset(feature),
+        panels=frozenset(panel),
+    )
+    _render_report(report)
+
+
+@cli.command("check-preset")
+@click.argument("preset", type=click.Path(path_type=Path))
+@click.option("--descriptor", required=True, type=click.Path(path_type=Path))
+@click.option("--settings-schema", required=True, type=click.Path(path_type=Path))
+@click.option("--firmware", required=True)
+@_domain_errors
+def check_preset_command(
+    preset: Path, descriptor: Path, settings_schema: Path, firmware: str
+) -> None:
+    """Validate complete settings offline."""
+    from .presentation import read_file, validate_preset
+
+    report = validate_preset(
+        read_file(preset),
+        descriptor_raw=read_file(descriptor),
+        settings_schema_raw=read_file(settings_schema),
+        firmware=firmware,
+    )
+    _render_report(report)
+
+
+def _renderer_origin(renderer_url: str | None) -> str | None:
+    if renderer_url is None:
+        return None
+    parsed = urlsplit(renderer_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError(f"preview_renderer_url_invalid: {renderer_url}")
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def _renderer_target(renderer_url: str | None, api_base: str) -> str:
+    if renderer_url is None:
+        return api_base
+    parsed = urlsplit(renderer_url)
+    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    query["apiBase"] = api_base
+    return urlunsplit(parsed._replace(query=urlencode(query)))
+
+
+def _run_preview(
+    *,
+    envelope: Path,
+    descriptor: Path,
+    resources: Path,
+    catalogue: Path,
+    fixtures: Path | None,
+    firmware: str | None,
+    feature: tuple[str, ...],
+    panel: tuple[str, ...],
+    renderer_url: str | None,
+    host: str,
+    port: int,
+    allow_network: bool,
+    no_open: bool,
+) -> None:
     from .fixtures import build_preview_model
     from .presentation import load_validated_preview_inputs
     from .preview_server import PreviewServer, bundled_assets, validate_listener
 
-    validate_listener(args.host, args.allow_network)
+    validate_listener(host, allow_network)
     candidate = load_validated_preview_inputs(
-        args.envelope,
-        args.descriptor,
-        args.resources,
-        args.catalogue,
-        firmware=args.firmware,
-        features=frozenset(args.feature),
-        panels=frozenset(args.panel),
+        envelope,
+        descriptor,
+        resources,
+        catalogue,
+        firmware=firmware,
+        features=frozenset(feature),
+        panels=frozenset(panel),
     )
+    if fixtures is not None:
+        candidate = type(candidate)(
+            envelope=candidate.envelope,
+            manifest=candidate.manifest,
+            binding_catalogue=candidate.binding_catalogue,
+            resource_root=fixtures.parent,
+        )
     model = build_preview_model(candidate)
+    renderer_origin = _renderer_origin(renderer_url)
     server = PreviewServer(
         model,
         bundled_assets(),
-        host=args.host,
-        port=args.port,
-        allow_network=args.allow_network,
+        host=host,
+        port=port,
+        allow_network=allow_network,
+        allowed_origin=renderer_origin,
     )
     try:
         address = server.start()
-        print(f"SIMULATED PRESENTATION DATA: {address.url}")
-        if not args.no_open and not webbrowser.open(address.url):
-            print(f"Browser did not open; use {address.url}")
-        server.wait()
+        target_url = _renderer_target(renderer_url, address.url)
+        if no_open or not sys.stdout.isatty():
+            ConsoleOutput().preview_ready(
+                target_url,
+                scenarios=len(model.scenarios),
+                renderer_version=model.renderer_version,
+            )
+            if not no_open and not webbrowser.open(target_url):
+                ConsoleOutput().message(f"Browser did not open; use {target_url}", style="yellow")
+            server.wait()
+            return
+        from .preview_tui import PreviewStatusApp
+
+        PreviewStatusApp(
+            url=target_url,
+            renderer_version=model.renderer_version,
+            scenarios=len(model.scenarios),
+            open_browser=webbrowser.open,
+            shutdown=server.shutdown,
+            open_on_mount=True,
+        ).run()
     except KeyboardInterrupt:
-        pass
+        return
     finally:
         server.shutdown()
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--version", action="version", version=__version__)
-    commands = parser.add_subparsers(dest="command", required=True)
-    new = commands.add_parser("new", help="Create a synthetic external plugin project")
-    new.add_argument("directory", type=Path)
-    new.add_argument("--package", default="example_plugin")
-    new.add_argument("--with-ui", action="store_true", help="Add optional read-only UI resources")
-    check = commands.add_parser("check", help="Offline descriptor schema and basic semantic checks")
-    check.add_argument("descriptor", type=Path)
-    bundle = commands.add_parser(
-        "inventory", help="Print hashes for a prepared bundle; not a release manifest"
-    )
-    bundle.add_argument("directory", type=Path)
-    ui = commands.add_parser("check-ui", help="Validate a presentation candidate offline")
-    ui.add_argument("envelope", type=Path)
-    ui.add_argument("--descriptor", required=True, type=Path)
-    ui.add_argument("--resources", required=True, type=Path, help="Package resource root")
-    ui.add_argument("--catalogue", required=True, type=Path)
-    ui.add_argument("--firmware")
-    ui.add_argument("--feature", action="append", default=[])
-    ui.add_argument("--panel", action="append", default=[])
-    preview = commands.add_parser(
-        "preview-ui", help="Preview simulated presentation states on a local renderer"
-    )
-    preview.add_argument("envelope", type=Path)
-    preview.add_argument("--descriptor", required=True, type=Path)
-    preview.add_argument("--resources", required=True, type=Path, help="Package resource root")
-    preview.add_argument("--catalogue", required=True, type=Path)
-    preview.add_argument("--fixtures", type=Path)
-    preview.add_argument("--firmware")
-    preview.add_argument("--feature", action="append", default=[])
-    preview.add_argument("--panel", action="append", default=[])
-    preview.add_argument("--renderer-url")
-    preview.add_argument("--host", default="127.0.0.1")
-    preview.add_argument("--port", default=0, type=int)
-    preview.add_argument("--allow-network", action="store_true")
-    preview.add_argument("--no-open", action="store_true")
-    preset = commands.add_parser("check-preset", help="Validate complete settings offline")
-    preset.add_argument("preset", type=Path)
-    preset.add_argument("--descriptor", required=True, type=Path)
-    preset.add_argument("--settings-schema", required=True, type=Path)
-    preset.add_argument("--firmware", required=True)
-    args = parser.parse_args()
+@cli.command("preview-ui")
+@click.argument("envelope", type=click.Path(path_type=Path))
+@_presentation_options
+@click.option("--fixtures", type=click.Path(path_type=Path))
+@click.option("--renderer-url")
+@click.option("--host", default="127.0.0.1", show_default=True)
+@click.option("--port", default=0, type=click.IntRange(0, 65535), show_default=True)
+@click.option("--allow-network", is_flag=True)
+@click.option("--no-open", is_flag=True)
+@_domain_errors
+def preview_ui_command(**options: object) -> None:
+    """Preview simulated presentation states on a local renderer."""
+    _run_preview(**options)  # type: ignore[arg-type]
+
+
+def main(args: Sequence[str] | None = None) -> int:
+    """Run the Click group and return a process-compatible exit code."""
     try:
-        if args.command == "new":
-            create_project(args.directory, args.package)
-            if args.with_ui:
-                from .presentation import create_ui_resources
-
-                create_ui_resources(args.directory, args.package)
-            print(
-                f"Created synthetic plugin at {args.directory}; "
-                "review before hardware or publication."
-            )
-        elif args.command == "check":
-            validate_descriptor(json.loads(args.descriptor.read_text(encoding="utf-8")))
-            print(
-                "Descriptor schema and basic S01/S02 checks passed; "
-                "full conformance and hardware evidence remain separate."
-            )
-        elif args.command == "preview-ui":
-            _run_preview(args)
-        elif args.command in ("check-ui", "check-preset"):
-            from .presentation import check_ui, read_file, validate_preset
-
-            if args.command == "check-ui":
-                report = check_ui(
-                    args.envelope,
-                    args.descriptor,
-                    args.resources,
-                    args.catalogue,
-                    firmware=args.firmware,
-                    features=frozenset(args.feature),
-                    panels=frozenset(args.panel),
-                )
-            else:
-                report = validate_preset(
-                    read_file(args.preset),
-                    descriptor_raw=read_file(args.descriptor),
-                    settings_schema_raw=read_file(args.settings_schema),
-                    firmware=args.firmware,
-                )
-            for finding in report.findings:
-                print(f"{finding.code}: {finding.path}: {finding.message}")
-            for page in report.unavailable_pages:
-                print(f"panel_unavailable: {page}")
-            if not report.valid:
-                parser.exit(1, "Presentation validation failed.\n")
-            print(
-                "Offline presentation checks passed; not admission or approval to apply settings."
-            )
-        else:
-            print(json.dumps(inventory(args.directory), indent=2))
-    except (ValueError, OSError, RuntimeError) as exc:
-        parser.exit(1, f"{exc}\n")
+        cli.main(
+            args=list(args) if args is not None else None,
+            prog_name="benchweave-sdk",
+            standalone_mode=False,
+        )
+    except click.ClickException as exc:
+        exc.show()
+        return exc.exit_code
+    except click.exceptions.Exit as exc:
+        return exc.exit_code
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

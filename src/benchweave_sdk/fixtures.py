@@ -38,8 +38,7 @@ def _schema_path() -> Path:
     if packaged.is_file():
         return packaged
     checkout = (
-        Path(__file__).resolve().parents[4]
-        / "contracts/plugin-ui-preview-v1/fixture.schema.json"
+        Path(__file__).resolve().parents[4] / "contracts/plugin-ui-preview-v1/fixture.schema.json"
     )
     if checkout.is_file():
         return checkout
@@ -89,9 +88,7 @@ def _check_value(path: Path, binding_id: str, value: object, expected: object) -
         "string": isinstance(value, str),
     }.get(str(expected), False)
     if value is not None and not valid:
-        raise ValueError(
-            f"preview_type_mismatch: {path}: {binding_id}: expected {expected}"
-        )
+        raise ValueError(f"preview_type_mismatch: {path}: {binding_id}: expected {expected}")
 
 
 def _scenario(

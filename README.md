@@ -120,7 +120,9 @@ benchweave-sdk preview-ui src/benchweave_acme_model100/presentation.json \
   --fixtures src/benchweave_acme_model100/ui/fixtures
 ```
 
-Use `--no-open` for CI or a terminal-only readiness check. The default listener is an ephemeral port on `127.0.0.1`; wildcard listeners are rejected. A non-loopback host requires `--allow-network` and remains unsuitable for shared or production deployment. UI contributors can point at a compatible Vite renderer with `--renderer-url`; both renderers require preview API version 1.
+Use `--no-open` for CI or a terminal-only readiness check. The default listener is an ephemeral port on `127.0.0.1`; wildcard listeners are rejected. A non-loopback host requires `--allow-network` and remains unsuitable for shared or production deployment. UI contributors can point at a compatible Vite renderer with `--renderer-url`; the CLI adds the preview server URL as the renderer's `apiBase` query parameter and permits cross-origin API responses only for that renderer's exact origin. Both renderers require preview API version 1.
+
+The command suite uses Click for stable parsing and exit codes and Rich for readable non-interactive output. In an interactive terminal, `preview-ui` uses a Textual status screen: press `o` to reopen the browser and `q` to stop the preview. Textual is deliberately bypassed for `--no-open` and non-terminal output so CI, pipes and SDK tests remain deterministic.
 
 Every preview is labelled `SIMULATED PRESENTATION DATA`. Control interactions create only in-memory simulated receipts and never update observed readings optimistically. Preview success is not admission, hardware qualification or permission to operate equipment.
 

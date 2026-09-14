@@ -53,7 +53,11 @@ class _PreviewHTTPServer(ThreadingHTTPServer):
     allow_reuse_address = False
 
 
-def _handler(model: PreviewModel, assets: Path) -> type[BaseHTTPRequestHandler]:
+def _handler(
+    model: PreviewModel,
+    assets: Path,
+    allowed_origin: str | None = None,
+) -> type[BaseHTTPRequestHandler]:
     scenarios = {scenario.id: scenario for scenario in model.scenarios}
 
     class Handler(BaseHTTPRequestHandler):
@@ -66,6 +70,9 @@ def _handler(model: PreviewModel, assets: Path) -> type[BaseHTTPRequestHandler]:
             raw = json.dumps(document, allow_nan=False, separators=(",", ":")).encode()
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
+            if allowed_origin and self.headers.get("Origin") == allowed_origin:
+                self.send_header("Access-Control-Allow-Origin", allowed_origin)
+                self.send_header("Vary", "Origin")
             self.send_header("Content-Length", str(len(raw)))
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
@@ -168,11 +175,12 @@ class PreviewServer:
         port: int = 0,
         *,
         allow_network: bool = False,
+        allowed_origin: str | None = None,
     ) -> None:
         validate_listener(host, allow_network)
         if not assets.joinpath("index.html").is_file():
             raise ValueError(f"preview_assets_missing: {assets / 'index.html'}")
-        self._server = _PreviewHTTPServer((host, port), _handler(model, assets))
+        self._server = _PreviewHTTPServer((host, port), _handler(model, assets, allowed_origin))
         bound_host, bound_port = self._server.server_address[:2]
         self.address = PreviewAddress(str(bound_host), int(bound_port))
         self._thread: threading.Thread | None = None
