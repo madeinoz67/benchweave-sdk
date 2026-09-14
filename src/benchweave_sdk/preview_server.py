@@ -91,8 +91,14 @@ def _handler(
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "BenchWeavePreview/1"
+        sys_version = ""  # do not disclose the interpreter patch version
 
         def log_message(self, format: str, *args: object) -> None:
+            return
+
+        def handle_error(self, request: object, client_address: object) -> None:
+            # Client aborts mid-response are routine during previews; the default
+            # socketserver traceback would garble a running Textual app.
             return
 
         def _host_is_trusted(self) -> bool:
@@ -197,7 +203,8 @@ def _handler(
             target = assets.joinpath(*pure.parts)
             try:
                 raw = target.read_bytes()
-            except (FileNotFoundError, IsADirectoryError, OSError):
+            except (FileNotFoundError, IsADirectoryError, OSError, ValueError):
+                # ValueError covers embedded NUL bytes, which pathlib rejects.
                 self._not_found()
                 return
             media_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"

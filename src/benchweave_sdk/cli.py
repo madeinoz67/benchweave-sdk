@@ -81,7 +81,9 @@ def check_command(descriptor: Path) -> None:
     """Run offline descriptor schema and basic semantic checks."""
     import json
 
-    validate_descriptor(json.loads(descriptor.read_text(encoding="utf-8")))
+    from .presentation import read_file
+
+    validate_descriptor(json.loads(read_file(descriptor)))
     ConsoleOutput().message(
         "Descriptor schema and basic S01/S02 checks passed; "
         "full conformance and hardware evidence remain separate.",
@@ -213,6 +215,8 @@ def _run_preview(
 
     validate_listener(host, allow_network)
     renderer_origin = _renderer_origin(renderer_url)
+    if fixtures is not None and not fixtures.is_dir():
+        raise ValueError(f"preview_fixtures_directory_expected: {fixtures}")
     candidate = load_validated_preview_inputs(
         envelope,
         descriptor,
@@ -253,7 +257,11 @@ def _run_preview(
                 scenarios=len(model.scenarios),
                 renderer_version=model.renderer_version,
             )
-            if not no_open and not webbrowser.open(target_url):
+            try:
+                opened = False if no_open else webbrowser.open(target_url)
+            except webbrowser.Error:
+                opened = False
+            if not no_open and not opened:
                 ConsoleOutput().message(f"Browser did not open; use {target_url}", style="yellow")
             server.wait()
             return
