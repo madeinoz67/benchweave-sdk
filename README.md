@@ -53,6 +53,9 @@ plugins/acme/model100/                 # independent plugin project
 │       ├── binding-catalogue.json     # --with-ui: descriptor-aligned targets
 │       └── ui/                        # --with-ui: presentation resource root
 │           ├── manifest.json          # generated readings page; no plot required
+│           ├── fixtures/              # generated synthetic preview examples
+│           │   ├── normal.json
+│           │   └── warning.json
 │           ├── settings/              # author-supplied, when configuration exists
 │           │   └── settings.schema.json
 │           ├── presets/               # author-supplied complete configurations
@@ -60,12 +63,13 @@ plugins/acme/model100/                 # independent plugin project
 │           └── assets/                # author-supplied declared static resources
 └── tests/
     ├── test_plugin.py                 # generated mock/conformance tests
+    ├── test_presentation_preview.py   # generated offline preview conformance test
     ├── test_configuration.py          # author-supplied schema/preset checks
     ├── test_presentation.py           # author-supplied UI binding/asset checks
     └── fixtures/                      # author-supplied exchanges by model/firmware
 ```
 
-Only `ui/manifest.json` is generated inside `ui/`. The `docs/`, `firmware/`, `config/`, optional UI asset directories and additional test files are recommended author-supplied extensions. Add only the features the device plugin supports. `default.json` is an example filename, not an automatically selected or applied configuration.
+The SDK generates `ui/manifest.json`, schema-valid synthetic examples under `ui/fixtures/`, and `tests/test_presentation_preview.py`. The `docs/`, `firmware/`, `config/`, optional UI asset directories and additional test files remain author-supplied extensions. Add only the features the device plugin supports. `default.json` is an example filename, not an automatically selected or applied configuration.
 
 | Optional feature | Recommended location | Behaviour and ownership |
 | --- | --- | --- |
@@ -96,13 +100,29 @@ pytest
 uv build
 ```
 
-Here `--resources` points to the **package root**. The generated envelope's `resource_root: "ui"` selects its `ui/` subdirectory. Manifest asset paths such as `settings/settings.schema.json` and `presets/default.json` are relative to that UI root. Resource paths must remain inside the root and cannot traverse symlinks; use canonical local paths. Keep descriptor, manifest and asset byte hashes current after editing resources. The binding catalogue must be aligned with the descriptor and verified by the host during admission; a packaged candidate catalogue does not grant device capabilities.
+Here `--resources` points to the **package root**. The generated envelope's `resource_root: "ui"` selects its `ui/` subdirectory. Manifest asset paths such as `settings/settings.schema.json` and `presets/default.json` are relative to that UI root. Resource paths must remain inside the root and cannot traverse symlinks; use canonical local paths. On macOS, use `/private/tmp/...` rather than the `/tmp` symlink for temporary preview projects. Keep descriptor, manifest and asset byte hashes current after editing resources. The binding catalogue must be aligned with the descriptor and verified by the host during admission; a packaged candidate catalogue does not grant device capabilities.
 
 ## Optional plugin pages and presets
 
 Add `--with-ui` to `benchweave-sdk new` to generate a declarative readings page, presentation envelope and binding catalogue. The default scaffold stays unchanged. Keep presentation assets under the import package's `ui/` directory so wheels carry them; store complete configuration presets alongside their settings schema. Plugins can declare configuration, readings, dataset and registered panel pages, with plots only when appropriate.
 
-Use `benchweave-sdk check-ui` and `benchweave-sdk check-preset` for offline validation before packaging. Validation neither admits a plugin nor approves applying settings. The [plugin presentation guide](../../docs/plugin-ui-v0.1.0/README.md) covers the directory structure, preconfigured settings, optional graphs, data bindings and CLI examples. These contracts prepare presentation metadata; a browser renderer and profile-action execution remain separate work.
+Use `benchweave-sdk check-ui` and `benchweave-sdk check-preset` for offline validation before packaging. Validation neither admits a plugin nor approves applying settings. The [plugin presentation guide](../../docs/plugin-ui-v0.1.0/README.md) covers the directory structure, preconfigured settings, optional graphs, data bindings and CLI examples.
+
+### Local UI preview
+
+The SDK includes the version-matched React renderer and nine deterministic baseline scenarios. Preview author fixtures without importing plugin Python, opening a device transport or contacting a gateway:
+
+```sh
+benchweave-sdk preview-ui src/benchweave_acme_model100/presentation.json \
+  --descriptor src/benchweave_acme_model100/descriptor.json \
+  --resources src/benchweave_acme_model100 \
+  --catalogue src/benchweave_acme_model100/binding-catalogue.json \
+  --fixtures src/benchweave_acme_model100/ui/fixtures
+```
+
+Use `--no-open` for CI or a terminal-only readiness check. The default listener is an ephemeral port on `127.0.0.1`; wildcard listeners are rejected. A non-loopback host requires `--allow-network` and remains unsuitable for shared or production deployment. UI contributors can point at a compatible Vite renderer with `--renderer-url`; both renderers require preview API version 1.
+
+Every preview is labelled `SIMULATED PRESENTATION DATA`. Control interactions create only in-memory simulated receipts and never update observed readings optimistically. Preview success is not admission, hardware qualification or permission to operate equipment.
 
 ## Public surfaces
 
