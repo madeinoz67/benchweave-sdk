@@ -58,6 +58,9 @@ def sync(bundle: Path, sdk_root: Path, *, check_only: bool = False) -> SyncRepor
                 f"standards_version_required: {identifier} content changed without a "
                 "standards version increment"
             )
+        elif prior.get("status") != "deprecated" and standard["status"] == "deprecated":
+            # Status-only transition: same version and bytes, new deprecation.
+            deprecated.append(identifier)
     removed = sorted(previous)
     _verify_bundle_integrity(bundle, document)
     if check_only:
@@ -107,7 +110,13 @@ def _read_lock(sdk_root: Path) -> dict[str, Any]:
     path = sdk_root / LOCK_NAME
     if not path.is_file():
         return {}
-    lock: dict[str, Any] = json.loads(path.read_bytes())
+    try:
+        lock: dict[str, Any] = json.loads(path.read_bytes())
+        _ = lock["lock_version"], lock["standards"]
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"lock_invalid: {exc}") from exc
+    except (KeyError, TypeError) as exc:
+        raise ValueError(f"lock_invalid: {exc}") from exc
     if lock.get("lock_version") != 1:
         raise ValueError("lock_version_unsupported")
     return lock
@@ -115,10 +124,19 @@ def _read_lock(sdk_root: Path) -> dict[str, Any]:
 
 def _bundle_hashes(bundle: Path, standard: dict[str, Any]) -> dict[str, str]:
     """Hashes recomputed from the bundle's files, not its manifest claims."""
-    return {
-        file["path"]: hashlib.sha256((bundle / "files" / file["path"]).read_bytes()).hexdigest()
-        for file in standard["files"]
-    }
+    hashes: dict[str, str] = {}
+    for file in standard["files"]:
+        raw = _bundle_file(bundle, file["path"])
+        hashes[file["path"]] = hashlib.sha256(raw).hexdigest()
+    return hashes
+
+
+def _bundle_file(bundle: Path, path: str) -> bytes:
+    """Bundle payload bytes; a listed-but-absent file is a vocabulary error."""
+    source = bundle / "files" / path
+    if not source.is_file():
+        raise ValueError(f"bundle_file_missing: {path}")
+    return source.read_bytes()
 
 
 def _lock_hashes(prior: dict[str, Any]) -> dict[str, str]:
@@ -132,8 +150,7 @@ def _verify_bundle_integrity(bundle: Path, document: dict[str, Any]) -> None:
     """
     for standard in document["standards"]:
         for file in standard["files"]:
-            raw = (bundle / "files" / file["path"]).read_bytes()
-            digest = hashlib.sha256(raw).hexdigest()
+            digest = hashlib.sha256(_bundle_file(bundle, file["path"])).hexdigest()
             if digest != file["sha256"]:
                 raise ValueError(f"hash_mismatch: {file['path']}")
 
@@ -175,7 +192,7 @@ def _write_vendored(bundle: Path, sdk_root: Path, document: dict[str, Any]) -> N
         stamps: list[str] = []
         rows: list[dict[str, str]] = []
         for file in standard["files"]:
-            raw = (bundle / "files" / file["path"]).read_bytes()
+            raw = _bundle_file(bundle, file["path"])
             target = tree / file["path"]
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(raw)

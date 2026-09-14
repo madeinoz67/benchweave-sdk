@@ -184,6 +184,13 @@ def sync_standards_command(bundle: Path, check_only: bool) -> None:
             ("removed", report.removed),
         )
     )
+    if check_only and any(
+        (report.added, report.changed, report.deprecated, report.removed)
+    ):
+        # A non-empty report in check mode is drift awaiting sync, not success.
+        raise click.ClickException(
+            f"standards drift detected ({summary}); re-run sync-standards to update"
+        )
     ConsoleOutput().message(
         f"Standards {'verified' if check_only else 'synced'} ({summary}).",
         style="green",
