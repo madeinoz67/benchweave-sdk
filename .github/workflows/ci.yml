@@ -32,11 +32,12 @@ jobs:
 
       - name: Standards self-check
         # lock <-> vendored tree <-> stamps with no bundle: the committed
-        # state alone. There is deliberately no separate docs-publishing
-        # workflow in this repository; that lane is carried by the main
-        # repository's ui/gates jobs. NOTE(Task 8): the compatibility-matrix
-        # staleness gate (`matrix --check`) slots in beside this step when
-        # Task 8 lands — not implemented yet.
+        # state alone. The compatibility-matrix staleness gate is
+        # deliberately NOT here: this repository has no standards manifest,
+        # so a lock-only matrix would duplicate the gate that the main
+        # repository runs (make check-sdk-standards: standards check +
+        # matrix --check). Docs publishing is likewise carried by the main
+        # repository's ui/gates jobs.
         run: uv run benchweave-sdk sync-standards --check
 
       - name: CLI entry point

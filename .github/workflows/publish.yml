@@ -16,10 +16,10 @@ jobs:
     steps:
       # No submodules, no PyPI publish, nothing attached: this lane PROVES
       # publishability. Release attachment stays the main repository's
-      # package.yml job, which owns the published release assets.
-      # NOTE(Task 8): the compatibility-matrix staleness gate
-      # (`matrix --check`) slots in beside the self-check below when Task 8
-      # lands — not implemented yet.
+      # package.yml job, which owns the published release assets. The
+      # compatibility-matrix staleness gate also lives main-side
+      # (make check-sdk-standards): this repository has no standards
+      # manifest to render a matrix from.
       - uses: actions/checkout@v4
 
       - name: Install uv
