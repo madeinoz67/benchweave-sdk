@@ -264,13 +264,9 @@ def _write_preview_examples(destination: Path, package: str, targets: list[dict[
         "from importlib.resources import files",
         "from pathlib import Path",
         "",
-        "from benchweave_sdk.fixtures import build_preview_model",
+        "from benchweave_sdk.fixtures import BASELINE_IDS, build_preview_model",
         "from benchweave_sdk.presentation import load_validated_preview_inputs",
         "",
-        "MANDATORY_BASELINE_IDS = frozenset((",
-        '    "normal", "loading", "stale", "disconnected", "warning",',
-        '    "critical", "trip", "recovery", "request-rejected",',
-        "))",
         "",
         "def _materialise(source, destination: Path) -> None:",
         "    destination.mkdir(parents=True, exist_ok=True)",
@@ -293,7 +289,7 @@ def _write_preview_examples(destination: Path, package: str, targets: list[dict[
         "        panels=frozenset(),",
         "    )",
         "    scenarios = build_preview_model(candidate).scenarios",
-        "    assert MANDATORY_BASELINE_IDS <= {row.id for row in scenarios}",
+        "    assert BASELINE_IDS <= {row.id for row in scenarios}",
         "",
     ]
     test_path = destination / "tests" / "test_presentation_preview.py"
