@@ -31,13 +31,24 @@ class SyncReport:
     removed: tuple[str, ...]
 
 
-def sync(bundle: Path, sdk_root: Path, *, check_only: bool = False) -> SyncReport:
+def sync(bundle: Path | None, sdk_root: Path, *, check_only: bool = False) -> SyncReport:
     """Import ``bundle`` into ``sdk_root``'s vendored tree, or verify it.
 
     Classification hashes the bundle's files as they exist on disk, so a
     content change the manifest does not declare is still caught: unchanged
     version plus changed bytes raises ``standards_version_required``.
+
+    With ``bundle=None`` and ``check_only``, verify the committed state alone
+    — lock against vendored tree against stamps — with no main-project export.
+    Importing without a bundle is refused.
     """
+    if bundle is None:
+        if not check_only:
+            raise ValueError(
+                "bundle_required: importing needs a bundle; only --check runs without one"
+            )
+        _verify_self_consistency(sdk_root)
+        return SyncReport((), (), (), ())
     document = _load_bundle(bundle)
     lock = _read_lock(sdk_root)
     previous = {row["id"]: row for row in lock.get("standards", [])}
@@ -171,6 +182,37 @@ def _verify_vendored_tree(sdk_root: Path, lock: dict[str, Any]) -> None:
             raise ValueError(f"hash_mismatch: {path} missing from the vendored tree")
         if hashlib.sha256(target.read_bytes()).hexdigest() != digest:
             raise ValueError(f"hash_mismatch: {path}")
+
+
+def _verify_self_consistency(sdk_root: Path) -> None:
+    """Verify the committed state alone: lock ↔ vendored tree ↔ stamps.
+
+    The bundle-free ``--check`` lane proves the SDK repository is internally
+    consistent with no main-project export. Beyond the per-file digests, an
+    unrecorded file in the tree or a missing stamp is drift too: either would
+    ride into wheels unnoticed.
+    """
+    lock = _read_lock(sdk_root)
+    _verify_vendored_tree(sdk_root, lock)
+    tree = sdk_root / VENDORED
+    standards = lock.get("standards", [])
+    stamps: set[str] = set()
+    for standard in standards:
+        stamp = f"{standard['id']}/{STAMP_NAME}"
+        if not (tree / stamp).is_file():
+            raise ValueError(f"stamp_missing: {stamp}")
+        stamps.add(stamp)
+    recorded = {file["path"] for standard in standards for file in standard["files"]}
+    # presentation.py imports the vendored plugin-ui contracts module, so its
+    # __pycache__ appears beside the source; it is gitignored and never
+    # packaged. Everything else in the tree must be lock-recorded or a stamp.
+    present = {
+        path.relative_to(tree).as_posix()
+        for path in tree.rglob("*")
+        if path.is_file() and "__pycache__" not in path.relative_to(tree).parts
+    }
+    for path in sorted(present - recorded - stamps):
+        raise ValueError(f"unexpected_vendored_file: {path}")
 
 
 def _write_vendored(bundle: Path, sdk_root: Path, document: dict[str, Any]) -> None:

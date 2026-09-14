@@ -163,11 +163,15 @@ def check_preset_command(
 
 
 @cli.command("sync-standards")
-@click.argument("bundle", type=click.Path(path_type=Path))
+@click.argument("bundle", required=False, type=click.Path(path_type=Path))
 @click.option("--check", "check_only", is_flag=True, help="Verify the vendored tree only")
 @_domain_errors
-def sync_standards_command(bundle: Path, check_only: bool) -> None:
-    """Import a standards bundle into the SDK's vendored tree and lock."""
+def sync_standards_command(bundle: Path | None, check_only: bool) -> None:
+    """Import a standards bundle into the SDK's vendored tree and lock.
+
+    With --check and no bundle, verify the committed lock and vendored tree
+    alone; no main-project export is read.
+    """
     from .standards_sync import sync
 
     report = sync(
@@ -191,6 +195,12 @@ def sync_standards_command(bundle: Path, check_only: bool) -> None:
         raise click.ClickException(
             f"standards drift detected ({summary}); re-run sync-standards to update"
         )
+    if bundle is None:
+        ConsoleOutput().message(
+            "Standards verified (committed lock and vendored tree agree).",
+            style="green",
+        )
+        return
     ConsoleOutput().message(
         f"Standards {'verified' if check_only else 'synced'} ({summary}).",
         style="green",
