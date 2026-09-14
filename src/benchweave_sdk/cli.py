@@ -4,12 +4,48 @@ from __future__ import annotations
 
 import argparse
 import json
+import webbrowser
 from pathlib import Path
 
 from . import __version__
 from .packaging import inventory
 from .scaffold import create_project
 from .validation import validate_descriptor
+
+
+def _run_preview(args: argparse.Namespace) -> None:
+    from .fixtures import build_preview_model
+    from .presentation import load_validated_preview_inputs
+    from .preview_server import PreviewServer, bundled_assets, validate_listener
+
+    validate_listener(args.host, args.allow_network)
+    candidate = load_validated_preview_inputs(
+        args.envelope,
+        args.descriptor,
+        args.resources,
+        args.catalogue,
+        firmware=args.firmware,
+        features=frozenset(args.feature),
+        panels=frozenset(args.panel),
+    )
+    model = build_preview_model(candidate)
+    server = PreviewServer(
+        model,
+        bundled_assets(),
+        host=args.host,
+        port=args.port,
+        allow_network=args.allow_network,
+    )
+    try:
+        address = server.start()
+        print(f"SIMULATED PRESENTATION DATA: {address.url}")
+        if not args.no_open and not webbrowser.open(address.url):
+            print(f"Browser did not open; use {address.url}")
+        server.wait()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.shutdown()
 
 
 def main() -> None:
@@ -34,6 +70,22 @@ def main() -> None:
     ui.add_argument("--firmware")
     ui.add_argument("--feature", action="append", default=[])
     ui.add_argument("--panel", action="append", default=[])
+    preview = commands.add_parser(
+        "preview-ui", help="Preview simulated presentation states on a local renderer"
+    )
+    preview.add_argument("envelope", type=Path)
+    preview.add_argument("--descriptor", required=True, type=Path)
+    preview.add_argument("--resources", required=True, type=Path, help="Package resource root")
+    preview.add_argument("--catalogue", required=True, type=Path)
+    preview.add_argument("--fixtures", type=Path)
+    preview.add_argument("--firmware")
+    preview.add_argument("--feature", action="append", default=[])
+    preview.add_argument("--panel", action="append", default=[])
+    preview.add_argument("--renderer-url")
+    preview.add_argument("--host", default="127.0.0.1")
+    preview.add_argument("--port", default=0, type=int)
+    preview.add_argument("--allow-network", action="store_true")
+    preview.add_argument("--no-open", action="store_true")
     preset = commands.add_parser("check-preset", help="Validate complete settings offline")
     preset.add_argument("preset", type=Path)
     preset.add_argument("--descriptor", required=True, type=Path)
@@ -57,6 +109,8 @@ def main() -> None:
                 "Descriptor schema and basic S01/S02 checks passed; "
                 "full conformance and hardware evidence remain separate."
             )
+        elif args.command == "preview-ui":
+            _run_preview(args)
         elif args.command in ("check-ui", "check-preset"):
             from .presentation import check_ui, read_file, validate_preset
 

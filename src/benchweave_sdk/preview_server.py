@@ -18,6 +18,11 @@ from .preview_models import PREVIEW_API_VERSION, PreviewModel, PreviewScenario
 MAX_REQUEST_BYTES = 64 * 1024
 
 
+def bundled_assets() -> Path:
+    """Return the version-matched renderer root included in the SDK package."""
+    return Path(__file__).with_name("preview_assets") / "site"
+
+
 def validate_listener(host: str, allow_network: bool) -> None:
     """Reject wildcard listeners and require acknowledgement outside loopback."""
     try:
@@ -181,6 +186,12 @@ class PreviewServer:
             )
             self._thread.start()
         return self.address
+
+    def wait(self) -> None:
+        """Block until shutdown while the background server remains responsive."""
+        if self._thread is None:
+            raise RuntimeError("preview_server_not_started")
+        self._thread.join()
 
     def shutdown(self) -> None:
         if self._thread is not None:
