@@ -1,0 +1,6 @@
+registry/registry-v1.0.0/examples/package-lock.json — Generated from registry@1.0.0 — do not edit
+registry/registry-v1.0.0/examples/release-manifest.json — Generated from registry@1.0.0 — do not edit
+registry/registry-v1.0.0/examples/release-status.json — Generated from registry@1.0.0 — do not edit
+registry/registry-v1.0.0/package-lock.schema.json — Generated from registry@1.0.0 — do not edit
+registry/registry-v1.0.0/release-manifest.schema.json — Generated from registry@1.0.0 — do not edit
+registry/registry-v1.0.0/release-status.schema.json — Generated from registry@1.0.0 — do not edit

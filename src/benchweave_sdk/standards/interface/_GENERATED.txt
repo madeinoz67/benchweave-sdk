@@ -1,0 +1,6 @@
+interface/interface-v1.1.1/examples/mcp-start-exchange.json — Generated from interface@1.1.1 — do not edit
+interface/interface-v1.1.1/examples/operation-vectors.json — Generated from interface@1.1.1 — do not edit
+interface/interface-v1.1.1/interface.schema.json — Generated from interface@1.1.1 — do not edit
+interface/interface-v1.1.1/mcp-tools.json — Generated from interface@1.1.1 — do not edit
+interface/interface-v1.1.1/openapi.json — Generated from interface@1.1.1 — do not edit
+interface/interface-v1.1.1/operation-catalog.json — Generated from interface@1.1.1 — do not edit

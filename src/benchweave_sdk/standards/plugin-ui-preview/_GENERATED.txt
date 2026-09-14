@@ -1,0 +1,2 @@
+plugin-ui-preview/plugin-ui-preview-v1/fixture.schema.json — Generated from plugin-ui-preview@1.0.0 — do not edit
+plugin-ui-preview/plugin-ui-preview-v1/preview-document.schema.json — Generated from plugin-ui-preview@1.0.0 — do not edit

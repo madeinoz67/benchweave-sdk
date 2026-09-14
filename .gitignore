@@ -1,2 +1,4 @@
 __pycache__/
 .gortex/
+venv/
+uv.lock

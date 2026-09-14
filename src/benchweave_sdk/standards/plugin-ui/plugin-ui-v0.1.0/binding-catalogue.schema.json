@@ -1,0 +1,6 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://benchweave.dev/contracts/plugin-ui/0.1.0/binding-catalogue.schema.json",
+  "title": "BenchWeave descriptor binding catalogue 0.1.0",
+  "$ref": "https://benchweave.dev/contracts/plugin-ui/0.1.0/ui-manifest.schema.json#/$defs/catalogue"
+}

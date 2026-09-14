@@ -1,0 +1,209 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://benchweave.dev/contracts/plugin-ui-preview/1/preview-document.schema.json",
+  "title": "BenchWeave plugin UI preview wire document",
+  "description": "The JSON document served at GET /api/v1/preview. Single source of truth for the Python emitter (benchweave_sdk.preview_models) and the renderer decoder (ui/src/preview/api.ts); both sides are conformance-tested against this file.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "api_version",
+    "plugin_id",
+    "renderer_version",
+    "pages",
+    "scenarios",
+    "simulation"
+  ],
+  "properties": {
+    "api_version": {
+      "const": 1
+    },
+    "plugin_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "renderer_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "pages": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/page"
+      }
+    },
+    "scenarios": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/scenario"
+      }
+    },
+    "simulation": {
+      "const": true
+    }
+  },
+  "$defs": {
+    "page": {
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "severity": {
+      "enum": [
+        "neutral",
+        "success",
+        "advisory",
+        "warning",
+        "critical",
+        "trip"
+      ]
+    },
+    "scenario": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "title",
+        "description",
+        "timestamp_strategy",
+        "observations",
+        "permissions",
+        "lease_state",
+        "approval_state",
+        "unavailable_panels",
+        "expected_severity",
+        "request_outcomes",
+        "baseline"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "timestamp_strategy": {
+          "enum": [
+            "fixed",
+            "relative"
+          ]
+        },
+        "observations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/observation"
+          }
+        },
+        "permissions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "lease_state": {
+          "type": "string"
+        },
+        "approval_state": {
+          "type": "string"
+        },
+        "unavailable_panels": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "expected_severity": {
+          "$ref": "#/$defs/severity"
+        },
+        "request_outcomes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/receipt"
+          }
+        },
+        "baseline": {
+          "type": "boolean"
+        }
+      }
+    },
+    "observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "binding_id",
+        "value",
+        "unit",
+        "quality",
+        "freshness_ms",
+        "provenance"
+      ],
+      "properties": {
+        "binding_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "value": {
+          "type": [
+            "boolean",
+            "number",
+            "string",
+            "null"
+          ]
+        },
+        "unit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "quality": {
+          "type": "string"
+        },
+        "freshness_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "provenance": {
+          "type": "string"
+        }
+      }
+    },
+    "receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "binding_id",
+        "outcome",
+        "message"
+      ],
+      "properties": {
+        "binding_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "outcome": {
+          "type": "string",
+          "minLength": 1
+        },
+        "message": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}
