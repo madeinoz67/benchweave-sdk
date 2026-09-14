@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import importlib
 import importlib.util
 import json
 import os
@@ -30,22 +29,22 @@ class ValidatedPreviewInputs:
 @cache
 def _contract() -> Any:
     name = "benchweave_sdk._presentation_contract"
-    try:
-        return importlib.import_module(name)
-    except ModuleNotFoundError as exc:
-        if exc.name != name:
-            raise
-        # Editable checkout only. Distributions contain this exact file via the build hook.
-        source = Path(__file__).resolve().parents[4] / "src/benchweave/presentation/contracts.py"
-        if not source.is_file():
-            raise RuntimeError("SDK presentation validator missing; reinstall the SDK") from exc
-        spec = importlib.util.spec_from_file_location(name, source)
-        if spec is None or spec.loader is None:
-            raise RuntimeError("Cannot load editable SDK validator") from exc
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[name] = module
-        spec.loader.exec_module(module)
-        return module
+    vendored = Path(__file__).with_name("standards") / "plugin-ui" / "contracts.py"
+    if not vendored.is_file():
+        # Editable checkout before the first standards sync only. Distributions
+        # contain the vendored tree, verified against its lock by the build hook.
+        vendored = Path(__file__).resolve().parents[4] / "src/benchweave/presentation/contracts.py"
+        if not vendored.is_file():
+            raise RuntimeError(
+                "SDK presentation validator missing; run sync-standards or reinstall the SDK"
+            )
+    spec = importlib.util.spec_from_file_location(name, vendored)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("Cannot load the SDK presentation validator")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def schemas() -> dict[str, Any]:

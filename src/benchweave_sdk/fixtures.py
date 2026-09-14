@@ -34,7 +34,12 @@ BASELINE_IDS = frozenset(
 
 
 def _schema_path() -> Path:
-    packaged = Path(__file__).with_name("contracts") / "plugin-ui-preview-v1/fixture.schema.json"
+    packaged = (
+        Path(__file__).with_name("standards")
+        / "plugin-ui-preview"
+        / "plugin-ui-preview-v1"
+        / "fixture.schema.json"
+    )
     if packaged.is_file():
         return packaged
     checkout = (
@@ -42,7 +47,9 @@ def _schema_path() -> Path:
     )
     if checkout.is_file():
         return checkout
-    raise RuntimeError("SDK preview fixture schema missing; reinstall the SDK")
+    raise RuntimeError(
+        "SDK preview fixture schema missing; run sync-standards or reinstall the SDK"
+    )
 
 
 def _parse(raw: bytes) -> dict[str, Any]:

@@ -15,10 +15,22 @@ from referencing.jsonschema import DRAFT202012
 
 @cache
 def contract_documents() -> dict[str, Any]:
-    root = files("benchweave_sdk").joinpath("contracts")
-    if not root.is_dir():
-        # Editable development only. Wheels/sdists contain their own contracts.
-        root = Path(__file__).resolve().parents[4] / "contracts"
+    vendored = files("benchweave_sdk").joinpath("standards")
+    sets = (
+        ("otdp", "otdp-v0.3.0"),
+        ("registry", "registry-v1.0.0"),
+        ("plugin-ui", "plugin-ui-v0.1.0"),
+    )
+    if vendored.is_dir():
+        # The vendored tree is standards/<id>/<set>/...; document keys stay
+        # <set>/... so schema_file lookups and $ref registries are unchanged.
+        directories = [
+            (vendored.joinpath(identifier, prefix), prefix) for identifier, prefix in sets
+        ]
+    else:
+        # Editable development before the first standards sync only.
+        checkout = Path(__file__).resolve().parents[4] / "contracts"
+        directories = [(checkout / prefix, prefix) for _, prefix in sets]
     documents: dict[str, Any] = {}
 
     def visit(directory: Any, prefix: str) -> None:
@@ -29,8 +41,8 @@ def contract_documents() -> dict[str, Any]:
             elif child.name.endswith(".json"):
                 documents[key] = json.loads(child.read_text(encoding="utf-8"))
 
-    for name in ("otdp-v0.3.0", "registry-v1.0.0", "plugin-ui-v0.1.0"):
-        visit(root.joinpath(name), name)
+    for directory, prefix in directories:
+        visit(directory, prefix)
     return documents
 
 

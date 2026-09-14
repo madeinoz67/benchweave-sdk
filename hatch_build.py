@@ -1,4 +1,4 @@
-"""Bundle canonical contracts, preview assets and the pure validator."""
+"""Verify the vendored standards tree against its lock before packaging."""
 
 import hashlib
 import json
@@ -6,7 +6,9 @@ from pathlib import Path
 
 from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 
-CONTRACT_SETS = ("otdp-v0.3.0", "registry-v1.0.0", "plugin-ui-v0.1.0", "plugin-ui-preview-v1")
+LOCK_NAME = "standards-lock.json"
+VENDORED = "src/benchweave_sdk/standards"
+STAMP_NAME = "_GENERATED.txt"
 
 
 def _validate_preview_assets(package: Path) -> None:
@@ -30,29 +32,43 @@ def _validate_preview_assets(package: Path) -> None:
             raise RuntimeError(f"Bundled preview asset is stale or corrupt: {relative}")
 
 
+def _verify_vendored_file(tree: Path, relative: str, digest: str) -> None:
+    path = Path(relative)
+    if path.is_absolute() or ".." in path.parts:
+        raise RuntimeError(f"Unsafe vendored standards path: {relative}")
+    target = tree / path
+    if not target.is_file():
+        raise RuntimeError(f"Vendored standards file missing: {relative}")
+    if hashlib.sha256(target.read_bytes()).hexdigest() != digest:
+        raise RuntimeError(f"Vendored standards file is stale or corrupt: {relative}")
+
+
+def _validate_vendored_standards(root: Path) -> None:
+    tree = root / VENDORED
+    lock_path = root / LOCK_NAME
+    if not tree.is_dir() or not lock_path.is_file():
+        raise RuntimeError(
+            "Vendored standards tree or lock missing; "
+            "run benchweave-sdk sync-standards <bundle> from packages/sdk"
+        )
+    try:
+        lock = json.loads(lock_path.read_bytes())
+        standards = lock["standards"]
+        if lock.get("lock_version") != 1 or not isinstance(standards, list) or not standards:
+            raise RuntimeError("Bundled standards lock is incompatible or empty")
+        for standard in standards:
+            identifier = standard["id"]
+            if not (tree / identifier / STAMP_NAME).is_file():
+                raise RuntimeError(f"Vendored standard stamp missing: {identifier}/{STAMP_NAME}")
+            for file in standard["files"]:
+                _verify_vendored_file(tree, file["path"], file["sha256"])
+    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise RuntimeError("Bundled standards lock is invalid") from exc
+
+
 class CustomBuildHook(BuildHookInterface):
     def initialize(self, version, build_data):
         root = Path(self.root)
         package = root / "src/benchweave_sdk"
-        contracts = package / "contracts"
         _validate_preview_assets(package)
-        if contracts.is_dir():
-            # An SDK sdist already contains the canonical build inputs.
-            for name in CONTRACT_SETS:
-                if not (contracts / name).is_dir():
-                    raise RuntimeError(f"Required contract set missing: {name}")
-            if not (package / "_presentation_contract.py").is_file():
-                raise RuntimeError("Bundled presentation validator missing")
-            return
-        checkout = root.parent.parent
-        contracts = checkout / "contracts"
-        validator = checkout / "src/benchweave/presentation/contracts.py"
-        if not contracts.is_dir() or not validator.is_file():
-            raise RuntimeError("Canonical sources unavailable; build from checkout or SDK sdist")
-        prefix = "benchweave_sdk" if self.target_name == "wheel" else "src/benchweave_sdk"
-        for name in CONTRACT_SETS:
-            source = contracts / name
-            if not source.is_dir():
-                raise RuntimeError(f"Required contract set missing: {name}")
-            build_data["force_include"][str(source)] = f"{prefix}/contracts/{name}"
-        build_data["force_include"][str(validator)] = f"{prefix}/_presentation_contract.py"
+        _validate_vendored_standards(root)
