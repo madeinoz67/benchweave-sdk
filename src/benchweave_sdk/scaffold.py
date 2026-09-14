@@ -5,11 +5,18 @@ from __future__ import annotations
 import json
 import keyword
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
 from . import __version__
 from .validation import validate_descriptor
+
+# A generated project whose package shadows the SDK itself or a stdlib module
+# breaks its own install and tests; deny those names up front.
+RESERVED_PACKAGE_NAMES = frozenset({"benchweave", "benchweave_sdk"}) | frozenset(
+    sys.stdlib_module_names
+)
 
 ADAPTER = '''"""Read-only synthetic OTDP adapter; qualify a real device separately."""
 import math
@@ -362,8 +369,14 @@ def descriptor_for(package: str) -> dict[str, Any]:
 
 
 def create_project(destination: Path, package: str) -> None:
-    if not re.fullmatch(r"[a-z][a-z0-9_]*", package) or keyword.iskeyword(package):
-        raise ValueError("Use a lowercase Python package name")
+    if (
+        not re.fullmatch(r"[a-z][a-z0-9_]*", package)
+        or keyword.iskeyword(package)
+        or package in RESERVED_PACKAGE_NAMES
+    ):
+        raise ValueError(
+            "Use a lowercase Python package name that does not shadow the SDK or the stdlib"
+        )
     descriptor = descriptor_for(package)
     validate_descriptor(descriptor)
     destination.mkdir(parents=True, exist_ok=False)

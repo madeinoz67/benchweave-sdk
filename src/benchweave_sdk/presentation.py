@@ -250,8 +250,6 @@ def _preview_fixture(target: dict[str, Any], *, suffix: str, severity: str) -> d
 
 
 def _write_preview_examples(destination: Path, package: str, targets: list[dict[str, Any]]) -> None:
-    if not targets:
-        raise ValueError("UI scaffolding requires at least one readable descriptor parameter")
     fixtures = destination / "src" / package / "ui" / "fixtures"
     fixtures.mkdir()
     for filename, severity in (("normal", "neutral"), ("warning", "warning")):
@@ -296,19 +294,19 @@ def _write_preview_examples(destination: Path, package: str, targets: list[dict[
     test_path.write_text("\n".join(lines), encoding="utf-8")
 
 
-def create_ui_resources(destination: Path, package: str) -> None:
-    """Add read-only presentation resources to an already generated SDK starter."""
-    root = destination / "src" / package
-    raw = read_file(root / "descriptor.json")
-    descriptor = _contract().parse_document(raw)
-    descriptor_hash = hashlib.sha256(raw).hexdigest()
-    targets = []
-    bindings = []
+def _ui_targets(descriptor: dict[str, Any]) -> list[dict[str, Any]]:
+    """Derive presentation targets, rejecting unsupported descriptor types."""
     types = {"float": "number", "int": "integer", "bool": "boolean", "string": "string"}
+    targets: list[dict[str, Any]] = []
     for parameter in descriptor["parameters"]:
         if parameter["access"] not in ("ro", "rw"):
             continue
         name = parameter["name"]
+        variable_type = types.get(str(parameter["type"]))
+        if variable_type is None:
+            raise ValueError(
+                f"preview_unsupported_parameter_type: {name}: {parameter['type']}"
+            )
         targets.append(
             {
                 "id": name,
@@ -317,7 +315,7 @@ def create_ui_resources(destination: Path, package: str) -> None:
                 "variables": [
                     {
                         "id": "value",
-                        "type": types[parameter["type"]],
+                        "type": variable_type,
                         "unit": parameter.get("unit"),
                         "shape": "scalar",
                         "axis_role": "value",
@@ -325,7 +323,21 @@ def create_ui_resources(destination: Path, package: str) -> None:
                 ],
             }
         )
-        bindings.append({"id": name, "kind": "observation", "target_id": name})
+    return targets
+
+
+def create_ui_resources(destination: Path, package: str) -> None:
+    """Add read-only presentation resources to an already generated SDK starter."""
+    root = destination / "src" / package
+    raw = read_file(root / "descriptor.json")
+    descriptor = _contract().parse_document(raw)
+    descriptor_hash = hashlib.sha256(raw).hexdigest()
+    # Validate everything derivable before the first write so a rejected
+    # descriptor leaves no half-generated project behind.
+    targets = _ui_targets(descriptor)
+    if not targets:
+        raise ValueError("UI scaffolding requires at least one readable descriptor parameter")
+    bindings = [{"id": row["id"], "kind": "observation", "target_id": row["id"]} for row in targets]
     manifest = {
         "contract_version": "0.1.0",
         "plugin_id": descriptor["id"],
