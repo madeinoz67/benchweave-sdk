@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 import json
 import mimetypes
@@ -10,7 +11,7 @@ from dataclasses import dataclass
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, cast
 from urllib.parse import unquote, urlsplit
 
 from .preview_models import PREVIEW_API_VERSION, PreviewModel, PreviewScenario
@@ -18,9 +19,37 @@ from .preview_models import PREVIEW_API_VERSION, PreviewModel, PreviewScenario
 MAX_REQUEST_BYTES = 64 * 1024
 
 
+def verify_bundled_assets(root: Path) -> None:
+    """Verify the packaged renderer against its inventory before serving it.
+
+    The build hook checks these hashes when the wheel is assembled; this closes
+    the gap between install-time and serve-time, where a same-venv build backend
+    could otherwise swap the rendered bytes silently.
+    """
+    try:
+        inventory = json.loads((root / "inventory.json").read_bytes())
+        assets = inventory["assets"]
+    except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise ValueError("preview_renderer_inventory_invalid") from exc
+    if inventory.get("api_version") != 1 or not isinstance(assets, list) or not assets:
+        raise ValueError("preview_renderer_inventory_invalid")
+    for asset in assets:
+        relative = PurePosixPath(str(asset.get("path", "")))
+        if relative.is_absolute() or ".." in relative.parts or "\\" in str(relative):
+            raise ValueError(f"preview_renderer_asset_unsafe: {relative}")
+        content = (root / relative).read_bytes()
+        if (
+            len(content) != asset.get("size")
+            or hashlib.sha256(content).hexdigest() != asset.get("sha256")
+        ):
+            raise ValueError(f"preview_renderer_asset_tampered: {relative}")
+
+
 def bundled_assets() -> Path:
     """Return the version-matched renderer root included in the SDK package."""
-    return Path(__file__).with_name("preview_assets") / "site"
+    root = Path(__file__).with_name("preview_assets")
+    verify_bundled_assets(root)
+    return root / "site"
 
 
 def validate_listener(host: str, allow_network: bool) -> None:
@@ -66,6 +95,40 @@ def _handler(
         def log_message(self, format: str, *args: object) -> None:
             return
 
+        def _host_is_trusted(self) -> bool:
+            """Reject DNS-rebinding: the Host header must name this listener."""
+            bound_address = cast(tuple[Any, ...], self.server.server_address)
+            bound_host, bound_port = bound_address[0], bound_address[1]
+            try:
+                bound_loopback = ipaddress.ip_address(str(bound_host)).is_loopback
+            except ValueError:
+                bound_loopback = False
+            header = self.headers.get("Host", "")
+            if header.startswith("["):
+                closing = header.find("]")
+                if closing < 0:
+                    return False
+                name = header[1:closing]
+                port = header[closing + 1 :].lstrip(":")
+            else:
+                name, separator, port = header.partition(":")
+                if not separator:
+                    return False
+            if not port.isdigit() or int(port) != int(bound_port):
+                return False
+            if name.lower() == "localhost":
+                return bound_loopback
+            try:
+                return ipaddress.ip_address(name).is_loopback and bound_loopback
+            except ValueError:
+                return name == str(bound_host)
+
+        def _reject_untrusted_host(self) -> bool:
+            if self._host_is_trusted():
+                return False
+            self._send_json({"error": "invalid_host"}, HTTPStatus.FORBIDDEN)
+            return True
+
         def _send_json(self, document: object, status: HTTPStatus = HTTPStatus.OK) -> None:
             raw = json.dumps(document, allow_nan=False, separators=(",", ":")).encode()
             self.send_response(status)
@@ -82,6 +145,8 @@ def _handler(
             self._send_json({"error": "not_found"}, HTTPStatus.NOT_FOUND)
 
         def do_GET(self) -> None:  # noqa: N802
+            if self._reject_untrusted_host():
+                return
             path = urlsplit(self.path).path
             if path == "/healthz":
                 self._send_json({"ready": True, "api_version": PREVIEW_API_VERSION})
@@ -107,10 +172,26 @@ def _handler(
                 return
             self._serve_asset(path)
 
+        def do_OPTIONS(self) -> None:  # noqa: N802
+            if self._reject_untrusted_host():
+                return
+            if allowed_origin and self.headers.get("Origin") == allowed_origin:
+                self.send_response(HTTPStatus.NO_CONTENT)
+                self.send_header("Access-Control-Allow-Origin", allowed_origin)
+                self.send_header("Vary", "Origin")
+                self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+                self.send_header("Access-Control-Allow-Headers", "Content-Type")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+            else:
+                self._send_json({"error": "origin_not_allowed"}, HTTPStatus.FORBIDDEN)
+
         def _serve_asset(self, request_path: str) -> None:
             relative = unquote(request_path).lstrip("/") or "index.html"
             pure = PurePosixPath(relative)
-            if pure.is_absolute() or ".." in pure.parts:
+            # A backslash is inert in PurePosixPath but a separator on Windows;
+            # reject it here so the guard means the same thing on every platform.
+            if pure.is_absolute() or ".." in pure.parts or "\\" in relative:
                 self._not_found()
                 return
             target = assets.joinpath(*pure.parts)
@@ -128,6 +209,8 @@ def _handler(
             self.wfile.write(raw)
 
         def do_POST(self) -> None:  # noqa: N802
+            if self._reject_untrusted_host():
+                return
             prefix = "/api/v1/scenarios/"
             suffix = "/requests"
             path = urlsplit(self.path).path

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import sys
 import webbrowser
 from collections.abc import Callable, Sequence
@@ -165,6 +166,19 @@ def _renderer_origin(renderer_url: str | None) -> str | None:
     parsed = urlsplit(renderer_url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise ValueError(f"preview_renderer_url_invalid: {renderer_url}")
+    host = parsed.hostname or ""
+    try:
+        loopback = ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        loopback = host == "localhost"
+    if not loopback:
+        # Author-editable plugin docs can suggest command lines; a non-loopback
+        # renderer would get CORS-trusted API access without the bundled
+        # renderer's simulation labelling. Keep trust on the operator's machine.
+        raise ValueError(
+            f"preview_renderer_origin_not_local: {renderer_url} must name a loopback "
+            "host; serve third-party renderers locally"
+        )
     return f"{parsed.scheme}://{parsed.netloc}"
 
 
@@ -198,6 +212,7 @@ def _run_preview(
     from .preview_server import PreviewServer, bundled_assets, validate_listener
 
     validate_listener(host, allow_network)
+    renderer_origin = _renderer_origin(renderer_url)
     candidate = load_validated_preview_inputs(
         envelope,
         descriptor,
@@ -215,7 +230,6 @@ def _run_preview(
             resource_root=fixtures.parent,
         )
     model = build_preview_model(candidate)
-    renderer_origin = _renderer_origin(renderer_url)
     server = PreviewServer(
         model,
         bundled_assets(),
@@ -227,6 +241,12 @@ def _run_preview(
     try:
         address = server.start()
         target_url = _renderer_target(renderer_url, address.url)
+        if renderer_url is not None:
+            ConsoleOutput().message(
+                "Custom renderer: a developer-supplied page is display, not the bundled "
+                "BenchWeave renderer; all data remains simulated.",
+                style="yellow",
+            )
         if no_open or not sys.stdout.isatty():
             ConsoleOutput().preview_ready(
                 target_url,

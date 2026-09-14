@@ -212,6 +212,8 @@ def generate_baselines(
         ("request-rejected", "Request rejected", "warning", "simulated"),
     )
     first_binding = observations[0].binding_id if observations else "request"
+    if {row[0] for row in rows} != BASELINE_IDS:
+        raise ValueError("preview_baseline_rows_drift")
     scenarios = []
     for scenario_id, title, severity, quality in rows:
         scenario_observations = tuple(
@@ -255,6 +257,17 @@ def generate_baselines(
     return tuple(scenarios)
 
 
+def _renderer_version() -> str:
+    """Report the version stamped by the renderer build, not a Python literal."""
+    inventory = json.loads(
+        (Path(__file__).with_name("preview_assets") / "inventory.json").read_bytes()
+    )
+    version = inventory.get("renderer_version")
+    if not isinstance(version, str) or not version:
+        raise ValueError("preview_renderer_inventory_invalid")
+    return version
+
+
 def build_preview_model(candidate: ValidatedPreviewInputs) -> PreviewModel:
     """Build one immutable preview model from the exact validated candidate."""
     baselines = generate_baselines(candidate.binding_catalogue, candidate.manifest)
@@ -263,7 +276,7 @@ def build_preview_model(candidate: ValidatedPreviewInputs) -> PreviewModel:
     )
     return PreviewModel(
         plugin_id=str(candidate.manifest["plugin_id"]),
-        renderer_version="0.1.0",
+        renderer_version=_renderer_version(),
         pages=tuple(candidate.manifest.get("pages", [])),
         scenarios=baselines + authored,
     )
