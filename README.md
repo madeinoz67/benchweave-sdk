@@ -1,3 +1,5 @@
+![BenchWeave SDK — Build. Validate. Integrate. A plugin package moving through build and validation into the BenchWeave gateway and connected instruments.](docs/assets/benchweave-sdk-banner.png)
+
 # BenchWeave plugin developer SDK
 
 Build an external device plugin without importing gateway internals. Python 3.13+, SDK 0.1.0, OTDP 0.3.0 and adapter API 1.1 are the initial baseline. This package is a separate wheel built alongside BenchWeave; it is not yet published to a package index.
