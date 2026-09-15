@@ -48,6 +48,8 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-15-intel]
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
     steps:
       - uses: actions/download-artifact@v4
         with:
@@ -63,7 +65,7 @@ jobs:
           set -euo pipefail
           uv venv "$RUNNER_TEMP/sdk-smoke"
           uv pip install --python "$RUNNER_TEMP/sdk-smoke/bin/python" dist/*.whl
-          "$RUNNER_TEMP/sdk-smoke/bin/benchweave-sdk" --version
+          "$RUNNER_TEMP/sdk-smoke/bin/benchweave-sdk" --version | grep -F "version ${TAG#v}"
           "$RUNNER_TEMP/sdk-smoke/bin/benchweave-sdk" new "$RUNNER_TEMP/example" --with-ui
           "$RUNNER_TEMP/sdk-smoke/bin/benchweave-sdk" check "$RUNNER_TEMP/example/src/example_plugin/descriptor.json"
 
