@@ -4,6 +4,10 @@
 
 Build an external device plugin without importing gateway internals. Python 3.13+, SDK 0.1.0, OTDP 0.3.0 and adapter API 1.1 are the initial baseline. This package is a separate wheel built alongside BenchWeave; it is not yet published to a package index.
 
+## Sister repository
+
+This is the SDK. The BenchWeave gateway and the canonical architecture and contract standards live in the main repository: [madeinoz67/benchweave](https://github.com/madeinoz67/benchweave). This SDK is mounted there at `packages/sdk` as a git submodule and has its own CI and release cycle.
+
 ## Five steps
 
 1. Install the built SDK wheel in your development environment (`uv pip install path/to/benchweave_sdk-0.1.0-py3-none-any.whl`).
