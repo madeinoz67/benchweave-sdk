@@ -57,14 +57,16 @@ it collapsed the analysis that depended on them. A drain with no bar is a pollut
 ## How to append
 
 **Use the helper.** It validates before it writes, fills in `vault`, and refuses a batch
-rather than queueing a bad line. Every proposal carries **at least one tag** — tags are the
-recall tag-filter lane, and an untagged memory is invisible to tag-scoped recall and reads
-as bare in the console (observed on the benchweave vault 2026-09-11). And **every proposal
-from this repository carries the `sdk` tag**, in addition to any descriptive tags: it is
-this repo's identity in the shared `benchweave` vault, so a reader can tell an SDK-repo
-finding from a main-repo finding without parsing paths. The validator rejects a proposal
-without it with an error that names the rule (`sdk-tag-required: proposals from this
-repository carry the sdk tag`):
+rather than queueing a bad line. Every proposal carries **at least one descriptive tag** —
+tags are the recall tag-filter lane, and an untagged memory is invisible to tag-scoped
+recall and reads as bare in the console (observed on the benchweave vault 2026-09-11). And
+**every proposal from this repository carries the `sdk` tag**, riding *with* a descriptive
+tag, never alone: it is this repo's identity in the shared `benchweave` vault, so a reader
+can tell an SDK-repo finding from a main-repo finding without parsing paths — but identity
+is not a finding tag, so it does not count toward the minimum. The validator rejects both
+halves of a violation with errors that name the rule: a missing `sdk` tag
+(`sdk-tag-required: proposals from this repository carry the sdk tag`) and a tags array of
+just `["sdk"]` (`must include at least 1 descriptive tag besides "sdk"`).
 
 ```sh
 node .claude/hooks/memory-propose.mjs <<'JSON'
@@ -87,7 +89,7 @@ session that wrote it can still fix it. But the helper is the path that cannot b
   "content":  "the fact itself",   // required — self-contained, >= 40 chars, readable in a year
   "summary":  "one line",          // strongly preferred
   "type":     "fact",              // fact|decision|observation|issue|procedure|constraint|…
-  "tags":     ["sdk", "…"],        // required — >= 1 AND must include "sdk" (repo identity)
+  "tags":     ["sdk", "…"],        // required — "sdk" (repo identity) AND >= 1 descriptive tag besides it
   "entities": ["…"],               // bare names are fine
   "importance": 0.8,               // 0.7+ is protected from capacity pruning
   "source":   "adversary",         // which agent or session proposed it
@@ -117,9 +119,9 @@ It drains itself. `PreCompact`, `SessionEnd` and a debounced `Stop` are wired in
 session transcripts: the two sessions holding 81.3% of all events fired `SessionEnd`
 **zero** times and compacted 18 times between them) is why `PreCompact` leads.
 
-To run it by hand: `node .claude/hooks/memory-drain.mjs` (`--dry-run` to see what it would
-do, `--max N` to cap a run). It targets the same MuninnDB MCP endpoint as the main repo:
-`http://127.0.0.1:8125/mcp`, vault `benchweave`, credential
+To run it by hand: `node .claude/hooks/memory-drain.mjs --base http://127.0.0.1:8125/mcp`
+(`--dry-run` to see what it would do, `--max N` to cap a run). It targets the same MuninnDB
+MCP endpoint as the main repo: `http://127.0.0.1:8125/mcp`, vault `benchweave`, credential
 `~/.muninn/flush-keys/benchweave.token`.
 
 **The drain is a pipe, not a curator.** Identity → write → archive → truncate. It performs
@@ -158,9 +160,12 @@ Its contract, in the order the properties matter:
    which is exactly the pollution this design exists to avoid — so the drain instead says so
    out loud: a `NOT APPLIED` line, `counts.unapplied_annotations` in the receipt, and
    `annotations_not_applied` on the archive record, which also keeps the corrected text.
-   *(SDK-repo delta: a tags array that is exactly `["sdk"]` is routing identity, not an
-   annotation — it is never reported as not applied. Tags beyond the mandatory one still
-   are.)* **Correcting a live memory is `muninn_evolve`'s job, not a re-proposal's.**
+   *(SDK-repo delta, tightened 2026-09-15: the schema refuses a tags array of just
+   `["sdk"]` — the mandatory tag rides with at least one descriptive tag — so a valid
+   proposal's tags always carry annotative content and `tags` is reported like any other
+   annotation. The earlier exemption that never reported an exactly-`["sdk"]` array died
+   with the rule change; such an array no longer reaches the write path at all.)*
+   **Correcting a live memory is `muninn_evolve`'s job, not a re-proposal's.**
 3. **Observable from outside.** *Every* invocation writes `memory-drain-receipt.json` and
    appends to `memory-drain-receipts.jsonl` — including the no-op, debounced, locked and
    failure paths — carrying timestamp, trigger, items considered, items acted on, and

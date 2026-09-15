@@ -54,7 +54,7 @@ function proposal(n, extra = {}) {
     content: `Synthetic finding number ${n}, written long enough to clear the forty-character self-containment floor.`,
     summary: `synthetic ${n}`,
     type: 'fact',
-    tags: ['synthetic', 'sdk'],   // the sdk tag is this repository's one mandatory delta
+    tags: ['synthetic', 'sdk'],   // this repo's one delta, two halves: sdk + a descriptive tag
     ...extra,
   }
 }
@@ -358,7 +358,23 @@ test('sdk tag is mandatory: the validator rejects a proposal without it, by name
   )
   assert.match(noSdk.problems.join('; '), /sdk-tag-required: proposals from this repository carry the sdk tag/)
   const withSdk = validate(proposal(2, { tags: ['gotcha', 'sdk'] }))
-  assert.equal(withSdk.ok, true, `adding the sdk tag is sufficient: ${JSON.stringify(withSdk.problems)}`)
+  assert.equal(withSdk.ok, true, `a descriptive tag plus sdk validates: ${JSON.stringify(withSdk.problems)}`)
+})
+
+// [SDK-repo delta, tightened 2026-09-15] `sdk` is repo identity, not a finding tag: it rides
+// WITH >= 1 descriptive tag and never satisfies the minimum on its own. A vault reader
+// filtering by tag needs a descriptive lane to find the memory on; `sdk` only says which
+// repo proposed it.
+test('sdk alone does not satisfy the tag rule: ["sdk"] is rejected with an error naming the descriptive-tag requirement', () => {
+  const bareSdk = validate(proposal(1, { tags: ['sdk'] }))
+  assert.equal(bareSdk.ok, false, 'a tags array of just ["sdk"] must not validate — identity is not a finding tag')
+  assert.match(
+    bareSdk.problems.join('; '),
+    /descriptive tag besides "sdk"/,
+    `the error must name the requirement: ${JSON.stringify(bareSdk.problems)}`
+  )
+  const sdkPlusDescriptive = validate(proposal(2, { tags: ['routing', 'sdk'] }))
+  assert.equal(sdkPlusDescriptive.ok, true, `sdk riding with a descriptive tag validates: ${JSON.stringify(sdkPlusDescriptive.problems)}`)
 })
 
 test('sdk-tag-required: memory-propose rejects a proposal without the sdk tag and appends nothing', async () => {
@@ -716,14 +732,21 @@ test('F5: a re-proposal whose non-identity fields changed is reported, never sil
   assert.equal(arch.summary, 'a corrected summary', 'the correction is recoverable from the archive')
 })
 
-test('F5: an idempotency hit with nothing to correct stays quiet', async (t) => {
+test('F5: an idempotency hit on a proposal with only routing tags reports the tags annotation, and nothing else', async (t) => {
   const srv = await fakeMuninn({ onRemember: () => ({ id: 'eng-existing', idempotent: true }) })
   t.after(() => srv.close())
-  const bare = { vault: 'testvault', concept: 'bare', content: 'A proposal carrying identity fields, the mandatory sdk tag, and nothing else at all.', tags: ['sdk'] }
+  // Tightened 2026-09-15: bare ["sdk"] can no longer validate, so the old quiet case (a
+  // tags array with no annotative content) is structurally gone — every valid proposal
+  // carries a descriptive tag, and the drain says out loud that it did not land.
+  const bare = { vault: 'testvault', concept: 'bare', content: 'A proposal carrying identity fields, the mandatory sdk tag, one descriptive tag, and nothing else at all.', tags: ['sdk', 'routing'] }
   const { root } = makeRepo([bare])
   const r = await runNode(DRAIN, ['--base', srv.base], { root })
-  assert.equal(readReceiptFile(root).counts.unapplied_annotations, 0)
-  assert.doesNotMatch(r.out, /NOT APPLIED/)
+  assert.equal(readReceiptFile(root).counts.unapplied_annotations, 1,
+    'tags always carry descriptive content now, so an idempotent hit must report them')
+  assert.match(r.out, /NOT APPLIED/)
+  assert.match(r.out, /tags/)
+  const arch = JSON.parse(lines(join(root, '.claude', 'memory-proposals.drained.jsonl'))[0])
+  assert.deepEqual(arch.annotations_not_applied, ['tags'], 'summary/type/entities are absent, so tags is the only annotation reported')
 })
 
 // ── The read boundary: an unterminated trailing line is transient, not permanent ───────────

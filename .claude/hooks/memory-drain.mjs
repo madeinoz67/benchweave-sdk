@@ -72,7 +72,7 @@
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { validate, opIdFor, explain, WRITTEN_FIELDS, IDENTITY_FIELDS, REQUIRED_TAG } from './memory-schema.mjs'
+import { validate, opIdFor, explain, WRITTEN_FIELDS, IDENTITY_FIELDS } from './memory-schema.mjs'
 import { paths, acquireLock, readPrefix, spliceConsumed, appendRecords, writeReceipt, readReceipt } from './memory-ledger.mjs'
 
 const P = paths()
@@ -264,13 +264,14 @@ async function run(receipt) {
       // silent, plausible-looking, wrong. The correction is not applied here (that is
       // curation — muninn_evolve), but it is never silent, and the archive keeps the
       // corrected text so it is recoverable.
-      // [SDK-repo delta] The mandatory `sdk` tag rides on every proposal from this repo,
-      // so a tags array that is exactly [sdk] carries no annotative content — reporting it
-      // as "not applied" would make every quiet re-proposal noisy. Tags beyond the
-      // mandatory one are still annotations and still reported.
-      const mandatoryTagOnly = Array.isArray(p.tags) && p.tags.length === 1 && p.tags[0] === REQUIRED_TAG
+      // [SDK-repo delta, tightened 2026-09-15] The schema now refuses a tags array of just
+      // ["sdk"] (repo identity must ride WITH a descriptive tag), so every valid proposal's
+      // tags carry annotative content and `tags` is reported like any other annotation on an
+      // idempotency hit. The earlier "exactly [sdk] carries no annotative content" exemption
+      // became unreachable the day that rule landed — an array that is only the mandatory
+      // tag no longer reaches this code; the drain dead-letters it first.
       const notApplied = w.data?.idempotent
-        ? WRITTEN_FIELDS.filter((f) => !IDENTITY_FIELDS.includes(f) && p[f] !== undefined && !(f === 'tags' && mandatoryTagOnly))
+        ? WRITTEN_FIELDS.filter((f) => !IDENTITY_FIELDS.includes(f) && p[f] !== undefined)
         : []
       if (w.data?.idempotent) {
         idempotent.push({ line: no, concept: p.concept, id, notApplied })

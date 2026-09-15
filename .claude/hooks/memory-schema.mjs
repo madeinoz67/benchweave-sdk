@@ -1,9 +1,11 @@
 // memory-schema.mjs — the one definition of what a memory proposal is.
 //
 // Ported 2026-09-15 from the main benchweave-ui repository (muninndb lineage, issue #825)
-// with exactly one rule added: every proposal from THIS repository carries the literal
-// `sdk` tag (REQUIRED_TAG below). The rule lives here so the producer, the guard and the
-// drain all enforce it — there is no path into the vault that skips it.
+// with exactly one rule added, in two halves (tightened 2026-09-15): every proposal from
+// THIS repository carries the literal `sdk` tag (REQUIRED_TAG below), AND that tag rides
+// with at least one descriptive tag — it never satisfies the minimum alone. The rule lives
+// here so the producer, the guard and the drain all enforce it — there is no path into the
+// vault that skips it.
 //
 // Three incompatible proposal schemas appeared in the ledger in a single day, against a
 // shape documented that same morning in .claude/memory-protocol.md. Prose does not enforce
@@ -38,13 +40,18 @@ export const MIN_CONTENT = 40
 // Tags are required, not decorative: the recall tag-filter lane and the console's tag
 // chips are the retrieval surface an untagged memory never reaches (observed on the
 // benchweave vault 2026-09-11 — three tag-less memories, invisible to tag-scoped recall).
+// In this repository the minimum counts DESCRIPTIVE tags only — see REQUIRED_TAG below.
 export const MIN_TAGS = 1
 
 // [SDK-repo delta] Repo identity, not a finding: every proposal from this repository
-// carries the literal `sdk` tag, on top of the >= 1 tag rule above, so a vault reader can
-// tell a benchweave-sdk finding from a main-repo finding without parsing paths. The drain
-// never substitutes it — a proposal without it is rejected with an error that names this
-// rule (memory-propose at the producer, ledger-guard in-session, dead-letter at the drain).
+// carries the literal `sdk` tag, alongside >= 1 descriptive tag, so a vault reader can
+// tell a benchweave-sdk finding from a main-repo finding without parsing paths. Two
+// consequences, both enforced below:
+//   1. a proposal without `sdk` is rejected with an error naming the rule;
+//   2. `sdk` does not count toward MIN_TAGS — an array of just ["sdk"] is rejected, because
+//      repo identity is not a descriptive lane and the memory would be invisible to
+//      tag-filtered recall anyway (tightened 2026-09-15: sdk alone used to satisfy the
+//      minimum). The drain never substitutes either rule.
 export const REQUIRED_TAG = 'sdk'
 
 // Fields the drain forwards to muninn_remember. Anything else on a proposal is carried in
@@ -60,7 +67,7 @@ export const CANONICAL_SHAPE = [
   `  "content":    "the fact itself",     // required — self-contained, >= ${MIN_CONTENT} chars`,
   '  "summary":    "one line",            // strongly preferred',
   '  "type":       "fact",                // fact|decision|observation|issue|procedure|constraint',
-  `  "tags":       ["${REQUIRED_TAG}", "..."],      // required — >= 1 AND must include "${REQUIRED_TAG}" (repo identity)`,
+  `  "tags":       ["${REQUIRED_TAG}", "..."],      // required — must include "${REQUIRED_TAG}" (repo identity) AND >= ${MIN_TAGS} descriptive tag besides it`,
   '  "entities":   ["..."],',
   '  "importance": 0.8,                   // 0.7+ is protected from capacity pruning',
   '  "source":     "which agent proposed it"',
@@ -111,8 +118,18 @@ export function validate(p) {
   }
   if (p.tags !== undefined && !Array.isArray(p.tags)) {
     problems.push(`'tags' must be an array`)
-  } else if (!Array.isArray(p.tags) || p.tags.filter((t) => typeof t === 'string' && t.trim()).length < MIN_TAGS) {
-    problems.push(`'tags' must include at least ${MIN_TAGS} non-empty entry — untagged memories are invisible to tag-filtered recall`)
+  } else {
+    // [SDK-repo delta] The minimum counts descriptive tags only: REQUIRED_TAG is repo
+    // identity, not a finding tag, so it is filtered out before the count. `["sdk"]` alone
+    // is the degenerate case this rejects — identity without a descriptive lane.
+    const descriptive = Array.isArray(p.tags)
+      ? p.tags.filter((t) => typeof t === 'string' && t.trim() && t !== REQUIRED_TAG)
+      : []
+    if (descriptive.length < MIN_TAGS) {
+      problems.push(
+        `'tags' must include at least ${MIN_TAGS} descriptive tag besides "${REQUIRED_TAG}" — "${REQUIRED_TAG}" is repo identity and does not count toward the minimum; without a descriptive tag the memory is invisible to tag-filtered recall`
+      )
+    }
   }
   if (p.entities !== undefined && !Array.isArray(p.entities)) problems.push(`'entities' must be an array`)
   if (Array.isArray(p.tags) && !p.tags.includes(REQUIRED_TAG)) {
