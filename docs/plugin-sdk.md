@@ -24,25 +24,25 @@ pip install git+https://github.com/madeinoz67/benchweave-sdk.git
 
 Full channel list: see the README Installation section.
 
-Use the SDK wheel from the corresponding BenchWeave release. Until a release contains these artefacts, maintainers can build them from a checkout of the main BenchWeave repository — run this from that checkout's root; `packages/sdk` is the submodule mount path there, not a directory in this repository:
+PyPI is the default install channel: `pip install benchweave-sdk` or `uv pip install benchweave-sdk`. Contributors and maintainers can instead build from a checkout of the main BenchWeave repository — run this from that checkout's root; `packages/sdk` is the submodule mount path there, not a directory in this repository:
 
 ```sh
 uv build packages/sdk --out-dir dist/sdk
 ```
 
-In your development directory, create an environment and install that wheel. Replace `/path/to/` with the actual download location:
+In your development directory, create an environment and install the built wheel from the checkout's `dist/sdk/`:
 
 ```sh
 uv venv --python 3.13
 source .venv/bin/activate
-uv pip install /path/to/benchweave_sdk-0.1.0-py3-none-any.whl
+uv pip install dist/sdk/benchweave_sdk-0.1.0-py3-none-any.whl
 benchweave-sdk new plugins/acme/model100 --package benchweave_acme_model100
 cd plugins/acme/model100
 uv pip install -e '.[test]'
 pytest
 ```
 
-Keep using the environment containing the SDK wheel; if you create a new environment inside the project, install the wheel there too. The SDK is not currently published to PyPI by this workflow. For a repeatable `uv lock`, configure your locally built SDK wheel or your organisation's package source explicitly; do not assume a public package index contains it.
+Keep using the environment containing the SDK wheel; if you create a new environment inside the project, install the wheel there too. For a repeatable `uv lock` against a locally built wheel, configure that wheel or your organisation's package source explicitly.
 
 Replace `acme/model100` with your manufacturer and device/plugin name. The destination controls the directory hierarchy; `--package` controls the Python import package. The SDK creates missing parent directories and refuses to overwrite an existing project.
 
