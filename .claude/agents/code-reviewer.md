@@ -61,8 +61,8 @@ that is confidently wrong is worse than none.
    from the main repository root, in the main repository's environment). When you are in
    the standalone clone without the parent checkout, say so explicitly and list which
    main-side test modules the change should be exercised through (`test_standards_sync`,
-   `test_cli_frameworks`, `test_presentation_cli`, `test_preview_server`, `test_preview_cli`,
-   `test_sdk`) — "couldn't run tests" stated plainly beats a green-looking review that
+   `test_cli_frameworks`, `test_presentation_cli`, `test_presentation_packaging`,
+   `test_preview_server`, `test_preview_cli`, `test_preview_fixtures`, `test_sdk`) — "couldn't run tests" stated plainly beats a green-looking review that
    never ran them.
 
 3. **RED-sanity-check every bug-fix claim.** Prove the new test fails without the fix
@@ -119,9 +119,9 @@ that is confidently wrong is worse than none.
   the change belongs in the main repository's canonical corpus, re-exported. **Refusal
   prefixes are the contract**: every refusal path raises a `snake_case:`-prefixed
   `ValueError` code (`bundle_required`, `bundle_manifest_missing`, `bundle_manifest_invalid`,
-  `bundle_path_invalid`, `bundle_file_missing`, `lock_invalid`, `lock_version_unsupported`,
-  `standards_version_required`, `hash_mismatch`, `not_synced`, `stamp_missing`,
-  `unexpected_vendored_file`) — a new refusal path that raises bare prose breaks the
+  `bundle_version_unsupported`, `bundle_path_invalid`, `bundle_file_missing`, `lock_invalid`,
+  `lock_version_unsupported`, `standards_version_required`, `hash_mismatch`, `not_synced`,
+  `stamp_missing`, `unexpected_vendored_file`) — a new refusal path that raises bare prose breaks the
   machine-matchable surface CI and scripts branch on.
 
 - **Scaffold** — `scaffold.py`. The generated project is the SDK's public face and

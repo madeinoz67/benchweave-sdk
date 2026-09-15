@@ -70,5 +70,6 @@ JSON
   `node .claude/hooks/memory-drain.mjs --base http://127.0.0.1:8125/mcp` before ending a
   session that queued proposals.
 - Sessions rooted in the **submodule mount** (`packages/sdk` inside the main checkout)
-  have no lifecycle hooks: prefer proposing from a real checkout of this repository, or
+  fire no lifecycle hooks from this repository (their hooks resolve to the main
+  checkout's settings): prefer proposing from a real checkout of this repository, or
   drain by hand (`.claude/memory-protocol.md` § Worktrees has the detail).
