@@ -112,7 +112,7 @@ Here `--resources` points to the **package root**. The generated envelope's `res
 
 Add `--with-ui` to `benchweave-sdk new` to generate a declarative readings page, presentation envelope and binding catalogue. The default scaffold stays unchanged. Keep presentation assets under the import package's `ui/` directory so wheels carry them; store complete configuration presets alongside their settings schema. Plugins can declare configuration, readings, dataset and registered panel pages, with plots only when appropriate.
 
-Use `benchweave-sdk check-ui` and `benchweave-sdk check-preset` for offline validation before packaging. Validation neither admits a plugin nor approves applying settings. The [plugin presentation guide](../../docs/plugin-ui-v0.1.0/README.md) covers the directory structure, preconfigured settings, optional graphs, data bindings and CLI examples.
+Use `benchweave-sdk check-ui` and `benchweave-sdk check-preset` for offline validation before packaging. Validation neither admits a plugin nor approves applying settings. The [plugin presentation guide](https://github.com/madeinoz67/benchweave/blob/main/docs/plugin-ui-v0.1.0/README.md) (main repository) covers the directory structure, preconfigured settings, optional graphs, data bindings and CLI examples.
 
 ### Local UI preview
 
