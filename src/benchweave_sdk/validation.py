@@ -17,20 +17,24 @@ from referencing.jsonschema import DRAFT202012
 def contract_documents() -> dict[str, Any]:
     vendored = files("benchweave_sdk").joinpath("standards")
     sets = (
-        ("otdp", "otdp-v0.3.0"),
-        ("registry", "registry-v1.0.0"),
-        ("plugin-ui", "plugin-ui-v0.1.0"),
+        ("otdp", "0.3.0"),
+        ("registry", "1.0.0"),
+        ("plugin-ui", "0.1.0"),
     )
     if vendored.is_dir():
-        # The vendored tree is standards/<id>/<set>/...; document keys stay
-        # <set>/... so schema_file lookups and $ref registries are unchanged.
+        # The vendored tree is standards/<id>/<version>/...; document keys stay
+        # <id>/<version>/... so schema_file lookups and $ref registries follow.
         directories = [
-            (vendored.joinpath(identifier, prefix), prefix) for identifier, prefix in sets
+            (vendored.joinpath(identifier, version), f"{identifier}/{version}")
+            for identifier, version in sets
         ]
     else:
         # Editable development before the first standards sync only.
-        checkout = Path(__file__).resolve().parents[4] / "contracts"
-        directories = [(checkout / prefix, prefix) for _, prefix in sets]
+        checkout = Path(__file__).resolve().parents[4] / "standards"
+        directories = [
+            (checkout / identifier / version, f"{identifier}/{version}")
+            for identifier, version in sets
+        ]
     documents: dict[str, Any] = {}
 
     def visit(directory: Any, prefix: str) -> None:
@@ -76,18 +80,18 @@ def validate(document: Any, schema_file: str, definition: str | None = None) -> 
 
 
 def validate_request(request: dict[str, Any]) -> None:
-    validate(request, "otdp-v0.3.0/otdp-runtime.schema.json", "operationRequest")
+    validate(request, "otdp/0.3.0/otdp-runtime.schema.json", "operationRequest")
 
 
 def validate_result(result: dict[str, Any], request: dict[str, Any]) -> None:
     validate_request(request)
-    validate(result, "otdp-v0.3.0/otdp-runtime.schema.json", "operationResult")
+    validate(result, "otdp/0.3.0/otdp-runtime.schema.json", "operationResult")
     if (result["operation_id"], result["verb"]) != (request["operation_id"], request["verb"]):
         raise ValueError("Result correlation does not match the request")
 
 
 def validate_descriptor(descriptor: dict[str, Any]) -> None:
-    validate(descriptor, "otdp-v0.3.0/otdp-device-descriptor.schema.json")
+    validate(descriptor, "otdp/0.3.0/otdp-device-descriptor.schema.json")
     capabilities = descriptor["capabilities"]
     if len(capabilities) != len(set(capabilities)) or set(capabilities) != set(
         descriptor["operations"]
