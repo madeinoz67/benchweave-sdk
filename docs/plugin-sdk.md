@@ -123,6 +123,6 @@ Run the same check locally from a checkout of the main BenchWeave repository (`s
 uv run --no-project --python 3.13 scripts/sdk_smoke.py --out-dir dist/packages
 ```
 
-On a published GitHub release, a separate job repeats these checks before attaching the SDK wheel and source distribution to that release. It does not publish to PyPI or a device registry. No release is published simply by editing these files or running the local smoke check.
+On a published GitHub release, a separate job repeats these checks before attaching the SDK wheel and source distribution to that release. Tagging a release triggers the publish workflow, which builds the sdist and wheel, smoke-installs the wheel on four OS/arch lanes, and publishes to PyPI via Trusted Publishing. No release is published simply by editing these files or running the local smoke check.
 
 When changing the SDK API, canonical contracts, template, gateway bridge or build tooling, update the affected tests and documentation together. Keep SDK distribution metadata, `__version__`, generated development dependency and this compatibility statement aligned; the smoke checks guard the installed distribution and contract resources.
