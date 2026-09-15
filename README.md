@@ -2,7 +2,7 @@
 
 # BenchWeave plugin developer SDK
 
-Build an external device plugin without importing gateway internals. Python 3.13+, SDK 0.1.0, OTDP 0.3.0 and adapter API 1.1 are the initial baseline. This package is a separate wheel built alongside BenchWeave; it is not yet published to a package index.
+Build an external device plugin without importing gateway internals. Python 3.13+, SDK 0.1.0, OTDP 0.3.0 and adapter API 1.1 are the initial baseline. This package is a separate wheel built alongside BenchWeave; published to PyPI as benchweave-sdk.
 
 ## Sister repository
 
@@ -151,4 +151,4 @@ Pure Python plugins still need declared dependencies and compatible runtimes. Na
 
 ## Distribution rights
 
-The existing project licence remains Proprietary. This implementation does not grant a new open-source licence for the SDK, copied contracts or templates. The project owner must establish distribution rights before public publication. Generated examples deliberately contain no invented licence grant; choose the appropriate plugin licence and provide its file before release.
+The SDK package is distributed under the [MIT licence](LICENSE). The vendored OTDP, registry and presentation contract sets and the generated templates are part of this package and carry the same grant. Plugin authors choose their own licence; generated examples contain no licence grant and make no claim on plugin code written with them.
