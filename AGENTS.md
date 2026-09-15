@@ -13,8 +13,8 @@ plugins. A separate wheel from the gateway, mounted in the main repository at
   say *do not edit*; hand-editing it is always wrong), and this repo's own working docs
   under `docs/superpowers/`.
 - **Main repository** ([madeinoz67/benchweave](https://github.com/madeinoz67/benchweave)):
-  the canonical standards corpus and its export tooling, the versioned contract docs
-  (`docs/interface-v1.1.1/`, `docs/otdp-v0.3.0/`, `docs/registry-v1.0.0/`, …), the
+  the canonical standards corpus and its export tooling (`standards/` — machine
+  artifacts and prose companions together, one tree), the
   compatibility matrix, the architecture contracts, the acceptance/evidence record, the
   SDK test suite (`tests/sdk/`), and `docs/plugin-sdk.md` as a stub pointing here. A
   standards change never lands here first — it lands in the corpus, is exported as a
