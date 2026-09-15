@@ -57,13 +57,15 @@ jobs:
         with:
           python-version: "3.13"
       - name: Install smoke (wheel outside any checkout)
+        # $RUNNER_TEMP is a real (non-symlink) path on every runner OS —
+        # the SDK's path validation rejects symlinked roots like macOS /tmp.
         run: |
           set -euo pipefail
-          uv venv /tmp/sdk-smoke
-          uv pip install --python /tmp/sdk-smoke/bin/python dist/*.whl
-          /tmp/sdk-smoke/bin/benchweave-sdk --version
-          /tmp/sdk-smoke/bin/benchweave-sdk new /tmp/example --with-ui
-          /tmp/sdk-smoke/bin/benchweave-sdk check /tmp/example/src/example_plugin/descriptor.json
+          uv venv "$RUNNER_TEMP/sdk-smoke"
+          uv pip install --python "$RUNNER_TEMP/sdk-smoke/bin/python" dist/*.whl
+          "$RUNNER_TEMP/sdk-smoke/bin/benchweave-sdk" --version
+          "$RUNNER_TEMP/sdk-smoke/bin/benchweave-sdk" new "$RUNNER_TEMP/example" --with-ui
+          "$RUNNER_TEMP/sdk-smoke/bin/benchweave-sdk" check "$RUNNER_TEMP/example/src/example_plugin/descriptor.json"
 
   publish:
     name: Publish to PyPI (Trusted Publishing)
