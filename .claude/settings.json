@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "_comment": "Adopted 2026-09-15 from the main benchweave-ui repository's memory system (see .claude/memory-protocol.md). ledger-guard.mjs rejects a malformed memory proposal in the session that can still fix it. memory-drain.mjs moves proposals into the `benchweave` MuninnDB vault (PreCompact leads because long sessions never fire SessionEnd; Stop covers crash/kill, debounced against the receipt). memory-freshness.mjs reads the drain receipt at SessionStart so a wedged or never-run drain reports itself. drain credentials: ~/.muninn/flush-keys/benchweave.token. One delta vs main: every proposal from this repo must carry the `sdk` tag (validator-enforced in memory-schema.mjs).",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/ledger-guard.mjs\""
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 60,
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/memory-drain.mjs\" --hook --trigger PreCompact --base http://127.0.0.1:8125/mcp"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 60,
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/memory-drain.mjs\" --hook --trigger SessionEnd --base http://127.0.0.1:8125/mcp"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 60,
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/memory-drain.mjs\" --hook --trigger Stop --debounce 20 --base http://127.0.0.1:8125/mcp"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 10,
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/memory-freshness.mjs\""
+          }
+        ]
+      }
+    ]
+  }
+}
