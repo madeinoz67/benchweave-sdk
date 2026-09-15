@@ -23,12 +23,15 @@ jobs:
           python-version: "3.13"
 
       - name: Sync environment
-        run: uv sync
+        run: uv sync --extra test
 
       - name: Lint
         run: |
           uv run ruff check .
           uv run mypy src
+
+      - name: Tests
+        run: uv run pytest -q
 
       - name: Standards self-check
         # lock <-> vendored tree <-> stamps with no bundle: the committed
