@@ -4,7 +4,7 @@ The SDK gives you a small starting point for developing a BenchWeave device plug
 
 The device is the hardware; the plugin is its Python integration and descriptor. Follow the [developer directory convention](https://github.com/madeinoz67/benchweave/blob/main/docs/device-developer-guide.md#repository-layout-for-device-plugins): `plugins/<manufacturer>/<name>/`, with `src/<python_package>/` inside that project. The name normally identifies the device model, such as `fnirsi/dps150`.
 
-The first SDK is `benchweave-sdk` 0.1.0 for Python 3.13+, OTDP 0.3.0 and adapter API 1.1, with registry 1.0.0 schemas. Its source lives in this repository, mounted at `packages/sdk` in the [main BenchWeave repository](https://github.com/madeinoz67/benchweave), and is built separately from the gateway. It supplies structural typing interfaces, offline contract validation, a scripted mock host, bounded async conformance helpers, an external project generator and file-inventory helpers.
+The first SDK is `benchweave-sdk` 0.0.1 for Python 3.13+, OTDP 0.3.0 and adapter API 1.1, with registry 1.0.0 schemas. Its source lives in this repository, mounted at `packages/sdk` in the [main BenchWeave repository](https://github.com/madeinoz67/benchweave), and is built separately from the gateway. It supplies structural typing interfaces, offline contract validation, a scripted mock host, bounded async conformance helpers, an external project generator and file-inventory helpers.
 
 ## 1. Install the SDK and generate your project
 
@@ -35,7 +35,7 @@ In your development directory, create an environment and install the built wheel
 ```sh
 uv venv --python 3.13
 source .venv/bin/activate
-uv pip install dist/sdk/benchweave_sdk-0.1.0-py3-none-any.whl
+uv pip install dist/sdk/benchweave_sdk-0.0.1-py3-none-any.whl
 benchweave-sdk new plugins/acme/model100 --package benchweave_acme_model100
 cd plugins/acme/model100
 uv pip install -e '.[test]'
