@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "muninndb-benchweave": {
+      "type": "http",
+      "url": "http://127.0.0.1:8125/mcp",
+      "headers": {
+        "Authorization": "Bearer ${MUNINN_BENCHWEAVE_KEY}"
+      }
+    }
+  }
+}
