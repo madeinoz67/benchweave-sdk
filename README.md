@@ -8,15 +8,35 @@ Build an external device plugin without importing gateway internals. Python 3.13
 
 This is the SDK. The BenchWeave gateway and the canonical architecture and contract standards live in the main repository: [madeinoz67/benchweave](https://github.com/madeinoz67/benchweave). This SDK is mounted there at `packages/sdk` as a git submodule and has its own CI and release cycle.
 
+## Installation
+
+Stable releases are on PyPI:
+
+```sh
+pip install benchweave-sdk
+# or as an isolated CLI tool
+uv tool install benchweave-sdk
+# or via Homebrew (macOS and Linux)
+brew install madeinoz67/tap/benchweave-sdk
+```
+
+For bleeding-edge work before a release, install straight from the default branch:
+
+```sh
+pip install git+https://github.com/madeinoz67/benchweave-sdk.git
+```
+
+To hack on the SDK itself, clone the repository and `uv sync --extra test`.
+
 ## Five steps
 
-1. Install the built SDK wheel in your development environment (`uv pip install path/to/benchweave_sdk-0.1.0-py3-none-any.whl`).
+1. Install the SDK from PyPI (`uv pip install benchweave-sdk`, or see [Installation](#installation)).
 2. Run `benchweave-sdk new plugins/acme/model100 --package benchweave_acme_model100`. Replace `acme/model100` with your manufacturer/device name; the independent project contains `src/benchweave_acme_model100/` and `tests/`.
 3. Change into the generated project (`cd plugins/acme/model100`). Replace the explicitly synthetic protocol with verified device behaviour, then update its descriptor. The generated AI-GUIDE.md describes the design, build, test, review and release steps.
 4. Install the plugin with test dependencies, run its tests, and run `benchweave-sdk check src/benchweave_acme_model100/descriptor.json`. Record all applicable S01–S18, C01–C12 and M01–M14 obligations and evidence; basic SDK checks do not cover all of them.
 5. Build with `uv build`, prepare registry metadata and reviewed evidence, and approve the release before publication or hardware qualification. `benchweave-sdk inventory` helps generate hashes, not a complete registry manifest.
 
-The generated runtime has no dependency on this SDK. Its test extra pins the SDK version; while unpublished, install the built SDK wheel explicitly before resolving that extra. Generate and retain a plugin dependency lock in its repository. A template is not qualified firmware or a real instrument driver.
+The generated runtime has no dependency on this SDK. The plugin test extra pins the SDK version from PyPI. Generate and retain a plugin dependency lock in its repository. A template is not qualified firmware or a real instrument driver.
 
 ## Directory structure
 

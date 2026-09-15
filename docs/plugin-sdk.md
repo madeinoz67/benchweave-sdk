@@ -8,6 +8,22 @@ The first SDK is `benchweave-sdk` 0.1.0 for Python 3.13+, OTDP 0.3.0 and adapter
 
 ## 1. Install the SDK and generate your project
 
+Install the SDK from PyPI:
+
+```sh
+pip install benchweave-sdk
+# or as an isolated CLI tool
+uv tool install benchweave-sdk
+```
+
+For bleeding-edge work before a release, install straight from the default branch:
+
+```sh
+pip install git+https://github.com/madeinoz67/benchweave-sdk.git
+```
+
+Full channel list: see the README Installation section.
+
 Use the SDK wheel from the corresponding BenchWeave release. Until a release contains these artefacts, maintainers can build them from a checkout of the main BenchWeave repository — run this from that checkout's root; `packages/sdk` is the submodule mount path there, not a directory in this repository:
 
 ```sh
