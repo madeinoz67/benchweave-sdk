@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Features
+
+- Git-cliff config, seeded CHANGELOG.md, release-driven changelog job
+
 ### Ci
 
 - Bump homebrew tap formula on release (go-rag pattern)
