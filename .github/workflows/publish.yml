@@ -136,3 +136,51 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -am "benchweave-sdk ${ver}" || echo "no formula changes"
           git push
+
+  changelog:
+    name: Changelog (release notes + CHANGELOG.md)
+    needs: publish
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ github.event.release.tag_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Generate notes for this release
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: --latest --strip header
+        env:
+          OUTPUT: RELEASE_NOTES.md
+      - name: Replace the release body with generated notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file RELEASE_NOTES.md
+      - name: Regenerate the full CHANGELOG.md
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+        env:
+          OUTPUT: CHANGELOG.md
+      - name: Commit CHANGELOG.md to main
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if git diff --quiet CHANGELOG.md; then
+            echo "CHANGELOG.md already up to date"
+            exit 0
+          fi
+          cp CHANGELOG.md /tmp/CHANGELOG.md
+          git checkout main
+          cp /tmp/CHANGELOG.md CHANGELOG.md
+          git add CHANGELOG.md
+          git commit -m "chore(changelog): update for $TAG"
+          git push
