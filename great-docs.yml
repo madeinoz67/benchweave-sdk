@@ -19,7 +19,10 @@
 # marketing/presentation name (e.g. 'My Package').
 # : null - (default) the actual package name (e.g. 'my_package' or 'my-package')
 # : type(str) - the name to display
-display_name: BenchWeave SDK
+# Wordmark per the public-site styleguide (main repo,
+# docs/internal/public-site-styleguide.html § Great Docs mapping): the site
+# carries the product brand, not the package name.
+display_name: BenchWeave
 
 # Project Type
 # ------------
@@ -134,6 +137,18 @@ cli:
   #     - title: Building
   #       contents: [build, preview]
   sections: []
+
+# Reference section order — CLI first (principal directive: the SDK is
+# CLI-first, so the CLI reference leads among API+CLI docs). INERT in
+# great-docs 0.17.0: the key exists only on upstream main
+# (posit-dev/great-docs, unreleased as of 0.17.0 / 2026-08-13), which
+# hardcodes the switcher order api,cli. Unknown yml keys merge silently,
+# so this line activates itself the day a released great-docs understands
+# it (CI installs great-docs unpinned). Built output is NOT patched — see
+# the Task 11 report for the evidence.
+ref_section_order:
+  - cli
+  - api
 
 # Go CLI Documentation
 # --------------------
@@ -507,7 +522,11 @@ version_aliases:
 # accent_color:
 #   light: "#3b82f6"
 #   dark: "#60a5fa"
-# accent_color: null
+# Trace Amber per the public-site styleguide (§ Great Docs mapping): the
+# text/icon-safe shade on light surfaces, the raw brand amber on dark.
+accent_color:
+  light: "#C6790A"
+  dark: "#FFB020"
 
 # Navbar gradient preset.
 # : null - (default) no gradient
@@ -519,10 +538,14 @@ version_aliases:
 # : null - (default) the theme's own navbar color
 # : type(str) - any CSS color, used in both modes, e.g. "#3b82f6"
 # : type(map) - per-mode:
-# navbar_color:
-#   light: "#3b82f6"
-#   dark: "#60a5fa"
-# navbar_color: null
+# Flat color, deliberately no navbar_style preset: none of the built-in
+# gradients (sky, peach, prism, lilac, slate, honey, dusk, mint) matches
+# Trace Amber, so a preset would trade brand accuracy for decoration
+# (styleguide § Great Docs mapping). Mist background in light mode,
+# Ink in dark.
+navbar_color:
+  light: "#EEF1F0"
+  dark: "#1B2027"
 
 # Explicit ordering of navbar items by their display text. Items not listed
 # are appended after the listed ones, preserving their original order.
@@ -600,7 +623,26 @@ version_aliases:
 # include_in_header:
 #   - '<script defer src="/analytics.js"></script>'
 #   - file: partials/head.html
-# include_in_header: []
+# BenchWeave typography per the public-site styleguide (§ Typography +
+# § Great Docs mapping): the same Google Fonts <link> tags the styleguide
+# carries (Space Grotesk 500/600/700 headings, IBM Plex Sans 400/500/600
+# body, IBM Plex Mono 400/500/600 code), plus the style block applying the
+# three families. Deliberately plain CSS rather than SCSS: Quarto inlines
+# include-in-header `file:` content raw (an .scss entry leaks as visible
+# text into <body> — verified empirically against Quarto 1.9.37), while a
+# `text:` <style> lands in <head> after the theme stylesheets, so the font
+# rules win the cascade. Every family ends in a system stack so the site
+# degrades gracefully when Google Fonts is blocked (styleguide caveat).
+include_in_header:
+  - '<link rel="preconnect" href="https://fonts.googleapis.com">'
+  - '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
+  - '<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">'
+  - text: |
+      <style>
+      body { font-family: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+      h1, h2, h3, h4, h5, h6, .navbar-brand { font-family: "Space Grotesk", "IBM Plex Sans", -apple-system, BlinkMacSystemFont, sans-serif; }
+      code, pre, kbd, samp { font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+      </style>
 
 # Freeze (Execution Caching)
 # --------------------------
