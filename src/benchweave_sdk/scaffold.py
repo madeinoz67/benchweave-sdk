@@ -296,6 +296,22 @@ use an isolated process without bench access for candidate-code execution.
 
 
 def descriptor_for(package: str) -> dict[str, Any]:
+    """Build the synthetic plugin descriptor for ``package``.
+
+    The descriptor advertises the synthetic identify/read protocol
+    (OTDP descriptor 0.1.0, adapter API 1.1) with
+    ``<package>.adapter:create_plugin`` as its entry point.
+
+    Parameters
+    ----------
+    package
+        Lowercase Python package name of the generated project.
+
+    Returns
+    -------
+    dict
+        A descriptor that passes ``validate_descriptor``.
+    """
     policy = {
         "timeout_ms": 1000,
         "side_effect": "none",
@@ -369,6 +385,35 @@ def descriptor_for(package: str) -> dict[str, Any]:
 
 
 def create_project(destination: Path, package: str) -> None:
+    """Write a complete synthetic plugin project under ``destination``.
+
+    Generates ``pyproject.toml``, a README, ``AI-GUIDE.md``, a working
+    read-only adapter with its synthetic protocol, a validated
+    ``descriptor.json``, synthetic protocol evidence, and a pytest suite
+    that exercises the adapter against SDK mocks. Nothing generated
+    contacts hardware or claims qualification.
+
+    Parameters
+    ----------
+    destination
+        Project directory to create; it must not already exist.
+    package
+        Lowercase package name (``[a-z][a-z0-9_]*``) that does not
+        shadow the SDK or a stdlib module.
+
+    Raises
+    ------
+    ValueError
+        If the package name is invalid or reserved.
+    FileExistsError
+        If the destination directory already exists.
+
+    Examples
+    --------
+    >>> from pathlib import Path
+    >>> from benchweave_sdk.scaffold import create_project
+    >>> create_project(Path("plugins/acme/cooler"), "acme_cooler")
+    """
     if (
         not re.fullmatch(r"[a-z][a-z0-9_]*", package)
         or keyword.iskeyword(package)

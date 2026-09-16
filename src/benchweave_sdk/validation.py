@@ -15,6 +15,12 @@ from referencing.jsonschema import DRAFT202012
 
 @cache
 def contract_documents() -> dict[str, Any]:
+    """Return the bundled standards documents keyed by relative path.
+
+    Documents load once from the vendored ``standards/`` tree (falling
+    back to the repository checkout during editable development) under
+    keys such as ``otdp/0.1.0/otdp-runtime.schema.json``.
+    """
     vendored = files("benchweave_sdk").joinpath("standards")
     sets = (
         ("otdp", "0.1.0"),
@@ -65,7 +71,28 @@ def _registry() -> Registry[Any]:
 
 
 def validate(document: Any, schema_file: str, definition: str | None = None) -> None:
-    """Validate against bundled contracts. No remote retrieval is permitted."""
+    """Validate a parsed document against a bundled contract, offline only.
+
+    No remote retrieval is permitted: schema references resolve only
+    against the bundled registry and fail closed when unresolved.
+
+    Parameters
+    ----------
+    document
+        Parsed JSON document to validate.
+    schema_file
+        Contract key from ``contract_documents()``, for example
+        ``"otdp/0.1.0/otdp-runtime.schema.json"``.
+    definition
+        Optional ``$defs`` entry to validate against, for example
+        ``"operationRequest"``.
+
+    Raises
+    ------
+    ValueError
+        If the document is not strictly JSON (finite numbers only) or
+        fails the contract.
+    """
     try:
         json.dumps(document, allow_nan=False)
         schema = contract_documents()[schema_file]
@@ -80,10 +107,28 @@ def validate(document: Any, schema_file: str, definition: str | None = None) -> 
 
 
 def validate_request(request: dict[str, Any]) -> None:
+    """Validate an OTDP operation request envelope against its contract."""
     validate(request, "otdp/0.1.0/otdp-runtime.schema.json", "operationRequest")
 
 
 def validate_result(result: dict[str, Any], request: dict[str, Any]) -> None:
+    """Validate a result envelope and its correlation with its request.
+
+    Parameters
+    ----------
+    result
+        Operation result envelope to validate.
+    request
+        The request the result answers. Both documents are validated,
+        and the result's ``operation_id`` and ``verb`` must match the
+        request's.
+
+    Raises
+    ------
+    ValueError
+        If either envelope fails its contract or the pair does not
+        correlate.
+    """
     validate_request(request)
     validate(result, "otdp/0.1.0/otdp-runtime.schema.json", "operationResult")
     if (result["operation_id"], result["verb"]) != (request["operation_id"], request["verb"]):
@@ -91,6 +136,31 @@ def validate_result(result: dict[str, Any], request: dict[str, Any]) -> None:
 
 
 def validate_descriptor(descriptor: dict[str, Any]) -> None:
+    """Validate a device descriptor against the bundled OTDP contract.
+
+    Beyond the schema, enforces the pinned semantic checks:
+    capabilities and operation policies must describe the same verbs and
+    parameter names must be unique (S01), and parameter bounds must not
+    be reversed (S02).
+
+    Parameters
+    ----------
+    descriptor
+        Parsed device descriptor document.
+
+    Raises
+    ------
+    ValueError
+        If the descriptor fails the schema or a semantic check.
+
+    Examples
+    --------
+    >>> import json
+    >>> from pathlib import Path
+    >>> from benchweave_sdk.validation import validate_descriptor
+    >>> validate_descriptor(
+    ...     json.loads(Path("src/demo_plugin/descriptor.json").read_text()))
+    """
     validate(descriptor, "otdp/0.1.0/otdp-device-descriptor.schema.json")
     capabilities = descriptor["capabilities"]
     if len(capabilities) != len(set(capabilities)) or set(capabilities) != set(

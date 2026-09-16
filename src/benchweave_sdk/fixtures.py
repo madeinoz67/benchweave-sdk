@@ -152,7 +152,41 @@ def _scenario(
 def load_author_fixtures(
     directory: Path, catalogue: Mapping[str, Any]
 ) -> tuple[PreviewScenario, ...]:
-    """Load a bounded, deterministic set of schema- and catalogue-valid fixtures."""
+    """Load author fixtures as validated, deterministic preview scenarios.
+
+    Every ``*.json`` file under ``directory`` is parsed, validated
+    against the vendored fixture schema, and cross-checked against the
+    binding catalogue: unknown bindings, unit mismatches, type
+    mismatches, reserved scenario ids, and duplicate scenario ids are
+    rejected. Files are processed in sorted order, so the result is
+    deterministic.
+
+    Parameters
+    ----------
+    directory
+        Fixture directory; a directory that does not exist yields no
+        scenarios.
+    catalogue
+        Validated binding catalogue indexable by target id.
+
+    Returns
+    -------
+    tuple
+        One ``PreviewScenario`` per fixture file, in path order.
+
+    Raises
+    ------
+    ValueError
+        If the fixture count exceeds 128, the total size exceeds 8 MiB,
+        or any fixture fails schema or catalogue validation.
+
+    Examples
+    --------
+    >>> from pathlib import Path
+    >>> from benchweave_sdk.fixtures import load_author_fixtures
+    >>> scenarios = load_author_fixtures(
+    ...     Path("src/demo_plugin/fixtures"), catalogue)
+    """
     if not directory.exists():
         return ()
     paths = sorted(directory.glob("*.json"))
