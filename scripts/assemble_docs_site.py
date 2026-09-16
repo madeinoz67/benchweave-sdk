@@ -29,7 +29,7 @@ serves at the Pages root and the versioned docs tree serves under ``docs/``:
   and ``site_url``/``seo.canonical.base_url`` carry the prefix for canonicals,
   sitemap and llms.txt.
 
-Three assembly-level repairs on top of the tool's own output:
+Five assembly-level repairs on top of the tool's own output:
 
 - ``v/latest/``/``v/stable/`` redirect stubs target ``/``, which is wrong for
   a project Pages site hosted under a path prefix; they are rewritten to the
@@ -43,6 +43,13 @@ Three assembly-level repairs on top of the tool's own output:
   sidebar switcher; the built order is rewritten cli-first in every page
   (principal directive) until a released great-docs honors the pre-seeded
   native ``ref_section_order`` key (see reorder_reference_sections).
+- 0.17.0's version-selector trigger composes ``"v" + tag`` over already-v
+  tags, rendering ``vv0.0.2`` in the navbar; the expression is un-doubled in
+  every generated widget copy (the yml labels stay — dropdown items, banners
+  and titles read them and are correct).
+- The docs tree has no route back to the hand-written front door; a navbar
+  link to the site root is injected into every content page (depth-relative,
+  so it holds at any serving prefix, GitHub Pages included).
 
 Any build failure aborts with a non-zero exit — this script runs in CI where
 a docs failure must fail the job. Verification is equally loud: verify_tree
@@ -81,6 +88,15 @@ REF_ORDER_SCRIPT_API_FIRST = (
 REF_ORDER_BODY_API_FIRST = 'data-gd-ref-sections="api,cli"'
 REF_ORDER_SCRIPT_CLI_FIRST = REF_ORDER_SCRIPT_API_FIRST.replace("'api,cli'", "'cli,api'")
 REF_ORDER_BODY_CLI_FIRST = REF_ORDER_BODY_API_FIRST.replace("api,cli", "cli,api")
+
+# great-docs 0.17.0's version-selector trigger composes the navbar label as
+# "v" + tag, but the tags already carry the v (as do the yml labels), so the
+# trigger renders "vv0.0.2". Dropdown items and warning banners use `label`
+# directly and are correct — the yml labels stay untouched.
+VS_TRIGGER_DOUBLE_V = '(currentVersion.tag === "dev" ? "dev" : "v" + currentVersion.tag)'
+# The left navbar list every content page carries (alias redirect stubs do not).
+NAVBAR_NAV_ANCHOR = '<ul class="navbar-nav navbar-nav-scroll me-auto">'
+SITE_LINK_MARKER = '<span class="menu-text">← BenchWeave</span>'
 
 
 def log(msg: str) -> None:
@@ -357,6 +373,74 @@ def reorder_reference_sections(docs_root: Path) -> None:
     log(f"reference sections cli-first: {changed} page(s) rewritten, {already} already cli-first")
 
 
+def fix_version_selector_trigger(docs_root: Path) -> None:
+    """Un-double the version label in great-docs' version-selector trigger.
+
+    0.17.0 renders the navbar trigger as ``"v" + tag`` while the tags already
+    carry the ``v`` (``v0.0.2``), so the widget shows ``vv0.0.2``. The dropdown
+    items and warning banners read ``label`` and render correctly, so the fix
+    is this one expression in the generated ``version-selector.js`` (one copy
+    per bucket) — not the yml labels, which would un-v every other consumer
+    (dropdown, banners, titles, _version_map). The ternary collapses to the
+    bare tag (``dev`` is its own tag). Delete when a released great-docs
+    renders the trigger without the extra prefix.
+    """
+    copies = sorted(docs_root.rglob("version-selector.js"))
+    fixed = 0
+    for widget in copies:
+        js = widget.read_text(encoding="utf-8")
+        if VS_TRIGGER_DOUBLE_V not in js:
+            continue
+        widget.write_text(js.replace(VS_TRIGGER_DOUBLE_V, "currentVersion.tag"), encoding="utf-8")
+        fixed += 1
+    if fixed == 0:
+        log(
+            f"WARNING: doubled-v trigger rewrite matched 0 of {len(copies)} "
+            "version-selector.js copies — great-docs fixed or changed the widget "
+            "(if fixed, delete this rewrite)"
+        )
+    else:
+        log(f"version-selector trigger un-doubled in {fixed}/{len(copies)} widget copies")
+
+
+def add_site_home_link(docs_root: Path) -> None:
+    """Give every docs page a navbar link back to the static site root.
+
+    The versioned docs tree serves under ``<site-root>/docs/`` with no route
+    back to the hand-written front door — a dead end for anyone landing in
+    the docs. great-docs.yml has no custom-navbar-link option (navbar items
+    are sections and widgets only), so the link is injected into the built
+    navbar here, as the first item on every content page.
+
+    The href is depth-relative — one ``../`` per directory below ``docs/`` —
+    resolving to the site root: the same target the alias-rewrite derives
+    from ``site_url`` (one level above the ``/docs/`` subpath), never ``/``
+    (wrong: the origin root on a GitHub project-Pages site sits one level
+    above the site). Relative beats the absolute ``/benchweave-sdk/`` form
+    because it also works when the assembled tree is previewed from a plain
+    server root (python -m http.server in site/).
+    """
+    added = already = 0
+    for page in sorted(docs_root.rglob("*.html")):
+        html = page.read_text(encoding="utf-8")
+        if SITE_LINK_MARKER in html:
+            already += 1
+            continue
+        if NAVBAR_NAV_ANCHOR not in html:
+            continue  # alias redirect stubs carry no navbar
+        ups = "../" * (len(page.relative_to(docs_root).parent.parts) + 1)
+        item = (
+            f'  <li class="nav-item">\n    <a class="nav-link" href="{ups}">\n'
+            f"{SITE_LINK_MARKER}</a>\n  </li>  \n"
+        )
+        html = html.replace(NAVBAR_NAV_ANCHOR, NAVBAR_NAV_ANCHOR + "\n" + item, 1)
+        page.write_text(html, encoding="utf-8")
+        added += 1
+    if added == 0 and already == 0:
+        log("WARNING: site-home link injected nowhere — navbar markup changed?")
+    log(f"site-home navbar link: {added} page(s) injected, {already} already linked")
+
+
 def website_version_options() -> list[tuple[str, str]]:
     """(version token, label) pairs from the website's docs version selector.
 
@@ -435,6 +519,38 @@ def verify_tree(dest: Path, tags: list[str], latest: str, dev_isolated: bool) ->
             "its reference rendering (or honors ref_section_order natively: then delete "
             "reorder_reference_sections and this check)"
         )
+    # Version-selector honesty: no doubled-v labels, trigger un-doubled, way home.
+    vv_pattern = re.compile(r"vv\d")
+    home_missed: list[str] = []
+    home_linked = 0
+    for page in docs.rglob("*.html"):
+        html = page.read_text(encoding="utf-8")
+        if SITE_LINK_MARKER in html:
+            home_linked += 1
+        elif NAVBAR_NAV_ANCHOR in html:
+            home_missed.append(str(page.relative_to(docs)))
+        if re.search(r'<meta name="gd-version-map"[^>]*vv\d', html):
+            failures.append(
+                f"doubled-v version label in gd-version-map meta: {page.relative_to(docs)}"
+            )
+    for vmap in docs.rglob("_version_map.json"):
+        if vv_pattern.search(vmap.read_text(encoding="utf-8")):
+            failures.append(f"doubled-v version label in {vmap.relative_to(docs)}")
+    vs_widgets = sorted(docs.rglob("version-selector.js"))
+    if not vs_widgets:
+        failures.append("version-selector.js missing from the built tree — widget changed?")
+    for widget in vs_widgets:
+        if VS_TRIGGER_DOUBLE_V in widget.read_text(encoding="utf-8"):
+            failures.append(
+                "version-selector.js still composes the doubled-v trigger: "
+                f"{widget.relative_to(docs)}"
+            )
+    if home_missed:
+        failures.append(
+            f"{len(home_missed)} navbar page(s) lack the site-home link, e.g. {home_missed[:3]}"
+        )
+    if home_linked == 0 and not home_missed:
+        failures.append("no docs page links back to the static site root — navbar markup changed?")
     if failures:
         raise SystemExit("assembled site verification FAILED:\n  " + "\n  ".join(failures))
 
@@ -575,6 +691,8 @@ def main() -> None:
     fix_alias_stubs(docs_root, site_path_prefix())
     complete_favicons(docs_root, REPO / "docs" / "assets" / "logo.svg")
     reorder_reference_sections(docs_root)
+    fix_version_selector_trigger(docs_root)
+    add_site_home_link(docs_root)
 
     verify_tree(dest, tags, latest, dev_isolated)
     log(f"assembled site at {dest}")
