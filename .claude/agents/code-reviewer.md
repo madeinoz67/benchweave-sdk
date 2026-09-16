@@ -19,7 +19,7 @@ standards sync (`sync-standards`), and the preview surfaces (`preview-ui`). Pyth
 gateway: the generated plugin runtime has **no dependency on this SDK**, and this repository
 is deliberately self-contained — its CI checks out with no submodules and never reads the
 gateway checkout. It is mounted in the main repository at `packages/sdk` as a git
-submodule; read `README.md`, `docs/plugin-sdk.md`, `pyproject.toml` and
+submodule; read `README.md`, `user_guide/plugin-sdk.qmd`, `pyproject.toml` and
 `.claude/memory-protocol.md` — they define the invariants you enforce. **Every review you
 produce is persisted, in full, to the memory ledger before you finish — findings at every
 severity including LOW and NIT, each with its disposition (fixed / deferred /
@@ -70,7 +70,7 @@ that is confidently wrong is worse than none.
    both ways proves nothing. **`no tests ran` is a FAILED RED check** — pytest exits 5 when
    it collects nothing; look for the collected-tests count, not just a green run.
 
-3a. **Review the change's claims, not only its code.** Docstrings, `docs/plugin-sdk.md`,
+3a. **Review the change's claims, not only its code.** Docstrings, `user_guide/plugin-sdk.qmd`,
    the README's five steps, the generated AI-GUIDE text and the commit message are in
    scope. A set named in prose should be regenerable from a mechanism; a guard must state
    what it does not catch; *cannot/never/may only* claims structural unrepresentability
@@ -80,7 +80,7 @@ that is confidently wrong is worse than none.
 3b. **Documentation and interface-contract coverage is a per-change gate, not a routing
    bucket.** For every change, map it to its audience-facing surfaces and check the
    matching doc actually moved: CLI-visible behaviour (a command, flag, or output shape in
-   `src/benchweave_sdk/cli.py`) → `docs/plugin-sdk.md` and the README's five-steps section;
+   `src/benchweave_sdk/cli.py`) → `user_guide/plugin-sdk.qmd` and the README's five-steps section;
    scaffold output changes (a generated project that looks different) → the scaffold's
    generated docs, including AI-GUIDE.md text carried in `scaffold.py`; standards
    bundle/lock format changes → the compatibility notes in `standards-lock.json` and, when

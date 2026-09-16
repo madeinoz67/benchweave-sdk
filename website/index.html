@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BenchWeave — the test-bench gateway</title>
+<meta name="description" content="BenchWeave connects instruments and devices under test through reusable plugins and typed profiles — coordinating bounded test procedures with explicit ownership, measurement evidence, and verified safe endings.">
+<link rel="icon" type="image/svg+xml" href="assets/logo.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+
+<header class="top">
+  <a class="wordmark" href="./" aria-label="BenchWeave home">
+    <img src="assets/logo.svg" width="22" height="22" alt="">
+    BenchWeave
+  </a>
+  <nav class="panels" aria-label="Site sections">
+    <button class="active" onclick="showPanel('home', this)">Home</button>
+    <button onclick="showPanel('standards', this)">Standards</button>
+    <button onclick="showPanel('guides', this)">User Guides</button>
+    <button onclick="showPanel('sdk', this)">SDK</button>
+  </nav>
+  <div class="top-right">
+    <button class="icon-btn" title="GitHub" aria-label="BenchWeave on GitHub" onclick="window.open('https://github.com/madeinoz67/benchweave','_blank','noopener')">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+    </button>
+    <button class="icon-btn" title="Toggle theme" aria-label="Toggle light or dark theme" onclick="toggleTheme()">◐</button>
+  </div>
+</header>
+
+<main>
+
+  <!-- ================= HOME ================= -->
+  <section class="panel active" id="panel-home">
+    <div class="hero">
+      <div class="hero-bg-scopes">
+        <div class="scope-panel scope-panel--a">
+          <div class="scope-screen">
+            <svg viewBox="0 0 200 60" preserveAspectRatio="none" aria-hidden="true">
+              <path class="scope-trace" d="M0 32 C16 8 32 8 48 32 C64 56 80 56 96 32 C112 8 128 8 144 32 C160 56 176 56 192 32 L200 32"/>
+            </svg>
+          </div>
+          <div class="scope-knobs"><span></span><span></span><span></span></div>
+        </div>
+
+        <div class="scope-panel scope-panel--b">
+          <div class="scope-screen">
+            <svg viewBox="0 0 200 60" preserveAspectRatio="none" aria-hidden="true">
+              <path class="scope-trace blue" d="M0 46 H26 V16 H52 V46 H78 V16 H104 V46 H130 V16 H156 V46 H182 V16 H200"/>
+            </svg>
+          </div>
+          <div class="scope-knobs"><span></span><span></span><span></span></div>
+        </div>
+
+        <div class="ambient-trace ambient-trace--a">
+          <svg viewBox="0 0 320 90" preserveAspectRatio="none" aria-hidden="true">
+            <path class="scope-trace" d="M0 45 Q40 5 80 45 T160 45 T240 45 T320 45"/>
+          </svg>
+        </div>
+
+        <div class="ambient-trace ambient-trace--b">
+          <svg viewBox="0 0 220 70" preserveAspectRatio="none" aria-hidden="true">
+            <path class="scope-trace blue" d="M0 55 H28 V20 H56 V55 H84 V20 H112 V55 H140 V20 H168 V55 H196 V20 H220"/>
+          </svg>
+        </div>
+      </div>
+      <div>
+        <div class="hero-badges">
+          <div class="status-line"><span class="status-dot"></span> Status: architecture baseline and Python scaffold</div>
+          <div class="status-line">
+            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="4" cy="4" r="2" stroke="var(--text-muted)" stroke-width="1.3"/><circle cx="4" cy="12" r="2" stroke="var(--text-muted)" stroke-width="1.3"/><circle cx="12" cy="4" r="2" stroke="var(--text-muted)" stroke-width="1.3"/><path d="M4 6v4M6 4h4a2 2 0 0 1 2 2v0" stroke="var(--text-muted)" stroke-width="1.3"/></svg>
+            Open source · MIT
+          </div>
+        </div>
+        <h1>The gateway that weaves your test bench together</h1>
+        <p class="sub">BenchWeave connects instruments and devices under test through reusable plugins and typed profiles — coordinating bounded test procedures with explicit ownership, measurement evidence, and verified safe endings.</p>
+        <div class="cta-row">
+          <a class="btn btn-primary" href="#guides" onclick="showPanel('guides', document.querySelectorAll('nav.panels button')[2]); return false;">Read the architecture</a>
+          <a class="btn btn-secondary" href="#sdk" onclick="showPanel('sdk', document.querySelectorAll('nav.panels button')[3]); return false;">Install the SDK</a>
+          <a class="btn btn-ghost" href="#standards" onclick="showPanel('standards', document.querySelectorAll('nav.panels button')[1]); return false;">Browse the standards →</a>
+        </div>
+      </div>
+      <div class="schematic-wrap">
+      <svg class="schematic" viewBox="0 0 460 320" fill="none" role="img" aria-label="Gateway topology: instrument plugins and DUT profiles weave through the gateway into the shared registry and verified evidence">
+        <defs>
+          <pattern id="dotgrid" width="20" height="20" patternUnits="userSpaceOnUse">
+            <circle cx="1" cy="1" r="1" fill="var(--border-strong)" opacity="0.35"/>
+          </pattern>
+        </defs>
+        <rect x="10" y="20" width="440" height="280" fill="url(#dotgrid)"/>
+
+        <!-- left weave: instrument (under) crosses registry (over) -->
+        <path d="M132 60 L178 159 A7 7 0 0 1 184 173 L192 190" stroke="var(--blue)" stroke-width="1.6"/>
+        <path d="M132 272 L192 142" stroke="var(--amber)" stroke-width="1.6"/>
+
+        <!-- right weave: DUT (under) crosses evidence (over), mirrored -->
+        <path d="M328 60 L282 159 A7 7 0 0 0 276 173 L268 190" stroke="var(--blue)" stroke-width="1.6"/>
+        <path id="evidence-trace" d="M328 272 L268 142" stroke="var(--green)" stroke-width="1.6"/>
+
+        <!-- gateway chip -->
+        <path d="M190 126 L270 126 L284 166 L270 206 L190 206 L176 166 Z" fill="var(--bg-elevated)" stroke="var(--amber)" stroke-width="1.8"/>
+        <line x1="202" y1="140" x2="202" y2="192" stroke="var(--amber)" stroke-width="0.7" opacity="0.35"/>
+        <line x1="230" y1="136" x2="230" y2="196" stroke="var(--amber)" stroke-width="0.7" opacity="0.35"/>
+        <line x1="258" y1="140" x2="258" y2="192" stroke="var(--amber)" stroke-width="0.7" opacity="0.35"/>
+        <text x="230" y="160" text-anchor="middle" fill="var(--text)" font-family="IBM Plex Mono" font-weight="600" font-size="12">gateway</text>
+        <text x="230" y="175" text-anchor="middle" fill="var(--text-muted)" font-family="IBM Plex Mono" font-size="9">REST · MCP</text>
+        <!-- gateway pin pads, colored by what they connect to -->
+        <circle cx="192" cy="142" r="2.6" fill="var(--amber)"/>
+        <circle cx="192" cy="190" r="2.6" fill="var(--blue)"/>
+        <circle cx="268" cy="142" r="2.6" fill="var(--green)"/>
+        <circle cx="268" cy="190" r="2.6" fill="var(--blue)"/>
+
+        <!-- instrument node -->
+        <rect x="26" y="34" width="100" height="52" rx="4" fill="var(--bg-elevated)" stroke="var(--blue)" stroke-width="1.6"/>
+        <circle cx="34" cy="42" r="2" fill="var(--blue)"/>
+        <rect x="44" y="44" width="26" height="14" rx="2" fill="var(--bg-inset)" stroke="var(--border-strong)" stroke-width="0.8"/>
+        <path d="M46 51 Q49 46 52 51 Q55 56 58 51 Q61 46 64 51 Q67 56 69 51" fill="none" stroke="var(--blue)" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+        <line x1="126" y1="48" x2="132" y2="48" stroke="var(--blue)" stroke-width="1.6"/>
+        <line x1="126" y1="60" x2="132" y2="60" stroke="var(--blue)" stroke-width="1.6"/>
+        <line x1="126" y1="72" x2="132" y2="72" stroke="var(--blue)" stroke-width="1.6"/>
+        <text x="76" y="64" text-anchor="middle" fill="var(--text)" font-family="IBM Plex Mono" font-weight="600" font-size="10.5">instrument</text>
+        <text x="76" y="76" text-anchor="middle" fill="var(--text-muted)" font-family="IBM Plex Mono" font-size="9">plugin</text>
+
+        <!-- DUT node (mirrored) -->
+        <rect x="334" y="34" width="100" height="52" rx="4" fill="var(--bg-elevated)" stroke="var(--blue)" stroke-width="1.6"/>
+        <circle cx="426" cy="42" r="2" fill="var(--blue)"/>
+        <line x1="400" y1="42" x2="400" y2="45" stroke="var(--blue)" stroke-width="1"/>
+        <line x1="405" y1="42" x2="405" y2="45" stroke="var(--blue)" stroke-width="1"/>
+        <line x1="410" y1="42" x2="410" y2="45" stroke="var(--blue)" stroke-width="1"/>
+        <rect x="396" y="45" width="18" height="12" rx="1" fill="var(--bg-inset)" stroke="var(--blue)" stroke-width="1.1"/>
+        <circle cx="398.5" cy="47.5" r="1" fill="var(--blue)"/>
+        <line x1="400" y1="57" x2="400" y2="60" stroke="var(--blue)" stroke-width="1"/>
+        <line x1="405" y1="57" x2="405" y2="60" stroke="var(--blue)" stroke-width="1"/>
+        <line x1="410" y1="57" x2="410" y2="60" stroke="var(--blue)" stroke-width="1"/>
+        <line x1="334" y1="48" x2="328" y2="48" stroke="var(--blue)" stroke-width="1.6"/>
+        <line x1="334" y1="60" x2="328" y2="60" stroke="var(--blue)" stroke-width="1.6"/>
+        <line x1="334" y1="72" x2="328" y2="72" stroke="var(--blue)" stroke-width="1.6"/>
+        <text x="384" y="64" text-anchor="middle" fill="var(--text)" font-family="IBM Plex Mono" font-weight="600" font-size="10.5">DUT</text>
+        <text x="384" y="76" text-anchor="middle" fill="var(--text-muted)" font-family="IBM Plex Mono" font-size="9">profile</text>
+
+        <!-- registry node -->
+        <rect x="26" y="246" width="100" height="52" rx="4" fill="var(--bg-elevated)" stroke="var(--amber)" stroke-width="1.6"/>
+        <rect x="94" y="254" width="18" height="2.6" rx="1" fill="var(--amber)" opacity="0.8"/>
+        <rect x="94" y="260" width="18" height="2.6" rx="1" fill="var(--amber)" opacity="0.8"/>
+        <rect x="94" y="266" width="12" height="2.6" rx="1" fill="var(--amber)" opacity="0.8"/>
+        <line x1="126" y1="260" x2="132" y2="260" stroke="var(--amber)" stroke-width="1.6"/>
+        <line x1="126" y1="272" x2="132" y2="272" stroke="var(--amber)" stroke-width="1.6"/>
+        <line x1="126" y1="284" x2="132" y2="284" stroke="var(--amber)" stroke-width="1.6"/>
+        <text x="76" y="280" text-anchor="middle" fill="var(--text)" font-family="IBM Plex Mono" font-weight="600" font-size="10.5">registry</text>
+        <text x="76" y="292" text-anchor="middle" fill="var(--text-muted)" font-family="IBM Plex Mono" font-size="9">shared</text>
+
+        <!-- evidence node (mirrored) -->
+        <rect x="334" y="246" width="100" height="52" rx="4" fill="var(--bg-elevated)" stroke="var(--green)" stroke-width="1.6"/>
+        <path d="M352 253 L360 256 L360 263 Q360 270 352 274 Q344 270 344 263 L344 256 Z" fill="none" stroke="var(--green)" stroke-width="1.3"/>
+        <path d="M347.5 263 L351 266.5 L358 259" fill="none" stroke="var(--green)" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+        <line x1="334" y1="260" x2="328" y2="260" stroke="var(--green)" stroke-width="1.6"/>
+        <line x1="334" y1="272" x2="328" y2="272" stroke="var(--green)" stroke-width="1.6"/>
+        <line x1="334" y1="284" x2="328" y2="284" stroke="var(--green)" stroke-width="1.6"/>
+        <text x="384" y="280" text-anchor="middle" fill="var(--text)" font-family="IBM Plex Mono" font-weight="600" font-size="10.5">evidence</text>
+        <text x="384" y="292" text-anchor="middle" fill="var(--text-muted)" font-family="IBM Plex Mono" font-size="9">verified</text>
+
+        <!-- one deliberate motion cue: command pulses riding gateway -> DUT and gateway -> instrument -->
+        <circle r="3" fill="var(--blue)">
+          <animateMotion dur="3.4s" repeatCount="indefinite" path="M268 190 L276 173 A7 7 0 0 1 282 159 L328 60"/>
+          <animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.15;0.85;1" dur="3.4s" repeatCount="indefinite"/>
+        </circle>
+        <circle r="3" fill="var(--blue)">
+          <animateMotion dur="3.4s" begin="1.1s" repeatCount="indefinite" path="M192 190 L184 173 A7 7 0 0 0 178 159 L132 60"/>
+          <animate attributeName="opacity" values="0;1;1;0" keyTimes="0;0.15;0.85;1" dur="3.4s" begin="1.1s" repeatCount="indefinite"/>
+        </circle>
+      </svg>
+      <div class="fig-caption">fig. 1 — gateway topology</div>
+      </div>
+    </div>
+
+    <div class="ai-callout">
+      <div>
+        <h2>Build your instrument and workbench with AI</h2>
+        <p>Five-step paths for device plugins and custom firmware — development, testing, review, and release prompts, checked against the contracts by the AI device reviewer before anything ships.</p>
+      </div>
+      <a class="btn btn-secondary" href="#guides" onclick="showPanel('guides', document.querySelectorAll('nav.panels button')[2]); return false;">See the AI device guide</a>
+    </div>
+
+    <div class="plan">
+      <h2>The plan</h2>
+      <p class="lede">Four commitments from the architecture, not four feature bullets.</p>
+      <div class="plan-grid">
+        <div class="plan-card"><h3>Connect</h3><p>Instruments and devices under test through reusable plugins and typed device profiles.</p></div>
+        <div class="plan-card"><h3>Share</h3><p>Profiles and implementations through a central registry, with local admission and offline execution.</p></div>
+        <div class="plan-card"><h3>Coordinate</h3><p>Bounded test procedures with explicit ownership, measurement evidence, and verified safe endings.</p></div>
+        <div class="plan-card"><h3>Expose</h3><p>A consistent REST and MCP interface for applications and coding agents.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= STANDARDS ================= -->
+  <section class="panel" id="panel-standards">
+    <div class="page-head">
+      <h1>Standards</h1>
+      <p>The versioned contracts that everything else is built against — treated as agreements, not informal notes. Each one is independently versioned.</p>
+    </div>
+    <div class="spec-grid">
+      <div class="spec-card">
+        <div class="spec-head"><h4>OTDP</h4><span class="badge badge-version">v0.1.0</span></div>
+        <p>Open test-device protocol — how the gateway talks to instrument and DUT plugins.</p>
+        <a class="spec-link" href="https://github.com/madeinoz67/benchweave/tree/main/standards/otdp/0.1.0" target="_blank" rel="noopener">View contract →</a>
+      </div>
+      <div class="spec-card">
+        <div class="spec-head"><h4>Registry</h4><span class="badge badge-version">v0.1.0</span></div>
+        <p>Plugin and device-profile registry — admission, sharing, and offline execution.</p>
+        <a class="spec-link" href="https://github.com/madeinoz67/benchweave/tree/main/standards/registry/0.1.0" target="_blank" rel="noopener">View contract →</a>
+      </div>
+      <div class="spec-card">
+        <div class="spec-head"><h4>Execution</h4><span class="badge badge-version">v0.1.0</span></div>
+        <p>Bounded test-procedure execution — ownership, evidence, and safe endings.</p>
+        <a class="spec-link" href="https://github.com/madeinoz67/benchweave/tree/main/standards/execution/0.1.0" target="_blank" rel="noopener">View contract →</a>
+      </div>
+      <div class="spec-card">
+        <div class="spec-head"><h4>Interface</h4><span class="badge badge-version">v0.1.0</span></div>
+        <p>The REST and MCP surface exposed to applications and coding agents.</p>
+        <a class="spec-link" href="https://github.com/madeinoz67/benchweave/tree/main/standards/interface/0.1.0" target="_blank" rel="noopener">View contract →</a>
+      </div>
+      <div class="spec-card">
+        <div class="spec-head"><h4>Plugin UI</h4><span class="badge badge-version">v0.1.0</span></div>
+        <p>Plugin presentation contract — bindings, presets and envelopes for the workbench UI.</p>
+        <a class="spec-link" href="https://github.com/madeinoz67/benchweave/tree/main/standards/plugin-ui/0.1.0" target="_blank" rel="noopener">View contract →</a>
+      </div>
+      <div class="spec-card">
+        <div class="spec-head"><h4>Plugin UI preview</h4><span class="badge badge-version">v0.1.0</span></div>
+        <p>Preview wire documents and fixtures for simulation-only plugin UI rendering.</p>
+        <a class="spec-link" href="https://github.com/madeinoz67/benchweave/tree/main/standards/plugin-ui-preview/0.1.0" target="_blank" rel="noopener">View contract →</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= USER GUIDES (docs shell) ================= -->
+  <section class="panel" id="panel-guides">
+    <div class="docs-shell">
+      <aside class="docs-sidebar">
+        <div class="sb-group">
+          <div class="sb-title">start here</div>
+          <a href="docs/">Docs home</a>
+          <a href="https://github.com/madeinoz67/benchweave/blob/main/docs/implementation-planning/00-poc-mvp-prd.md" target="_blank" rel="noopener">PoC/MVP PRD</a>
+          <a href="https://github.com/madeinoz67/benchweave/blob/main/docs/implementation-planning/01-delivery-plan.md" target="_blank" rel="noopener">Delivery plan</a>
+          <a href="https://github.com/madeinoz67/benchweave/blob/main/docs/smart-test-gateway-architecture-v1.5.md" target="_blank" rel="noopener">Architecture v1.5</a>
+        </div>
+        <div class="sb-group">
+          <div class="sb-title">contract sets</div>
+          <a href="https://github.com/madeinoz67/benchweave/tree/main/standards/otdp" target="_blank" rel="noopener">OTDP</a>
+          <a href="https://github.com/madeinoz67/benchweave/tree/main/standards/registry" target="_blank" rel="noopener">Registry</a>
+          <a href="https://github.com/madeinoz67/benchweave/tree/main/standards/execution" target="_blank" rel="noopener">Execution</a>
+          <a href="https://github.com/madeinoz67/benchweave/tree/main/standards/interface" target="_blank" rel="noopener">Interface</a>
+          <a href="https://github.com/madeinoz67/benchweave/tree/main/standards/plugin-ui" target="_blank" rel="noopener">Plugin UI</a>
+        </div>
+        <div class="sb-group">
+          <div class="sb-title">development</div>
+          <a href="https://github.com/madeinoz67/benchweave/blob/main/docs/develop-your-device.md" target="_blank" rel="noopener">Develop your device with AI</a>
+          <a href="https://github.com/madeinoz67/benchweave/blob/main/docs/device-developer-guide.md" target="_blank" rel="noopener">Device developer guide</a>
+          <a href="https://github.com/madeinoz67/benchweave/blob/main/docs/ai-device-reviewer.md" target="_blank" rel="noopener">AI device reviewer</a>
+          <a class="current" href="docs/user-guide/plugin-sdk.html">Plugin SDK guide</a>
+          <a href="https://github.com/madeinoz67/benchweave/blob/main/docs/development.md" target="_blank" rel="noopener">Development &amp; CI</a>
+        </div>
+      </aside>
+      <div class="docs-content">
+        <div class="breadcrumb">user guide / plugin developer guide</div>
+        <div class="title-row">
+          <h1>Plugin developer SDK</h1>
+          <select class="version-select" onchange="gotoVersion(this)" aria-label="Documentation version">
+            <option value="docs/">v0.0.2 (latest)</option>
+            <option value="docs/v/v0.0.1/">v0.0.1</option>
+            <option value="docs/v/dev/">dev</option>
+          </select>
+        </div>
+        <p class="lede">A small starting point for developing a BenchWeave device plugin with AI: generate → implement → test → review → prepare a release.</p>
+        <h2>Before you start</h2>
+        <p>Independent plugin repositories and releases are the preferred authoring path. Device plugins integrate existing instruments or custom hardware.</p>
+        <div class="code-block">benchweave-sdk new plugins/acme/model100 --package benchweave_acme_model100</div>
+        <p>Replace <code>acme/model100</code> with your manufacturer/device name. The generated project contains <code>src/</code> and <code>tests/</code>.</p>
+        <div class="page-nav">
+          <a href="https://github.com/madeinoz67/benchweave/blob/main/docs/develop-your-device.md" target="_blank" rel="noopener">← Develop your device with AI</a>
+          <a href="docs/reference/">API reference →</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= SDK ================= -->
+  <section class="panel" id="panel-sdk">
+    <div class="sdk-wrap">
+      <div class="page-head" style="padding-top:40px;">
+        <h1 style="font-family:var(--font-display); font-size:24px; margin:0 0 4px;">SDK</h1>
+        <p style="margin:0;">The plugin developer SDK lives in its own repository with its own release cycle.</p>
+      </div>
+      <div class="sdk-card">
+        <h1>benchweave-sdk</h1>
+        <p class="tagline">Build an external device plugin without importing gateway internals. Python 3.13+ · SDK 0.0.2 · OTDP 0.1.0 baseline.</p>
+
+        <div class="install-tabs">
+          <button class="active" onclick="showInstall('pip', this)">pip</button>
+          <button onclick="showInstall('uv', this)">uv</button>
+          <button onclick="showInstall('brew', this)">brew</button>
+        </div>
+        <div class="code-block" id="install-pip">pip install benchweave-sdk</div>
+        <div class="code-block" id="install-uv" style="display:none;">uv tool install benchweave-sdk</div>
+        <div class="code-block" id="install-brew" style="display:none;">brew install madeinoz67/tap/benchweave-sdk</div>
+
+        <h2 style="font-family:var(--font-display); font-size:16px; margin:26px 0 10px;">Five steps</h2>
+        <ol class="steps">
+          <li>Install the SDK from PyPI.</li>
+          <li>Run <code class="mono">benchweave-sdk new plugins/&lt;manufacturer&gt;/&lt;device&gt;</code>.</li>
+          <li>Replace the synthetic protocol with verified device behaviour.</li>
+          <li>Run tests, then <code class="mono">benchweave-sdk check</code> against the descriptor.</li>
+          <li>Build, prepare registry metadata, and get evidence reviewed before release.</li>
+        </ol>
+
+        <div class="sdk-links">
+          <a class="btn btn-primary" href="https://github.com/madeinoz67/benchweave-sdk" target="_blank" rel="noopener">View on GitHub</a>
+          <a class="btn btn-secondary" href="https://pypi.org/project/benchweave-sdk/" target="_blank" rel="noopener">View on PyPI</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer class="site-footer">
+    <span>© BenchWeave · Open source · MIT</span>
+    <span class="mono"><a href="https://github.com/madeinoz67/benchweave" target="_blank" rel="noopener">benchweave</a> · <a href="https://github.com/madeinoz67/benchweave-sdk" target="_blank" rel="noopener">benchweave-sdk</a> · <a href="docs/">docs</a></span>
+  </footer>
+</main>
+
+<script src="assets/site.js"></script>
+
+</body>
+</html>

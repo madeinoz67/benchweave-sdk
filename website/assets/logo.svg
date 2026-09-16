@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" role="img" aria-labelledby="bw-logo-title">
+  <title id="bw-logo-title">BenchWeave mark: amber hexagon with an amber-under/blue-over wire weave</title>
+  <!-- Gateway hexagon (Trace Amber, fixed in both themes per public-site styleguide) -->
+  <path d="M12 2 L20.66 7 L20.66 17 L12 22 L3.34 17 L3.34 7 Z" stroke="#FFB020" stroke-width="1.6"/>
+  <!-- Amber strand: hops under (arc) from top-left to bottom-right -->
+  <path d="M7 7 L10.6 10.6 A2 2 0 0 1 13.4 13.4 L17 17" stroke="#FFB020" stroke-width="2" stroke-linecap="round"/>
+  <!-- Blue strand: passes over, straight from top-right to bottom-left -->
+  <path d="M17 7 L7 17" stroke="#4C6FFF" stroke-width="2" stroke-linecap="round"/>
+</svg>

@@ -1,0 +1,122 @@
+name: CI Docs
+
+# Public Pages site (docs-site plan Addendum B + Task 12): CI assembles one
+# tree — static public site from website/ at the root, versioned docs under
+# docs/ (docs/ root = latest stable release, docs/v/<tag>/ per release,
+# docs/v/dev/ from main) — then deploys to GitHub Pages on pushes to main.
+# The assembly contract and its disclosed approximations are documented in
+# scripts/assemble_docs_site.py.
+#
+# A docs build failure fails the job: no continue-on-error on any build or
+# assembly step (the fork-PR preview comment is the sole, documented
+# exception — it is not part of the build).
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build-docs:
+    name: "Build Docs"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0 # Full history + tags: release-tag detection, git_ref API snapshots, page dates
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install docs toolchain
+        run: |
+          sudo apt-get update && sudo apt-get install -y libcairo2 # native cairo for cairosvg raster favicons
+          python -m pip install uv
+          uv sync
+          # [svg] is great-docs' supported cairosvg extra — without it raster
+          # favicons silently skip (SVG-only). CI runners have no
+          # UV_PROJECT_ENVIRONMENT convention; the default .venv is correct here.
+          uv pip install "great-docs[svg]"
+
+      - name: Set up Quarto
+        uses: quarto-dev/quarto-actions/setup@v2
+
+      - name: Assemble versioned docs site
+        run: uv run python scripts/assemble_docs_site.py
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # changelog fetch; passed through to --from-repo builds
+
+      - name: Save docs artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: docs-html
+          path: site
+          include-hidden-files: true
+
+      - name: How to preview this build locally
+        if: github.event_name == 'pull_request'
+        run: uv run great-docs ci notice --run ${{ github.run_id }} --pr ${{ github.event.number }}
+
+      - name: Upload build timings
+        uses: actions/upload-artifact@v7
+        with:
+          name: build-timings
+          path: site/docs/build-timings.json # docs root moved under /docs/ (Task 12)
+          if-no-files-found: ignore
+
+  publish-docs:
+    name: "Publish Docs"
+    runs-on: ubuntu-latest
+    needs: "build-docs"
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: docs-html
+          path: site
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+          include-hidden-files: true
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
+
+  preview-docs:
+    name: "Preview Docs"
+    runs-on: ubuntu-latest
+    needs: "build-docs"
+    if: github.event_name == 'pull_request'
+    permissions:
+      pull-requests: write
+    steps:
+      # Post (and keep updated) a sticky PR comment with the local-preview
+      # command, pinned to this run so it reproduces the build under review.
+      # Runs the released great-docs via pipx (no install step needed); kept as
+      # its own minimal job so the docs build never holds a pull-requests:write
+      # token. continue-on-error so fork PRs (read-only token) don't fail the run.
+      - name: Post preview instructions to the PR
+        continue-on-error: true
+        run: pipx run great-docs ci pr-comment --run ${{ github.run_id }} --pr ${{ github.event.number }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

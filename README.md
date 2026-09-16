@@ -2,7 +2,7 @@
 
 # BenchWeave plugin developer SDK
 
-Build an external device plugin without importing gateway internals. Python 3.13+, SDK 0.0.2, OTDP 0.3.0 and adapter API 1.1 are the initial baseline. This package is a separate wheel built alongside BenchWeave; published to PyPI as benchweave-sdk.
+Build an external device plugin without importing gateway internals. Python 3.13+, SDK 0.0.2, OTDP 0.1.0 and adapter API 1.1 are the initial baseline. This package is a separate wheel built alongside BenchWeave; published to PyPI as benchweave-sdk.
 
 ## Sister repository
 
@@ -37,6 +37,10 @@ To hack on the SDK itself, clone the repository and `uv sync --extra test`.
 5. Build with `uv build`, prepare registry metadata and reviewed evidence, and approve the release before publication or hardware qualification. `benchweave-sdk inventory` helps generate hashes, not a complete registry manifest.
 
 The generated runtime has no dependency on this SDK. The plugin test extra pins the SDK version from PyPI. Generate and retain a plugin dependency lock in its repository. A template is not qualified firmware or a real instrument driver.
+
+## Documentation
+
+The versioned documentation site is published at <https://madeinoz67.github.io/benchweave-sdk/>. Start from the rendered [plugin SDK guide](https://madeinoz67.github.io/benchweave-sdk/docs/user-guide/plugin-sdk.html); the version selector on each docs page switches between the released versions and the current `main` build.
 
 ## Directory structure
 
