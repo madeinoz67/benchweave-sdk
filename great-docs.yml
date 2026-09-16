@@ -149,8 +149,9 @@ cli:
 # (posit-dev/great-docs, unreleased as of 0.17.0 / 2026-08-13), which
 # hardcodes the switcher order api,cli. Unknown yml keys merge silently,
 # so this line activates itself the day a released great-docs understands
-# it (CI installs great-docs unpinned). Built output is NOT patched — see
-# the Task 11 report for the evidence.
+# it (CI installs great-docs unpinned). Until then the assembly patches the
+# built order cli-first (scripts/assemble_docs_site.py:
+# reorder_reference_sections); delete that transform when this key activates.
 ref_section_order:
   - cli
   - api

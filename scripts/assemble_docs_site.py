@@ -29,7 +29,7 @@ serves at the Pages root and the versioned docs tree serves under ``docs/``:
   and ``site_url``/``seo.canonical.base_url`` carry the prefix for canonicals,
   sitemap and llms.txt.
 
-Two assembly-level repairs on top of the tool's own output:
+Three assembly-level repairs on top of the tool's own output:
 
 - ``v/latest/``/``v/stable/`` redirect stubs target ``/``, which is wrong for
   a project Pages site hosted under a path prefix; they are rewritten to the
@@ -39,6 +39,10 @@ Two assembly-level repairs on top of the tool's own output:
   is generated once at the docs root (cairosvg, when importable) and copied
   into any bucket that is missing it — cosmetic-only: pages reference the
   docs-root favicon absolutely and the SVG favicon is always present.
+- great-docs 0.17.0 hard-codes the reference-section order api-first in the
+  sidebar switcher; the built order is rewritten cli-first in every page
+  (principal directive) until a released great-docs honors the pre-seeded
+  native ``ref_section_order`` key (see reorder_reference_sections).
 
 Any build failure aborts with a non-zero exit — this script runs in CI where
 a docs failure must fail the job. Verification is equally loud: verify_tree
@@ -64,6 +68,19 @@ REPO = Path(__file__).resolve().parent.parent
 TAG_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
 RASTER_FAVICONS = ("favicon.ico", "favicon-16x16.png", "favicon-32x32.png", "apple-touch-icon.png")
 ALIASES = ("latest", "stable")
+
+# Reference-section order markup as great-docs 0.17.0 emits it: the sidebar
+# switcher reads data-gd-ref-sections (inline DOMContentLoaded script; a plain
+# body attribute is the other historically documented form). 0.17.0 hard-codes
+# 'api,cli'; great-docs.yml pre-seeds the native ref_section_order: [cli, api]
+# key, inert until a released great-docs understands it.
+REF_ORDER_SCRIPT_API_FIRST = (
+    "<script>document.addEventListener('DOMContentLoaded',function()"
+    "{document.body.setAttribute('data-gd-ref-sections','api,cli');});</script>"
+)
+REF_ORDER_BODY_API_FIRST = 'data-gd-ref-sections="api,cli"'
+REF_ORDER_SCRIPT_CLI_FIRST = REF_ORDER_SCRIPT_API_FIRST.replace("'api,cli'", "'cli,api'")
+REF_ORDER_BODY_CLI_FIRST = REF_ORDER_BODY_API_FIRST.replace("api,cli", "cli,api")
 
 
 def log(msg: str) -> None:
@@ -287,6 +304,59 @@ def complete_favicons(dest: Path, logo: Path) -> None:
                 shutil.copy2(src, bucket / name)
 
 
+def reorder_reference_sections(docs_root: Path) -> None:
+    """Put the CLI reference section before the API section in the docs sidebar.
+
+    Markup inspection of the great-docs 0.17.0 output: reference pages render
+    one sidebar per section — API pages list only API entries, CLI pages only
+    CLI entries — so no built sidebar encodes both groups as sibling markup,
+    and the reference index pages render only their own section's groups. The
+    one cross-section order surface is the sidebar's reference switcher, which
+    reads the ``data-gd-ref-sections`` body attribute; the build emits it as a
+    hard-coded ``'api,cli'`` inline script. This transform rewrites that order
+    to ``'cli,api'`` in every page of every bucket, flipping the switcher to
+    CLI-first (principal directive: the SDK is CLI-first).
+
+    great-docs.yml pre-seeds ``ref_section_order: [cli, api]`` — inert on
+    0.17.0, where the key exists only on unreleased upstream main. When a
+    released great-docs honors the native key, DELETE this transform and the
+    matching verify_tree check — the native key takes over.
+
+    Idempotent (pages already cli-first are left untouched) and loud on drift:
+    pages carrying the attribute in any other form, or a tree with no order
+    markup at all, WARN so the day great-docs changes its markup we notice
+    instead of silently shipping api-first.
+    """
+    changed = already = 0
+    drifted: list[str] = []
+    for page in sorted(docs_root.rglob("*.html")):
+        html = page.read_text(encoding="utf-8")
+        if REF_ORDER_SCRIPT_API_FIRST in html or REF_ORDER_BODY_API_FIRST in html:
+            page.write_text(
+                html.replace(REF_ORDER_SCRIPT_API_FIRST, REF_ORDER_SCRIPT_CLI_FIRST).replace(
+                    REF_ORDER_BODY_API_FIRST, REF_ORDER_BODY_CLI_FIRST
+                ),
+                encoding="utf-8",
+            )
+            changed += 1
+        elif REF_ORDER_SCRIPT_CLI_FIRST in html or REF_ORDER_BODY_CLI_FIRST in html:
+            already += 1
+        elif "data-gd-ref-sections" in html:
+            drifted.append(str(page.relative_to(docs_root)))
+    if drifted:
+        log(
+            f"WARNING: {len(drifted)} page(s) carry data-gd-ref-sections in an "
+            f"unrecognized form — great-docs markup drift? first: {drifted[:3]}"
+        )
+    if changed == 0 and already == 0:
+        log(
+            "WARNING: no reference-section order markup found in the built tree — "
+            "great-docs changed its reference rendering (or now honors ref_section_order "
+            "natively; if so, delete reorder_reference_sections)"
+        )
+    log(f"reference sections cli-first: {changed} page(s) rewritten, {already} already cli-first")
+
+
 def website_version_options() -> list[tuple[str, str]]:
     """(version token, label) pairs from the website's docs version selector.
 
@@ -339,6 +409,31 @@ def verify_tree(dest: Path, tags: list[str], latest: str, dev_isolated: bool) ->
     elif latest_labelled[0] != latest:
         failures.append(
             f"website labels {latest_labelled[0]} '(latest)' but the latest release tag is {latest}"
+        )
+    order_api_first = order_cli_first = order_drifted = 0
+    for page in docs.rglob("*.html"):
+        html = page.read_text(encoding="utf-8")
+        if REF_ORDER_SCRIPT_API_FIRST in html or REF_ORDER_BODY_API_FIRST in html:
+            order_api_first += 1
+        elif REF_ORDER_SCRIPT_CLI_FIRST in html or REF_ORDER_BODY_CLI_FIRST in html:
+            order_cli_first += 1
+        elif "data-gd-ref-sections" in html:
+            order_drifted += 1
+    if order_api_first:
+        failures.append(
+            f"{order_api_first} page(s) still order reference sections api-first "
+            "(reorder_reference_sections missed them?)"
+        )
+    if order_drifted:
+        failures.append(
+            f"{order_drifted} page(s) carry data-gd-ref-sections in an unrecognized "
+            "form — great-docs markup drift"
+        )
+    if order_cli_first == 0 and not order_api_first and not order_drifted:
+        failures.append(
+            "no page carries the reference-section order markup — great-docs changed "
+            "its reference rendering (or honors ref_section_order natively: then delete "
+            "reorder_reference_sections and this check)"
         )
     if failures:
         raise SystemExit("assembled site verification FAILED:\n  " + "\n  ".join(failures))
@@ -479,6 +574,7 @@ def main() -> None:
     copy_website(dest)
     fix_alias_stubs(docs_root, site_path_prefix())
     complete_favicons(docs_root, REPO / "docs" / "assets" / "logo.svg")
+    reorder_reference_sections(docs_root)
 
     verify_tree(dest, tags, latest, dev_isolated)
     log(f"assembled site at {dest}")
