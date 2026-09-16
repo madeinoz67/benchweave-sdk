@@ -30,13 +30,13 @@
   },
   "compatibility": {
     "otdp_versions": [
-      "0.3.0"
+      "0.1.0"
     ],
     "adapter_api_versions": [
-      "1.1"
+      "0.1.0"
     ],
     "stg_versions": [
-      "1.2"
+      "1.5"
     ],
     "runtimes": [
       {

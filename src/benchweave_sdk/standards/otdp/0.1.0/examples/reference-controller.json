@@ -132,7 +132,7 @@
       {
         "title": "OTDP reference protocol",
         "reference": "reference-protocols.md",
-        "revision": "0.3.0"
+        "revision": "0.1.0"
       }
     ],
     "test_vectors": [
