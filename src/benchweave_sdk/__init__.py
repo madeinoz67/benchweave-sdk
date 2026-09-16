@@ -10,5 +10,5 @@ try:
 except PackageNotFoundError:  # source checkout without an installed dist
     __version__ = "0.0.0+source"
 OTDP_VERSION = "0.1.0"
-ADAPTER_API_VERSION = "1.1"
+ADAPTER_API_VERSION = "0.1.0"
 __all__ = ["Adapter", "HostServices", "OperationContext"]
