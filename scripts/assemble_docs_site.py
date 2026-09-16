@@ -411,7 +411,7 @@ def main() -> None:
         root_copy.mkdir(parents=True)
         copy_root_tree(docs_root, root_copy)
         replace_dir(root_copy, docs_root / "v" / latest)
-        log(f"docs/v/{latest}/ <- copy of docs root (in-process latest render; approximated bucket)")
+        log(f"docs/v/{latest}/ <- copy of docs root (in-process latest; approximated bucket)")
 
     # ── 5. Static front door at the root, then repairs: alias stubs, favicons ──
     copy_website(dest)
