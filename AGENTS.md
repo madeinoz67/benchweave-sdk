@@ -6,6 +6,8 @@ plugins. A separate wheel from the gateway, mounted in the main repository at
 `user_guide/plugin-sdk.qmd` is the developer guide (rendered at `user-guide/` on the
 docs site).
 
+Prose defers to machine sources: when README/guides/site content contradicts standards-lock, manifests, the compatibility matrix, or vendored schemas, the prose is wrong — correct it against the machine source (principal directive 2026-09-16).
+
 ## Doc-home map — what lives here, what lives in the main repository
 
 - **Here:** `user_guide/plugin-sdk.qmd` (the plugin developer guide — moved here

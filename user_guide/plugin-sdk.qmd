@@ -6,7 +6,7 @@ The SDK gives you a small starting point for developing a BenchWeave device plug
 
 The device is the hardware; the plugin is its Python integration and descriptor. Follow the [developer directory convention](https://github.com/madeinoz67/benchweave/blob/main/docs/device-developer-guide.md#repository-layout-for-device-plugins): `plugins/<manufacturer>/<name>/`, with `src/<python_package>/` inside that project. The name normally identifies the device model, such as `fnirsi/dps150`.
 
-The first SDK is `benchweave-sdk` 0.0.2 for Python 3.13+, OTDP 0.3.0 and adapter API 1.1, with registry 1.0.0 schemas. Its source lives in this repository, mounted at `packages/sdk` in the [main BenchWeave repository](https://github.com/madeinoz67/benchweave), and is built separately from the gateway. It supplies structural typing interfaces, offline contract validation, a scripted mock host, bounded async conformance helpers, an external project generator and file-inventory helpers.
+The first SDK is `benchweave-sdk` 0.0.2 for Python 3.13+, OTDP 0.1.0 and adapter API 1.1, with registry 0.1.0 schemas. Its source lives in this repository, mounted at `packages/sdk` in the [main BenchWeave repository](https://github.com/madeinoz67/benchweave), and is built separately from the gateway. It supplies structural typing interfaces, offline contract validation, a scripted mock host, bounded async conformance helpers, an external project generator and file-inventory helpers.
 
 ## 1. Install the SDK and generate your project
 

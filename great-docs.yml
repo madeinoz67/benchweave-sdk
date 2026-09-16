@@ -488,7 +488,7 @@ hero:
 versions:
   - tag: v0.0.2
     label: v0.0.2
-    latest: true          # latest stable lives at the site root (landing version)
+    latest: true          # latest stable lives at the docs/ root (landing version; site root is the static site)
     git_ref: v0.0.2
   - tag: v0.0.1
     label: v0.0.1
