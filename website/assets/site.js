@@ -1,9 +1,10 @@
-/* BenchWeave public site — panel navigation, install tabs, theme toggle.
-   Structure per the public-site mockup (docs/internal/public-site-mockup.html):
-   plain JS, no build chain. Adds hash deep links (#standards, #guides, #sdk)
-   so panels are reachable from outside the page. */
+/* BenchWeave SDK public site — panel navigation, install tabs, theme toggle.
+   Plain JS, no build chain. Hash deep links (#docs, #cli, #gateway) keep the
+   panels reachable from outside the page; #install scrolls to the install
+   block on the home panel. */
 
 var THEME_KEY = 'bw-site-theme';
+var PANEL_INDEX = { home: 0, docs: 1, cli: 2, gateway: 3 };
 
 function showPanel(name, btn) {
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
@@ -14,8 +15,20 @@ function showPanel(name, btn) {
   window.scrollTo({ top: 0, behavior: 'auto' });
 }
 
+function scrollToInstall() {
+  if (!document.getElementById('panel-home').classList.contains('active')) {
+    showPanel('home', document.querySelectorAll('nav.panels button')[PANEL_INDEX.home]);
+  }
+  var el = document.getElementById('install');
+  if (el) el.scrollIntoView({ block: 'start' });
+  try { history.replaceState(null, '', '#install'); } catch (e) {}
+}
+
 function showInstall(name, btn) {
-  ['pip','uv','brew'].forEach(k => { document.getElementById('install-'+k).style.display = (k===name) ? 'block' : 'none'; });
+  ['pip', 'uv', 'brew', 'git'].forEach(k => {
+    var el = document.getElementById('install-' + k);
+    if (el) el.style.display = (k === name) ? 'block' : 'none';
+  });
   document.querySelectorAll('.install-tabs button').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
 }
@@ -40,18 +53,21 @@ function gotoVersion(select) {
 
 applyStoredTheme();
 
-/* Open the panel named by the URL hash (e.g. /#sdk), matching nav buttons. */
-(function openPanelFromHash() {
-  const PANEL_INDEX = { home: 0, standards: 1, guides: 2, sdk: 3 };
+/* Open the panel named by the URL hash (e.g. /#cli), matching nav buttons. */
+(function openFromHash() {
   const name = (location.hash || '').replace('#', '');
   if (name in PANEL_INDEX) {
-    const btn = document.querySelectorAll('nav.panels button')[PANEL_INDEX[name]];
-    showPanel(name, btn);
+    showPanel(name, document.querySelectorAll('nav.panels button')[PANEL_INDEX[name]]);
+  } else if (name === 'install') {
+    scrollToInstall();
   }
 })();
 
+/* Reduced motion: the hero figure degrades to its finished state (solid
+   device, verified badge) rather than freezing at t=0 on the wireframe. */
 if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
   document.querySelectorAll('svg.schematic').forEach(function (svg) {
+    if (typeof svg.setCurrentTime === 'function') svg.setCurrentTime(5.2);
     if (typeof svg.pauseAnimations === 'function') svg.pauseAnimations();
   });
 }

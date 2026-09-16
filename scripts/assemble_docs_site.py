@@ -5,8 +5,8 @@ Implements the per-tag snapshot deploy design (docs-site plan Addendum B) with
 the Task 12 two-tier layout — the hand-written static site from ``website/``
 serves at the Pages root and the versioned docs tree serves under ``docs/``:
 
-- ``website/`` (one page, four panels, per the public-site mockup; no build
-  chain) is copied verbatim to the artifact root. Its links into the docs use
+- ``website/`` (one page, four panels — Home, Docs, CLI, Gateway — SDK-focused,
+  styled per the main repo's public-site styleguide; no build chain) is copied verbatim to the artifact root. Its links into the docs use
   relative ``docs/…`` paths, so the pair previews correctly from any server
   root, GitHub Pages included.
 - Every release tag that carries a ``great-docs.yml`` at its ref is built in
