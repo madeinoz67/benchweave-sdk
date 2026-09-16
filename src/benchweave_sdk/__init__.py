@@ -1,4 +1,4 @@
-"""Public authoring surface for OTDP 0.3.0 / adapter API 1.1."""
+"""Public authoring surface for OTDP 0.1.0 / adapter API 0.1.0."""
 
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _dist_version
