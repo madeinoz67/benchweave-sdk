@@ -381,12 +381,16 @@ reference:
 # A logo replaces the text title in the navbar.
 # : type(str) - a single file used in both light and dark mode
 # : type(map) - (default) light/dark variants, as below
-# Compact square mark (the hex glyph cropped from the banner, 96px / 13KB)
-# for the navbar; the full 1.6MB banner is reserved for the landing hero
-# (hero.logo below). show_title keeps the "BenchWeave SDK" text beside the
-# mark — the mark alone does not carry the name.
+# Brand mark per the public-site styleguide (main repo,
+# docs/internal/public-site-styleguide.html § Logo): the gateway hexagon with
+# the amber-under/blue-over wire-hop — hand-authored SVG derived from the
+# mockup's 22×22 nav mark (viewBox 0 0 24 24, strokes 1.6/2 at nav scale).
+# Colors fixed in both themes: amber #FFB020 (--amber-solid) + blue #4C6FFF
+# (--blue-solid); no inversion, no recolor. great-docs auto-generates favicons
+# from this SVG. The 1.6MB banner remains the landing hero asset (hero.logo
+# below), not a navbar asset.
 logo:
-  light: docs/assets/benchweave-sdk-logo.png
+  light: docs/assets/logo.svg
   show_title: true
 # logo:
 #   light: null            # null = no logo
