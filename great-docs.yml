@@ -97,7 +97,12 @@ repo: https://github.com/madeinoz67/benchweave-sdk
 # Canonical address of the deployed docs site. Used for skills-page install
 # commands, .well-known/ discovery, sitemaps, and subdirectory deployments;
 # also sets website.site-url in _quarto.yml.
-site_url: https://madeinoz67.github.io/benchweave-sdk/
+site_url: https://madeinoz67.github.io/benchweave-sdk/docs/
+seo:
+  canonical:
+    # Pages live under /docs/ next to the static public site; the tool's
+    # auto-detection would canonicalize to the GitHub Pages repo root.
+    base_url: https://madeinoz67.github.io/benchweave-sdk/docs/
 
 # Source Link Configuration
 # -------------------------

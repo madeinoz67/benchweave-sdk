@@ -1,32 +1,44 @@
 #!/usr/bin/env python3
-"""Assemble the versioned BenchWeave SDK documentation site.
+"""Assemble the public BenchWeave SDK Pages site: static front door + versioned docs.
 
-Implements the per-tag snapshot deploy design (docs-site plan Addendum B):
+Implements the per-tag snapshot deploy design (docs-site plan Addendum B) with
+the Task 12 two-tier layout — the hand-written static site from ``website/``
+serves at the Pages root and the versioned docs tree serves under ``docs/``:
 
+- ``website/`` (one page, four panels, per the public-site mockup; no build
+  chain) is copied verbatim to the artifact root. Its links into the docs use
+  relative ``docs/…`` paths, so the pair previews correctly from any server
+  root, GitHub Pages included.
 - Every release tag that carries a ``great-docs.yml`` at its ref is built in
   isolation (``great-docs build --from-repo … --branch <tag> --versions <tag>``)
-  and overlaid into the assembled tree under ``v/<tag>/``; the latest stable
-  tag additionally populates the site root; ``main`` builds to ``v/dev/``.
+  and overlaid into the docs tree under ``docs/v/<tag>/``; the latest stable
+  tag additionally populates the ``docs/`` root; ``main`` builds to
+  ``docs/v/dev/``.
 - Pre-site tags (no ``great-docs.yml`` at their ref — v0.0.1/v0.0.2 today)
   cannot be isolated-built. One in-process multi-version build of the current
   tree produces their buckets instead: correct symbol sets via the tool's
   git_ref introspection at each tag, content/docstrings from the current tree
   (a disclosed approximation that isolated builds supersede from the next
   release onward). The approximated latest-stable render is copied from the
-  site root into ``v/<latest>/`` so every release has a stable bucket URL.
+  ``docs/`` root into ``docs/v/<latest>/`` so every release has a stable
+  bucket URL.
 - The version list in ``great-docs.yml`` stays static and complete, so every
-  bucket's version switcher lists all versions.
+  bucket's version switcher lists all versions. Serving under the ``/docs/``
+  subpath is safe by construction: page links are relative, the version
+  switcher derives its base path from ``window.location.pathname`` at runtime,
+  and ``site_url``/``seo.canonical.base_url`` carry the prefix for canonicals,
+  sitemap and llms.txt.
 
 Two assembly-level repairs on top of the tool's own output:
 
 - ``v/latest/``/``v/stable/`` redirect stubs target ``/``, which is wrong for
   a project Pages site hosted under a path prefix; they are rewritten to the
-  prefix derived from ``site_url``.
+  prefix derived from ``site_url`` (``/benchweave-sdk/docs/``).
 - Isolated ``--from-repo`` builds install plain ``great-docs`` (no cairosvg),
   so raster favicons silently skip inside those buckets. The full favicon set
-  is generated once at the site root (cairosvg, when importable) and copied
+  is generated once at the docs root (cairosvg, when importable) and copied
   into any bucket that is missing it — cosmetic-only: pages reference the
-  site-root favicon absolutely and the SVG favicon is always present.
+  docs-root favicon absolutely and the SVG favicon is always present.
 
 Any build failure aborts with a non-zero exit — this script runs in CI where
 a docs failure must fail the job. Run from the repository root with
@@ -105,6 +117,21 @@ def replace_dir(src: Path, dst: Path) -> None:
         shutil.rmtree(dst)
     dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(src, dst)
+
+
+def copy_website(dest: Path) -> None:
+    """Copy the hand-written static site (``website/``) to the artifact root.
+
+    The static site is the Pages front door; the docs tree lives under
+    ``dest/docs/``. Loud failure if ``website/`` is missing or incomplete —
+    a root without the static index would serve GitHub's 404 at the repo
+    Pages URL.
+    """
+    src = REPO / "website"
+    if not (src / "index.html").is_file():
+        raise SystemExit(f"static website missing or incomplete: {src / 'index.html'} not found")
+    shutil.copytree(src, dest, dirs_exist_ok=True)
+    log(f"static site <- {src} (artifact root)")
 
 
 def copy_root_tree(src: Path, dst: Path) -> None:
@@ -257,29 +284,34 @@ def complete_favicons(dest: Path, logo: Path) -> None:
 
 
 def verify_tree(dest: Path, tags: list[str], latest: str, dev_isolated: bool) -> None:
+    docs = dest / "docs"
     failures = []
     if not (dest / "index.html").is_file():
-        failures.append("site root index.html missing")
+        failures.append("static site root index.html missing (website/ not copied?)")
+    if not (dest / "assets" / "logo.svg").is_file():
+        failures.append("static site assets/logo.svg missing")
+    if not (docs / "index.html").is_file():
+        failures.append("docs root index.html missing (docs/ subpath build failed?)")
     for tag in tags:
-        if not (dest / "v" / tag / "index.html").is_file():
+        if not (docs / "v" / tag / "index.html").is_file():
             failures.append(
-                f"v/{tag}/index.html missing (is the tag in great-docs.yml 'versions:'?)"
+                f"docs/v/{tag}/index.html missing (is the tag in great-docs.yml 'versions:'?)"
             )
-    if not (dest / "v" / "dev" / "index.html").is_file():
-        failures.append("v/dev/index.html missing")
+    if not (docs / "v" / "dev" / "index.html").is_file():
+        failures.append("docs/v/dev/index.html missing")
     for alias in ALIASES:
-        if not (dest / "v" / alias / "index.html").is_file():
-            failures.append(f"alias v/{alias}/ missing")
+        if not (docs / "v" / alias / "index.html").is_file():
+            failures.append(f"alias docs/v/{alias}/ missing")
     if failures:
         raise SystemExit("assembled site verification FAILED:\n  " + "\n  ".join(failures))
 
     dev_source = (
         "isolated main build" if dev_isolated else "in-process current tree (pre-merge fallback)"
     )
-    log(f"verification OK: root=latest({latest}), dev source: {dev_source}")
-    for path in sorted((dest / "v").iterdir()):
+    log(f"verification OK: static root + docs/=latest({latest}), dev source: {dev_source}")
+    for path in sorted((docs / "v").iterdir()):
         if path.is_dir():
-            log(f"  v/{path.name}/  ({sum(1 for _ in path.rglob('*'))} files)")
+            log(f"  docs/v/{path.name}/  ({sum(1 for _ in path.rglob('*'))} files)")
 
 
 def main() -> None:
@@ -300,6 +332,9 @@ def main() -> None:
 
     dest = (REPO / args.dest).resolve()
     staging = (REPO / args.staging).resolve()
+    if dest.exists():
+        shutil.rmtree(dest)  # hermetic: no stale content from a previous layout survives a re-run
+    docs_root = dest / "docs"
     tags = release_tags()
     if not tags:
         raise SystemExit("no release tags (vX.Y.Z) found — nothing to assemble")
@@ -321,10 +356,10 @@ def main() -> None:
         )
         if proc.returncode != 0:
             raise SystemExit(f"in-process docs build failed ({proc.returncode})")
-        replace_dir(REPO / "great-docs" / "_site", dest)
+        replace_dir(REPO / "great-docs" / "_site", docs_root)
     else:
-        dest.mkdir(parents=True, exist_ok=True)
-        (dest / "v").mkdir(exist_ok=True)
+        docs_root.mkdir(parents=True, exist_ok=True)
+        (docs_root / "v").mkdir(exist_ok=True)
         log("all release tags carry great-docs.yml — no in-process historical buckets needed")
 
     dev_isolated = False
@@ -339,11 +374,11 @@ def main() -> None:
             out_dir = staging / tag
             isolated_build(args.great_docs, args.repo_url, tag, tag, out_dir)
             src = bucket_source(out_dir, tag)
-            replace_dir(src, dest / "v" / tag)
+            replace_dir(src, docs_root / "v" / tag)
             if tag == latest:
-                replace_root(src, dest)
-                log(f"site root <- isolated build of {tag} (latest stable)")
-            log(f"v/{tag}/ <- isolated build at ref {tag}")
+                replace_root(src, docs_root)
+                log(f"docs/ root <- isolated build of {tag} (latest stable)")
+            log(f"docs/v/{tag}/ <- isolated build at ref {tag}")
 
         # ── 3. Dev bucket from main (isolated), with the pre-merge PR fallback ──
         main_ref = f"origin/{args.main_branch}"
@@ -358,7 +393,7 @@ def main() -> None:
         if has_origin_main and ref_has_config(main_ref):
             out_dir = staging / "dev"
             isolated_build(args.great_docs, args.repo_url, args.main_branch, "dev", out_dir)
-            replace_dir(bucket_source(out_dir, "dev"), dest / "v" / "dev")
+            replace_dir(bucket_source(out_dir, "dev"), docs_root / "v" / "dev")
             dev_isolated = True
         else:
             log(
@@ -369,18 +404,19 @@ def main() -> None:
         log("--skip-isolated: dev + historical buckets are all in-process renders")
 
     # ── 4. Approximated latest-stable bucket: copy of the root render ──
-    if not ref_has_config(latest) and not (dest / "v" / latest / "index.html").is_file():
+    if not ref_has_config(latest) and not (docs_root / "v" / latest / "index.html").is_file():
         root_copy = staging / "root-copy"
         if root_copy.exists():
             shutil.rmtree(root_copy)
         root_copy.mkdir(parents=True)
-        copy_root_tree(dest, root_copy)
-        replace_dir(root_copy, dest / "v" / latest)
-        log(f"v/{latest}/ <- copy of site root (in-process latest render; approximated bucket)")
+        copy_root_tree(docs_root, root_copy)
+        replace_dir(root_copy, docs_root / "v" / latest)
+        log(f"docs/v/{latest}/ <- copy of docs root (in-process latest render; approximated bucket)")
 
-    # ── 5. Repairs: alias stubs, favicon completion ──
-    fix_alias_stubs(dest, site_path_prefix())
-    complete_favicons(dest, REPO / "docs" / "assets" / "logo.svg")
+    # ── 5. Static front door at the root, then repairs: alias stubs, favicons ──
+    copy_website(dest)
+    fix_alias_stubs(docs_root, site_path_prefix())
+    complete_favicons(docs_root, REPO / "docs" / "assets" / "logo.svg")
 
     verify_tree(dest, tags, latest, dev_isolated)
     log(f"assembled site at {dest}")

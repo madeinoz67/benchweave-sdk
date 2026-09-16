@@ -1,10 +1,11 @@
 name: CI Docs
 
-# Versioned docs site (docs-site plan Addendum B): CI builds TRUE per-tag
-# snapshots and assembles one tree — site root = latest stable release,
-# v/<tag>/ per release, v/dev/ from main — then deploys to GitHub Pages on
-# pushes to main. The assembly contract and its disclosed approximations are
-# documented in scripts/assemble_docs_site.py.
+# Public Pages site (docs-site plan Addendum B + Task 12): CI assembles one
+# tree — static public site from website/ at the root, versioned docs under
+# docs/ (docs/ root = latest stable release, docs/v/<tag>/ per release,
+# docs/v/dev/ from main) — then deploys to GitHub Pages on pushes to main.
+# The assembly contract and its disclosed approximations are documented in
+# scripts/assemble_docs_site.py.
 #
 # A docs build failure fails the job: no continue-on-error on any build or
 # assembly step (the fork-PR preview comment is the sole, documented
@@ -71,7 +72,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: build-timings
-          path: site/build-timings.json
+          path: site/docs/build-timings.json # docs root moved under /docs/ (Task 12)
           if-no-files-found: ignore
 
   publish-docs:
