@@ -17,8 +17,8 @@ from referencing.jsonschema import DRAFT202012
 def contract_documents() -> dict[str, Any]:
     vendored = files("benchweave_sdk").joinpath("standards")
     sets = (
-        ("otdp", "0.3.0"),
-        ("registry", "1.0.0"),
+        ("otdp", "0.1.0"),
+        ("registry", "0.1.0"),
         ("plugin-ui", "0.1.0"),
     )
     if vendored.is_dir():
@@ -80,18 +80,18 @@ def validate(document: Any, schema_file: str, definition: str | None = None) -> 
 
 
 def validate_request(request: dict[str, Any]) -> None:
-    validate(request, "otdp/0.3.0/otdp-runtime.schema.json", "operationRequest")
+    validate(request, "otdp/0.1.0/otdp-runtime.schema.json", "operationRequest")
 
 
 def validate_result(result: dict[str, Any], request: dict[str, Any]) -> None:
     validate_request(request)
-    validate(result, "otdp/0.3.0/otdp-runtime.schema.json", "operationResult")
+    validate(result, "otdp/0.1.0/otdp-runtime.schema.json", "operationResult")
     if (result["operation_id"], result["verb"]) != (request["operation_id"], request["verb"]):
         raise ValueError("Result correlation does not match the request")
 
 
 def validate_descriptor(descriptor: dict[str, Any]) -> None:
-    validate(descriptor, "otdp/0.3.0/otdp-device-descriptor.schema.json")
+    validate(descriptor, "otdp/0.1.0/otdp-device-descriptor.schema.json")
     capabilities = descriptor["capabilities"]
     if len(capabilities) != len(set(capabilities)) or set(capabilities) != set(
         descriptor["operations"]

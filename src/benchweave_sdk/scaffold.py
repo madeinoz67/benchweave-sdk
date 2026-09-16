@@ -304,7 +304,7 @@ def descriptor_for(package: str) -> dict[str, Any]:
         "completion": "acknowledged",
     }
     return {
-        "otdp_version": "0.3.0",
+        "otdp_version": "0.1.0",
         "descriptor_version": "0.1.0",
         "id": f"dev.example.{package.replace('_', '-')}",
         "display_name": "SDK synthetic example",
@@ -352,7 +352,7 @@ def descriptor_for(package: str) -> dict[str, Any]:
                 "read_policy": {"max_age_ms": 0, "destructive": False},
             }
         ],
-        "required_features": ["otdp.core/0.3.0", "otdp.adapter/1.1"],
+        "required_features": ["otdp.core/0.1.0", "otdp.adapter/0.1.0"],
         "provenance": {
             "sources": [
                 {"title": "SDK synthetic protocol", "reference": "protocol.md", "revision": "0.1.0"}

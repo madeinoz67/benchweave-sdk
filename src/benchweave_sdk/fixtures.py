@@ -37,14 +37,14 @@ def _schema_path() -> Path:
     packaged = (
         Path(__file__).with_name("standards")
         / "plugin-ui-preview"
-        / "1.0.0"
+        / "0.1.0"
         / "fixture.schema.json"
     )
     if packaged.is_file():
         return packaged
     checkout = (
         Path(__file__).resolve().parents[4]
-        / "standards/plugin-ui-preview/1.0.0/fixture.schema.json"
+        / "standards/plugin-ui-preview/0.1.0/fixture.schema.json"
     )
     if checkout.is_file():
         return checkout
