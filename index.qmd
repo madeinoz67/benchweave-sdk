@@ -1,0 +1,42 @@
+The **BenchWeave plugin developer SDK** is the offline authoring and conformance toolkit for BenchWeave OTDP device plugins: generate a plugin project, implement and test it against SDK-supplied interfaces and scripted mocks, validate descriptor and presentation contracts offline, and prepare a reviewed release — all without importing gateway internals.
+
+It is a separate wheel from the BenchWeave gateway, published to PyPI as `benchweave-sdk`, and mounted in the [main BenchWeave repository](https://github.com/madeinoz67/benchweave) at `packages/sdk` as a git submodule with its own CI and release cycle. Python 3.13+, SDK 0.0.2, OTDP 0.3.0 and adapter API 1.1 are the initial baseline.
+
+# Installation
+
+Stable releases are on PyPI:
+
+```sh
+pip install benchweave-sdk
+# or as an isolated CLI tool
+uv tool install benchweave-sdk
+# or via Homebrew (macOS and Linux)
+brew install madeinoz67/tap/benchweave-sdk
+```
+
+For bleeding-edge work before a release, install straight from the default branch:
+
+```sh
+pip install git+https://github.com/madeinoz67/benchweave-sdk.git
+```
+
+To hack on the SDK itself, clone the repository and `uv sync --extra test`.
+
+# Quick start
+
+Generate an independent plugin project with one command:
+
+```sh
+benchweave-sdk new plugins/acme/model100 --package benchweave_acme_model100
+```
+
+The generator creates a standalone project — source package, an explicitly synthetic protocol, generated mock/conformance tests, and an `AI-GUIDE.md` describing the design, build, test, review and release workflow. From there the path is five steps: install, generate, replace the synthetic protocol with verified device behaviour, run the checks, then prepare and approve a release. The [plugin developer guide](user-guide/plugin-sdk.qmd) walks through each one.
+
+# Documentation
+
+- [Plugin developer guide](user-guide/plugin-sdk.qmd) — install, generate, implement, test, review and release a device plugin.
+- [API reference](reference/index.qmd) — the `Adapter`, `HostServices` and `OperationContext` structural-typing protocols.
+- [CLI reference](reference/cli/index.qmd) — `new`, `check`, `check-ui`, `check-preset`, `preview-ui`, `inventory` and `sync-standards`.
+- [Changelog](changelog.qmd) — release history.
+
+The BenchWeave gateway, the canonical architecture and contract standards, the compatibility matrix and the device-level integration guides live in the [main BenchWeave repository](https://github.com/madeinoz67/benchweave).

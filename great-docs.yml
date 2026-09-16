@@ -94,7 +94,7 @@ repo: https://github.com/madeinoz67/benchweave-sdk
 # Canonical address of the deployed docs site. Used for skills-page install
 # commands, .well-known/ discovery, sitemaps, and subdirectory deployments;
 # also sets website.site-url in _quarto.yml.
-# site_url: null
+site_url: https://madeinoz67.github.io/benchweave-sdk/
 
 # Source Link Configuration
 # -------------------------
@@ -310,7 +310,16 @@ changelog:
 #
 # File paths are relative to the user guide directory (no user_guide/ prefix).
 # When using explicit ordering, numeric filename prefixes are preserved as-is.
-user_guide: docs
+#
+# Explicit list on purpose: only the pages named here are copied and rendered.
+# A directory string would auto-discover recursively and render the gitignored
+# docs/superpowers/ planning docs (defect found in review of the initial build).
+# The explicit list resolves against the conventional user_guide/ directory at
+# the project root, so guide sources live in user_guide/, not docs/.
+user_guide:
+  - section: "Plugin development"
+    contents:
+      - plugin-sdk.qmd
 
 # Bibliography & Citations
 # ------------------------
@@ -372,7 +381,13 @@ reference:
 # A logo replaces the text title in the navbar.
 # : type(str) - a single file used in both light and dark mode
 # : type(map) - (default) light/dark variants, as below
-logo: docs/assets/benchweave-sdk-banner.png
+# Compact square mark (the hex glyph cropped from the banner, 96px / 13KB)
+# for the navbar; the full 1.6MB banner is reserved for the landing hero
+# (hero.logo below). show_title keeps the "BenchWeave SDK" text beside the
+# mark — the mark alone does not carry the name.
+logo:
+  light: docs/assets/benchweave-sdk-logo.png
+  show_title: true
 # logo:
 #   light: null            # null = no logo
 #   dark: null             # dark-mode variant; falls back to `light` when null
@@ -402,6 +417,12 @@ logo: docs/assets/benchweave-sdk-banner.png
 #   tagline: null          # false hides it
 #   badges: auto           # "auto" (from README), a list, or false
 #   starfield: false       # interactive starfield animation
+hero:
+  logo:
+    light: docs/assets/benchweave-sdk-banner.png
+  logo_height: 200px
+  name: false              # the banner already carries the name
+                            # (tagline falls back to the package description)
 
 # Markdown Pages
 # --------------

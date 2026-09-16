@@ -3,11 +3,13 @@
 The BenchWeave plugin SDK: offline authoring and conformance tooling for OTDP device
 plugins. A separate wheel from the gateway, mounted in the main repository at
 `packages/sdk` as a git submodule. `README.md` is the five-step quickstart;
-`docs/plugin-sdk.md` is the developer guide.
+`user_guide/plugin-sdk.qmd` is the developer guide (rendered at `user-guide/` on the
+docs site).
 
 ## Doc-home map — what lives here, what lives in the main repository
 
-- **Here:** `docs/plugin-sdk.md` (the plugin developer guide — moved here 2026-09-15),
+- **Here:** `user_guide/plugin-sdk.qmd` (the plugin developer guide — moved here
+  2026-09-15, migrated into the docs site 2026-09-16),
   `README.md` (quickstart + sister-repo pointer), the vendored standards **copy** under
   `src/benchweave_sdk/standards/` (generated from the lock — the `_GENERATED.txt` stamps
   say *do not edit*; hand-editing it is always wrong), and this repo's own working docs
