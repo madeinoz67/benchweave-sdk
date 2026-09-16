@@ -452,7 +452,7 @@
   },
   "additionalProperties": false,
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:otdp:device-descriptor:0.3.0",
+  "$id": "urn:otdp:device-descriptor:0.1.0",
   "title": "OTDP 0.1.0 device descriptor \u2014 STG architecture contract",
   "description": "OTDP 0.1.0 device and class declarations. Read core specification, measurement-model.md, device-classes.md and the pinned profile catalog. Schema validation is followed by class/action/constraint and dataset semantic checks.",
   "$defs": {

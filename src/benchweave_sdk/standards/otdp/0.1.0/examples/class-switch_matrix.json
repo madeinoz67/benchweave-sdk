@@ -106,7 +106,7 @@
   ],
   "contracts": [
     {
-      "id": "urn:otdp:profile-catalog:1.0.0",
+      "id": "urn:otdp:profile-catalog:0.1.0",
       "path": "device-profile-catalog.json",
       "sha256": "0c709d14714a5425fca62c60be335b43e7df854067dc276b3191fb008f6c260b"
     },
