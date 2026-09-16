@@ -38,6 +38,10 @@ To hack on the SDK itself, clone the repository and `uv sync --extra test`.
 
 The generated runtime has no dependency on this SDK. The plugin test extra pins the SDK version from PyPI. Generate and retain a plugin dependency lock in its repository. A template is not qualified firmware or a real instrument driver.
 
+## Documentation
+
+The versioned documentation site is published at <https://madeinoz67.github.io/benchweave-sdk/>. Start from the rendered [plugin SDK guide](https://madeinoz67.github.io/benchweave-sdk/docs/user-guide/plugin-sdk.html); the version selector on each docs page switches between the released versions and the current `main` build.
+
 ## Directory structure
 
 In a plugin collection, each device plugin is an independent project at `plugins/<manufacturer>/<name>/`. The SDK itself stays in `packages/sdk/`. An external plugin repository can use that device project as its repository root; it does not need the enclosing `plugins/<manufacturer>/` directories. The project directory and Python import package have different roles: `acme/model100` organises the collection, while `benchweave_acme_model100` is the import name selected by `--package`.

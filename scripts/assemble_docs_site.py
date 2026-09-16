@@ -41,8 +41,12 @@ Two assembly-level repairs on top of the tool's own output:
   docs-root favicon absolutely and the SVG favicon is always present.
 
 Any build failure aborts with a non-zero exit — this script runs in CI where
-a docs failure must fail the job. Run from the repository root with
-``great-docs`` on PATH (see .github/workflows/docs.yml).
+a docs failure must fail the job. Verification is equally loud: verify_tree
+fails the build on an incomplete tree, a website version selector that has
+drifted from the release tags, or a release tag missing from great-docs.yml's
+static ``versions:`` list; and a ``--dest`` inside the repository or over
+tracked files is refused before anything is wiped. Run from the repository
+root with ``great-docs`` on PATH (see .github/workflows/docs.yml).
 """
 
 from __future__ import annotations
@@ -94,7 +98,7 @@ def ref_has_config(ref: str) -> bool:
 
 
 def yml_version_tags() -> set[str]:
-    """Tags listed under ``versions:`` in great-docs.yml (for a staleness warning)."""
+    """Tags listed under ``versions:`` in great-docs.yml (must cover every release tag)."""
     text = (REPO / "great-docs.yml").read_text(encoding="utf-8")
     block = re.search(r"^versions:\n((?:[ \t]+.*\n?)+)", text, re.MULTILINE)
     if not block:
@@ -283,6 +287,25 @@ def complete_favicons(dest: Path, logo: Path) -> None:
                 shutil.copy2(src, bucket / name)
 
 
+def website_version_options() -> list[tuple[str, str]]:
+    """(version token, label) pairs from the website's docs version selector.
+
+    The static front door hard-codes its version selector, so it can drift
+    from the release tags it points at — a new tag cut without updating the
+    website leaves the selector advertising the previous release. Parsing it
+    here lets verify_tree fail that drift in CI instead of shipping it.
+    """
+    src = REPO / "website" / "index.html"
+    html = src.read_text(encoding="utf-8")
+    select = re.search(r'<select class="version-select".*?</select>', html, re.DOTALL)
+    if not select:
+        raise SystemExit(f"docs version selector missing from website source: {src}")
+    labels = re.findall(r'<option value="[^"]*">\s*([^<]+?)\s*</option>', select.group(0))
+    if not labels:
+        raise SystemExit(f"docs version selector has no <option> entries: {src}")
+    return [(label.split()[0], label) for label in labels]
+
+
 def verify_tree(dest: Path, tags: list[str], latest: str, dev_isolated: bool) -> None:
     docs = dest / "docs"
     failures = []
@@ -290,6 +313,10 @@ def verify_tree(dest: Path, tags: list[str], latest: str, dev_isolated: bool) ->
         failures.append("static site root index.html missing (website/ not copied?)")
     if not (dest / "assets" / "logo.svg").is_file():
         failures.append("static site assets/logo.svg missing")
+    if not (dest / "assets" / "styles.css").is_file():
+        failures.append("static site assets/styles.css missing (index.html hard-references it)")
+    if not (dest / "assets" / "site.js").is_file():
+        failures.append("static site assets/site.js missing (index.html hard-references it)")
     if not (docs / "index.html").is_file():
         failures.append("docs root index.html missing (docs/ subpath build failed?)")
     for tag in tags:
@@ -302,6 +329,17 @@ def verify_tree(dest: Path, tags: list[str], latest: str, dev_isolated: bool) ->
     for alias in ALIASES:
         if not (docs / "v" / alias / "index.html").is_file():
             failures.append(f"alias docs/v/{alias}/ missing")
+    advertised = website_version_options()
+    for token, label in advertised:
+        if not (docs / "v" / token / "index.html").is_file():
+            failures.append(f"website selector advertises {label!r}; docs/v/{token}/ not assembled")
+    latest_labelled = [token for token, label in advertised if "(latest)" in label]
+    if len(latest_labelled) != 1:
+        failures.append(f"website selector must label exactly one option '(latest)': {advertised}")
+    elif latest_labelled[0] != latest:
+        failures.append(
+            f"website labels {latest_labelled[0]} '(latest)' but the latest release tag is {latest}"
+        )
     if failures:
         raise SystemExit("assembled site verification FAILED:\n  " + "\n  ".join(failures))
 
@@ -312,6 +350,24 @@ def verify_tree(dest: Path, tags: list[str], latest: str, dev_isolated: bool) ->
     for path in sorted((docs / "v").iterdir()):
         if path.is_dir():
             log(f"  docs/v/{path.name}/  ({sum(1 for _ in path.rglob('*'))} files)")
+
+
+def guard_dest(dest: Path) -> None:
+    """Refuse to assemble into the repository itself or over tracked files.
+
+    Assembly wipes ``--dest``: ``--dest .`` would rmtree the working tree and
+    ``--dest docs`` would delete tracked sources. Loud refusal before any
+    destructive operation runs.
+    """
+    if dest == REPO or dest in REPO.parents:
+        raise SystemExit(f"--dest {dest} is the repository root or an ancestor of it — refusing")
+    if REPO in dest.parents and dest.exists():
+        tracked = run(["git", "ls-files", "--", str(dest.relative_to(REPO))], cwd=REPO).split()
+        if tracked:
+            raise SystemExit(
+                f"--dest {dest} contains {len(tracked)} tracked file(s), "
+                f"e.g. {tracked[0]} — refusing to wipe them"
+            )
 
 
 def main() -> None:
@@ -332,8 +388,11 @@ def main() -> None:
 
     dest = (REPO / args.dest).resolve()
     staging = (REPO / args.staging).resolve()
+    guard_dest(dest)
     if dest.exists():
         shutil.rmtree(dest)  # hermetic: no stale content from a previous layout survives a re-run
+    if staging.exists():
+        shutil.rmtree(staging)  # hermetic: prior/concurrent-run leftovers suffix-collide, not merge
     docs_root = dest / "docs"
     tags = release_tags()
     if not tags:
@@ -342,7 +401,10 @@ def main() -> None:
 
     missing = [t for t in tags if t not in yml_version_tags()]
     if missing:
-        log(f"WARNING: release tags absent from great-docs.yml versions: {missing}")
+        raise SystemExit(
+            f"release tags absent from great-docs.yml 'versions:': {missing} — the list is "
+            "static and complete by design; add every tag at release time"
+        )
 
     # ── 1. In-process base build: current tree + approximated historical buckets ──
     inproc_versions = [t for t in tags if not ref_has_config(t)] + ["dev"]
