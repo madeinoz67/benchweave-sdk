@@ -22,8 +22,12 @@ permissions:
   pages: write
   id-token: write
 
+# Keyed by ref: only publish-docs touches Pages and it runs on main alone, so
+# a PR build and the main build must not share a group — when they did, the
+# merge's main run was cancelled in favour of the still-queued PR check
+# ("higher priority waiting request for pages exists") and nothing deployed.
 concurrency:
-  group: pages
+  group: pages-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
