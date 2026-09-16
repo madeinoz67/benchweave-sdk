@@ -15,3 +15,9 @@ docs/superpowers/
 .claude/memory-drain-receipts.jsonl
 .claude/memory-drain-receipts.jsonl.tmp
 .claude/settings.local.json
+
+# Gortex git-hook artifacts — the post-merge hook regenerates all three
+# (gortex export --format mermaid, gortex wiki, gortex docs); local-only.
+wiki/
+docs/architecture/
+CHANGELOG_AUTO.md
