@@ -166,8 +166,46 @@ def _verify_bundle_integrity(bundle: Path, document: dict[str, Any]) -> None:
                 raise ValueError(f"hash_mismatch: {file['path']}")
 
 
+def _collect_stamps(tree: Path, standards: list[dict[str, Any]]) -> set[str]:
+    """Verify every standard's stamp is present; return their paths.
+
+    Shared by every verification lane (#9): a missing stamp is drift in
+    bundle-mode --check, the no-bundle lane, and the hatch build hook
+    alike — it would ride into wheels unnoticed.
+    """
+    stamps: set[str] = set()
+    for standard in standards:
+        stamp = f"{standard['id']}/{STAMP_NAME}"
+        if not (tree / stamp).is_file():
+            raise ValueError(f"stamp_missing: {stamp}")
+        stamps.add(stamp)
+    return stamps
+
+
+def _sweep_vendored_tree(tree: Path, recorded: set[str], stamps: set[str]) -> None:
+    """The one extras sweep (#9): every file in the vendored tree must be
+    lock-recorded, a per-standard stamp, or transient __pycache__ —
+    presentation.py imports the vendored plugin-ui contracts module, so
+    its bytecode cache appears beside the source; it is gitignored and
+    never packaged. Anything else is drift: it would ship in a wheel
+    built outside the gated paths."""
+    present = {
+        path.relative_to(tree).as_posix()
+        for path in tree.rglob("*")
+        if path.is_file() and "__pycache__" not in path.relative_to(tree).parts
+    }
+    for path in sorted(present - recorded - stamps):
+        raise ValueError(f"unexpected_vendored_file: {path}")
+
+
 def _verify_vendored_tree(sdk_root: Path, lock: dict[str, Any]) -> None:
-    """Recompute the vendored tree against the lock; refuse any drift."""
+    """Recompute the vendored tree against the lock; refuse any drift.
+
+    #9: this lane now verifies what the no-bundle lane verifies — per-file
+    digests over lock-recorded paths, stamp presence per standard, and the
+    extras sweep over the whole tree. A stray file or a missing stamp is
+    drift here too, not only in the bundle-free lane.
+    """
     recorded = {
         file["path"]: file["sha256"]
         for standard in lock.get("standards", [])
@@ -182,6 +220,8 @@ def _verify_vendored_tree(sdk_root: Path, lock: dict[str, Any]) -> None:
             raise ValueError(f"hash_mismatch: {path} missing from the vendored tree")
         if hashlib.sha256(target.read_bytes()).hexdigest() != digest:
             raise ValueError(f"hash_mismatch: {path}")
+    stamps = _collect_stamps(tree, lock.get("standards", []))
+    _sweep_vendored_tree(tree, set(recorded), stamps)
 
 
 def _verify_self_consistency(sdk_root: Path) -> None:
@@ -194,25 +234,6 @@ def _verify_self_consistency(sdk_root: Path) -> None:
     """
     lock = _read_lock(sdk_root)
     _verify_vendored_tree(sdk_root, lock)
-    tree = sdk_root / VENDORED
-    standards = lock.get("standards", [])
-    stamps: set[str] = set()
-    for standard in standards:
-        stamp = f"{standard['id']}/{STAMP_NAME}"
-        if not (tree / stamp).is_file():
-            raise ValueError(f"stamp_missing: {stamp}")
-        stamps.add(stamp)
-    recorded = {file["path"] for standard in standards for file in standard["files"]}
-    # presentation.py imports the vendored plugin-ui contracts module, so its
-    # __pycache__ appears beside the source; it is gitignored and never
-    # packaged. Everything else in the tree must be lock-recorded or a stamp.
-    present = {
-        path.relative_to(tree).as_posix()
-        for path in tree.rglob("*")
-        if path.is_file() and "__pycache__" not in path.relative_to(tree).parts
-    }
-    for path in sorted(present - recorded - stamps):
-        raise ValueError(f"unexpected_vendored_file: {path}")
 
 
 def _write_vendored(bundle: Path, sdk_root: Path, document: dict[str, Any]) -> None:
