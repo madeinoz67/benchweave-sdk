@@ -1,28 +1,63 @@
 # Security Policy
 
-## Supported versions
-
-Only the latest release and the `main` branch receive security fixes.
+The BenchWeave SDK is **pre-1.0** software maintained by a single person. This
+policy is written to be honest about that rather than to promise more than it can
+deliver.
 
 ## Reporting a vulnerability
 
-**Do not open a public GitHub issue for a security problem.**
+**Please report privately, not in a public issue.**
 
-Email **[seaton@strobotics.com.au](mailto:seaton@strobotics.com.au)** with:
+Use GitHub's private vulnerability reporting:
+[**Report a vulnerability**](https://github.com/madeinoz67/benchweave-sdk/security/advisories/new).
+It creates a private advisory only you and the maintainer can see, and it handles
+coordinated disclosure and CVE requests if it gets that far.
 
-- the affected component (SDK, preview server, or standards tooling),
-- steps to reproduce or a proof of concept,
-- the impact you believe it has.
+If you can, include:
 
-You should receive an acknowledgment, typically within 72 hours. Fixes are coordinated with you before disclosure; credit in the advisory is yours if you want it.
+- The SDK version or commit you tested
+- Which surface is affected — the plugin contract packages, the Python runtime
+  support, or the preview server used to develop plugins against recorded
+  gateway sessions
+- What an attacker gains, and what access they need to start
+- The smallest reproduction you can manage
+
+Reports are acknowledged and worked on a **best-effort** basis. No response time is
+promised that cannot be honored. If something is being actively exploited, say so in
+the report and it will be treated accordingly.
+
+Please give a reasonable chance to ship a fix before disclosing publicly. Credit in
+the advisory is gladly given — say how you want to be credited, or that you would
+rather not be.
 
 ## Scope
 
-This SDK packages the BenchWeave plugin contract, its Python runtime support,
-and the preview server used to develop plugins against recorded gateway
-sessions. Issues in third-party dependencies should be reported upstream, but
-a working exploit chain through the SDK counts.
+**Supported version: the latest release.** The SDK is pre-1.0 and fixes are not
+backported to older tags.
 
-Please do not run automated scanning, load testing, or denial-of-service
-techniques against any publicly hosted BenchWeave infrastructure; this project
-is self-hosted, so a repro on your own instance is all that is needed.
+In scope — anything that lets a plugin or a crafted input exceed the boundary the
+SDK is supposed to enforce:
+
+- The plugin contract the SDK implements, where a defect lets a plugin exceed
+  the boundary a conforming gateway enforces
+- The preview server — anything that lets a recorded session or a crafted
+  replay read or write outside its working directory
+- Secrets or tokens leaking through logs, errors, or preview-server responses
+
+Out of scope:
+
+- Anything that requires an attacker to already have filesystem or OS-level
+  access to the host — the SDK is local development tooling for single-operator
+  use and does not defend against a compromised machine.
+- Missing TLS or hardening headers. The preview server binds to loopback
+  (`127.0.0.1`) by default and ships no TLS. If you rebind it, transport
+  security is yours to provide.
+- Denial of service through sheer volume against a server you control.
+- Findings from automated scanners with no demonstrated impact.
+
+## Known weaknesses
+
+The SDK is pre-1.0 and has rough edges already known about; some are tracked as
+public issues. If you find something already tracked, a comment on that issue is
+more useful than a new report — but if you think it is more severe than it was
+rated, say so privately. Re-rating severity beats defending it.
