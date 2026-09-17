@@ -8,6 +8,10 @@ Build an external device plugin without importing gateway internals. Python 3.13
 
 This is the SDK. The BenchWeave gateway and the canonical architecture and contract standards live in the main repository: [madeinoz67/benchweave](https://github.com/madeinoz67/benchweave). This SDK is mounted there at `packages/sdk` as a git submodule and has its own CI and release cycle.
 
+## Community
+
+Questions and discussion happen on the [BenchWeave Discord](https://discord.gg/Y5XPTWQQXr) — permanent invite. SDK bugs and feature requests belong in the [SDK issue tracker](https://github.com/madeinoz67/benchweave-sdk/issues).
+
 ## Installation
 
 Stable releases are on PyPI:
