@@ -12,6 +12,7 @@ import json
 import shutil
 import tomllib
 from dataclasses import dataclass
+from importlib.resources import files
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -118,7 +119,10 @@ def _guard_path(identifier: str, path: str) -> None:
 
 
 def _read_lock(sdk_root: Path) -> dict[str, Any]:
-    path = sdk_root / LOCK_NAME
+    return _read_lock_file(sdk_root / LOCK_NAME)
+
+
+def _read_lock_file(path: Path) -> dict[str, Any]:
     if not path.is_file():
         return {}
     try:
@@ -206,6 +210,10 @@ def _verify_vendored_tree(sdk_root: Path, lock: dict[str, Any]) -> None:
     extras sweep over the whole tree. A stray file or a missing stamp is
     drift here too, not only in the bundle-free lane.
     """
+    _verify_tree(sdk_root / VENDORED, lock)
+
+
+def _verify_tree(tree: Path, lock: dict[str, Any]) -> None:
     recorded = {
         file["path"]: file["sha256"]
         for standard in lock.get("standards", [])
@@ -213,7 +221,6 @@ def _verify_vendored_tree(sdk_root: Path, lock: dict[str, Any]) -> None:
     }
     if not recorded:
         raise ValueError("not_synced: no standards in the lock; run sync-standards first")
-    tree = sdk_root / VENDORED
     for path, digest in sorted(recorded.items()):
         target = tree / path
         if not target.is_file():
@@ -232,9 +239,31 @@ def _verify_self_consistency(sdk_root: Path) -> None:
     unrecorded file in the tree or a missing stamp is drift too: either would
     ride into wheels unnoticed.
     """
-    lock = _read_lock(sdk_root)
-    _verify_vendored_tree(sdk_root, lock)
+_verify_state(sdk_root / LOCK_NAME, sdk_root / VENDORED)
 
+
+def verify_installed() -> None:
+    """Verify an installed SDK's vendored tree against its packaged lock.
+
+    Installed distributions carry the lock inside the package (wheels since
+    the lock was force-included), so ``sync-standards --check`` can prove
+    integrity without a repository checkout — including the stamp and
+    extras checks the repository lanes run. Importing a bundle still needs
+    the checkout: it rewrites the source tree.
+    """
+    package = Path(str(files("benchweave_sdk")))
+    lock_path = package / LOCK_NAME
+    if not lock_path.is_file():
+        raise ValueError(
+            "lock_missing: this installed SDK does not package its standards lock; "
+            "reinstall a newer benchweave-sdk or run --check from a repository checkout"
+        )
+    _verify_state(lock_path, package / "standards")
+
+
+def _verify_state(lock_path: Path, tree: Path) -> None:
+    lock = _read_lock_file(lock_path)
+    _verify_tree(tree, lock)
 
 def _write_vendored(bundle: Path, sdk_root: Path, document: dict[str, Any]) -> None:
     """Rewrite the vendored tree and lock; vendored bytes match the bundle exactly."""

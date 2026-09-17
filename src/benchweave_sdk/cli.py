@@ -162,6 +162,14 @@ def check_preset_command(
     _render_report(report)
 
 
+def _sdk_checkout_root() -> Path | None:
+    """The SDK repository checkout containing this module, or None when installed."""
+    from .validation import _project_name
+
+    candidate = Path(__file__).resolve().parents[2]
+    return candidate if _project_name(candidate) == "benchweave-sdk" else None
+
+
 @cli.command("sync-standards")
 @click.argument("bundle", required=False, type=click.Path(path_type=Path))
 @click.option("--check", "check_only", is_flag=True, help="Verify the vendored tree only")
@@ -170,13 +178,27 @@ def sync_standards_command(bundle: Path | None, check_only: bool) -> None:
     """Import a standards bundle into the SDK's vendored tree and lock.
 
     With --check and no bundle, verify the committed lock and vendored tree
-    alone; no main-project export is read.
+    alone; no main-project export is read. An installed SDK (no repository
+    checkout) supports only that --check form, against its packaged lock.
     """
-    from .standards_sync import sync
+    from .standards_sync import sync, verify_installed
 
+    sdk_root = _sdk_checkout_root()
+    if sdk_root is None:
+        if bundle is not None or not check_only:
+            raise ValueError(
+                "sync_requires_repo_checkout: importing a bundle rewrites the SDK "
+                "source tree; an installed SDK supports only 'sync-standards --check'"
+            )
+        verify_installed()
+        ConsoleOutput().message(
+            "Standards verified (packaged lock and vendored tree agree).",
+            style="green",
+        )
+        return
     report = sync(
         bundle,
-        sdk_root=Path(__file__).resolve().parents[2],
+        sdk_root=sdk_root,
         check_only=check_only,
     )
     summary = ", ".join(
@@ -354,6 +376,10 @@ def main(args: Sequence[str] | None = None) -> int:
         return exc.exit_code
     except click.exceptions.Exit as exc:
         return exc.exit_code
+    except click.exceptions.Abort:
+        # Ctrl-C at a prompt: match standalone mode's clean exit, not a traceback.
+        click.echo("Aborted!", err=True)
+        return 1
     return 0
 
 
