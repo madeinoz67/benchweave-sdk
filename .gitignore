@@ -1,7 +1,6 @@
 __pycache__/
 .gortex/
 venv/
-uv.lock
 docs/superpowers/
 
 # Memory-proposal ledger: session findings queued for the vault (see .claude/memory-protocol.md)
