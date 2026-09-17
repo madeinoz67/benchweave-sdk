@@ -149,9 +149,27 @@ jobs:
     env:
       TAG: ${{ github.event.release.tag_name }}
     steps:
+      - name: Check changelog app wiring
+        id: wiring
+        run: |
+          if [ -z "${{ vars.CHANGELOG_APP_ID }}" ]; then
+            echo "::warning::CHANGELOG_APP_ID variable not set — skipping CHANGELOG.md commit. Register the changelog GitHub App, install it on this repo, then set CHANGELOG_APP_ID + CHANGELOG_APP_PRIVATE_KEY."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Create changelog app token
+        if: steps.wiring.outputs.ready == 'true'
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.CHANGELOG_APP_ID }}
+          private-key: ${{ secrets.CHANGELOG_APP_PRIVATE_KEY }}
+          permission-contents: write
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          token: ${{ steps.wiring.outputs.ready == 'true' && steps.app-token.outputs.token || github.token }}
       - name: Generate notes for this release
         uses: orhun/git-cliff-action@v4
         with:
@@ -164,16 +182,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file RELEASE_NOTES.md
       - name: Regenerate the full CHANGELOG.md
+        if: steps.wiring.outputs.ready == 'true'
         uses: orhun/git-cliff-action@v4
         with:
           config: cliff.toml
         env:
           OUTPUT: CHANGELOG.md
       - name: Commit CHANGELOG.md to main
+        if: steps.wiring.outputs.ready == 'true'
         run: |
           set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "${{ steps.app-token.outputs.app-slug }}[bot]"
+          git config user.email "${{ steps.app-token.outputs.app-slug }}[bot]@users.noreply.github.com"
           if git diff --quiet CHANGELOG.md; then
             echo "CHANGELOG.md already up to date"
             exit 0
@@ -182,5 +202,8 @@ jobs:
           git checkout main
           cp /tmp/CHANGELOG.md CHANGELOG.md
           git add CHANGELOG.md
-          git commit -m "chore(changelog): update for $TAG"
-          git push
+          # [skip ci] is load-bearing: app-token pushes DO trigger workflows
+          # (GITHUB_TOKEN pushes do not) — without it the changelog commit
+          # re-runs the full ci suite on a CHANGELOG.md-only commit.
+          git commit -m "chore(changelog): update for $TAG [skip ci]"
+          git push origin HEAD:main
