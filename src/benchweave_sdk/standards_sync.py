@@ -53,6 +53,12 @@ def sync(bundle: Path | None, sdk_root: Path, *, check_only: bool = False) -> Sy
     document = _load_bundle(bundle)
     lock = _read_lock(sdk_root)
     previous = {row["id"]: row for row in lock.get("standards", [])}
+    # One read-and-digest pass over the bundle serves both the drift
+    # classification and the manifest integrity check below; the files were
+    # previously read and hashed twice.
+    recomputed = {
+        standard["id"]: _bundle_hashes(bundle, standard) for standard in document["standards"]
+    }
     added: list[str] = []
     changed: list[str] = []
     deprecated: list[str] = []
@@ -65,7 +71,7 @@ def sync(bundle: Path | None, sdk_root: Path, *, check_only: bool = False) -> Sy
             changed.append(identifier)
             if standard["status"] == "deprecated":
                 deprecated.append(identifier)
-        elif _bundle_hashes(bundle, standard) != _lock_hashes(prior):
+        elif recomputed[identifier] != _lock_hashes(prior):
             raise ValueError(
                 f"standards_version_required: {identifier} content changed without a "
                 "standards version increment"
@@ -74,7 +80,7 @@ def sync(bundle: Path | None, sdk_root: Path, *, check_only: bool = False) -> Sy
             # Status-only transition: same version and bytes, new deprecation.
             deprecated.append(identifier)
     removed = sorted(previous)
-    _verify_bundle_integrity(bundle, document)
+    _verify_bundle_integrity(document, recomputed)
     if check_only:
         _verify_vendored_tree(sdk_root, lock)
     else:
@@ -158,15 +164,19 @@ def _lock_hashes(prior: dict[str, Any]) -> dict[str, str]:
     return {file["path"]: file["sha256"] for file in prior["files"]}
 
 
-def _verify_bundle_integrity(bundle: Path, document: dict[str, Any]) -> None:
+def _verify_bundle_integrity(
+    document: dict[str, Any], recomputed: dict[str, dict[str, str]]
+) -> None:
     """The manifest must describe the bytes actually present in the bundle.
 
     sha256 is the anchor: the lock records no sizes, only digests.
+    ``recomputed`` carries the digests already computed from the bundle's
+    files, so the bundle is read exactly once per sync.
     """
     for standard in document["standards"]:
+        actual = recomputed[standard["id"]]
         for file in standard["files"]:
-            digest = hashlib.sha256(_bundle_file(bundle, file["path"])).hexdigest()
-            if digest != file["sha256"]:
+            if actual[file["path"]] != file["sha256"]:
                 raise ValueError(f"hash_mismatch: {file['path']}")
 
 
@@ -267,11 +277,19 @@ def _verify_state(lock_path: Path, tree: Path) -> None:
 
 
 def _write_vendored(bundle: Path, sdk_root: Path, document: dict[str, Any]) -> None:
-    """Rewrite the vendored tree and lock; vendored bytes match the bundle exactly."""
+    """Rewrite the vendored tree and lock; vendored bytes match the bundle exactly.
+
+    The new tree is staged beside the old one and swapped in at the end, so
+    an interrupted sync can never leave a half-empty vendored tree behind
+    (the old ``rmtree``-then-write order destroyed the tree first). The lock
+    is written only after the swap: a failure between the two surfaces as
+    loud ``--check`` drift, never as a silently torn state.
+    """
     tree = sdk_root / VENDORED
-    if tree.exists():
-        shutil.rmtree(tree)
-    tree.mkdir(parents=True)
+    staging = tree.with_name(tree.name + ".new")
+    if staging.exists():
+        shutil.rmtree(staging)
+    staging.mkdir(parents=True)
     lock: dict[str, Any] = {
         "lock_version": 1,
         "standards": [],
@@ -281,31 +299,44 @@ def _write_vendored(bundle: Path, sdk_root: Path, document: dict[str, Any]) -> N
             "notes": None,
         },
     }
-    for standard in document["standards"]:
-        stamps: list[str] = []
-        rows: list[dict[str, str]] = []
-        for file in standard["files"]:
-            raw = _bundle_file(bundle, file["path"])
-            target = tree / file["path"]
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(raw)
-            stamps.append(
-                STAMP_LINE.format(
-                    path=file["path"], identifier=standard["id"], version=standard["version"]
+    try:
+        for standard in document["standards"]:
+            stamps: list[str] = []
+            rows: list[dict[str, str]] = []
+            for file in standard["files"]:
+                raw = _bundle_file(bundle, file["path"])
+                target = staging / file["path"]
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(raw)
+                stamps.append(
+                    STAMP_LINE.format(
+                        path=file["path"], identifier=standard["id"], version=standard["version"]
+                    )
                 )
+                rows.append({"path": file["path"], "sha256": file["sha256"]})
+            stamp_file = staging / standard["id"] / STAMP_NAME
+            stamp_file.parent.mkdir(parents=True, exist_ok=True)
+            stamp_file.write_text("\n".join(stamps) + "\n", encoding="utf-8")
+            lock["standards"].append(
+                {
+                    "id": standard["id"],
+                    "version": standard["version"],
+                    "status": standard["status"],
+                    "files": rows,
+                }
             )
-            rows.append({"path": file["path"], "sha256": file["sha256"]})
-        stamp_file = tree / standard["id"] / STAMP_NAME
-        stamp_file.parent.mkdir(parents=True, exist_ok=True)
-        stamp_file.write_text("\n".join(stamps) + "\n", encoding="utf-8")
-        lock["standards"].append(
-            {
-                "id": standard["id"],
-                "version": standard["version"],
-                "status": standard["status"],
-                "files": rows,
-            }
-        )
+        if tree.exists():
+            retired = tree.with_name(tree.name + ".old")
+            if retired.exists():
+                shutil.rmtree(retired)
+            tree.rename(retired)
+            staging.rename(tree)
+            shutil.rmtree(retired)
+        else:
+            staging.rename(tree)
+    except BaseException:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
     (sdk_root / LOCK_NAME).write_bytes(_canonical_json(lock))
 
 
