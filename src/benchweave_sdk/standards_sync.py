@@ -330,7 +330,14 @@ def _write_vendored(bundle: Path, sdk_root: Path, document: dict[str, Any]) -> N
             if retired.exists():
                 shutil.rmtree(retired)
             tree.rename(retired)
-            staging.rename(tree)
+            try:
+                staging.rename(tree)
+            except BaseException:
+                # The old tree was already moved aside; put it back so a
+                # failed swap leaves the previous state in place, not a
+                # missing vendored tree.
+                retired.rename(tree)
+                raise
             shutil.rmtree(retired)
         else:
             staging.rename(tree)
