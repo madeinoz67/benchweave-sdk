@@ -10,6 +10,15 @@ readme = "README.md"
 requires-python = ">=3.13"
 license = "MIT"
 license-files = ["LICENSE"]
+keywords = ["benchweave", "otdp", "device-plugin", "conformance", "scaffold"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Software Development :: Testing",
+  "Typing :: Typed",
+]
 dependencies = [
   "click>=8.3,<9",
   "jsonschema>=4.23",
@@ -22,6 +31,12 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest>=8.0"]
+
+[project.urls]
+Homepage = "https://madeinoz67.github.io/benchweave-sdk/"
+Documentation = "https://madeinoz67.github.io/benchweave-sdk/docs/"
+Repository = "https://github.com/madeinoz67/benchweave-sdk"
+Changelog = "https://github.com/madeinoz67/benchweave-sdk/blob/main/CHANGELOG.md"
 
 [project.scripts]
 benchweave-sdk = "benchweave_sdk.cli:main"

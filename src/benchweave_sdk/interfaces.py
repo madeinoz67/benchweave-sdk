@@ -108,13 +108,29 @@ class HostServices(Protocol):
 
 
 class CaptureServices(HostServices, Protocol):
+    """Host services extended with capture artifact storage.
+
+    Optional: a host that implements no capture support hands adapters plain
+    :class:`HostServices`. Data appended under a ``capture_id`` becomes a
+    single artifact when finalised; an aborted capture leaves nothing behind.
+
+    See Also
+    --------
+    HostServices : the base transport, clock, and evidence surface.
+    """
+
     async def artifact_append(
         self, capture_id: str, data: bytes, context: OperationContext
-    ) -> None: ...
+    ) -> None:
+        """Append ``data`` to the capture artifact identified by ``capture_id``."""
+
     async def artifact_finalise(
         self, capture_id: str, metadata: dict[str, Any], context: OperationContext
-    ) -> dict[str, Any]: ...
-    async def artifact_abort(self, capture_id: str) -> None: ...
+    ) -> dict[str, Any]:
+        """Seal the capture and return its manifest (identity, size, digest, metadata)."""
+
+    async def artifact_abort(self, capture_id: str) -> None:
+        """Discard an in-progress capture; safe to call for unknown ids."""
 
 
 class Adapter(Protocol):
