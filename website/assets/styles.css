@@ -1,8 +1,53 @@
 /* BenchWeave SDK public site — tokens and components per the public-site
-   styleguide (main repo docs/internal/public-site-styleguide.html).
-   Dark-first; light at parity via the data-theme toggle. Plain CSS, no build. */
+   styleguide v0.2 (main repo docs/internal/public-site-styleguide.html). The
+   :root / dark blocks are copied from the styleguide verbatim (its "Instructions
+   for AI"); the mark is the dashed-hexagon SDK sub-brand with the filled SDK
+   pill. Theme follows the OS unless data-theme is set by the toggle. Plain CSS. */
 
   :root {
+    --bg: #EEF1F0;
+    --bg-elevated: #FFFFFF;
+    --bg-inset: #E3E7E5;
+    --text: #1B2027;
+    --text-muted: #565F68;
+    --border: #D6DBD9;
+    --border-strong: #B7BEBB;
+    --amber: #C6790A;      /* text/icon-safe shade of Trace Amber on light bg */
+    --amber-solid: #FFB020; /* raw brand amber for fills */
+    --amber-on: #1B2027;
+    --blue: #3355E0;
+    --blue-solid: #4C6FFF;
+    --green: #1F8F5F;
+    --green-solid: #3FB27F;
+    --red: #C82F35;
+    --red-solid: #E5484D;
+    --grid-line: rgba(27,32,39,0.06);
+    --shadow: 0 1px 2px rgba(27,32,39,0.08);
+    --radius-sm: 3px;
+    --radius-md: 6px;
+    --font-display: 'Space Grotesk', 'Segoe UI', system-ui, sans-serif;
+    --font-body: 'IBM Plex Sans', 'Segoe UI', system-ui, sans-serif;
+    --font-mono: 'IBM Plex Mono', 'SFMono-Regular', Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #1B2027;
+      --bg-elevated: #232A33;
+      --bg-inset: #161B21;
+      --text: #ECEFEE;
+      --text-muted: #A7B0B8;
+      --border: #333C46;
+      --border-strong: #46505C;
+      --amber: #FFB020;
+      --amber-on: #1B2027;
+      --blue: #8AA0FF;
+      --green: #3FD394;
+      --red: #FF6B70;
+      --grid-line: rgba(236,239,238,0.06);
+      --shadow: 0 1px 2px rgba(0,0,0,0.4);
+    }
+  }
+  :root[data-theme="dark"] {
     --bg: #1B2027;
     --bg-elevated: #232A33;
     --bg-inset: #161B21;
@@ -15,26 +60,14 @@
     --blue: #8AA0FF;
     --green: #3FD394;
     --red: #FF6B70;
-    --grid-line: rgba(236,239,238,0.055);
-    --font-display: 'Space Grotesk', 'Segoe UI', system-ui, sans-serif;
-    --font-body: 'IBM Plex Sans', 'Segoe UI', system-ui, sans-serif;
-    --font-mono: 'IBM Plex Mono', 'SFMono-Regular', Consolas, monospace;
+    --grid-line: rgba(236,239,238,0.06);
+    --shadow: 0 1px 2px rgba(0,0,0,0.4);
   }
-  :root[data-theme="light"] {
-    --bg: #EEF1F0;
-    --bg-elevated: #FFFFFF;
-    --bg-inset: #E3E7E5;
-    --text: #1B2027;
-    --text-muted: #565F68;
-    --border: #D6DBD9;
-    --border-strong: #B7BEBB;
-    --amber: #C6790A;
-    --amber-on: #FFFFFF;
-    --blue: #3355E0;
-    --green: #1F8F5F;
-    --red: #C82F35;
-    --grid-line: rgba(27,32,39,0.06);
-  }
+
+  /* Logo strand: the one stroke in the mark that swaps per theme (styleguide "Logo — copy exactly"). */
+  .wordmark .strand { stroke: #4C6FFF; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .wordmark .strand { stroke: #8AA0FF; } }
+  :root[data-theme="dark"] .wordmark .strand { stroke: #8AA0FF; }
   * { box-sizing: border-box; }
   html, body { margin: 0; }
   html { scroll-behavior: smooth; }
@@ -59,8 +92,8 @@
   }
   .wordmark { display: flex; align-items: center; gap: 9px; font-family: var(--font-display); font-weight: 600; font-size: 17px; color: var(--text); }
   .wordmark:hover { text-decoration: none; }
-  .wordmark img { display: block; }
-  .wordmark-sub { font-family: var(--font-mono); font-weight: 500; font-size: 12px; color: var(--amber); border: 1px solid var(--amber); border-radius: 4px; padding: 1px 6px; margin-left: 2px; }
+  .wordmark svg { display: block; flex-shrink: 0; }
+  .wordmark-sub { font-family: var(--font-mono); font-weight: 600; font-size: 11px; line-height: 1; color: #1B2027; background: #FFB020; border-radius: 999px; padding: 3px 7px; margin-left: 1px; }
   nav.panels { display: flex; gap: 4px; }
   nav.panels button {
     font-family: var(--font-body); font-size: 14px; font-weight: 500;
@@ -130,13 +163,13 @@
 
   .hero-badges { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 22px; }
   .status-line { display: inline-flex; align-items: center; gap: 8px; font-family: var(--font-mono); font-size: 12.5px; color: var(--text-muted); border: 1px solid var(--border); padding: 5px 10px; border-radius: 999px; background: var(--bg); }
-  .status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--amber); }
+  .status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--amber-solid); }
   .hero h1 { font-family: var(--font-display); font-size: 40px; line-height: 1.12; font-weight: 700; margin: 0 0 18px; letter-spacing: -0.01em; }
   .hero p.sub { color: var(--text-muted); font-size: 16.5px; max-width: 50ch; margin: 0 0 30px; }
   .cta-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
   .btn { font-family: var(--font-body); font-weight: 600; font-size: 14.5px; padding: 11px 20px; border-radius: 5px; border: 1px solid transparent; cursor: pointer; display: inline-block; }
   .btn:hover { text-decoration: none; }
-  .btn-primary { background: var(--amber); color: var(--amber-on); }
+  .btn-primary { background: var(--amber-solid); color: var(--amber-on); }
   .btn-ghost { background: transparent; color: var(--blue); padding: 11px 14px; }
   .btn-secondary { background: transparent; border-color: var(--border-strong); color: var(--text); }
 

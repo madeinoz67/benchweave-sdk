@@ -40,9 +40,14 @@ function applyStoredTheme() {
   } catch (e) {}
 }
 
+function currentTheme() {
+  const set = document.documentElement.getAttribute('data-theme');
+  if (set === 'light' || set === 'dark') return set;
+  return (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+}
+
 function toggleTheme() {
-  const isLight = document.documentElement.getAttribute('data-theme') === 'light';
-  const next = isLight ? 'dark' : 'light';
+  const next = currentTheme() === 'light' ? 'dark' : 'light';
   document.documentElement.setAttribute('data-theme', next);
   try { localStorage.setItem(THEME_KEY, next); } catch (e) {}
 }
