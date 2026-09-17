@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from benchweave_sdk import standards_sync
 from benchweave_sdk.standards_sync import (
     _verify_state,
     _verify_tree,
@@ -57,3 +58,21 @@ def test_checkout_root_detection() -> None:
     from benchweave_sdk.cli import _sdk_checkout_root
 
     assert _sdk_checkout_root() == REPO
+
+
+def test_verify_installed_passes_on_an_installed_layout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Mirror an installed wheel: the packaged lock sits INSIDE the package,
+    # beside the vendored standards tree. This is the success path the
+    # publish smoke also proves against the real wheel.
+    package = tmp_path / "benchweave_sdk"
+    package.mkdir()
+    shutil.copy(REPO / "standards-lock.json", package / "standards-lock.json")
+    shutil.copytree(
+        REPO / "src/benchweave_sdk/standards",
+        package / "standards",
+        ignore=shutil.ignore_patterns("__pycache__"),
+    )
+    monkeypatch.setattr(standards_sync, "files", lambda _name: package)
+    verify_installed()

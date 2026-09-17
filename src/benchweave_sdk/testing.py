@@ -195,8 +195,10 @@ class MockHost:
         TimeoutError
             If the context is cancelled or past its deadline.
         ConnectionError
-            If the transport has been closed — or the scripted response is
-            itself an exception, which is raised as-is.
+            If the transport has been closed.
+        Exception
+            Any scripted exception response is raised as-is, whatever its
+            type.
         ConformanceError
             If the transfer is unscripted, mismatched, or transmitted
             without a dispatch marker.

@@ -73,6 +73,10 @@ jobs:
           "$BIN/benchweave-sdk" --version | grep -F "version ${TAG#v}"
           "$BIN/benchweave-sdk" new "$RUNNER_TEMP/example" --with-ui
           "$BIN/benchweave-sdk" check "$RUNNER_TEMP/example/src/example_plugin/descriptor.json"
+          # Installed-mode standards verification: proves the packaged lock
+          # (the wheel force-include) and the resource path in
+          # verify_installed before anything reaches PyPI.
+          "$BIN/benchweave-sdk" sync-standards --check
 
   publish:
     name: Publish to PyPI (Trusted Publishing)
