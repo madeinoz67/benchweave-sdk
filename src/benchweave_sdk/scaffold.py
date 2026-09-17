@@ -407,7 +407,8 @@ def create_project(destination: Path, package: str) -> None:
     ValueError
         If the package name is invalid or reserved.
     FileExistsError
-        If the destination directory already exists.
+        If the destination directory — or a leftover ``.partial`` staging
+        sibling — already exists.
 
     Examples
     --------
@@ -429,10 +430,13 @@ def create_project(destination: Path, package: str) -> None:
         raise FileExistsError(f"Destination already exists: {destination}")
     destination.parent.mkdir(parents=True, exist_ok=True)
     # Stage into a sibling directory and rename at the end, so an interrupted
-    # run never leaves a half-generated project at the destination.
+    # run never leaves a half-generated project at the destination. A
+    # pre-existing staging path is refused, never deleted: it is either not
+    # ours (the tool must not destroy content it did not create) or the
+    # leftover of a hard-killed run, which the operator removes deliberately.
     staging = destination.with_name(destination.name + ".partial")
     if staging.exists():
-        shutil.rmtree(staging)
+        raise FileExistsError(f"Staging path already exists: {staging}; remove it and retry")
     staging.mkdir()
     pyproject = f'''[build-system]
 requires = ["hatchling>=1.26"]

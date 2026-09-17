@@ -239,7 +239,7 @@ def _verify_self_consistency(sdk_root: Path) -> None:
     unrecorded file in the tree or a missing stamp is drift too: either would
     ride into wheels unnoticed.
     """
-_verify_state(sdk_root / LOCK_NAME, sdk_root / VENDORED)
+    _verify_state(sdk_root / LOCK_NAME, sdk_root / VENDORED)
 
 
 def verify_installed() -> None:
@@ -264,6 +264,7 @@ def verify_installed() -> None:
 def _verify_state(lock_path: Path, tree: Path) -> None:
     lock = _read_lock_file(lock_path)
     _verify_tree(tree, lock)
+
 
 def _write_vendored(bundle: Path, sdk_root: Path, document: dict[str, Any]) -> None:
     """Rewrite the vendored tree and lock; vendored bytes match the bundle exactly."""

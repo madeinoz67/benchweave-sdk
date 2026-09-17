@@ -100,6 +100,7 @@ def _read_file_no_dirfd(path: Path, limit: int) -> bytes:
     resolved = path.absolute()
     reparse_point = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
     current = Path(resolved.parts[0])
+    details = os.lstat(current)
     for part in resolved.parts[1:]:
         current = current / part
         details = os.lstat(current)
@@ -112,7 +113,11 @@ def _read_file_no_dirfd(path: Path, limit: int) -> bytes:
         metadata = os.fstat(stream.fileno())
         if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > limit:
             raise ValueError("Input must be a bounded regular file")
-        if not os.path.samestat(metadata, os.lstat(resolved)):
+        # samestat against the WALK's own lstat of the final component, not a
+        # fresh post-open lstat: the descriptor is thereby tied to the very
+        # file that was verified not to be a symlink or reparse point, which
+        # closes the swap-in/swap-out window a re-run lstat would miss.
+        if not os.path.samestat(metadata, details):
             raise ValueError("Input path changed while being read")
         raw = stream.read(limit + 1)
         if len(raw) > limit:
