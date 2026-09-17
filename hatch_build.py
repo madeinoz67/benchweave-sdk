@@ -56,12 +56,27 @@ def _validate_vendored_standards(root: Path) -> None:
         standards = lock["standards"]
         if lock.get("lock_version") != 1 or not isinstance(standards, list) or not standards:
             raise RuntimeError("Bundled standards lock is incompatible or empty")
+        recorded: set[str] = set()
+        stamps: set[str] = set()
         for standard in standards:
             identifier = standard["id"]
             if not (tree / identifier / STAMP_NAME).is_file():
                 raise RuntimeError(f"Vendored standard stamp missing: {identifier}/{STAMP_NAME}")
+            stamps.add(f"{identifier}/{STAMP_NAME}")
             for file in standard["files"]:
                 _verify_vendored_file(tree, file["path"], file["sha256"])
+                recorded.add(file["path"])
+        # #9: the build-time extras sweep — same rule as every sync lane
+        # (lock ∪ stamps ∪ __pycache__; inlined here because the build hook
+        # must stay importable without the package installed). A stray file
+        # must not ship in a wheel built outside the gated paths.
+        present = {
+            path.relative_to(tree).as_posix()
+            for path in tree.rglob("*")
+            if path.is_file() and "__pycache__" not in path.relative_to(tree).parts
+        }
+        for path in sorted(present - recorded - stamps):
+            raise RuntimeError(f"unexpected_vendored_file: {path}")
     except (json.JSONDecodeError, KeyError, TypeError) as exc:
         raise RuntimeError("Bundled standards lock is invalid") from exc
 
