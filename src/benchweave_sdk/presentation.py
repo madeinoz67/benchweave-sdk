@@ -48,7 +48,10 @@ def _contract() -> Any:
     return module
 
 
+@cache
 def schemas() -> dict[str, Any]:
+    # Cached: the expansion walks every contract document and is re-requested
+    # for each envelope/preset validation; the corpus never changes in-process.
     result = dict(contract_documents())
     for document in tuple(result.values()):
         if "$id" in document:
