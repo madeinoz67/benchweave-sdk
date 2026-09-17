@@ -106,3 +106,30 @@ def test_verify_inventory_refuses_symlinked_root(tmp_path: Path) -> None:
         pytest.skip("symlinks unavailable (privilege or filesystem)")
     with pytest.raises(ValueError, match="real bundle directory"):
         verify_inventory(alias, listed)
+
+
+def test_failed_swap_restores_the_previous_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bundle = _export(tmp_path)
+    sdk = _synced_sdk(tmp_path, bundle)
+    tree = sdk / "src/benchweave_sdk/standards"
+    before = sorted(p.relative_to(tree).as_posix() for p in tree.rglob("*") if p.is_file())
+
+    original_rename = Path.rename
+
+    def failing_rename(self: Path, target: object) -> Path:
+        # Fail exactly the staging->tree swap, after the old tree moved aside.
+        if self.name.endswith(".new"):
+            raise OSError("swap interrupted")
+        return original_rename(self, target)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "rename", failing_rename)
+    with pytest.raises(OSError, match="swap interrupted"):
+        sync(bundle, sdk)
+    monkeypatch.undo()
+
+    after = sorted(p.relative_to(tree).as_posix() for p in tree.rglob("*") if p.is_file())
+    assert after == before, "a failed swap must restore the previous tree"
+    assert not tree.with_name(tree.name + ".old").exists()
+    sync(None, sdk, check_only=True)
