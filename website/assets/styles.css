@@ -109,6 +109,16 @@
     background: transparent; color: var(--text-muted); cursor: pointer; font-size: 14px;
   }
   .icon-btn:hover { color: var(--text); border-color: var(--border-strong); text-decoration: none; }
+  .star-btn {
+    display: flex; align-items: center; gap: 7px;
+    height: 32px; padding: 0 12px; border-radius: 5px;
+    border: 1px solid var(--border); background: transparent;
+    font-family: var(--font-mono); font-size: 12.5px; font-weight: 500;
+    color: var(--text-muted); white-space: nowrap;
+  }
+  .star-btn:hover { color: var(--text); border-color: var(--border-strong); text-decoration: none; }
+  .star-btn .star { color: var(--amber); font-size: 14px; line-height: 1; }
+  .star-btn .count { padding: 1px 7px; border-radius: 9px; background: var(--bg-inset); border: 1px solid var(--border); font-size: 11.5px; line-height: 1.4; }
 
   main { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
   .panel { display: none; }
@@ -274,10 +284,20 @@
     header.top { padding: 0 16px; }
     main { padding: 0 16px; }
   }
+  @media (max-width: 700px) {
+    /* Twin of the main site's 560px header wrap, pulled up to 700px here: this
+       header is tighter (longer wordmark + PyPI link beside the star CTA) and
+       the single row overflows well before 560px is reached. */
+    header.top { flex-wrap: wrap; height: auto; min-height: 48px; padding: 6px 16px; }
+    nav.panels { order: 3; flex: 1 0 100%; justify-content: space-between; }
+  }
   @media (max-width: 560px) {
     .wordmark { font-size: 15px; gap: 6px; }
     .wordmark-sub { display: none; }
-    .top-right .icon-btn[href] { display: none; } /* PyPI/GitHub links repeat in the footer */
+    .top-right .icon-btn[href] { display: none; } /* PyPI repeats in the footer */
+    /* Star CTA compacts to glyph + count; the repo link stays in the footer */
+    .star-btn { padding: 0 8px; gap: 5px; }
+    .star-btn .label { display: none; }
     nav.panels button { padding: 8px 7px; font-size: 12.5px; }
     .hero-badges .status-line { font-size: 11.5px; }
   }
