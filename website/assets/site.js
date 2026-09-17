@@ -58,6 +58,23 @@ function gotoVersion(select) {
 
 applyStoredTheme();
 
+/* Header star CTA: live count from the GitHub API, best-effort. The ask
+   stands without the number when the fetch fails or the count is zero. */
+(function starCount() {
+  const el = document.getElementById('star-count');
+  if (!el) return;
+  fetch('https://api.github.com/repos/madeinoz67/benchweave-sdk', { headers: { Accept: 'application/vnd.github+json' } })
+    .then(r => (r.ok ? r.json() : null))
+    .then(d => {
+      const n = d && typeof d.stargazers_count === 'number' ? d.stargazers_count : 0;
+      if (n > 0) {
+        el.textContent = n >= 1000 ? (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k' : String(n);
+        el.hidden = false;
+      }
+    })
+    .catch(() => { /* offline or rate-limited: keep the ask, drop the number */ });
+})();
+
 /* Open the panel named by the URL hash (e.g. /#cli), matching nav buttons. */
 (function openFromHash() {
   const name = (location.hash || '').replace('#', '');
