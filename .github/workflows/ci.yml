@@ -10,8 +10,14 @@ permissions:
 
 jobs:
   sdk:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        # windows-latest is the regression proof for the portable read_file
+        # path and the .gitattributes LF policy the standards digests rely on.
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     steps:
       # Deliberately NO submodules: this lane proves the SDK repository is
       # self-contained and never reads the gateway checkout.
@@ -23,7 +29,7 @@ jobs:
           python-version: "3.13"
 
       - name: Sync environment
-        run: uv sync --extra test
+        run: uv sync --locked --extra test
 
       - name: Lint
         run: |
@@ -45,3 +51,16 @@ jobs:
 
       - name: CLI entry point
         run: uv run benchweave-sdk --version
+
+      - name: Scaffold and check a plugin end-to-end
+        # Exercises the file-reading CLI paths (new --with-ui, check,
+        # check-ui) on every OS in the matrix — the paths that were
+        # unusable on Windows before the portable read_file.
+        shell: bash
+        run: |
+          uv run benchweave-sdk new "$RUNNER_TEMP/ci-demo" --package ci_demo --with-ui
+          uv run benchweave-sdk check "$RUNNER_TEMP/ci-demo/src/ci_demo/descriptor.json"
+          uv run benchweave-sdk check-ui "$RUNNER_TEMP/ci-demo/src/ci_demo/presentation.json" \
+            --descriptor "$RUNNER_TEMP/ci-demo/src/ci_demo/descriptor.json" \
+            --resources "$RUNNER_TEMP/ci-demo/src/ci_demo" \
+            --catalogue "$RUNNER_TEMP/ci-demo/src/ci_demo/binding-catalogue.json"

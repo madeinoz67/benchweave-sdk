@@ -53,8 +53,18 @@ class PreviewStatusApp(App[None]):
             self.action_open_browser()
 
     def action_open_browser(self) -> None:
+        # ``webbrowser.open`` can block for seconds while a browser starts;
+        # run it on a worker thread so the UI stays responsive.
+        self.run_worker(self._open_browser_blocking, thread=True)
+
+    def _open_browser_blocking(self) -> None:
         if not self._open_browser(self.url):
-            self.notify(f"Browser did not open; use {self.url}", severity="warning", timeout=10)
+            self.call_from_thread(
+                self.notify,
+                f"Browser did not open; use {self.url}",
+                severity="warning",
+                timeout=10,
+            )
 
     def _stop_server(self) -> None:
         if not self._shutdown_complete:

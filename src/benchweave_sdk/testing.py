@@ -15,6 +15,16 @@ from typing import Any
 from .interfaces import OperationContext
 
 
+class ConformanceError(AssertionError):
+    """A conformance expectation failed.
+
+    Subclasses ``AssertionError`` so existing ``pytest.raises(AssertionError)``
+    suites keep passing, while surviving ``python -O``: bare ``assert``
+    statements are stripped under optimisation, and a conformance harness that
+    silently passes everything there is worse than none.
+    """
+
+
 class MockContext:
     def __init__(
         self, operation_id: str, *, deadline_monotonic: float, dataset_id: str | None = None
@@ -83,11 +93,15 @@ class MockHost:
         self._check(context)
         if self.closed:
             raise ConnectionError("Transport closed")
-        if transaction.get("kind") not in ("stream_receive", "can_receive"):
-            assert getattr(context, "dispatched", False), "Transmission needs a dispatch marker"
-        assert self._script, "Unexpected transfer: no scripted exchange remains"
+        if transaction.get("kind") not in ("stream_receive", "can_receive") and not getattr(
+            context, "dispatched", False
+        ):
+            raise ConformanceError("Transmission needs a dispatch marker")
+        if not self._script:
+            raise ConformanceError("Unexpected transfer: no scripted exchange remains")
         expected, response = self._script[0]
-        assert transaction == expected, f"Expected {expected!r}, got {transaction!r}"
+        if transaction != expected:
+            raise ConformanceError(f"Expected {expected!r}, got {transaction!r}")
         self._script.popleft()
         self.transfers.append(deepcopy(transaction))
         if isinstance(response, Exception):
@@ -95,7 +109,10 @@ class MockHost:
         return deepcopy(response)
 
     async def close_transport(self, context: OperationContext) -> None:
-        self._check(context)
+        # No deadline/cancellation check: closing the transport is cleanup,
+        # and cleanup after an expired or cancelled operation is correct
+        # adapter behaviour (``Adapter.close`` must tolerate repeated calls),
+        # not a late transmission.
         self.closed = True
 
     async def record_evidence(self, entry: dict[str, Any], context: OperationContext) -> None:
@@ -103,4 +120,5 @@ class MockHost:
         self.evidence.append(deepcopy(entry))
 
     def assert_complete(self) -> None:
-        assert not self._script, f"{len(self._script)} scripted exchanges were not consumed"
+        if self._script:
+            raise ConformanceError(f"{len(self._script)} scripted exchanges were not consumed")

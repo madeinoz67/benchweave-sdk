@@ -46,6 +46,8 @@ def inventory(root: Path) -> list[dict[str, Any]]:
 
 def verify_inventory(root: Path, expected: list[dict[str, Any]]) -> None:
     """Reject missing, duplicate, altered, escaped and unlisted bundle files."""
+    if root.is_symlink() or not root.is_dir():
+        raise ValueError("Expected a real bundle directory")
     seen = set()
     for entry in expected:
         name = entry["path"]
@@ -57,5 +59,14 @@ def verify_inventory(root: Path, expected: list[dict[str, Any]]) -> None:
             raise ValueError(f"File size mismatch: {name}")
         if hashlib.sha256(raw).hexdigest() != entry["sha256"]:
             raise ValueError(f"File hash mismatch: {name}")
-    if seen != {entry["path"] for entry in inventory(root)}:
+    # A hash-free walk detects unlisted files: every listed file was already
+    # read and digested above, and re-running inventory() here used to read
+    # and hash the entire bundle a second time for no additional assurance.
+    present = set()
+    for path in sorted(root.rglob("*")):
+        if path.is_symlink():
+            raise ValueError("Symlink inventory path")
+        if path.is_file():
+            present.add(path.relative_to(root).as_posix())
+    if seen != present:
         raise ValueError("Unlisted inventory path")
