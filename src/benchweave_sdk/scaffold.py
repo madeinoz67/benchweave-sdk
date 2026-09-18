@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import keyword
 import re
+import shutil
 import sys
 from pathlib import Path
 from typing import Any
@@ -406,7 +407,9 @@ def create_project(destination: Path, package: str) -> None:
     ValueError
         If the package name is invalid or reserved.
     FileExistsError
-        If the destination directory already exists.
+        If the destination directory — or a leftover ``.partial`` staging
+        sibling — already exists; a dangling symlink occupying either name
+        counts as existing.
 
     Examples
     --------
@@ -424,7 +427,20 @@ def create_project(destination: Path, package: str) -> None:
         )
     descriptor = descriptor_for(package)
     validate_descriptor(descriptor)
-    destination.mkdir(parents=True, exist_ok=False)
+    # is_symlink() catches a dangling symlink occupying the name, which
+    # exists() reports as absent but which would break the final rename.
+    if destination.exists() or destination.is_symlink():
+        raise FileExistsError(f"Destination already exists: {destination}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    # Stage into a sibling directory and rename at the end, so an interrupted
+    # run never leaves a half-generated project at the destination. A
+    # pre-existing staging path is refused, never deleted: it is either not
+    # ours (the tool must not destroy content it did not create) or the
+    # leftover of a hard-killed run, which the operator removes deliberately.
+    staging = destination.with_name(destination.name + ".partial")
+    if staging.exists() or staging.is_symlink():
+        raise FileExistsError(f"Staging path already exists: {staging}; remove it and retry")
+    staging.mkdir()
     pyproject = f'''[build-system]
 requires = ["hatchling>=1.26"]
 build-backend = "hatchling.build"
@@ -469,7 +485,12 @@ packages = ["src/{package}"]
         + "\n",
         "tests/test_plugin.py": TEST.replace("__PLUGIN__", package),
     }
-    for relative, content in contents.items():
-        path = destination / relative
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
+    try:
+        for relative, content in contents.items():
+            path = staging / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+        staging.rename(destination)
+    except BaseException:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
