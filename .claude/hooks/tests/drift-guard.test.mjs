@@ -4,11 +4,13 @@
 import { spawnSync } from 'node:child_process'
 import { rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-const HOOK = join(import.meta.dirname, '..', 'drift-guard.mjs')
+// Portable form (matches pipeline.test.mjs): import.meta.dirname needs Node >= 20.11.
+const HOOK = join(dirname(fileURLToPath(import.meta.url)), '..', 'drift-guard.mjs')
 const STATE = join(tmpdir(), 'benchweave-sdk-drift-guard')
 
 function runWith(session, relPath) {
