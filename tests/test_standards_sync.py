@@ -15,11 +15,19 @@ REPO = Path(__file__).resolve().parents[1]
 
 
 def _export(tmp_path: Path) -> Path:
-    """Reconstruct the corpus bundle from the SDK's committed vendored state.
+    """Rebuild a corpus-shaped bundle from the SDK's committed lock and vendored tree.
 
-    The gateway's ``export_bundle`` is not importable here; the lock records
-    exactly what it exported, and the vendored tree carries the identical
-    bytes, so the rebuilt bundle matches the corpus export by construction.
+    What this reproduces: the manifest rows the sync reads (``id``,
+    ``version``, ``status`` and each file's ``path``/``sha256``) and the file
+    bytes, which the lock pins to the vendored tree. What it does not: the
+    gateway's ``export_bundle`` is not importable here, so the manifest is a
+    synthetic subset of a real export (none of its provenance fields, such
+    as ``exported_from``, ``released``, ``supersedes`` or ``size``), and the
+    rebuild is circular by construction — a vendored tree that has drifted
+    from the gateway's canonical corpus rebuilds into a bundle that agrees
+    with itself. Corpus-to-vendored drift is the main repository's check
+    (``make check-sdk-standards``); these tests pin the sync's own behaviour
+    against a bundle, not the vendored tree's fidelity to the corpus.
     """
     lock = json.loads((REPO / "standards-lock.json").read_bytes())
     bundle = tmp_path / "bundle"
@@ -263,3 +271,101 @@ def test_check_command_without_bundle_verifies_real_committed_tree() -> None:
     from benchweave_sdk import cli as sdk_cli
 
     assert sdk_cli.main(["sync-standards", "--check"]) == 0
+
+
+# --- Guards a mutation run showed unpinned: deleting either kept the suite green. ---
+
+
+def _manifest(bundle: Path) -> dict[str, Any]:
+    document: dict[str, Any] = json.loads((bundle / "bundle-manifest.json").read_bytes())
+    return document
+
+
+def _rewrite_manifest(bundle: Path, document: dict[str, Any]) -> None:
+    (bundle / "bundle-manifest.json").write_bytes(
+        (json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    )
+
+
+def _fresh_sdk(tmp_path: Path) -> Path:
+    sdk = tmp_path / "sdk"
+    (sdk / "src/benchweave_sdk").mkdir(parents=True)
+    (sdk / "src/benchweave_sdk/__init__.py").write_text("")
+    return sdk
+
+
+def test_parent_traversal_in_a_manifest_row_is_refused_before_any_write(
+    tmp_path: Path,
+) -> None:
+    """``_guard_path`` is the write boundary for untrusted bundles.
+
+    A manifest row may only name ``<id>/...`` paths inside the vendored
+    tree. Without the guard a ``..`` row is hashed, classified and written
+    wherever it points; the payload is planted where the traversal resolves
+    so that only the guard, not a missing-file error, can refuse the sync.
+    """
+    bundle = _export(tmp_path)
+    sdk = _synced_sdk(tmp_path, bundle)
+    payload = b"{}"
+    (bundle / "escape.json").write_bytes(payload)  # bundle/files/otdp/../../escape.json
+    document = _manifest(bundle)
+    target = next(s for s in document["standards"] if s["id"] == "otdp")
+    target["files"].append(
+        {"path": "otdp/../../escape.json", "sha256": hashlib.sha256(payload).hexdigest()}
+    )
+    target["version"] = "0.3.1"  # classification accepts a bumped standard; only the guard is left
+    _rewrite_manifest(bundle, document)
+    with pytest.raises(ValueError, match="^bundle_path_invalid: "):
+        sync(bundle, sdk)
+    assert not list(sdk.rglob("escape.json")), "nothing may be written outside the vendored tree"
+    sync(None, sdk, check_only=True)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        pytest.param("/otdp/absolute.json", id="absolute"),
+        pytest.param("registry/0.1.0/foreign.json", id="foreign-standard-prefix"),
+        pytest.param("otdp", id="no-file-component"),
+    ],
+)
+def test_manifest_row_shape_outside_the_standard_is_refused(tmp_path: Path, path: str) -> None:
+    bundle = _export(tmp_path)
+    sdk = _synced_sdk(tmp_path, bundle)
+    document = _manifest(bundle)
+    target = next(s for s in document["standards"] if s["id"] == "otdp")
+    target["files"].append({"path": path, "sha256": "0" * 64})
+    target["version"] = "0.3.1"
+    _rewrite_manifest(bundle, document)
+    with pytest.raises(ValueError, match="^bundle_path_invalid: "):
+        sync(bundle, sdk)
+
+
+@pytest.mark.parametrize("first_sync", [True, False], ids=["first-sync", "version-bump"])
+def test_manifest_digest_claims_are_recomputed_not_trusted(
+    tmp_path: Path, first_sync: bool
+) -> None:
+    """STD-2: a manifest that vouches for itself is not a pin.
+
+    A row whose ``sha256`` disagrees with the file bytes is refused exactly
+    where classification would otherwise accept the standard — on a first
+    sync (every standard is new) and on a version bump (content is expected
+    to change) — and nothing is written.
+    """
+    bundle = _export(tmp_path)
+    sdk = _fresh_sdk(tmp_path) if first_sync else _synced_sdk(tmp_path, bundle)
+    document = _manifest(bundle)
+    target = next(s for s in document["standards"] if s["id"] == "otdp")
+    if not first_sync:
+        target["version"] = "0.3.1"
+    target["files"][0]["sha256"] = "0" * 64
+    _rewrite_manifest(bundle, document)
+    lock_before = None if first_sync else (sdk / "standards-lock.json").read_bytes()
+    with pytest.raises(ValueError, match="^hash_mismatch: "):
+        sync(bundle, sdk)
+    if first_sync:
+        assert not (sdk / "standards-lock.json").exists()
+        assert not (sdk / "src/benchweave_sdk/standards").exists()
+    else:
+        assert (sdk / "standards-lock.json").read_bytes() == lock_before
+        sync(None, sdk, check_only=True)
