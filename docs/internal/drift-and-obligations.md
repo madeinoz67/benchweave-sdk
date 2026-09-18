@@ -7,25 +7,25 @@ rubric's G5 gate is the obligation; this file is the detail behind it.
 
 ## "If a PR touches X, it must also do Y"
 
-1. **CLI-visible behavior** (a command, flag, or output shape in `src/benchweave_sdk/cli.py`)
+1. **CLI-visible behavior** 🪝 (a command, flag, or output shape in `src/benchweave_sdk/cli.py`)
    → `user_guide/plugin-sdk.qmd` and the README's five-steps section.
 
-2. **Scaffold output changes** (a generated project that looks different) → the scaffold's
+2. **Scaffold output changes** 🪝 (a generated project that looks different) → the scaffold's
    generated docs, including the AI-GUIDE.md text carried in `scaffold.py`. Downstream
    plugin repositories diff generated output; treat the change as an interface change and
    say so in the PR.
 
-3. **Standards bundle/lock format changes** → the compatibility notes in
+3. **Standards bundle/lock format changes** 🪝 → the compatibility notes in
    `standards-lock.json`; when the export format itself moves, the main repository's
    corpus export docs. Normative content never changes here first (invariants STD-5,
    TWO-1) — a content change arrives as a re-sync from main with a version increment.
 
-4. **Packaging changes** (`pyproject.toml`, `hatch_build.py`) → wheel/sdist contents and
+4. **Packaging changes** 🪝 (`pyproject.toml`, `hatch_build.py`) → wheel/sdist contents and
    the README install steps (the SDK is not yet on an index; installs name the built wheel
    explicitly). Confirm `.claude/`, `.mcp.json`, `AGENTS.md`, `CLAUDE.md` still appear in
    neither artifact (invariants PKG-2).
 
-5. **Vendored bytes** → `standards-lock.json` sha256 records, stamps, and the main-side
+5. **Vendored bytes** 🪝 → `standards-lock.json` sha256 records, stamps, and the main-side
    sync staying green (`make check-sdk-standards`). A hand-edit is wrong regardless of
    quality; the change belongs in the main repository's canonical corpus.
 
@@ -36,7 +36,7 @@ rubric's G5 gate is the obligation; this file is the detail behind it.
    main-side coverage is a required change; name the module that should carry the test.
    The SDK's own pytest is the release smoke only.
 
-7. **The renderer** (`ui/` main-side builds into `preview_assets/` here) → a fresh
+7. **The renderer** 🪝 (`ui/` main-side builds into `preview_assets/` here) → a fresh
    `npm --prefix ui run build:preview` must leave the committed assets unchanged
    (invariants PKG-3); renderer-affecting UI changes land with a rebuilt, committed
    asset tree in the same change.

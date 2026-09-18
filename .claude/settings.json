@@ -1,8 +1,18 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
-  "_comment": "Adopted 2026-09-15 from the main benchweave-ui repository's memory system (see .claude/memory-protocol.md). ledger-guard.mjs rejects a malformed memory proposal in the session that can still fix it. memory-drain.mjs moves proposals into the `benchweave` MuninnDB vault (PreCompact leads because long sessions never fire SessionEnd; Stop covers crash/kill, debounced against the receipt). memory-freshness.mjs reads the drain receipt at SessionStart so a wedged or never-run drain reports itself. drain credentials: ~/.muninn/flush-keys/benchweave.token. One delta vs main: every proposal from this repo must carry the `sdk` tag (validator-enforced in memory-schema.mjs).",
+  "_comment": "Project-owned guards (see .claude/memory-protocol.md for the protocol and its measured history). drift-guard.mjs warns on the path-shaped cross-surface obligations in docs/internal/drift-and-obligations.md (once per session, never blocks). ledger-guard.mjs rejects a malformed memory proposal in the session that can still fix it. memory-drain.mjs moves proposals into the `benchweave` memory vault (PreCompact leads because long sessions never fire SessionEnd; Stop covers crash/kill, debounced against the receipt). memory-freshness.mjs reads the drain receipt at SessionStart so a wedged or never-run drain reports itself. drain credentials: ~/.muninn/flush-keys/benchweave.token. Repo delta: every proposal from this repo must carry the `sdk` tag (validator-enforced in memory-schema.mjs).",
+  "_trigger_rationale": "The three-event trigger set comes from the memory system's original design, measured on ITS workload: 55 transcripts, 35,417 events, where the two sessions holding 81.3% of events ran 7.5 and 6.3 days, fired SessionEnd zero times, and compacted 2 and 16 times — hence PreCompact leads there. LOCAL measurement (2026-09-18, all BenchWeave project transcript dirs, this repo included): 394 transcripts, 46,020 events, top sessions 0.7-1.15 days, only 4 in-file compaction markers detected — under this setup's 1M-context windows sessions compact far less often, so PreCompact fires less here and Stop and SessionEnd carry correspondingly more of the load. All three are kept because the local shape is a window-size artifact, not a property of the work. Stop is debounced against the receipt's last_run_at (20 min). The watermark advances only on an outcome that actually consumed from the ledger: a locked/unreachable/error run that advanced it would disable this trigger permanently. A periodic OS timer was rejected: it has no CLAUDE_PROJECT_DIR so it cannot find the right ledger, and it would fire mid-append. The drain is invoked with --hook, so it always exits 0 and the receipt carries the truth: a hook that reports failure at session close is a hook people disable.",
   "hooks": {
     "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/drift-guard.mjs\""
+          }
+        ]
+      },
       {
         "matcher": "Write|Edit|Bash",
         "hooks": [
