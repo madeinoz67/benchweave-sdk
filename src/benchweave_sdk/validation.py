@@ -382,7 +382,18 @@ def validate_descriptor(descriptor: dict[str, Any]) -> None:
     >>> validate_descriptor(
     ...     json.loads(Path("src/demo_plugin/descriptor.json").read_text()))
     """
-    validate(descriptor, "otdp/0.1.2/otdp-device-descriptor.schema.json")
+    try:
+        validate(descriptor, "otdp/0.1.2/otdp-device-descriptor.schema.json")
+    except ValueError as exc:
+        # When derived_variables is present, S19 runs even on a
+        # schema-invalid document: the derivation_*: reason is the
+        # actionable one for the author, and both checkers (this lane and
+        # the gateway admission seam) then agree on the census prefixes.
+        if isinstance(descriptor, dict) and isinstance(
+            descriptor.get("derived_variables"), list
+        ):
+            _check_derived_variables(descriptor["derived_variables"])
+        raise
     capabilities = descriptor["capabilities"]
     if len(capabilities) != len(set(capabilities)) or set(capabilities) != set(
         descriptor["operations"]
