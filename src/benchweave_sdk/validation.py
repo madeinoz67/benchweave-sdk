@@ -118,19 +118,33 @@ def validate(document: Any, schema_file: str, definition: str | None = None) -> 
         fails the contract.
     """
     if schema_file not in contract_documents():
-        raise ValueError(f"Unknown contract schema: {schema_file}")
+        raise ValueError(f"unknown_contract_schema: {schema_file}")
     try:
         json.dumps(document, allow_nan=False)
         schema = contract_documents()[schema_file]
         if definition:
-            schema = {"$ref": f"{schema['$id']}#/$defs/{definition}"}
+            schema_id = schema.get("$id")
+            if schema_id is None:
+                raise ValueError(
+                    f"schema {schema_file} carries no '$id'; definitions cannot be addressed"
+                )
+            schema = {"$ref": f"{schema_id}#/$defs/{definition}"}
         validator = Draft202012Validator(
             schema, registry=_registry(), format_checker=FormatChecker()
         )
         validator.validate(document)
-    except (TypeError, ValueError, SchemaError, ValidationError, Unresolvable) as exc:
+    except (
+        TypeError,
+        ValueError,
+        RecursionError,
+        SchemaError,
+        ValidationError,
+        Unresolvable,
+    ) as exc:
         # Only document/schema failures are laundered into the domain error;
-        # a programming error (say, a KeyError) keeps its own face.
+        # a programming error (say, a KeyError) keeps its own face. A deep
+        # enough document overflows the validator's recursion before anything
+        # else runs, so RecursionError is a document failure here too.
         raise ValueError(f"Contract validation failed: {exc}") from exc
 
 

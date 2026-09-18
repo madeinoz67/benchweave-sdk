@@ -24,6 +24,18 @@ def test_create_project_refuses_existing_destination(tmp_path: Path) -> None:
         create_project(destination, "demo_plugin")
 
 
+def test_create_project_refuses_dangling_symlink_destination(tmp_path: Path) -> None:
+    # exists() is False for a dangling symlink, but the name is taken and the
+    # final rename would fail mid-flight; refuse it up front, as documented.
+    destination = tmp_path / "demo"
+    try:
+        destination.symlink_to(tmp_path / "nowhere")
+    except OSError:
+        pytest.skip("symlinks unavailable (privilege or filesystem)")
+    with pytest.raises(FileExistsError, match="already exists"):
+        create_project(destination, "demo_plugin")
+
+
 def test_interrupted_generation_leaves_no_destination(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

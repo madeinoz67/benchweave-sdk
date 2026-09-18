@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import importlib.util
 import json
@@ -61,7 +62,12 @@ def schemas() -> dict[str, Any]:
 
 
 def read_file(path: Path, limit: int = 262144) -> bytes:
-    """Open bounded regular files without following symlinks in any component."""
+    """Open bounded regular files without following symlinks in any component.
+
+    Path-shape refusals — symlinked or non-directory components, non-regular
+    targets, oversize input — raise ``ValueError`` on every platform; absence
+    and permission failures keep their ``OSError`` face.
+    """
     if limit < 0:
         raise ValueError("Input byte limit exceeded")
     if sys.platform == "win32":
@@ -84,6 +90,16 @@ def read_file(path: Path, limit: int = 262144) -> bytes:
             if len(raw) > limit:
                 raise ValueError("Input byte limit exceeded")
             return raw
+    except OSError as exc:
+        # Align refusal classes with the Windows branch: a path whose SHAPE is
+        # wrong is a domain refusal (ValueError), matching the messages the
+        # explicit checks raise; environment errors (ENOENT, EACCES) pass
+        # through unchanged.
+        if exc.errno == errno.ELOOP:
+            raise ValueError("Input path must not contain symlinked components") from exc
+        if exc.errno in (errno.ENOTDIR, errno.EISDIR):
+            raise ValueError("Input must be a bounded regular file") from exc
+        raise
     finally:
         os.close(directory)
 
@@ -103,10 +119,19 @@ def _read_file_no_dirfd(path: Path, limit: int) -> bytes:
     details = os.lstat(current)
     for part in resolved.parts[1:]:
         current = current / part
-        details = os.lstat(current)
+        try:
+            details = os.lstat(current)
+        except NotADirectoryError as exc:
+            # A regular file sitting where a directory component should be —
+            # the same refusal class the POSIX branch maps ENOTDIR to.
+            raise ValueError("Input must be a bounded regular file") from exc
         is_reparse = getattr(details, "st_file_attributes", 0) & reparse_point
         if stat.S_ISLNK(details.st_mode) or is_reparse:
             raise ValueError("Input path must not contain symlinked components")
+    if not stat.S_ISREG(details.st_mode):
+        # Refuse directories and other non-regular targets before the open,
+        # where Windows would otherwise fail with a platform-specific OSError.
+        raise ValueError("Input must be a bounded regular file")
     flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOINHERIT", 0)
     descriptor = os.open(resolved, flags)
     with os.fdopen(descriptor, "rb") as stream:

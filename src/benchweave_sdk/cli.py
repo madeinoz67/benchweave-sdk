@@ -163,11 +163,23 @@ def check_preset_command(
 
 
 def _sdk_checkout_root() -> Path | None:
-    """The SDK repository checkout containing this module, or None when installed."""
+    """The SDK repository checkout containing this module, or None when installed.
+
+    Repo mode needs both halves to hold: the grandparent directory is a
+    checkout whose pyproject names this project, AND this module actually
+    runs from that checkout's ``src`` tree. A --target/PYTHONPATH install
+    that happens to sit inside a checkout satisfies the first test but not
+    the second — sync must not treat the checkout as the running package.
+    """
     from .validation import _project_name
 
-    candidate = Path(__file__).resolve().parents[2]
-    return candidate if _project_name(candidate) == "benchweave-sdk" else None
+    package_dir = Path(__file__).resolve().parent
+    candidate = package_dir.parents[1]
+    if _project_name(candidate) != "benchweave-sdk":
+        return None
+    if package_dir != candidate / "src" / "benchweave_sdk":
+        return None
+    return candidate
 
 
 @cli.command("sync-standards")

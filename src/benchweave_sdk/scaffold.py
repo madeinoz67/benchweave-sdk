@@ -408,7 +408,8 @@ def create_project(destination: Path, package: str) -> None:
         If the package name is invalid or reserved.
     FileExistsError
         If the destination directory — or a leftover ``.partial`` staging
-        sibling — already exists.
+        sibling — already exists; a dangling symlink occupying either name
+        counts as existing.
 
     Examples
     --------
@@ -426,7 +427,9 @@ def create_project(destination: Path, package: str) -> None:
         )
     descriptor = descriptor_for(package)
     validate_descriptor(descriptor)
-    if destination.exists():
+    # is_symlink() catches a dangling symlink occupying the name, which
+    # exists() reports as absent but which would break the final rename.
+    if destination.exists() or destination.is_symlink():
         raise FileExistsError(f"Destination already exists: {destination}")
     destination.parent.mkdir(parents=True, exist_ok=True)
     # Stage into a sibling directory and rename at the end, so an interrupted
@@ -435,7 +438,7 @@ def create_project(destination: Path, package: str) -> None:
     # ours (the tool must not destroy content it did not create) or the
     # leftover of a hard-killed run, which the operator removes deliberately.
     staging = destination.with_name(destination.name + ".partial")
-    if staging.exists():
+    if staging.exists() or staging.is_symlink():
         raise FileExistsError(f"Staging path already exists: {staging}; remove it and retry")
     staging.mkdir()
     pyproject = f'''[build-system]

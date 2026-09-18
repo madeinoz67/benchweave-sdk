@@ -41,7 +41,8 @@ def test_s02_accepts_equal_bounds() -> None:
 
 
 def test_unknown_schema_file_is_a_clear_error() -> None:
-    with pytest.raises(ValueError, match="Unknown contract schema"):
+    # snake_case prefix: machine-matchable like its sibling refusals.
+    with pytest.raises(ValueError, match="unknown_contract_schema"):
         validate({}, "otdp/0.1.0/no-such-schema.json")
 
 
@@ -50,3 +51,31 @@ def test_schema_failure_is_a_domain_error() -> None:
     descriptor.pop("identity")
     with pytest.raises(ValueError, match="Contract validation failed"):
         validate_descriptor(descriptor)
+
+
+def test_deep_document_is_a_domain_error_not_a_recursion_crash() -> None:
+    # A document nested past the interpreter's recursion limit used to escape
+    # as a bare RecursionError; it is a document failure and must wrap.
+    document: Any = "leaf"
+    for _ in range(20000):
+        document = [document]
+    with pytest.raises(ValueError, match="Contract validation failed"):
+        validate(document, "otdp/0.1.0/otdp-runtime.schema.json")
+
+
+def test_definition_against_idless_schema_is_a_domain_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A bundled schema without '$id' cannot anchor a $defs reference; the
+    # KeyError this produced was a crash, not the documented ValueError.
+    from benchweave_sdk import validation
+
+    fake = {
+        "fake/no-id.schema.json": {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "$defs": {"thing": {"type": "object"}},
+        }
+    }
+    monkeypatch.setattr(validation, "contract_documents", lambda: fake)
+    with pytest.raises(ValueError, match="definitions cannot be addressed"):
+        validation.validate({}, "fake/no-id.schema.json", "thing")
