@@ -8,12 +8,17 @@ tests below therefore call the Windows branch directly — it is plain
 
 from __future__ import annotations
 
+import errno
 import os
+import stat
 import sys
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pytest
 
+from benchweave_sdk import presentation
 from benchweave_sdk.presentation import _read_file_no_dirfd, read_file
 
 # A regular file blocking a directory position: POSIX reports ENOTDIR, which
@@ -94,6 +99,107 @@ def test_exact_limit_is_accepted(tmp_path: Path) -> None:
     payload = os.urandom(32)
     target.write_bytes(payload)
     assert read_file(target, limit=32) == payload
+
+
+# --- POSIX branch: refusal by inspection; errno is only the backstop --------
+
+_POSIX_ONLY = pytest.mark.skipif(sys.platform == "win32", reason="POSIX dir_fd walk only")
+
+_OpenLike = Callable[[str, int, int, int | None], int]
+
+
+class _KernelLikeOS:
+    """``os`` with one ``open`` behaviour swapped in; everything else passes through.
+
+    Lets a test stand in for a kernel whose ``O_NOFOLLOW`` open reports a
+    different errno than the one this CI runner has, without patching the
+    real ``os`` module for the rest of the process.
+    """
+
+    def __init__(self, open_override: _OpenLike) -> None:
+        self._open = open_override
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(os, name)
+
+    def open(self, path: str, flags: int, mode: int = 0o777, *, dir_fd: int | None = None) -> int:
+        return self._open(path, flags, mode, dir_fd)
+
+
+@_POSIX_ONLY
+def test_posix_symlinked_directory_is_refused_by_inspection_not_errno(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Linux 6.x and Darwin report ENOTDIR, not ELOOP, for a symlink opened O_NOFOLLOW|O_DIRECTORY.
+
+    The directory check runs before the symlink check on both, so an errno
+    mapping keyed on ELOOP misclassified a symlinked directory as a
+    "bounded regular file" — the wrong reason, and invisible to a suite
+    that had only ever executed on Windows. The refusal therefore has to
+    come from the per-component lstat, with the errno mapping only a
+    backstop; this stand-in kernel makes the property explicit whatever
+    kernel the runner has.
+    """
+    real_dir = tmp_path / "real"
+    real_dir.mkdir()
+    (real_dir / "document.json").write_bytes(b"{}")
+    link_dir = tmp_path / "alias"
+    _symlink_or_skip(link_dir, real_dir, directory=True)
+
+    def notdir_open(path: str, flags: int, mode: int, dir_fd: int | None) -> int:
+        if flags & os.O_NOFOLLOW and flags & os.O_DIRECTORY:
+            details = os.stat(path, dir_fd=dir_fd, follow_symlinks=False)
+            if stat.S_ISLNK(details.st_mode):
+                raise OSError(errno.ENOTDIR, "Not a directory")
+        return os.open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(presentation, "os", _KernelLikeOS(notdir_open))
+    with pytest.raises(ValueError, match="symlinked components"):
+        read_file(link_dir / "document.json")
+
+
+@_POSIX_ONLY
+@pytest.mark.parametrize(
+    ("code", "message"),
+    [
+        pytest.param(errno.ELOOP, "symlinked components", id="ELOOP-linux-darwin"),
+        pytest.param(errno.EMLINK, "symlinked components", id="EMLINK-freebsd"),
+        pytest.param(errno.ENOTDIR, "bounded regular file", id="ENOTDIR"),
+        pytest.param(errno.EISDIR, "bounded regular file", id="EISDIR"),
+    ],
+)
+def test_posix_open_errno_backstop_maps_shape_failures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code: int, message: str
+) -> None:
+    """A component swapped after its lstat still surfaces as the shape refusal, per kernel."""
+    target = tmp_path / "document.json"
+    target.write_bytes(b"{}")
+
+    def failing_open(path: str, flags: int, mode: int, dir_fd: int | None) -> int:
+        if flags & os.O_NOFOLLOW:
+            raise OSError(code, os.strerror(code))
+        return os.open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(presentation, "os", _KernelLikeOS(failing_open))
+    with pytest.raises(ValueError, match=message):
+        read_file(target)
+
+
+@_POSIX_ONLY
+def test_posix_environment_errors_keep_their_oserror_face(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "document.json"
+    target.write_bytes(b"{}")
+
+    def denied_open(path: str, flags: int, mode: int, dir_fd: int | None) -> int:
+        if flags & os.O_NOFOLLOW:
+            raise OSError(errno.EACCES, os.strerror(errno.EACCES))
+        return os.open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(presentation, "os", _KernelLikeOS(denied_open))
+    with pytest.raises(PermissionError):
+        read_file(target)
 
 
 # --- direct coverage of the Windows branch (runs on every platform) --------

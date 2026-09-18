@@ -61,12 +61,25 @@ def schemas() -> dict[str, Any]:
     return result
 
 
+# The errno an O_NOFOLLOW open reports for a symlink varies by kernel: Linux
+# and Darwin say ELOOP, FreeBSD says EMLINK — and with O_DIRECTORY also set,
+# Linux (6.x, measured) and Darwin say ENOTDIR instead, because the directory
+# check runs before the symlink check. The per-component lstat in read_file
+# decides the refusal; this set only classifies the residual window between
+# that lstat and the open, where a component was swapped for a symlink.
+_SYMLINK_ERRNOS = frozenset({errno.ELOOP, errno.EMLINK})
+
+
 def read_file(path: Path, limit: int = 262144) -> bytes:
     """Open bounded regular files without following symlinks in any component.
 
     Path-shape refusals — symlinked or non-directory components, non-regular
     targets, oversize input — raise ``ValueError`` on every platform; absence
-    and permission failures keep their ``OSError`` face.
+    and permission failures keep their ``OSError`` face. On POSIX every
+    component is ``lstat``-ed relative to the walked directory descriptor
+    before it is opened, so a symlink is refused by inspection on every
+    kernel rather than by whichever errno that kernel's ``O_NOFOLLOW`` open
+    happens to report.
     """
     if limit < 0:
         raise ValueError("Input byte limit exceeded")
@@ -76,9 +89,11 @@ def read_file(path: Path, limit: int = 262144) -> bytes:
     directory = os.open(parts[0], os.O_RDONLY | os.O_DIRECTORY)
     try:
         for part in parts[1:-1]:
+            _refuse_symlink(part, directory)
             child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory)
             os.close(directory)
             directory = child
+        _refuse_symlink(parts[-1], directory)
         descriptor = os.open(
             parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory
         )
@@ -94,14 +109,28 @@ def read_file(path: Path, limit: int = 262144) -> bytes:
         # Align refusal classes with the Windows branch: a path whose SHAPE is
         # wrong is a domain refusal (ValueError), matching the messages the
         # explicit checks raise; environment errors (ENOENT, EACCES) pass
-        # through unchanged.
-        if exc.errno == errno.ELOOP:
+        # through unchanged. A symlink normally never reaches here —
+        # _refuse_symlink saw it first — so the symlink mapping is the
+        # backstop for a component swapped between its lstat and its open.
+        if exc.errno in _SYMLINK_ERRNOS:
             raise ValueError("Input path must not contain symlinked components") from exc
         if exc.errno in (errno.ENOTDIR, errno.EISDIR):
             raise ValueError("Input must be a bounded regular file") from exc
         raise
     finally:
         os.close(directory)
+
+
+def _refuse_symlink(name: str, directory: int) -> None:
+    """``lstat`` one path component relative to ``directory``; refuse a symlink.
+
+    Inspection, not errno, is what makes the refusal identical on Linux,
+    Darwin and the BSDs. Absence and permission failures propagate as the
+    ``OSError`` they are.
+    """
+    details = os.stat(name, dir_fd=directory, follow_symlinks=False)
+    if stat.S_ISLNK(details.st_mode):
+        raise ValueError("Input path must not contain symlinked components")
 
 
 def _read_file_no_dirfd(path: Path, limit: int) -> bytes:
