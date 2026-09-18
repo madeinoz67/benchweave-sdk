@@ -1,5 +1,5 @@
 {
-  "otdp_version": "0.1.0",
+  "otdp_version": "0.1.1",
   "descriptor_version": "1.0.0",
   "id": "dev.local.class-dc-psu",
   "display_name": "Structural reference: DC power supply",
@@ -111,14 +111,14 @@
   ],
   "contracts": [
     {
-      "id": "urn:otdp:profile-catalog:0.1.0",
+      "id": "urn:otdp:profile-catalog:0.1.1",
       "path": "device-profile-catalog.json",
-      "sha256": "0c709d14714a5425fca62c60be335b43e7df854067dc276b3191fb008f6c260b"
+      "sha256": "fde8e03b21cf5104917e32af8bf5c835a39c62ea97a4c6e61b90b161a5eeced4"
     },
     {
-      "id": "urn:otdp:measurement:0.1.0",
+      "id": "urn:otdp:measurement:0.1.1",
       "path": "otdp-measurement.schema.json",
-      "sha256": "705c9fbe72f01899a681a0927d11c86e5692ed98493732ccb885ac62686b8c0b"
+      "sha256": "e2d6bb9d45339ca35f4a3ecec95971356251e0b6cc2b6038759140af00ff621d"
     }
   ],
   "actions": {
