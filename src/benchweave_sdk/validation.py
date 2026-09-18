@@ -384,7 +384,7 @@ def validate_descriptor(descriptor: dict[str, Any]) -> None:
     """
     try:
         validate(descriptor, "otdp/0.1.2/otdp-device-descriptor.schema.json")
-    except ValueError as exc:
+    except ValueError:
         # When derived_variables is present, S19 runs even on a
         # schema-invalid document: the derivation_*: reason is the
         # actionable one for the author, and both checkers (this lane and
