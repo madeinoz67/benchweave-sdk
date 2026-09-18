@@ -1,13 +1,13 @@
 {
-  "otdp_version": "0.1.0",
+  "otdp_version": "0.1.1",
   "descriptor_version": "1.0.0",
-  "id": "dev.local.class-embedded-controller",
-  "display_name": "Structural reference: Embedded-controller telemetry and control",
+  "id": "dev.local.class-function-generator",
+  "display_name": "Structural reference: Function and arbitrary waveform generator",
   "description": "Class-contract fixture, not a verified real device or implemented adapter.",
   "identity": {
     "strategy": "adapter",
     "manufacturer": "OTDP Reference",
-    "model": "embedded_controller",
+    "model": "function_generator",
     "firmware_policy": "listed",
     "supported_firmware": [
       "1.0"
@@ -16,13 +16,13 @@
   "integration": {
     "mode": "adapter",
     "adapter": {
-      "entry_point": "reference_embedded_controller:create_plugin",
+      "entry_point": "reference_function_generator:create_plugin",
       "api_version": "1.1",
       "version": "1.0.0",
       "dependencies": [],
       "permissions": [
         "scoped_transport",
-        "artifact_writer"
+        "artifact_reader"
       ]
     }
   },
@@ -40,9 +40,7 @@
   },
   "capabilities": [
     "identify",
-    "invoke",
-    "read",
-    "write"
+    "invoke"
   ],
   "operations": {
     "identify": {
@@ -58,53 +56,15 @@
       "retry": "never",
       "cancellable": true,
       "completion": "acknowledged"
-    },
-    "read": {
-      "timeout_ms": 2000,
-      "side_effect": "none",
-      "retry": "never",
-      "cancellable": false,
-      "completion": "acknowledged"
-    },
-    "write": {
-      "timeout_ms": 2000,
-      "side_effect": "state_change",
-      "retry": "never",
-      "cancellable": false,
-      "completion": "readback"
     }
   },
-  "parameters": [
-    {
-      "name": "led_enabled",
-      "description": "Synthetic control reference",
-      "type": "bool",
-      "access": "rw",
-      "semantic": "state",
-      "hazard_class": "unknown",
-      "binding": {
-        "kind": "adapter",
-        "key": "led_enabled"
-      },
-      "read_policy": {
-        "max_age_ms": 0,
-        "destructive": false
-      },
-      "write_policy": {
-        "effect": "actuate",
-        "completion": "readback",
-        "verification_parameter": "led_enabled",
-        "settling_timeout_ms": 1000,
-        "retry": "never"
-      }
-    }
-  ],
+  "parameters": [],
   "required_features": [
     "otdp.core/0.1.0",
     "otdp.adapter/0.1.0",
     "otdp.profile_actions/0.1.0",
     "otdp.measurement/0.1.0",
-    "otdp.embedded_controller/1.0.0"
+    "otdp.function_generator/1.0.0"
   ],
   "provenance": {
     "sources": [
@@ -116,7 +76,7 @@
     ],
     "test_vectors": [
       {
-        "id": "embedded_controller-actions",
+        "id": "function_generator-actions",
         "path": "class-action-vectors.json",
         "purpose": "Input/output contract examples; not a device simulator"
       }
@@ -126,7 +86,7 @@
     {
       "id": "ch1",
       "label": "Reference channel 1",
-      "role": "measure",
+      "role": "source",
       "quantities": [
         "voltage"
       ],
@@ -135,46 +95,55 @@
     {
       "id": "ch2",
       "label": "Reference channel 2",
-      "role": "digital_output",
+      "role": "source",
       "quantities": [
-        "digital_level"
+        "voltage"
       ],
-      "parameter_names": [
-        "led_enabled"
-      ]
+      "parameter_names": []
     }
   ],
   "profiles": [
-    "otdp.embedded_controller/1.0.0"
+    "otdp.function_generator/1.0.0"
   ],
   "contracts": [
     {
-      "id": "urn:otdp:profile-catalog:0.1.0",
+      "id": "urn:otdp:profile-catalog:0.1.1",
       "path": "device-profile-catalog.json",
-      "sha256": "0c709d14714a5425fca62c60be335b43e7df854067dc276b3191fb008f6c260b"
+      "sha256": "fde8e03b21cf5104917e32af8bf5c835a39c62ea97a4c6e61b90b161a5eeced4"
     },
     {
-      "id": "urn:otdp:measurement:0.1.0",
+      "id": "urn:otdp:measurement:0.1.1",
       "path": "otdp-measurement.schema.json",
-      "sha256": "705c9fbe72f01899a681a0927d11c86e5692ed98493732ccb885ac62686b8c0b"
+      "sha256": "e2d6bb9d45339ca35f4a3ecec95971356251e0b6cc2b6038759140af00ff621d"
     }
   ],
   "actions": {
-    "otdp.embedded_controller.telemetry/1.0.0": {
+    "otdp.function_generator.configure/1.0.0": {
       "binding": {
         "kind": "adapter",
-        "key": "otdp.embedded_controller.telemetry/1.0.0"
+        "key": "otdp.function_generator.configure/1.0.0"
       },
       "input_constraints": {},
       "timeout_ms": 30000,
-      "side_effect": "none",
+      "side_effect": "state_change",
       "cancellable": true,
       "retry": "never"
     },
-    "otdp.embedded_controller.set_control/1.0.0": {
+    "otdp.function_generator.output/1.0.0": {
       "binding": {
         "kind": "adapter",
-        "key": "otdp.embedded_controller.set_control/1.0.0"
+        "key": "otdp.function_generator.output/1.0.0"
+      },
+      "input_constraints": {},
+      "timeout_ms": 30000,
+      "side_effect": "state_change",
+      "cancellable": true,
+      "retry": "never"
+    },
+    "otdp.function_generator.upload/1.0.0": {
+      "binding": {
+        "kind": "adapter",
+        "key": "otdp.function_generator.upload/1.0.0"
       },
       "input_constraints": {},
       "timeout_ms": 30000,
