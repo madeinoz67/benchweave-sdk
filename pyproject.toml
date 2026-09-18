@@ -29,6 +29,11 @@ benchweave-sdk = "benchweave_sdk.cli:main"
 [tool.hatch.build.targets.wheel]
 packages = ["src/benchweave_sdk"]
 
+[tool.hatch.build.targets.wheel.force-include]
+# Packaged so an installed SDK can verify its vendored tree offline
+# (`benchweave-sdk sync-standards --check` without a repository checkout).
+"standards-lock.json" = "benchweave_sdk/standards-lock.json"
+
 [tool.hatch.build.targets.sdist]
 include = ["src", "pyproject.toml", "README.md", "hatch_build.py", "standards-lock.json"]
 

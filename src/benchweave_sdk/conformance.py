@@ -8,6 +8,7 @@ from collections.abc import Callable
 from typing import Any
 
 from .interfaces import Adapter, OperationContext
+from .testing import ConformanceError as ConformanceError  # re-exported for callers
 from .testing import MockContext, MockHost
 from .validation import validate_descriptor, validate_request, validate_result
 
@@ -51,13 +52,16 @@ async def check_lifecycle(
     try:
         async with asyncio.timeout(timeout):
             await adapter.open(descriptor, host, context)
-        assert not host.transfers, "Open performed a device transaction"
+        if host.transfers:
+            raise ConformanceError("Open performed a device transaction")
         async with asyncio.timeout(timeout):
-            assert await adapter.next_event("quiet", context) is None
+            if await adapter.next_event("quiet", context) is not None:
+                raise ConformanceError("A quiet subscription returned an event")
     finally:
         async with asyncio.timeout(timeout):
             await adapter.close(context)
     async with asyncio.timeout(timeout):
         await adapter.close(context)
     host.assert_complete()
-    assert not host.transfers, "Lifecycle performed a device transaction"
+    if host.transfers:
+        raise ConformanceError("Lifecycle performed a device transaction")

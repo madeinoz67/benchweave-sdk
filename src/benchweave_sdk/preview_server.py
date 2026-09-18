@@ -274,15 +274,20 @@ class PreviewServer:
         bound_host, bound_port = self._server.server_address[:2]
         self.address = PreviewAddress(str(bound_host), int(bound_port))
         self._thread: threading.Thread | None = None
+        self._lifecycle = threading.Lock()
+        self._closed = False
 
     def start(self) -> PreviewAddress:
-        if self._thread is None:
-            self._thread = threading.Thread(
-                target=self._server.serve_forever,
-                name="benchweave-preview",
-                daemon=True,
-            )
-            self._thread.start()
+        with self._lifecycle:
+            if self._closed:
+                raise RuntimeError("preview_server_closed")
+            if self._thread is None:
+                self._thread = threading.Thread(
+                    target=self._server.serve_forever,
+                    name="benchweave-preview",
+                    daemon=True,
+                )
+                self._thread.start()
         return self.address
 
     def wait(self) -> None:
@@ -292,10 +297,16 @@ class PreviewServer:
         self._thread.join()
 
     def shutdown(self) -> None:
-        if self._thread is not None:
+        # Idempotent and safe under concurrent callers: the TUI's quit action
+        # and the CLI's ``finally`` both reach here.
+        with self._lifecycle:
+            if self._closed:
+                return
+            self._closed = True
+            thread, self._thread = self._thread, None
+        if thread is not None:
             self._server.shutdown()
-            self._thread.join(timeout=2)
-            self._thread = None
+            thread.join(timeout=2)
         self._server.server_close()
 
     def __enter__(self) -> PreviewAddress:

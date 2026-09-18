@@ -1,0 +1,4 @@
+# Preserve the exact document bytes used by contract digest fixtures on every OS.
+# The vendored standards tree is verified byte-for-byte against standards-lock.json
+# (sync-standards --check, hatch_build.py); a CRLF checkout would fail every digest.
+* text=auto eol=lf
