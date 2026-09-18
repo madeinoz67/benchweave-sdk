@@ -1,0 +1,6 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://benchweave.dev/contracts/plugin-ui/0.1.1/configuration-preset.schema.json",
+  "title": "BenchWeave complete configuration preset 0.1.1",
+  "$ref": "https://benchweave.dev/contracts/plugin-ui/0.1.1/ui-manifest.schema.json#/$defs/preset"
+}

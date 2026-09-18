@@ -17,7 +17,7 @@ from referencing.jsonschema import DRAFT202012
 
 MAX_DOCUMENT_BYTES = 262144
 MAX_DEPTH = 32
-SCHEMA_ROOT = "https://benchweave.dev/contracts/plugin-ui/0.1.0/"
+SCHEMA_ROOT = "https://benchweave.dev/contracts/plugin-ui/0.1.1/"
 
 
 class DocumentError(ValueError):
@@ -163,7 +163,7 @@ def validate_preset(
         except DocumentError as exc:
             return ValidationReport((Finding(exc.code, path, str(exc)),))
     preset, descriptor, settings_schema = decoded
-    if preset.get("contract_version") != "0.1.0":
+    if preset.get("contract_version") != "0.1.1":
         return ValidationReport(
             (
                 Finding(
@@ -255,7 +255,7 @@ def _checked_document(
     raw: bytes, name: str, documents: Mapping[str, dict[str, Any]]
 ) -> dict[str, Any]:
     document = parse_document(raw)
-    if document.get("contract_version") != "0.1.0":
+    if document.get("contract_version") != "0.1.1":
         raise _Rejected((Finding("unsupported_version", name, "Unsupported contract version"),))
     schema = documents.get(SCHEMA_ROOT + name + ".schema.json")
     if schema is None:
@@ -396,6 +396,26 @@ def _plot_findings(
             findings.append(
                 Finding("invalid_plot", path, "Time series needs receipt time in seconds")
             )
+        # channel_hints (0.1.1): membership in THIS plot's y and duplicate ids are
+        # semantic checks on the Python seam; shape, enum, booleans and item
+        # counts are the schema's job in the 0.1.1 corpus. A variable of the
+        # bound target that this plot does not list in y is not hintable here.
+        hinted: set[str] = set()
+        for hint in plot.get("channel_hints", []):
+            variable_id = hint["variable_id"]
+            if variable_id not in plot["y"]:
+                findings.append(
+                    Finding(
+                        "unresolved_reference",
+                        path + ".channel_hints",
+                        "Channel hint names a variable outside this plot's y channels",
+                    )
+                )
+            elif variable_id in hinted:
+                findings.append(
+                    Finding("invalid_document", path + ".channel_hints", "Duplicate identifiers")
+                )
+            hinted.add(variable_id)
     return findings
 
 

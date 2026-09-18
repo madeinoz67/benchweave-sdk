@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://benchweave.dev/contracts/plugin-ui/0.1.0/ui-manifest.schema.json",
-  "title": "BenchWeave plugin presentation manifest 0.1.0",
+  "$id": "https://benchweave.dev/contracts/plugin-ui/0.1.1/ui-manifest.schema.json",
+  "title": "BenchWeave plugin presentation manifest 0.1.1",
   "type": "object",
   "additionalProperties": false,
   "required": ["contract_version", "plugin_id", "descriptor_sha256", "pages", "bindings"],
   "properties": {
-    "contract_version": {"const": "0.1.0"},
+    "contract_version": {"const": "0.1.1"},
     "plugin_id": {"$ref": "#/$defs/id"},
     "descriptor_sha256": {"$ref": "#/$defs/hash"},
     "pages": {"type": "array", "maxItems": 64, "items": {"$ref": "#/$defs/page"}},
@@ -29,7 +29,7 @@
       "properties": {"id": {"$ref": "#/$defs/id"}, "kind": {"enum": ["configuration", "procedure", "observation", "dataset"]}, "target_id": {"$ref": "#/$defs/id"}, "preset_ids": {"$ref": "#/$defs/ids"}},
       "allOf": [{"if": {"properties": {"kind": {"const": "configuration"}}}, "else": {"not": {"required": ["preset_ids"]}}}]
     },
-    "plot": {"type": "object", "additionalProperties": false, "required": ["kind", "binding_id", "x", "y"], "properties": {"kind": {"enum": ["time_series", "waveform"]}, "binding_id": {"$ref": "#/$defs/id"}, "x": {"$ref": "#/$defs/id"}, "y": {"type": "array", "minItems": 1, "maxItems": 16, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}}}},
+    "plot": {"type": "object", "additionalProperties": false, "required": ["kind", "binding_id", "x", "y"], "properties": {"kind": {"enum": ["time_series", "waveform"]}, "binding_id": {"$ref": "#/$defs/id"}, "x": {"$ref": "#/$defs/id"}, "y": {"type": "array", "minItems": 1, "maxItems": 16, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}}, "channel_hints": {"type": "array", "maxItems": 16, "items": {"type": "object", "additionalProperties": false, "required": ["variable_id"], "properties": {"variable_id": {"$ref": "#/$defs/id"}, "color_role": {"enum": ["accent", "muted"]}, "visible": {"type": "boolean"}}, "anyOf": [{"required": ["color_role"]}, {"required": ["visible"]}]}}}},
     "page": {
       "type": "object", "additionalProperties": false,
       "required": ["id", "title", "kind", "bindings", "required"],
@@ -39,12 +39,12 @@
         {"if": {"properties": {"kind": {"enum": ["readings", "dataset"]}}}, "else": {"not": {"required": ["plots"]}}}
       ]
     },
-    "envelope": {"type": "object", "additionalProperties": false, "required": ["contract_version", "descriptor_sha256", "resource_root", "manifest"], "properties": {"contract_version": {"const": "0.1.0"}, "descriptor_sha256": {"$ref": "#/$defs/hash"}, "resource_root": {"$ref": "#/$defs/path"}, "manifest": {"$ref": "#/$defs/reference"}}},
+    "envelope": {"type": "object", "additionalProperties": false, "required": ["contract_version", "descriptor_sha256", "resource_root", "manifest"], "properties": {"contract_version": {"const": "0.1.1"}, "descriptor_sha256": {"$ref": "#/$defs/hash"}, "resource_root": {"$ref": "#/$defs/path"}, "manifest": {"$ref": "#/$defs/reference"}}},
     "preset": {
       "type": "object", "additionalProperties": false,
       "required": ["contract_version", "id", "title", "revision", "plugin_id", "profile_ids", "supported_firmware", "settings_schema", "settings", "provenance"],
       "properties": {
-        "contract_version": {"const": "0.1.0"}, "id": {"$ref": "#/$defs/id"}, "title": {"$ref": "#/$defs/title"}, "revision": {"$ref": "#/$defs/id"}, "plugin_id": {"$ref": "#/$defs/id"}, "profile_ids": {"$ref": "#/$defs/ids"},
+        "contract_version": {"const": "0.1.1"}, "id": {"$ref": "#/$defs/id"}, "title": {"$ref": "#/$defs/title"}, "revision": {"$ref": "#/$defs/id"}, "plugin_id": {"$ref": "#/$defs/id"}, "profile_ids": {"$ref": "#/$defs/ids"},
         "supported_firmware": {"type": "array", "minItems": 1, "maxItems": 256, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
         "settings_schema": {"type": "object", "additionalProperties": false, "required": ["id", "sha256"], "properties": {"id": {"$ref": "#/$defs/id"}, "sha256": {"$ref": "#/$defs/hash"}}},
         "settings": {"type": "object"},
@@ -64,6 +64,6 @@
         {"properties": {"kind": {"const": "dataset"}}, "required": ["action_id", "profile_ids", "measurement_schema_id", "variables"], "not": {"anyOf": [{"required": ["parameter_id"]}, {"required": ["channel_id"]}, {"required": ["input_schema_id"]}, {"required": ["schema_asset_id"]}, {"required": ["preset_asset_ids"]}]}}
       ]
     },
-    "catalogue": {"type": "object", "additionalProperties": false, "required": ["contract_version", "descriptor_sha256", "targets"], "properties": {"contract_version": {"const": "0.1.0"}, "descriptor_sha256": {"$ref": "#/$defs/hash"}, "targets": {"type": "array", "maxItems": 256, "items": {"$ref": "#/$defs/target"}}}}
+    "catalogue": {"type": "object", "additionalProperties": false, "required": ["contract_version", "descriptor_sha256", "targets"], "properties": {"contract_version": {"const": "0.1.1"}, "descriptor_sha256": {"$ref": "#/$defs/hash"}, "targets": {"type": "array", "maxItems": 256, "items": {"$ref": "#/$defs/target"}}}}
   }
 }
