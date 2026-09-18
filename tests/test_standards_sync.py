@@ -407,3 +407,42 @@ def test_manifest_digest_claims_are_recomputed_not_trusted(
     else:
         assert (sdk / "standards-lock.json").read_bytes() == lock_before
         sync(None, sdk, check_only=True)
+
+
+# --- Manifest shape the single-pass hashing keys on: ids and paths must be unique. ---
+
+
+@pytest.mark.parametrize("first_sync", [True, False], ids=["first-sync", "resync"])
+def test_duplicate_standard_ids_are_refused_as_manifest_invalid(
+    tmp_path: Path, first_sync: bool
+) -> None:
+    """Per-standard state is keyed by id; a duplicate is a refusal, never a bare KeyError.
+
+    On a first sync both entries classify as added and the single-pass
+    digests (last id wins) left the integrity check to fail with a bare
+    KeyError; on a resync classification tripped over the same collision
+    first and reported a misleading standards_version_required. Both are
+    now the one refusal.
+    """
+    bundle = _export(tmp_path)
+    sdk = _fresh_sdk(tmp_path) if first_sync else _synced_sdk(tmp_path, bundle)
+    document = _manifest(bundle)
+    target = next(s for s in document["standards"] if s["id"] == "otdp")
+    assert len(target["files"]) >= 2
+    first, rest = target["files"][:1], target["files"][1:]
+    target["files"] = first
+    document["standards"].append({**target, "files": rest})  # same id, disjoint file lists
+    _rewrite_manifest(bundle, document)
+    with pytest.raises(ValueError, match="^bundle_manifest_invalid: duplicate standard id"):
+        sync(bundle, sdk)
+
+
+def test_duplicate_file_paths_within_a_standard_are_refused(tmp_path: Path) -> None:
+    bundle = _export(tmp_path)
+    sdk = _synced_sdk(tmp_path, bundle)
+    document = _manifest(bundle)
+    target = next(s for s in document["standards"] if s["id"] == "otdp")
+    target["files"].append(dict(target["files"][0]))
+    _rewrite_manifest(bundle, document)
+    with pytest.raises(ValueError, match="^bundle_manifest_invalid: duplicate file path"):
+        sync(bundle, sdk)
