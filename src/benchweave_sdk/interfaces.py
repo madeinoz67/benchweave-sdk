@@ -110,9 +110,15 @@ class HostServices(Protocol):
 class CaptureServices(HostServices, Protocol):
     """Host services extended with capture artifact storage.
 
-    Optional: a host that implements no capture support hands adapters plain
-    :class:`HostServices`. Data appended under a ``capture_id`` becomes a
-    single artifact when finalised; an aborted capture leaves nothing behind.
+    Provisional. Nothing in this SDK or in the gateway implements this
+    protocol yet — :class:`~benchweave_sdk.testing.MockHost` provides
+    :class:`HostServices` only, and the gateway's bridge does not implement
+    capture — so the behaviour described here is the intended shape of the
+    contract, not a pinned one; no conformance check exercises it. A host
+    without capture support should hand adapters plain
+    :class:`HostServices`. An implementation should turn the data appended
+    under one ``capture_id`` into a single artifact when finalised and
+    should leave nothing behind for an aborted capture.
 
     See Also
     --------
@@ -127,10 +133,14 @@ class CaptureServices(HostServices, Protocol):
     async def artifact_finalise(
         self, capture_id: str, metadata: dict[str, Any], context: OperationContext
     ) -> dict[str, Any]:
-        """Seal the capture and return its manifest (identity, size, digest, metadata)."""
+        """Seal the capture; implementations should return its manifest.
+
+        The intended manifest carries the artifact's identity, size, digest
+        and the supplied ``metadata``; no implementation pins that shape yet.
+        """
 
     async def artifact_abort(self, capture_id: str) -> None:
-        """Discard an in-progress capture; safe to call for unknown ids."""
+        """Discard an in-progress capture; implementations should accept unknown ids."""
 
 
 class Adapter(Protocol):
