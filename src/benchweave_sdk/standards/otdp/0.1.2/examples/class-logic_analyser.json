@@ -1,5 +1,5 @@
 {
-  "otdp_version": "0.1.1",
+  "otdp_version": "0.1.2",
   "descriptor_version": "1.0.0",
   "id": "dev.local.class-logic-analyser",
   "display_name": "Structural reference: Logic analyser and bus decoding",
@@ -107,14 +107,14 @@
   ],
   "contracts": [
     {
-      "id": "urn:otdp:profile-catalog:0.1.1",
+      "id": "urn:otdp:profile-catalog:0.1.2",
       "path": "device-profile-catalog.json",
-      "sha256": "fde8e03b21cf5104917e32af8bf5c835a39c62ea97a4c6e61b90b161a5eeced4"
+      "sha256": "75db66a242e9916bfc7fe35e711de19ad53f6866c25289c05eac962d60f03796"
     },
     {
-      "id": "urn:otdp:measurement:0.1.1",
+      "id": "urn:otdp:measurement:0.1.2",
       "path": "otdp-measurement.schema.json",
-      "sha256": "e2d6bb9d45339ca35f4a3ecec95971356251e0b6cc2b6038759140af00ff621d"
+      "sha256": "0765a320d837f7099001707127da913374e9a09db3376ac8c981cb5c9a9e3363"
     }
   ],
   "actions": {

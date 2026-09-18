@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:otdp:runtime:0.1.1",
+  "$id": "urn:otdp:runtime:0.1.2",
   "title": "OTDP runtime envelopes",
   "description": "Core runtime envelopes plus invoke for schema-defined class actions. Validate action input/output against its locally pinned contract in addition to this envelope.",
   "$defs": {

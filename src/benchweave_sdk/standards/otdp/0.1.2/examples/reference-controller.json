@@ -1,13 +1,13 @@
 {
-  "otdp_version": "0.1.1",
+  "otdp_version": "0.1.2",
   "descriptor_version": "1.0.0",
-  "id": "dev.local.reference-psu",
-  "display_name": "Illustrative reference-psu",
+  "id": "dev.local.reference-controller",
+  "display_name": "Illustrative reference-controller",
   "description": "Reference protocol only; not a qualified commercial instrument or bench safety profile.",
   "identity": {
-    "strategy": "scpi_idn",
+    "strategy": "uart_identity",
     "manufacturer": "OTDP Reference",
-    "model": "reference-psu",
+    "model": "reference-controller",
     "firmware_policy": "listed",
     "supported_firmware": [
       "1.0"
@@ -17,14 +17,16 @@
     "mode": "declarative"
   },
   "transport": {
-    "type": "lan_scpi",
-    "connection_key": "psu",
+    "type": "uart_json",
+    "connection_key": "controller",
     "settings": {
-      "protocol": "raw",
-      "port": 5555,
-      "write_termination": "lf",
-      "read_termination": "lf",
-      "max_response_bytes": 4096
+      "baud": 115200,
+      "data_bits": 8,
+      "parity": "none",
+      "stop_bits": 1,
+      "rtscts": false,
+      "max_frame_bytes": 4096,
+      "framing": "ndjson"
     }
   },
   "capabilities": [
@@ -32,7 +34,8 @@
     "read",
     "write",
     "self_test",
-    "get_errors"
+    "stream_subscribe",
+    "stream_unsubscribe"
   ],
   "operations": {
     "identify": {
@@ -54,7 +57,7 @@
       "side_effect": "state_change",
       "retry": "never",
       "cancellable": false,
-      "completion": "readback"
+      "completion": "acknowledged"
     },
     "self_test": {
       "timeout_ms": 2000,
@@ -63,7 +66,14 @@
       "cancellable": false,
       "completion": "acknowledged"
     },
-    "get_errors": {
+    "stream_subscribe": {
+      "timeout_ms": 2000,
+      "side_effect": "state_change",
+      "retry": "never",
+      "cancellable": false,
+      "completion": "acknowledged"
+    },
+    "stream_unsubscribe": {
       "timeout_ms": 2000,
       "side_effect": "state_change",
       "retry": "never",
@@ -73,23 +83,34 @@
   },
   "parameters": [
     {
-      "name": "voltage_setpoint",
-      "description": "voltage setpoint",
+      "name": "battery_voltage",
+      "description": "battery voltage",
       "type": "float",
-      "access": "rw",
-      "semantic": "setpoint",
+      "access": "ro",
+      "semantic": "measurement",
       "binding": {
-        "kind": "scpi",
-        "get": "VOLT?",
-        "set": "VOLT {value}",
-        "codec": {
-          "kind": "float"
-        }
+        "kind": "uart_json"
       },
       "unit": "V",
-      "range": [
-        0,
-        10
+      "read_policy": {
+        "max_age_ms": 0,
+        "destructive": false
+      }
+    },
+    {
+      "name": "led_state",
+      "description": "led state",
+      "type": "enum",
+      "access": "rw",
+      "semantic": "configuration",
+      "binding": {
+        "kind": "uart_json"
+      },
+      "enum_values": [
+        "off",
+        "red",
+        "green",
+        "blue"
       ],
       "read_policy": {
         "max_age_ms": 0,
@@ -98,59 +119,8 @@
       "hazard_class": "unknown",
       "write_policy": {
         "effect": "setting",
-        "completion": "readback",
-        "retry": "never",
-        "verification_parameter": "voltage_setpoint",
-        "absolute_tolerance": 0.001,
-        "settling_timeout_ms": 1000
-      }
-    },
-    {
-      "name": "voltage_measured",
-      "description": "voltage measured",
-      "type": "float",
-      "access": "ro",
-      "semantic": "measurement",
-      "binding": {
-        "kind": "scpi",
-        "get": "MEAS:VOLT?",
-        "codec": {
-          "kind": "float"
-        }
-      },
-      "unit": "V",
-      "read_policy": {
-        "max_age_ms": 0,
-        "destructive": false
-      }
-    },
-    {
-      "name": "output_enabled",
-      "description": "output enabled",
-      "type": "bool",
-      "access": "rw",
-      "semantic": "state",
-      "binding": {
-        "kind": "scpi",
-        "get": "OUTP?",
-        "set": "OUTP {value}",
-        "codec": {
-          "kind": "bool",
-          "true_value": "1",
-          "false_value": "0"
-        }
-      },
-      "read_policy": {
-        "max_age_ms": 0,
-        "destructive": false
-      },
-      "hazard_class": "unknown",
-      "write_policy": {
-        "effect": "energise",
-        "completion": "readback",
-        "retry": "never",
-        "verification_parameter": "output_enabled",
-        "settling_timeout_ms": 1000
+        "completion": "acknowledged",
+        "retry": "never"
       }
     }
   ],
@@ -167,21 +137,14 @@
     ],
     "test_vectors": [
       {
-        "id": "reference-psu-reference",
+        "id": "reference-controller-reference",
         "path": "reference-vectors.json",
         "purpose": "Normative reference exchanges and codec outcomes"
       }
     ]
   },
-  "diagnostics": {
-    "self_test": {
-      "command": "*TST?",
-      "pass_response": "0"
-    },
-    "errors": {
-      "command": "SYST:ERR?",
-      "no_error_code": 0,
-      "max_entries": 16
-    }
+  "stream_limits": {
+    "min_interval_ms": 100,
+    "max_subscriptions": 1
   }
 }
