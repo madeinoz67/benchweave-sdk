@@ -19,11 +19,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Pin to the release tag / dispatch tag: never build the default branch.
           ref: ${{ github.event.release.tag_name || inputs.tag }}
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           python-version: "3.13"
       - run: uv sync
@@ -33,7 +33,7 @@ jobs:
         # hatch_build verifies the vendored standards tree and preview assets
         # against the lock during the build, so a stale tree cannot reach PyPI.
         run: uv build
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: dist
           path: dist/
@@ -47,27 +47,36 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-15-intel]
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-15-intel, windows-latest]
     env:
       TAG: ${{ github.event.release.tag_name || inputs.tag }}
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: dist
           path: dist
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           python-version: "3.13"
       - name: Install smoke (wheel outside any checkout)
         # $RUNNER_TEMP is a real (non-symlink) path on every runner OS —
         # the SDK's path validation rejects symlinked roots like macOS /tmp.
+        # bash everywhere: the Windows runner otherwise defaults to pwsh,
+        # and its venv puts entry points under Scripts/, not bin/.
+        shell: bash
         run: |
           set -euo pipefail
           uv venv "$RUNNER_TEMP/sdk-smoke"
-          uv pip install --python "$RUNNER_TEMP/sdk-smoke/bin/python" dist/*.whl
-          "$RUNNER_TEMP/sdk-smoke/bin/benchweave-sdk" --version | grep -F "version ${TAG#v}"
-          "$RUNNER_TEMP/sdk-smoke/bin/benchweave-sdk" new "$RUNNER_TEMP/example" --with-ui
-          "$RUNNER_TEMP/sdk-smoke/bin/benchweave-sdk" check "$RUNNER_TEMP/example/src/example_plugin/descriptor.json"
+          BIN="$RUNNER_TEMP/sdk-smoke/bin"
+          [ -d "$BIN" ] || BIN="$RUNNER_TEMP/sdk-smoke/Scripts"
+          uv pip install --python "$BIN/python" dist/*.whl
+          "$BIN/benchweave-sdk" --version | grep -F "version ${TAG#v}"
+          "$BIN/benchweave-sdk" new "$RUNNER_TEMP/example" --with-ui
+          "$BIN/benchweave-sdk" check "$RUNNER_TEMP/example/src/example_plugin/descriptor.json"
+          # Installed-mode standards verification: proves the packaged lock
+          # (the wheel force-include) and the resource path in
+          # verify_installed before anything reaches PyPI.
+          "$BIN/benchweave-sdk" sync-standards --check
 
   publish:
     name: Publish to PyPI (Trusted Publishing)
@@ -78,19 +87,19 @@ jobs:
       id-token: write
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.release.tag_name || inputs.tag }}
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           python-version: "3.13"
       - name: Tag must match project.version
         run: uv run --no-project python scripts/verify_release_tag.py "${{ github.event.release.tag_name || inputs.tag }}" --pyproject pyproject.toml
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: dist
           path: dist
-      - uses: pypa/gh-action-pypi-publish@release/v1
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
 
   tap:
     name: bump homebrew tap
@@ -101,7 +110,7 @@ jobs:
     env:
       TAG: ${{ github.event.release.tag_name || inputs.tag }}
     steps:
-      - uses: actions/checkout@v4   # for the formula template at .github/homebrew/benchweave-sdk.rb.tmpl
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 — for the formula template at .github/homebrew/benchweave-sdk.rb.tmpl
       - name: Render Formula/benchweave-sdk.rb from the template and push to madeinoz67/homebrew-tap
         env:
           TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
@@ -161,17 +170,17 @@ jobs:
       - name: Create changelog app token
         if: steps.wiring.outputs.ready == 'true'
         id: app-token
-        uses: actions/create-github-app-token@v3
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           app-id: ${{ vars.CHANGELOG_APP_ID }}
           private-key: ${{ secrets.CHANGELOG_APP_PRIVATE_KEY }}
           permission-contents: write
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           token: ${{ steps.wiring.outputs.ready == 'true' && steps.app-token.outputs.token || github.token }}
       - name: Generate notes for this release
-        uses: orhun/git-cliff-action@v4
+        uses: orhun/git-cliff-action@3d96a18cc4ec17e9dc69ddcc424ccafaf1f78ce2 # v4.9.0
         with:
           config: cliff.toml
           args: --latest --strip header
@@ -183,7 +192,7 @@ jobs:
         run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file RELEASE_NOTES.md
       - name: Regenerate the full CHANGELOG.md
         if: steps.wiring.outputs.ready == 'true'
-        uses: orhun/git-cliff-action@v4
+        uses: orhun/git-cliff-action@3d96a18cc4ec17e9dc69ddcc424ccafaf1f78ce2 # v4.9.0
         with:
           config: cliff.toml
         env:
