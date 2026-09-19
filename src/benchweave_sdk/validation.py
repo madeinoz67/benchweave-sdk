@@ -136,6 +136,12 @@ def validate_result(result: dict[str, Any], request: dict[str, Any]) -> None:
         raise ValueError("Result correlation does not match the request")
 
 
+#: The grammar's ``digits`` are exactly ASCII 0-9 (the OTDP schema
+#: pattern's class) — ``str.isdigit`` admits Unicode digit-class characters
+#: and the two checkers would then disagree on identical content.
+_ASCII_DIGITS = frozenset("0123456789")
+
+
 def _derivation_tokens(expression: str) -> list[tuple[str, str]]:
     """Tokenize a derived-variable expression (S19; measurement-model §8).
 
@@ -158,19 +164,19 @@ def _derivation_tokens(expression: str) -> list[tuple[str, str]]:
             tokens.append((char, char))
             index += 1
             continue
-        if char.isdigit() or char == ".":
+        if char in _ASCII_DIGITS or char == ".":
             start = index
-            if char.isdigit():
-                while index < length and expression[index].isdigit():
+            if char in _ASCII_DIGITS:
+                while index < length and expression[index] in _ASCII_DIGITS:
                     index += 1
             if index < length and expression[index] == ".":
                 index += 1
-                if index >= length or not expression[index].isdigit():
+                if index >= length or expression[index] not in _ASCII_DIGITS:
                     raise ValueError(
                         f"S19: derivation_grammar: malformed number at {start} "
                         f"in {expression!r}"
                     )
-                while index < length and expression[index].isdigit():
+                while index < length and expression[index] in _ASCII_DIGITS:
                     index += 1
             if index == start:
                 raise ValueError(

@@ -210,6 +210,24 @@
       "expression": "sense_a + sense_a + sense_a + sense_a + sense_a + sense_a + sense_a + sense_a + sense_a + sense_a + sense_a + sense_a + sense_a + sense_a + sense_a + sense_a + sense_a + sense_a + sense_a + sense_a + sense_a + sense_a + sense_a + sense_a + sense_a + sense_a + sense_a + sense_a + sense_a + sense_a + sense_a + sense_a + sense_a + sense_a + sense_a + sense_a + sense_a + sense_a + sense_a + sense_a + sense_a + sense_a + sense_a + sense_a + sense_a + sense_a + sense_a + sense_a + sense_a + sense_a + sense_a + sense_a + sense_b",
       "expect": "reject",
       "reason_prefix": "derivation_grammar:"
+    },
+    {
+      "id": "g-39",
+      "expression": "voltage + \u00b2",
+      "expect": "reject",
+      "reason_prefix": "derivation_grammar:"
+    },
+    {
+      "id": "g-40",
+      "expression": "voltage + \u0663",
+      "expect": "reject",
+      "reason_prefix": "derivation_grammar:"
+    },
+    {
+      "id": "g-41",
+      "expression": "voltage * \uff11",
+      "expect": "reject",
+      "reason_prefix": "derivation_grammar:"
     }
   ],
   "static": [
@@ -2089,6 +2107,250 @@
           }
         }
       ]
+    },
+    {
+      "id": "e-18",
+      "derived": [
+        {
+          "id": "d18",
+          "quantity": "voltage",
+          "unit": "V",
+          "expression": "v18 + 1"
+        }
+      ],
+      "dataset": {
+        "dataset_id": "dataset-e-18",
+        "kind": "scalar_set",
+        "configuration_id": "cfg-census",
+        "acquisition_id": null,
+        "started_at": "2026-09-19T00:00:00Z",
+        "clock": {
+          "domain_id": "census",
+          "timestamp_source": "host",
+          "synchronisation": "unknown",
+          "uncertainty_s": null
+        },
+        "axes": [],
+        "variables": [
+          {
+            "id": "v18",
+            "quantity": "voltage",
+            "unit": "V",
+            "channel_ids": [
+              "ch1"
+            ],
+            "dtype": "float64",
+            "dimensions": [],
+            "values": [
+              1.0
+            ],
+            "uncertainty": {
+              "status": "unknown"
+            },
+            "calibration": {
+              "status": "unknown"
+            },
+            "status": "valid"
+          },
+          {
+            "id": "c18",
+            "quantity": "voltage",
+            "unit": "V",
+            "channel_ids": [
+              "ch1"
+            ],
+            "dtype": "float64",
+            "dimensions": [],
+            "values": [
+              42.0
+            ],
+            "uncertainty": {
+              "status": "unknown"
+            },
+            "calibration": {
+              "status": "unknown"
+            },
+            "status": "valid",
+            "derivation": {
+              "kind": "expression",
+              "expression": "42",
+              "operand_ids": []
+            }
+          }
+        ],
+        "trigger": {
+          "source": "immediate",
+          "time_relative_s": null
+        },
+        "status": "complete",
+        "context": {
+          "origin": "derivation-vectors"
+        }
+      },
+      "expect": "refused",
+      "reason_prefix": "derivation_marker_mismatch:"
+    },
+    {
+      "id": "e-19",
+      "derived": [
+        {
+          "id": "d19",
+          "quantity": "voltage",
+          "unit": "V",
+          "expression": "v19 + 1"
+        }
+      ],
+      "dataset": {
+        "dataset_id": "dataset-e-19",
+        "kind": "scalar_set",
+        "configuration_id": "cfg-census",
+        "acquisition_id": null,
+        "started_at": "2026-09-19T00:00:00Z",
+        "clock": {
+          "domain_id": "census",
+          "timestamp_source": "host",
+          "synchronisation": "unknown",
+          "uncertainty_s": null
+        },
+        "axes": [],
+        "variables": [
+          {
+            "id": "v19",
+            "quantity": "voltage",
+            "unit": "V",
+            "channel_ids": [
+              "ch1"
+            ],
+            "dtype": "float64",
+            "dimensions": [],
+            "values": [
+              1.0
+            ],
+            "uncertainty": {
+              "status": "unknown"
+            },
+            "calibration": {
+              "status": "unknown"
+            },
+            "status": "valid"
+          },
+          {
+            "id": "c19",
+            "quantity": "voltage",
+            "unit": "V",
+            "channel_ids": [
+              "ch1"
+            ],
+            "dtype": "float64",
+            "dimensions": [],
+            "values": [
+              2.0
+            ],
+            "uncertainty": {
+              "status": "unknown"
+            },
+            "calibration": {
+              "status": "unknown"
+            },
+            "status": "valid",
+            "derivation": {
+              "kind": "expression",
+              "expression": "v19 + v19",
+              "operand_ids": [
+                "v19",
+                "v19"
+              ]
+            }
+          }
+        ],
+        "trigger": {
+          "source": "immediate",
+          "time_relative_s": null
+        },
+        "status": "complete",
+        "context": {
+          "origin": "derivation-vectors"
+        }
+      },
+      "expect": "refused",
+      "reason_prefix": "derivation_marker_mismatch:"
+    },
+    {
+      "id": "e-20",
+      "derived": [
+        {
+          "id": "d20",
+          "quantity": "voltage",
+          "unit": "V",
+          "expression": "v20 + 1"
+        }
+      ],
+      "dataset": {
+        "dataset_id": "dataset-e-20",
+        "kind": "scalar_set",
+        "configuration_id": "cfg-census",
+        "acquisition_id": null,
+        "started_at": "2026-09-19T00:00:00Z",
+        "clock": {
+          "domain_id": "census",
+          "timestamp_source": "host",
+          "synchronisation": "unknown",
+          "uncertainty_s": null
+        },
+        "axes": [],
+        "variables": [
+          {
+            "id": "v20",
+            "quantity": "voltage",
+            "unit": "V",
+            "channel_ids": [
+              "ch1"
+            ],
+            "dtype": "float64",
+            "dimensions": [],
+            "values": [
+              1.0
+            ],
+            "uncertainty": {
+              "status": "unknown"
+            },
+            "calibration": {
+              "status": "unknown"
+            },
+            "status": "valid"
+          },
+          {
+            "id": "v20",
+            "quantity": "voltage",
+            "unit": "V",
+            "channel_ids": [
+              "ch1"
+            ],
+            "dtype": "float64",
+            "dimensions": [],
+            "values": [
+              9.0
+            ],
+            "uncertainty": {
+              "status": "unknown"
+            },
+            "calibration": {
+              "status": "unknown"
+            },
+            "status": "valid"
+          }
+        ],
+        "trigger": {
+          "source": "immediate",
+          "time_relative_s": null
+        },
+        "status": "complete",
+        "context": {
+          "origin": "derivation-vectors"
+        }
+      },
+      "expect": "refused",
+      "reason_prefix": "derivation_duplicate_variable:"
     }
   ]
 }
