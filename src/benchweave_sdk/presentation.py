@@ -85,7 +85,12 @@ def read_file(path: Path, limit: int = 262144) -> bytes:
 
 
 def validate_preset(
-    raw: bytes, *, descriptor_raw: bytes, settings_schema_raw: bytes, firmware: str | None
+    raw: bytes,
+    *,
+    descriptor_raw: bytes,
+    settings_schema_raw: bytes,
+    firmware: str | None,
+    action_id: str | None = None,
 ) -> Any:
     validate_descriptor(_contract().parse_document(descriptor_raw))
     return _contract().validate_preset(
@@ -94,7 +99,22 @@ def validate_preset(
         settings_schema_raw=settings_schema_raw,
         schema_documents=schemas(),
         firmware=firmware,
+        action_id=action_id,
     )
+
+
+def resolve_preset_action(raw: bytes, *, descriptor_raw: bytes) -> str | None:
+    """Resolve the corpus action a preset's settings schema identifies.
+
+    The same resolver ``validate_preset`` uses, exported so the CLI's
+    envelope note cannot disagree with the enforcement: ``None`` means the
+    settings schema carries a custom ``$id`` and lane 1 applies no envelope.
+    """
+    validate_descriptor(_contract().parse_document(descriptor_raw))
+    resolved: str | None = _contract().resolve_preset_action(
+        _contract().parse_document(raw), schemas()
+    )
+    return resolved
 
 
 def validate_presentation(
@@ -338,7 +358,7 @@ def create_ui_resources(destination: Path, package: str) -> None:
         raise ValueError("UI scaffolding requires at least one readable descriptor parameter")
     bindings = [{"id": row["id"], "kind": "observation", "target_id": row["id"]} for row in targets]
     manifest = {
-        "contract_version": "0.1.1",
+        "contract_version": "0.2.0",
         "plugin_id": descriptor["id"],
         "descriptor_sha256": descriptor_hash,
         "bindings": bindings,
@@ -354,13 +374,13 @@ def create_ui_resources(destination: Path, package: str) -> None:
     }
     manifest_raw = (json.dumps(manifest, indent=2) + "\n").encode()
     envelope = {
-        "contract_version": "0.1.1",
+        "contract_version": "0.2.0",
         "descriptor_sha256": descriptor_hash,
         "resource_root": "ui",
         "manifest": {"path": "manifest.json", "sha256": hashlib.sha256(manifest_raw).hexdigest()},
     }
     catalogue = {
-        "contract_version": "0.1.1",
+        "contract_version": "0.2.0",
         "descriptor_sha256": descriptor_hash,
         "targets": targets,
     }
