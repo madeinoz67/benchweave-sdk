@@ -1,47 +1,31 @@
 {
-  "otdp_version": "0.1.2",
+  "otdp_version": "0.2.0",
   "descriptor_version": "1.0.0",
-  "id": "dev.local.reference-capture",
-  "display_name": "Illustrative reference-capture",
+  "id": "dev.local.reference-can",
+  "display_name": "Illustrative reference-can",
   "description": "Reference protocol only; not a qualified commercial instrument or bench safety profile.",
   "identity": {
-    "strategy": "adapter",
+    "strategy": "commissioned",
     "manufacturer": "OTDP Reference",
-    "model": "reference-capture",
-    "firmware_policy": "listed",
-    "supported_firmware": [
-      "1.0"
-    ]
+    "model": "reference-can",
+    "firmware_policy": "commissioned"
   },
   "integration": {
-    "mode": "adapter",
-    "adapter": {
-      "entry_point": "reference_capture:create_plugin",
-      "api_version": "1.1",
-      "version": "1.0.0",
-      "dependencies": [],
-      "permissions": [
-        "scoped_transport",
-        "artifact_writer"
-      ]
-    }
+    "mode": "declarative"
   },
   "transport": {
-    "type": "serial",
-    "connection_key": "capture_device",
+    "type": "can",
+    "connection_key": "can_sensor",
     "settings": {
-      "baud": 115200,
-      "data_bits": 8,
-      "parity": "none",
-      "stop_bits": 1,
-      "rtscts": false,
-      "max_frame_bytes": 65536
+      "receive_id": 418,
+      "extended": false,
+      "fd": false,
+      "payload_length": 4
     }
   },
   "capabilities": [
     "identify",
-    "read",
-    "capture"
+    "read"
   ],
   "operations": {
     "identify": {
@@ -57,13 +41,6 @@
       "retry": "never",
       "cancellable": false,
       "completion": "acknowledged"
-    },
-    "capture": {
-      "timeout_ms": 10000,
-      "side_effect": "state_change",
-      "retry": "never",
-      "cancellable": false,
-      "completion": "acknowledged"
     }
   },
   "parameters": [
@@ -74,19 +51,43 @@
       "access": "ro",
       "semantic": "measurement",
       "binding": {
-        "kind": "adapter",
-        "key": "voltage_mv"
+        "kind": "packed_binary",
+        "byte_offset": 0,
+        "length_bytes": 2,
+        "endianness": "big",
+        "signed": false,
+        "scale": 0.01
       },
       "unit": "V",
       "read_policy": {
-        "max_age_ms": 0,
+        "max_age_ms": 100,
+        "destructive": false
+      }
+    },
+    {
+      "name": "current",
+      "description": "current",
+      "type": "float",
+      "access": "ro",
+      "semantic": "measurement",
+      "binding": {
+        "kind": "packed_binary",
+        "byte_offset": 2,
+        "length_bytes": 2,
+        "endianness": "big",
+        "signed": true,
+        "scale": 0.1
+      },
+      "unit": "A",
+      "read_policy": {
+        "max_age_ms": 100,
         "destructive": false
       }
     }
   ],
   "required_features": [
     "otdp.core/0.1.0",
-    "otdp.adapter/0.1.0"
+    "otdp.passive_can/0.1.0"
   ],
   "provenance": {
     "sources": [
@@ -98,17 +99,10 @@
     ],
     "test_vectors": [
       {
-        "id": "reference-capture-reference",
+        "id": "reference-can-reference",
         "path": "reference-vectors.json",
         "purpose": "Normative reference exchanges and codec outcomes"
       }
     ]
-  },
-  "capture_formats": [
-    "waveform_f64le"
-  ],
-  "capture_limits": {
-    "max_samples": 1024,
-    "max_bytes": 8192
   }
 }

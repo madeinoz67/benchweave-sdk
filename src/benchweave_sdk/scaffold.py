@@ -248,7 +248,7 @@ plugin source package. A preset is configuration, not a retained measurement.
 
 > Inspect this project and my supplied device manual/protocol evidence. List
 > exact model/firmware support, intended operations, command sources, ranges,
-> transport bounds, side effects and unknowns. Map them to OTDP 0.1.2 and adapter
+> transport bounds, side effects and unknowns. Map them to OTDP 0.2.0 and adapter
 > API 1.1. Do not invent commands. Propose a small implementation plan before
 > editing. Do not contact hardware, flash firmware, energise outputs or publish.
 
@@ -299,7 +299,7 @@ def descriptor_for(package: str) -> dict[str, Any]:
     """Build the synthetic plugin descriptor for ``package``.
 
     The descriptor advertises the synthetic identify/read protocol
-    (OTDP descriptor 0.1.2, adapter API 1.1) with
+    (OTDP descriptor 0.2.0, adapter API 1.1) with
     ``<package>.adapter:create_plugin`` as its entry point.
 
     Parameters
@@ -320,7 +320,7 @@ def descriptor_for(package: str) -> dict[str, Any]:
         "completion": "acknowledged",
     }
     return {
-        "otdp_version": "0.1.2",
+        "otdp_version": "0.2.0",
         "descriptor_version": "0.1.0",
         "id": f"dev.example.{package.replace('_', '-')}",
         "display_name": "SDK synthetic example",
