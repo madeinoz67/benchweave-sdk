@@ -1,1 +1,276 @@
-{"compatibility":{"main_project":">=0.1.0","notes":null,"sdk":"0.0.2"},"lock_version":1,"standards":[{"files":[{"path":"otdp/0.1.1/device-profile-catalog.json","sha256":"fde8e03b21cf5104917e32af8bf5c835a39c62ea97a4c6e61b90b161a5eeced4"},{"path":"otdp/0.1.1/device-profile-catalog.schema.json","sha256":"8a529ff137e431ba2316e9a6f36a93c7eae8d45590c6ffc8971be133fbeedd21"},{"path":"otdp/0.1.1/examples/class-action-vectors.json","sha256":"750cb0b0ed52b218d178f769888b36aaac69f32a61d0cfb6777f6bceea095f37"},{"path":"otdp/0.1.1/examples/class-daq.json","sha256":"102d75791de713e61fd01b9cd57bfaa31194ba45058edda679f77be92bc12002"},{"path":"otdp/0.1.1/examples/class-dc_psu.json","sha256":"6d121a495f60b7a8d519db48357598dccad923659b8788c1232c00971aa61440"},{"path":"otdp/0.1.1/examples/class-dmm.json","sha256":"8959e4036c9ced2bb353f9096b4d09770d4904c3aa5e835cb3ad2f5c96355edb"},{"path":"otdp/0.1.1/examples/class-electronic_load.json","sha256":"0cc5ed6dd0eaf15fc998fabc9970c15c6c83d97661c4e2e151d49692108ff475"},{"path":"otdp/0.1.1/examples/class-embedded_controller.json","sha256":"1ed2870117af95b59dcb999f4b4e95edfcbe44caa1702af448847d3bf89309f1"},{"path":"otdp/0.1.1/examples/class-function_generator.json","sha256":"1985650656b823f65d0b42c164c003c07913fae6779b4f2c11d68a7b9ed74e3d"},{"path":"otdp/0.1.1/examples/class-logic_analyser.json","sha256":"0a1dcdf88c4febbbfe9fa803e19c98a892b10a236be7ff1e034a617f7d34d048"},{"path":"otdp/0.1.1/examples/class-oscilloscope.json","sha256":"39fb294548d88e472c51fd9384cb5fbd5758b657198d363d33dd448bc137f4c9"},{"path":"otdp/0.1.1/examples/class-smu.json","sha256":"3fd2cebf9d9c05192660d2420dbbb7de554333d6bf132809d13591514a8cbdb1"},{"path":"otdp/0.1.1/examples/class-spectrum_analyser.json","sha256":"04b67a004c1bf902bb0104a6a1646c5f312ce6ab0e17149075d21cfe3058f3f4"},{"path":"otdp/0.1.1/examples/class-switch_matrix.json","sha256":"176f02663c18bd8affe6c5566198f5b24da594366c4fe4057f56db9eb20b7731"},{"path":"otdp/0.1.1/examples/class-vna.json","sha256":"e62d5dc8675f6fd1b2d5b212929348c36e63936b7a7c050538532b4b2f34a65a"},{"path":"otdp/0.1.1/examples/measurement-vectors.json","sha256":"31f24643307997f89cdaf02d0542884831f901a15ed63653cea303719fb47858"},{"path":"otdp/0.1.1/examples/reference-can.json","sha256":"45c1dce17277eae1a0e462e991d502b34f0e973c528f6135e667ec4dca0c79db"},{"path":"otdp/0.1.1/examples/reference-capture.json","sha256":"0efdde60e89240c7e3c0ce86b9819eeac7bc369a1b5366ce4a4d1aa477d2fb03"},{"path":"otdp/0.1.1/examples/reference-controller.json","sha256":"f515ef298d5b56584205f85c613a7a1e57934c05e04b785d7adacac549a514ae"},{"path":"otdp/0.1.1/examples/reference-psu.json","sha256":"1d450bdfcfb3e454559edf6576c7a828c67eb45f6000937b12e643dfabc578a0"},{"path":"otdp/0.1.1/examples/reference-vectors.json","sha256":"6f476b31ec98f572c83127ed1684506fba18ed0205ea47869f90bdf0fe5fcef0"},{"path":"otdp/0.1.1/otdp-device-descriptor.schema.json","sha256":"83aeb0f0504a9657f993a00db61bf866806e76fa5d978c5beb1be5fccfff7e08"},{"path":"otdp/0.1.1/otdp-measurement.schema.json","sha256":"e2d6bb9d45339ca35f4a3ecec95971356251e0b6cc2b6038759140af00ff621d"},{"path":"otdp/0.1.1/otdp-runtime.schema.json","sha256":"c7e9c4b8b817a737cabc9f2a11e74a7cf88e4d7dc246f6b67910d9dcc69e7e95"}],"id":"otdp","status":"stable","version":"0.1.1"},{"files":[{"path":"registry/0.1.0/examples/package-lock.json","sha256":"52f57da1f016ed0eb61cc5b7a3c0d213ecffb443df1613f91e55e691a7d275c6"},{"path":"registry/0.1.0/examples/release-manifest.json","sha256":"9d3cbfab9d63fd22f456be2f8ef1d1c15b730b314f2cb807ac36827f7ded3be6"},{"path":"registry/0.1.0/examples/release-status.json","sha256":"aa03712342d50d8119e6e3ec181f8a7d0a8231bd54eb7deefc1d5cd65bc4e769"},{"path":"registry/0.1.0/package-lock.schema.json","sha256":"06b6f9ea312ff6d0361c1546bc1174b721017ad9f2bfccc47dcf9748db2b234a"},{"path":"registry/0.1.0/release-manifest.schema.json","sha256":"5f08b2ac0f14c3a1eaea87ab2b6791bd4db481b272b3516431049090e7f5693b"},{"path":"registry/0.1.0/release-status.schema.json","sha256":"fb95ef0827892ac0ee080e28735f2185903a660277dc211780ea83c307f94112"}],"id":"registry","status":"stable","version":"0.1.0"},{"files":[{"path":"execution/0.1.0/bench.schema.json","sha256":"503093996daba1deb27f0f0954f6e90db5c4f2e055bc7bdfd8d3d8197ce5b6b2"},{"path":"execution/0.1.0/commissioning.schema.json","sha256":"a275a8afdd35c8dda4dd7c8391bba9873abf95424ad66cd8cbf1ac8f5a627dc9"},{"path":"execution/0.1.0/examples/bench.json","sha256":"d67d9b254c30ed006f90f4d5fa7c5f7ac1f638bbf21481e2487f878b8030d952"},{"path":"execution/0.1.0/examples/commissioning.json","sha256":"f13a2195929e4b5f34347bbe45a7677f9c6ac7883d16242bd75e2bfc0e4176df"},{"path":"execution/0.1.0/examples/procedure.json","sha256":"64ac82e02f0e13412337fc1bd3503cea1c952ee9a31e5e50214bc4677da3381a"},{"path":"execution/0.1.0/examples/run-binding.json","sha256":"0e875072137b6846ee64ab9f01bad00c5c6b384d366def36741087c1ab6a6330"},{"path":"execution/0.1.0/examples/run-record.json","sha256":"28bf392e9c20ee467709407db787d546e9851498c03e9c0109a4ad9a723e9707"},{"path":"execution/0.1.0/examples/safety-policy.json","sha256":"73454794f991f14b80e0caa396a9e8a5b388b17e806145402e6531c7dcc7655a"},{"path":"execution/0.1.0/procedure.schema.json","sha256":"194b0aab8fb348059897cfd4612a4d41e1e07d4c9e746b1c4bfdbd92ab733c6d"},{"path":"execution/0.1.0/run-binding.schema.json","sha256":"a86c160555c030173f8b045a5a15a045788b7c167b32dc53741621bf86444817"},{"path":"execution/0.1.0/run-record.schema.json","sha256":"59d5e93515215c6c15c3001bb91c28a2b6bbfc5eb3e1bd623293df9de8c99b82"},{"path":"execution/0.1.0/safety-policy.schema.json","sha256":"06107ddd4bf375e7f2c1dbe764a842557f37c0bfbe24b358e258398ff56d4bad"}],"id":"execution","status":"stable","version":"0.1.0"},{"files":[{"path":"interface/0.1.0/examples/mcp-start-exchange.json","sha256":"13a2d04b7969444ba0034c5ae38299bedfcd759213cf0cca37205ef2c0eac893"},{"path":"interface/0.1.0/examples/operation-vectors.json","sha256":"537a7c9ac9600bd18f5bbbed6e6ba07aa9715a7ee286c218331f72d5d3ddc97e"},{"path":"interface/0.1.0/interface.schema.json","sha256":"33e8f0af6ef7dde117f0be1816aaa035ce1ea261cc99e4428507c9a74d12c2ba"},{"path":"interface/0.1.0/mcp-tools.json","sha256":"7b956d1fdccfe943237b0de0c456e0c0787bc8af396ddf0a3559e7d6202b22b4"},{"path":"interface/0.1.0/openapi.json","sha256":"47daba3e3fe840a19ca23030977293f1204f2fce6f8cb63bfcd18318c7fd3a2d"},{"path":"interface/0.1.0/operation-catalog.json","sha256":"1ca993619658e45d0450b0f9862e86a80832a7b684ebebf6fd3c6c8cfdefe18f"}],"id":"interface","status":"stable","version":"0.1.0"},{"files":[{"path":"plugin-ui/0.1.1/binding-catalogue.schema.json","sha256":"517358e1f519203b6eba77059b53cd4e732aeb837b2390aee409e14e7568423a"},{"path":"plugin-ui/0.1.1/configuration-preset.schema.json","sha256":"cd99df6e29e17f282b84701d3f13eb34b9c372d863067821de03e9c4aa406f01"},{"path":"plugin-ui/0.1.1/presentation-envelope.schema.json","sha256":"0f1e494de44358c8f3b263591b9374a61627ef40cebc709c02f417bb27f9952f"},{"path":"plugin-ui/0.1.1/ui-manifest.schema.json","sha256":"3c59fc11f4fd31d418c698adc96a3d16568ed95dec4d389c52f0b94e3ed7ff8a"},{"path":"plugin-ui/contracts.py","sha256":"3154f3398e0066e7147fa11ebd29e9e65a4ef3f91e4cce1a8fbb8e00cec146ca"}],"id":"plugin-ui","status":"stable","version":"0.1.1"},{"files":[{"path":"plugin-ui-preview/0.1.0/fixture.schema.json","sha256":"134878f178bd58879aa1b626ee6fa7782581fffed540bcd6ce31c97b375d14de"},{"path":"plugin-ui-preview/0.1.0/preview-document.schema.json","sha256":"567c3c98389828f850a26ad54b38f3f4c8eb1d7756b6da618c6a58199d560012"}],"id":"plugin-ui-preview","status":"stable","version":"0.1.0"}]}
+{
+  "compatibility": {
+    "main_project": ">=0.1.0",
+    "notes": "otdp 0.1.2 adds derived variables (descriptor derived_variables[] array, closed derivation marker on dataset variables; measurement-model.md section 8, M15/S19) and the S19 grammar/static checks including the ASCII digit gate. RE-VERSION OBLIGATION: the SDK's vendored tree is single-active-version, so a descriptor declaring otdp_version 0.1.1 no longer validates against the active 0.1.2 const \u2014 existing descriptors must re-version (the in-tree sim_scope plugin did); measurement datasets and schemas stay compatible (0.1.2 is additive). plugin-ui 0.1.1 carries row C's per-channel display hints (see its own compatibility note).",
+    "sdk": "0.0.2"
+  },
+  "lock_version": 1,
+  "standards": [
+    {
+      "files": [
+        {
+          "path": "otdp/0.1.2/device-profile-catalog.json",
+          "sha256": "75db66a242e9916bfc7fe35e711de19ad53f6866c25289c05eac962d60f03796"
+        },
+        {
+          "path": "otdp/0.1.2/device-profile-catalog.schema.json",
+          "sha256": "f65fb61a8f1994be9e385512292fdc5285831af8b30794f125ec139acc470458"
+        },
+        {
+          "path": "otdp/0.1.2/examples/class-action-vectors.json",
+          "sha256": "750cb0b0ed52b218d178f769888b36aaac69f32a61d0cfb6777f6bceea095f37"
+        },
+        {
+          "path": "otdp/0.1.2/examples/class-daq.json",
+          "sha256": "7d7a5700a561198df8fdfd750b1fff84ecfa5b5b4501736f119e8a423171bb39"
+        },
+        {
+          "path": "otdp/0.1.2/examples/class-dc_psu.json",
+          "sha256": "25232670214e968b2c638b63219b4f7ffd292b35861206473ff21465715bc6f8"
+        },
+        {
+          "path": "otdp/0.1.2/examples/class-dmm.json",
+          "sha256": "2fd4a1a2f9ecb07920d0964d01eddb4fdb5b13ae9e685da78443bb05acda4a50"
+        },
+        {
+          "path": "otdp/0.1.2/examples/class-electronic_load.json",
+          "sha256": "355be9569140e34a84d7f8871bddd7bef285b889ba868f009ff78644c6daeb0d"
+        },
+        {
+          "path": "otdp/0.1.2/examples/class-embedded_controller.json",
+          "sha256": "c7e145dc3e728572b09f0841a35e159362910225f0f6fef7af32acfae77dbc6e"
+        },
+        {
+          "path": "otdp/0.1.2/examples/class-function_generator.json",
+          "sha256": "a2dca8b8192d5ef739307f933424b83d24750ad5e07bbb8db6a6b41453354466"
+        },
+        {
+          "path": "otdp/0.1.2/examples/class-logic_analyser.json",
+          "sha256": "2746278796657a0a90448316661c507fc0b47ae5351e9c3de5615409ca876bd7"
+        },
+        {
+          "path": "otdp/0.1.2/examples/class-oscilloscope.json",
+          "sha256": "26abbd2e6de2f4c73ee6ae2e1625359a50adeb06090871dc7518ff266d538d4e"
+        },
+        {
+          "path": "otdp/0.1.2/examples/class-smu.json",
+          "sha256": "2212f2cc4d7aebab15ba6ad9820d34bcaf7b00a1778587300302d93abbbd785a"
+        },
+        {
+          "path": "otdp/0.1.2/examples/class-spectrum_analyser.json",
+          "sha256": "e6b1d83650c0cf6174f0ff5afddd6bde059df4a7a90d1e9c9f20dfea26a6e88f"
+        },
+        {
+          "path": "otdp/0.1.2/examples/class-switch_matrix.json",
+          "sha256": "d0c4816a25f6590a7379752cc33c385adc9593fc8a6202a04afc511addf0896f"
+        },
+        {
+          "path": "otdp/0.1.2/examples/class-vna.json",
+          "sha256": "faed309feaa682a36c16fa234d4245bdf7c0f12e72f24c9c42bd6ee5f3a6bcbd"
+        },
+        {
+          "path": "otdp/0.1.2/examples/derivation-vectors.json",
+          "sha256": "f4c3bab4a0871488c13ffa22adcab64a0f1e799a95106d14bcb9c8a3a777cfa6"
+        },
+        {
+          "path": "otdp/0.1.2/examples/measurement-vectors.json",
+          "sha256": "aff78ac0fb0057daac2cba98d314f633e5c36b5e33e2eb14e792bb63fa76ca06"
+        },
+        {
+          "path": "otdp/0.1.2/examples/reference-can.json",
+          "sha256": "03d1f495205427054ffc9e69e053d466906eedde4fa95af8b50791f79a5e9f91"
+        },
+        {
+          "path": "otdp/0.1.2/examples/reference-capture.json",
+          "sha256": "ca1d26b9a81b5e81069ef7a1f46d87f65333e8153b5c3ec6d66795bb1601eb72"
+        },
+        {
+          "path": "otdp/0.1.2/examples/reference-controller.json",
+          "sha256": "7b80615c2e64c7eeaa509ffa71e2751830690fa9d14a62178060b28ed455252c"
+        },
+        {
+          "path": "otdp/0.1.2/examples/reference-psu.json",
+          "sha256": "089388d6504064c17d6733585a922027d0d9ec125d1ccef5dcdfd4c6b89a1614"
+        },
+        {
+          "path": "otdp/0.1.2/examples/reference-vectors.json",
+          "sha256": "6f476b31ec98f572c83127ed1684506fba18ed0205ea47869f90bdf0fe5fcef0"
+        },
+        {
+          "path": "otdp/0.1.2/otdp-device-descriptor.schema.json",
+          "sha256": "702c421a21ad574212094d6947516cd46a9613cce56ba14e93becdc43c2e83c1"
+        },
+        {
+          "path": "otdp/0.1.2/otdp-measurement.schema.json",
+          "sha256": "0765a320d837f7099001707127da913374e9a09db3376ac8c981cb5c9a9e3363"
+        },
+        {
+          "path": "otdp/0.1.2/otdp-runtime.schema.json",
+          "sha256": "8d42711f4cfef112d91fd9953e4f18a797cadd0e3aafe2d50dbd41cf5decbbea"
+        }
+      ],
+      "id": "otdp",
+      "status": "stable",
+      "version": "0.1.2"
+    },
+    {
+      "files": [
+        {
+          "path": "registry/0.1.0/examples/package-lock.json",
+          "sha256": "52f57da1f016ed0eb61cc5b7a3c0d213ecffb443df1613f91e55e691a7d275c6"
+        },
+        {
+          "path": "registry/0.1.0/examples/release-manifest.json",
+          "sha256": "9d3cbfab9d63fd22f456be2f8ef1d1c15b730b314f2cb807ac36827f7ded3be6"
+        },
+        {
+          "path": "registry/0.1.0/examples/release-status.json",
+          "sha256": "aa03712342d50d8119e6e3ec181f8a7d0a8231bd54eb7deefc1d5cd65bc4e769"
+        },
+        {
+          "path": "registry/0.1.0/package-lock.schema.json",
+          "sha256": "06b6f9ea312ff6d0361c1546bc1174b721017ad9f2bfccc47dcf9748db2b234a"
+        },
+        {
+          "path": "registry/0.1.0/release-manifest.schema.json",
+          "sha256": "5f08b2ac0f14c3a1eaea87ab2b6791bd4db481b272b3516431049090e7f5693b"
+        },
+        {
+          "path": "registry/0.1.0/release-status.schema.json",
+          "sha256": "fb95ef0827892ac0ee080e28735f2185903a660277dc211780ea83c307f94112"
+        }
+      ],
+      "id": "registry",
+      "status": "stable",
+      "version": "0.1.0"
+    },
+    {
+      "files": [
+        {
+          "path": "execution/0.1.0/bench.schema.json",
+          "sha256": "503093996daba1deb27f0f0954f6e90db5c4f2e055bc7bdfd8d3d8197ce5b6b2"
+        },
+        {
+          "path": "execution/0.1.0/commissioning.schema.json",
+          "sha256": "a275a8afdd35c8dda4dd7c8391bba9873abf95424ad66cd8cbf1ac8f5a627dc9"
+        },
+        {
+          "path": "execution/0.1.0/examples/bench.json",
+          "sha256": "d67d9b254c30ed006f90f4d5fa7c5f7ac1f638bbf21481e2487f878b8030d952"
+        },
+        {
+          "path": "execution/0.1.0/examples/commissioning.json",
+          "sha256": "f13a2195929e4b5f34347bbe45a7677f9c6ac7883d16242bd75e2bfc0e4176df"
+        },
+        {
+          "path": "execution/0.1.0/examples/procedure.json",
+          "sha256": "64ac82e02f0e13412337fc1bd3503cea1c952ee9a31e5e50214bc4677da3381a"
+        },
+        {
+          "path": "execution/0.1.0/examples/run-binding.json",
+          "sha256": "0e875072137b6846ee64ab9f01bad00c5c6b384d366def36741087c1ab6a6330"
+        },
+        {
+          "path": "execution/0.1.0/examples/run-record.json",
+          "sha256": "28bf392e9c20ee467709407db787d546e9851498c03e9c0109a4ad9a723e9707"
+        },
+        {
+          "path": "execution/0.1.0/examples/safety-policy.json",
+          "sha256": "73454794f991f14b80e0caa396a9e8a5b388b17e806145402e6531c7dcc7655a"
+        },
+        {
+          "path": "execution/0.1.0/procedure.schema.json",
+          "sha256": "194b0aab8fb348059897cfd4612a4d41e1e07d4c9e746b1c4bfdbd92ab733c6d"
+        },
+        {
+          "path": "execution/0.1.0/run-binding.schema.json",
+          "sha256": "a86c160555c030173f8b045a5a15a045788b7c167b32dc53741621bf86444817"
+        },
+        {
+          "path": "execution/0.1.0/run-record.schema.json",
+          "sha256": "59d5e93515215c6c15c3001bb91c28a2b6bbfc5eb3e1bd623293df9de8c99b82"
+        },
+        {
+          "path": "execution/0.1.0/safety-policy.schema.json",
+          "sha256": "06107ddd4bf375e7f2c1dbe764a842557f37c0bfbe24b358e258398ff56d4bad"
+        }
+      ],
+      "id": "execution",
+      "status": "stable",
+      "version": "0.1.0"
+    },
+    {
+      "files": [
+        {
+          "path": "interface/0.1.0/examples/mcp-start-exchange.json",
+          "sha256": "13a2d04b7969444ba0034c5ae38299bedfcd759213cf0cca37205ef2c0eac893"
+        },
+        {
+          "path": "interface/0.1.0/examples/operation-vectors.json",
+          "sha256": "537a7c9ac9600bd18f5bbbed6e6ba07aa9715a7ee286c218331f72d5d3ddc97e"
+        },
+        {
+          "path": "interface/0.1.0/interface.schema.json",
+          "sha256": "33e8f0af6ef7dde117f0be1816aaa035ce1ea261cc99e4428507c9a74d12c2ba"
+        },
+        {
+          "path": "interface/0.1.0/mcp-tools.json",
+          "sha256": "7b956d1fdccfe943237b0de0c456e0c0787bc8af396ddf0a3559e7d6202b22b4"
+        },
+        {
+          "path": "interface/0.1.0/openapi.json",
+          "sha256": "47daba3e3fe840a19ca23030977293f1204f2fce6f8cb63bfcd18318c7fd3a2d"
+        },
+        {
+          "path": "interface/0.1.0/operation-catalog.json",
+          "sha256": "1ca993619658e45d0450b0f9862e86a80832a7b684ebebf6fd3c6c8cfdefe18f"
+        }
+      ],
+      "id": "interface",
+      "status": "stable",
+      "version": "0.1.0"
+    },
+    {
+      "files": [
+        {
+          "path": "plugin-ui/0.1.1/binding-catalogue.schema.json",
+          "sha256": "517358e1f519203b6eba77059b53cd4e732aeb837b2390aee409e14e7568423a"
+        },
+        {
+          "path": "plugin-ui/0.1.1/configuration-preset.schema.json",
+          "sha256": "cd99df6e29e17f282b84701d3f13eb34b9c372d863067821de03e9c4aa406f01"
+        },
+        {
+          "path": "plugin-ui/0.1.1/presentation-envelope.schema.json",
+          "sha256": "0f1e494de44358c8f3b263591b9374a61627ef40cebc709c02f417bb27f9952f"
+        },
+        {
+          "path": "plugin-ui/0.1.1/ui-manifest.schema.json",
+          "sha256": "3c59fc11f4fd31d418c698adc96a3d16568ed95dec4d389c52f0b94e3ed7ff8a"
+        },
+        {
+          "path": "plugin-ui/contracts.py",
+          "sha256": "3154f3398e0066e7147fa11ebd29e9e65a4ef3f91e4cce1a8fbb8e00cec146ca"
+        }
+      ],
+      "id": "plugin-ui",
+      "status": "stable",
+      "version": "0.1.1"
+    },
+    {
+      "files": [
+        {
+          "path": "plugin-ui-preview/0.1.0/fixture.schema.json",
+          "sha256": "134878f178bd58879aa1b626ee6fa7782581fffed540bcd6ce31c97b375d14de"
+        },
+        {
+          "path": "plugin-ui-preview/0.1.0/preview-document.schema.json",
+          "sha256": "567c3c98389828f850a26ad54b38f3f4c8eb1d7756b6da618c6a58199d560012"
+        }
+      ],
+      "id": "plugin-ui-preview",
+      "status": "stable",
+      "version": "0.1.0"
+    }
+  ]
+}
