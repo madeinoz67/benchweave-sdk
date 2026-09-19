@@ -26,7 +26,7 @@ def contract_documents() -> dict[str, Any]:
     sets = (
         ("otdp", "0.2.0"),
         ("registry", "0.1.0"),
-        ("plugin-ui", "0.1.1"),
+        ("plugin-ui", "0.2.0"),
     )
     if vendored.is_dir():
         # The vendored tree is standards/<id>/<version>/...; document keys stay
