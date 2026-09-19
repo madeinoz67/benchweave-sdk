@@ -1,13 +1,13 @@
 {
-  "otdp_version": "0.1.1",
+  "otdp_version": "0.1.2",
   "descriptor_version": "1.0.0",
-  "id": "dev.local.class-smu",
-  "display_name": "Structural reference: Source-measure unit",
+  "id": "dev.local.class-function-generator",
+  "display_name": "Structural reference: Function and arbitrary waveform generator",
   "description": "Class-contract fixture, not a verified real device or implemented adapter.",
   "identity": {
     "strategy": "adapter",
     "manufacturer": "OTDP Reference",
-    "model": "smu",
+    "model": "function_generator",
     "firmware_policy": "listed",
     "supported_firmware": [
       "1.0"
@@ -16,13 +16,13 @@
   "integration": {
     "mode": "adapter",
     "adapter": {
-      "entry_point": "reference_smu:create_plugin",
+      "entry_point": "reference_function_generator:create_plugin",
       "api_version": "1.1",
       "version": "1.0.0",
       "dependencies": [],
       "permissions": [
         "scoped_transport",
-        "artifact_writer"
+        "artifact_reader"
       ]
     }
   },
@@ -64,7 +64,7 @@
     "otdp.adapter/0.1.0",
     "otdp.profile_actions/0.1.0",
     "otdp.measurement/0.1.0",
-    "otdp.smu/1.0.0"
+    "otdp.function_generator/1.0.0"
   ],
   "provenance": {
     "sources": [
@@ -76,7 +76,7 @@
     ],
     "test_vectors": [
       {
-        "id": "smu-actions",
+        "id": "function_generator-actions",
         "path": "class-action-vectors.json",
         "purpose": "Input/output contract examples; not a device simulator"
       }
@@ -86,46 +86,42 @@
     {
       "id": "ch1",
       "label": "Reference channel 1",
-      "role": "source_measure",
+      "role": "source",
       "quantities": [
-        "voltage",
-        "current",
-        "power"
+        "voltage"
       ],
       "parameter_names": []
     },
     {
       "id": "ch2",
       "label": "Reference channel 2",
-      "role": "source_measure",
+      "role": "source",
       "quantities": [
-        "voltage",
-        "current",
-        "power"
+        "voltage"
       ],
       "parameter_names": []
     }
   ],
   "profiles": [
-    "otdp.smu/1.0.0"
+    "otdp.function_generator/1.0.0"
   ],
   "contracts": [
     {
-      "id": "urn:otdp:profile-catalog:0.1.1",
+      "id": "urn:otdp:profile-catalog:0.1.2",
       "path": "device-profile-catalog.json",
-      "sha256": "fde8e03b21cf5104917e32af8bf5c835a39c62ea97a4c6e61b90b161a5eeced4"
+      "sha256": "75db66a242e9916bfc7fe35e711de19ad53f6866c25289c05eac962d60f03796"
     },
     {
-      "id": "urn:otdp:measurement:0.1.1",
+      "id": "urn:otdp:measurement:0.1.2",
       "path": "otdp-measurement.schema.json",
-      "sha256": "e2d6bb9d45339ca35f4a3ecec95971356251e0b6cc2b6038759140af00ff621d"
+      "sha256": "0765a320d837f7099001707127da913374e9a09db3376ac8c981cb5c9a9e3363"
     }
   ],
   "actions": {
-    "otdp.smu.configure/1.0.0": {
+    "otdp.function_generator.configure/1.0.0": {
       "binding": {
         "kind": "adapter",
-        "key": "otdp.smu.configure/1.0.0"
+        "key": "otdp.function_generator.configure/1.0.0"
       },
       "input_constraints": {},
       "timeout_ms": 30000,
@@ -133,10 +129,10 @@
       "cancellable": true,
       "retry": "never"
     },
-    "otdp.smu.output/1.0.0": {
+    "otdp.function_generator.output/1.0.0": {
       "binding": {
         "kind": "adapter",
-        "key": "otdp.smu.output/1.0.0"
+        "key": "otdp.function_generator.output/1.0.0"
       },
       "input_constraints": {},
       "timeout_ms": 30000,
@@ -144,65 +140,10 @@
       "cancellable": true,
       "retry": "never"
     },
-    "otdp.smu.measure/1.0.0": {
+    "otdp.function_generator.upload/1.0.0": {
       "binding": {
         "kind": "adapter",
-        "key": "otdp.smu.measure/1.0.0"
-      },
-      "input_constraints": {},
-      "timeout_ms": 30000,
-      "side_effect": "none",
-      "cancellable": true,
-      "retry": "never"
-    },
-    "otdp.smu.configure_sweep/1.0.0": {
-      "binding": {
-        "kind": "adapter",
-        "key": "otdp.smu.configure_sweep/1.0.0"
-      },
-      "input_constraints": {},
-      "timeout_ms": 30000,
-      "side_effect": "state_change",
-      "cancellable": true,
-      "retry": "never"
-    },
-    "otdp.smu.arm/1.0.0": {
-      "binding": {
-        "kind": "adapter",
-        "key": "otdp.smu.arm/1.0.0"
-      },
-      "input_constraints": {},
-      "timeout_ms": 30000,
-      "side_effect": "state_change",
-      "cancellable": true,
-      "retry": "never"
-    },
-    "otdp.smu.trigger/1.0.0": {
-      "binding": {
-        "kind": "adapter",
-        "key": "otdp.smu.trigger/1.0.0"
-      },
-      "input_constraints": {},
-      "timeout_ms": 30000,
-      "side_effect": "state_change",
-      "cancellable": true,
-      "retry": "never"
-    },
-    "otdp.smu.fetch/1.0.0": {
-      "binding": {
-        "kind": "adapter",
-        "key": "otdp.smu.fetch/1.0.0"
-      },
-      "input_constraints": {},
-      "timeout_ms": 30000,
-      "side_effect": "none",
-      "cancellable": true,
-      "retry": "never"
-    },
-    "otdp.smu.abort/1.0.0": {
-      "binding": {
-        "kind": "adapter",
-        "key": "otdp.smu.abort/1.0.0"
+        "key": "otdp.function_generator.upload/1.0.0"
       },
       "input_constraints": {},
       "timeout_ms": 30000,

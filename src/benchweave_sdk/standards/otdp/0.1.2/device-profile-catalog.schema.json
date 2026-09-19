@@ -1,13 +1,13 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:otdp:profile-catalog:0.1.1",
+  "$id": "urn:otdp:profile-catalog:0.1.2",
   "type": "object",
   "properties": {
     "catalog_version": {
-      "const": "0.1.1"
+      "const": "0.1.2"
     },
     "otdp_version": {
-      "const": "0.1.1"
+      "const": "0.1.2"
     },
     "profiles": {
       "type": "array",

@@ -73,6 +73,34 @@
             "status": "unknown"
           },
           "status": "valid"
+        },
+        {
+          "id": "resistance",
+          "quantity": "resistance",
+          "unit": "Ohm",
+          "channel_ids": [
+            "ch1"
+          ],
+          "dtype": "float64",
+          "dimensions": [],
+          "values": [
+            32.99999999999999
+          ],
+          "uncertainty": {
+            "status": "unknown"
+          },
+          "calibration": {
+            "status": "unknown"
+          },
+          "status": "valid",
+          "derivation": {
+            "kind": "expression",
+            "expression": "voltage / current",
+            "operand_ids": [
+              "voltage",
+              "current"
+            ]
+          }
         }
       ],
       "trigger": {

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:otdp:measurement:0.1.1",
-  "title": "OTDP typed measurements and datasets 0.1.1",
+  "$id": "urn:otdp:measurement:0.1.2",
+  "title": "OTDP typed measurements and datasets 0.1.2",
   "description": "Read measurement-model.md. Shapes, dimensions, dtype encodings, required profile quantities and referenced artifacts require semantic checks. Unknown uncertainty is not zero.",
   "$defs": {
     "uncertainty": {
@@ -199,6 +199,36 @@
       ],
       "additionalProperties": false
     },
+    "derivation": {
+      "type": "object",
+      "description": "Provenance for a computed variable: how the values were produced. Records the expression and its parsed operand ids so a recorded dataset is self-contained for replay. The marker is provenance, not authority: whether values were computed by the host is verifiable by re-evaluation, and a marker whose operand_ids disagree with its own expression is refused.",
+      "properties": {
+        "kind": {
+          "const": "expression"
+        },
+        "expression": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[0-9a-z_+\\-*/(). ]*$"
+        },
+        "operand_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          }
+        }
+      },
+      "required": [
+        "kind",
+        "expression",
+        "operand_ids"
+      ],
+      "additionalProperties": false
+    },
     "variable": {
       "type": "object",
       "properties": {
@@ -291,6 +321,9 @@
         "status_reason": {
           "type": "string",
           "minLength": 1
+        },
+        "derivation": {
+          "$ref": "#/$defs/derivation"
         }
       },
       "required": [
@@ -555,6 +588,23 @@
                 },
                 "minItems": 0
               }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "derivation"
+            ]
+          },
+          "then": {
+            "required": [
+              "values"
+            ],
+            "not": {
+              "required": [
+                "artifact"
+              ]
             }
           }
         },

@@ -2,7 +2,7 @@
   "type": "object",
   "properties": {
     "otdp_version": {
-      "const": "0.1.1"
+      "const": "0.1.2"
     },
     "descriptor_version": {
       "type": "string",
@@ -19,6 +19,42 @@
     "description": {
       "type": "string",
       "minLength": 1
+    },
+    "derived_variables": {
+      "type": "array",
+      "description": "Optional dataset variables computed by the host from other dataset variables by a fixed-grammar arithmetic expression (measurement-model.md section 8, M15; S19). The pattern bounds only the character surface; token formation, balanced parentheses, nesting (max 32) and expression length (max 256) are enforced by the semantic checks, pinned by examples/derivation-vectors.json.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "quantity": {
+            "type": "string",
+            "minLength": 1
+          },
+          "unit": {
+            "type": "string",
+            "minLength": 1
+          },
+          "expression": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[0-9a-z_+\\-*/(). ]*$"
+          }
+        },
+        "required": [
+          "id",
+          "quantity",
+          "unit",
+          "expression"
+        ],
+        "additionalProperties": false
+      },
+      "uniqueItems": true,
+      "minItems": 0
     },
     "identity": {
       "$ref": "#/$defs/identity"
@@ -452,9 +488,9 @@
   },
   "additionalProperties": false,
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:otdp:device-descriptor:0.1.1",
-  "title": "OTDP 0.1.1 device descriptor \u2014 STG architecture contract",
-  "description": "OTDP 0.1.1 device and class declarations. Read core specification, measurement-model.md, device-classes.md and the pinned profile catalog. Schema validation is followed by class/action/constraint and dataset semantic checks.",
+  "$id": "urn:otdp:device-descriptor:0.1.2",
+  "title": "OTDP 0.1.2 device descriptor \u2014 STG architecture contract",
+  "description": "OTDP 0.1.2 device and class declarations. Read core specification, measurement-model.md, device-classes.md and the pinned profile catalog. Schema validation is followed by class/action/constraint and dataset semantic checks.",
   "$defs": {
     "operationPolicy": {
       "type": "object",
