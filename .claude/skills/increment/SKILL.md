@@ -77,7 +77,12 @@ run the loop.
    check (mechanism disabled → effect gone), a golden-project diff, or a
    permutation/shuffle null. Report the number.
 7. **Land.** PR into `main` (working branches only — never commit to `main` directly),
-   title + body naming what shipped + what's deferred, referencing the design. Watch CI
+   title + body naming what shipped + what's deferred, referencing the design — and
+   **every deferral in the body must cite an open issue, created at PR-open time if
+   absent; an orphan deferral blocks the merge** (main #69). Multiple PRs from one
+   work use **PR stacks**: dependent PRs open with base = the predecessor's branch;
+   merge bottom-up, retargeting successors to `main`. **A work is complete only when
+   every PR it raised — in both repos, when it spans them — is merged.** Watch CI
    to green (`gh pr checks --watch`). Merge when all-green and authorized; otherwise hand
    off. If a gate is red or a finding is unfixed, HOLD and report — do not merge.
 
@@ -96,6 +101,17 @@ lives main-side (`tests/sdk/` in the gateway checkout). "Couldn't run the main-s
 suite" stated plainly beats a green-looking review that never ran it. A change that
 expects a main-side counterpart (corpus re-sync, renderer rebuild, pointer advance)
 names that counterpart in its PR.
+
+## Surface-aware parallelism (main #69)
+
+Parallel increments only across DISJOINT surfaces. Increments sharing a surface —
+this repo's `main`, the vendored standards tree (which changes only via
+`sync-standards` from the main repo), or the preview assets — serialize on it by
+design: the second parks at review-complete and rebases onto the merged predecessor
+exactly once. Before any push: **merge-result pre-check** — CI tests your branch +
+current `origin/main`, not your base; simulate the merge and run sibling lanes when
+a shared surface moved. The vendored GOVERNANCE/rules prose arrives via sync from
+main — never edited SDK-side.
 
 ## Pipelining
 
