@@ -3,18 +3,18 @@
   "renderer_version": "0.1.0",
   "assets": [
     {
-      "path": "site/assets/index-CRWPIK7-.css",
-      "sha256": "b67a3951bfdec10c104dd1659e13eacb8d46c615107b73882b8153c29431c52a",
-      "size": 12528
+      "path": "site/assets/index-DXvz8TIH.css",
+      "sha256": "3034c0cc2231bd7971dce298f883de688de40c5d2c189c94a357981a38699559",
+      "size": 12518
     },
     {
-      "path": "site/assets/index-PMB8seC6.js",
-      "sha256": "0626dd1870239b4f0fc339ca7cddfea746f1f62000c778b059e2665f81eacb8d",
-      "size": 780114
+      "path": "site/assets/index-Dj-koJt2.js",
+      "sha256": "66a8f45b9c6d5395374cf72d34a28ae368ee96da0f634240ddc7459c8c0c63e5",
+      "size": 780301
     },
     {
       "path": "site/index.html",
-      "sha256": "6c939ba86aa32dd2dd2750539ba04d66691a0cb8b976b25c722d2981a5f50fec",
+      "sha256": "700d0b65e257917e6e593a62a48be7fb8643fab5188d6d0c8199765a9728f202",
       "size": 481
     }
   ]
