@@ -110,8 +110,9 @@ this repo's `main`, the vendored standards tree (which changes only via
 design: the second parks at review-complete and rebases onto the merged predecessor
 exactly once. Before any push: **merge-result pre-check** — CI tests your branch +
 current `origin/main`, not your base; simulate the merge and run sibling lanes when
-a shared surface moved. The vendored GOVERNANCE/rules prose arrives via sync from
-main — never edited SDK-side.
+a shared surface moved. GOVERNANCE.md and the loop/rubric prose live main-side
+only — they are NOT part of the vendored set and do not sync; the authoritative
+text is the main repo's.
 
 ## Pipelining
 
