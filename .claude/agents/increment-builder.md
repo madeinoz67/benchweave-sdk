@@ -83,6 +83,18 @@ contents and the README install steps, with `.claude/`, `.mcp.json`, `AGENTS.md`
 they arrive as a re-sync with a version increment; a renderer-affecting change pairs with
 a main-side rebuild of the committed `preview_assets/`.
 
+## Push discipline for shared surfaces (main #69)
+
+CI tests the MERGE RESULT (your branch + current `origin/main`), not your base.
+Before pushing a branch that shares a surface with a sibling (this repo's main, the
+vendored tree, preview assets): simulate the merge and run the sibling lanes against
+that tree. The vendored standards tree moves ONLY via `sync-standards` — a local edit
+to it is a defect, not a shortcut. When parked behind a sibling: stand by at
+review-complete and rebase onto the merged predecessor exactly once. **Check your
+inbox before reporting "standing by."** Verify FILE BYTES after any digest/pin edit —
+re-parse and compare against the authority; an in-memory "verification" shipped a
+stale pin through three green suites once.
+
 ## Rules that are not negotiable
 
 - **Never hand-edit the vendored tree.** The stamps say generated — do not edit; the
