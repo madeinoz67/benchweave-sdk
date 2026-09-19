@@ -2351,6 +2351,91 @@
       },
       "expect": "refused",
       "reason_prefix": "derivation_duplicate_variable:"
+    },
+    {
+      "id": "e-21",
+      "derived": [
+        {
+          "id": "neg_zero",
+          "quantity": "voltage",
+          "unit": "V",
+          "expression": "-z0"
+        }
+      ],
+      "dataset": {
+        "dataset_id": "dataset-e-21",
+        "kind": "scalar_set",
+        "configuration_id": "cfg-census",
+        "acquisition_id": null,
+        "started_at": "2026-09-19T00:00:00Z",
+        "clock": {
+          "domain_id": "census",
+          "timestamp_source": "host",
+          "synchronisation": "unknown",
+          "uncertainty_s": null
+        },
+        "axes": [],
+        "variables": [
+          {
+            "id": "z0",
+            "quantity": "voltage",
+            "unit": "V",
+            "channel_ids": [
+              "ch1"
+            ],
+            "dtype": "float64",
+            "dimensions": [],
+            "values": [
+              0.0
+            ],
+            "uncertainty": {
+              "status": "unknown"
+            },
+            "calibration": {
+              "status": "unknown"
+            },
+            "status": "valid"
+          }
+        ],
+        "trigger": {
+          "source": "immediate",
+          "time_relative_s": null
+        },
+        "status": "complete",
+        "context": {
+          "origin": "derivation-vectors"
+        }
+      },
+      "expect": "derived",
+      "expected": [
+        {
+          "id": "neg_zero",
+          "quantity": "voltage",
+          "unit": "V",
+          "channel_ids": [
+            "ch1"
+          ],
+          "dtype": "float64",
+          "dimensions": [],
+          "values": [
+            -0.0
+          ],
+          "uncertainty": {
+            "status": "unknown"
+          },
+          "calibration": {
+            "status": "unknown"
+          },
+          "status": "valid",
+          "derivation": {
+            "kind": "expression",
+            "expression": "-z0",
+            "operand_ids": [
+              "z0"
+            ]
+          }
+        }
+      ]
     }
   ]
 }
