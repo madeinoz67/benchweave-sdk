@@ -338,7 +338,7 @@ def create_ui_resources(destination: Path, package: str) -> None:
         raise ValueError("UI scaffolding requires at least one readable descriptor parameter")
     bindings = [{"id": row["id"], "kind": "observation", "target_id": row["id"]} for row in targets]
     manifest = {
-        "contract_version": "0.1.0",
+        "contract_version": "0.1.1",
         "plugin_id": descriptor["id"],
         "descriptor_sha256": descriptor_hash,
         "bindings": bindings,
@@ -354,13 +354,13 @@ def create_ui_resources(destination: Path, package: str) -> None:
     }
     manifest_raw = (json.dumps(manifest, indent=2) + "\n").encode()
     envelope = {
-        "contract_version": "0.1.0",
+        "contract_version": "0.1.1",
         "descriptor_sha256": descriptor_hash,
         "resource_root": "ui",
         "manifest": {"path": "manifest.json", "sha256": hashlib.sha256(manifest_raw).hexdigest()},
     }
     catalogue = {
-        "contract_version": "0.1.0",
+        "contract_version": "0.1.1",
         "descriptor_sha256": descriptor_hash,
         "targets": targets,
     }
