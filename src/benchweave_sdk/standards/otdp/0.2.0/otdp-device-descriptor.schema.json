@@ -2,7 +2,7 @@
   "type": "object",
   "properties": {
     "otdp_version": {
-      "const": "0.1.2"
+      "const": "0.2.0"
     },
     "descriptor_version": {
       "type": "string",
@@ -488,9 +488,9 @@
   },
   "additionalProperties": false,
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:otdp:device-descriptor:0.1.2",
-  "title": "OTDP 0.1.2 device descriptor \u2014 STG architecture contract",
-  "description": "OTDP 0.1.2 device and class declarations. Read core specification, measurement-model.md, device-classes.md and the pinned profile catalog. Schema validation is followed by class/action/constraint and dataset semantic checks.",
+  "$id": "urn:otdp:device-descriptor:0.2.0",
+  "title": "OTDP 0.2.0 device descriptor \u2014 STG architecture contract",
+  "description": "OTDP 0.2.0 device and class declarations. Read core specification, measurement-model.md, device-classes.md and the pinned profile catalog. Schema validation is followed by class/action/constraint and dataset semantic checks.",
   "$defs": {
     "operationPolicy": {
       "type": "object",

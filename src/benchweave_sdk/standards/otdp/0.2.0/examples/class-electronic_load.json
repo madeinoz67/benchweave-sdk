@@ -1,5 +1,5 @@
 {
-  "otdp_version": "0.1.2",
+  "otdp_version": "0.2.0",
   "descriptor_version": "1.0.0",
   "id": "dev.local.class-electronic-load",
   "display_name": "Structural reference: Electronic load",
@@ -111,14 +111,14 @@
   ],
   "contracts": [
     {
-      "id": "urn:otdp:profile-catalog:0.1.2",
+      "id": "urn:otdp:profile-catalog:0.2.0",
       "path": "device-profile-catalog.json",
-      "sha256": "75db66a242e9916bfc7fe35e711de19ad53f6866c25289c05eac962d60f03796"
+      "sha256": "dc776ec3dd02f3b37e02005f79434597f220b5acb5d6c23c98b844aa3e63d923"
     },
     {
-      "id": "urn:otdp:measurement:0.1.2",
+      "id": "urn:otdp:measurement:0.2.0",
       "path": "otdp-measurement.schema.json",
-      "sha256": "0765a320d837f7099001707127da913374e9a09db3376ac8c981cb5c9a9e3363"
+      "sha256": "e911d0efec92a5167788dc59c40acdbf62e99f82249fcc99bf2e57ffe5331382"
     }
   ],
   "actions": {

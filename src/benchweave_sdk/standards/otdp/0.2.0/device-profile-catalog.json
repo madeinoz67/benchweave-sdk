@@ -1,6 +1,6 @@
 {
-  "catalog_version": "0.1.2",
-  "otdp_version": "0.1.2",
+  "catalog_version": "0.2.0",
+  "otdp_version": "0.2.0",
   "profiles": [
     {
       "id": "otdp.dc_psu/1.0.0",
@@ -383,7 +383,7 @@
         "$id": "urn:otdp:action:dc_psu.measure:1.0.0:input"
       },
       "output_schema": {
-        "$ref": "urn:otdp:measurement:0.1.2#/$defs/dataset",
+        "$ref": "urn:otdp:measurement:0.2.0#/$defs/dataset",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "$id": "urn:otdp:action:dc_psu.measure:1.0.0:output"
       },
@@ -661,7 +661,7 @@
         "$id": "urn:otdp:action:dmm.measure:1.0.0:input"
       },
       "output_schema": {
-        "$ref": "urn:otdp:measurement:0.1.2#/$defs/dataset",
+        "$ref": "urn:otdp:measurement:0.2.0#/$defs/dataset",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "$id": "urn:otdp:action:dmm.measure:1.0.0:output"
       },
@@ -722,12 +722,18 @@
           },
           "sample_count": {
             "type": "integer",
-            "minimum": 1
+            "minimum": 1,
+            "maximum": 1000000
           },
           "pretrigger_fraction": {
             "type": "number",
             "minimum": 0,
             "maximum": 1
+          },
+          "averaging_count": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 64
           },
           "trigger": {
             "type": "object",
@@ -869,12 +875,18 @@
               },
               "sample_count": {
                 "type": "integer",
-                "minimum": 1
+                "minimum": 1,
+                "maximum": 1000000
               },
               "pretrigger_fraction": {
                 "type": "number",
                 "minimum": 0,
                 "maximum": 1
+              },
+              "averaging_count": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 64
               },
               "trigger": {
                 "type": "object",
@@ -1089,7 +1101,7 @@
         "$id": "urn:otdp:action:oscilloscope.fetch:1.0.0:input"
       },
       "output_schema": {
-        "$ref": "urn:otdp:measurement:0.1.2#/$defs/dataset",
+        "$ref": "urn:otdp:measurement:0.2.0#/$defs/dataset",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "$id": "urn:otdp:action:oscilloscope.fetch:1.0.0:output"
       },
@@ -1171,7 +1183,8 @@
           },
           "sample_count": {
             "type": "integer",
-            "minimum": 1
+            "minimum": 1,
+            "maximum": 1000000
           },
           "trigger": {
             "type": "object",
@@ -1294,7 +1307,8 @@
               },
               "sample_count": {
                 "type": "integer",
-                "minimum": 1
+                "minimum": 1,
+                "maximum": 1000000
               },
               "trigger": {
                 "type": "object",
@@ -1508,7 +1522,7 @@
         "$id": "urn:otdp:action:logic_analyser.fetch:1.0.0:input"
       },
       "output_schema": {
-        "$ref": "urn:otdp:measurement:0.1.2#/$defs/dataset",
+        "$ref": "urn:otdp:measurement:0.2.0#/$defs/dataset",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "$id": "urn:otdp:action:logic_analyser.fetch:1.0.0:output"
       },
@@ -1731,7 +1745,7 @@
         "$id": "urn:otdp:action:logic_analyser.decode:1.0.0:input"
       },
       "output_schema": {
-        "$ref": "urn:otdp:measurement:0.1.2#/$defs/dataset",
+        "$ref": "urn:otdp:measurement:0.2.0#/$defs/dataset",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "$id": "urn:otdp:action:logic_analyser.decode:1.0.0:output"
       },
@@ -2314,7 +2328,7 @@
         "$id": "urn:otdp:action:electronic_load.measure:1.0.0:input"
       },
       "output_schema": {
-        "$ref": "urn:otdp:measurement:0.1.2#/$defs/dataset",
+        "$ref": "urn:otdp:measurement:0.2.0#/$defs/dataset",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "$id": "urn:otdp:action:electronic_load.measure:1.0.0:output"
       },
@@ -2594,7 +2608,7 @@
         "$id": "urn:otdp:action:smu.measure:1.0.0:input"
       },
       "output_schema": {
-        "$ref": "urn:otdp:measurement:0.1.2#/$defs/dataset",
+        "$ref": "urn:otdp:measurement:0.2.0#/$defs/dataset",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "$id": "urn:otdp:action:smu.measure:1.0.0:output"
       },
@@ -3002,7 +3016,7 @@
         "$id": "urn:otdp:action:smu.fetch:1.0.0:input"
       },
       "output_schema": {
-        "$ref": "urn:otdp:measurement:0.1.2#/$defs/dataset",
+        "$ref": "urn:otdp:measurement:0.2.0#/$defs/dataset",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "$id": "urn:otdp:action:smu.fetch:1.0.0:output"
       },
@@ -3124,7 +3138,8 @@
           },
           "sample_count": {
             "type": "integer",
-            "minimum": 1
+            "minimum": 1,
+            "maximum": 1000000
           },
           "sampling": {
             "enum": [
@@ -3294,7 +3309,8 @@
               },
               "sample_count": {
                 "type": "integer",
-                "minimum": 1
+                "minimum": 1,
+                "maximum": 1000000
               },
               "sampling": {
                 "enum": [
@@ -3515,7 +3531,7 @@
         "$id": "urn:otdp:action:daq.fetch:1.0.0:input"
       },
       "output_schema": {
-        "$ref": "urn:otdp:measurement:0.1.2#/$defs/dataset",
+        "$ref": "urn:otdp:measurement:0.2.0#/$defs/dataset",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "$id": "urn:otdp:action:daq.fetch:1.0.0:output"
       },
@@ -3584,7 +3600,7 @@
         "$id": "urn:otdp:action:embedded_controller.telemetry:1.0.0:input"
       },
       "output_schema": {
-        "$ref": "urn:otdp:measurement:0.1.2#/$defs/dataset",
+        "$ref": "urn:otdp:measurement:0.2.0#/$defs/dataset",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "$id": "urn:otdp:action:embedded_controller.telemetry:1.0.0:output"
       },
@@ -4279,7 +4295,7 @@
         "$id": "urn:otdp:action:spectrum_analyser.fetch:1.0.0:input"
       },
       "output_schema": {
-        "$ref": "urn:otdp:measurement:0.1.2#/$defs/dataset",
+        "$ref": "urn:otdp:measurement:0.2.0#/$defs/dataset",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "$id": "urn:otdp:action:spectrum_analyser.fetch:1.0.0:output"
       },
@@ -4748,7 +4764,7 @@
         "$id": "urn:otdp:action:vna.fetch:1.0.0:input"
       },
       "output_schema": {
-        "$ref": "urn:otdp:measurement:0.1.2#/$defs/dataset",
+        "$ref": "urn:otdp:measurement:0.2.0#/$defs/dataset",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "$id": "urn:otdp:action:vna.fetch:1.0.0:output"
       },

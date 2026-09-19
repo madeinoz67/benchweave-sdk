@@ -1,13 +1,13 @@
 {
-  "otdp_version": "0.1.2",
+  "otdp_version": "0.2.0",
   "descriptor_version": "1.0.0",
-  "id": "dev.local.class-function-generator",
-  "display_name": "Structural reference: Function and arbitrary waveform generator",
+  "id": "dev.local.class-dc-psu",
+  "display_name": "Structural reference: DC power supply",
   "description": "Class-contract fixture, not a verified real device or implemented adapter.",
   "identity": {
     "strategy": "adapter",
     "manufacturer": "OTDP Reference",
-    "model": "function_generator",
+    "model": "dc_psu",
     "firmware_policy": "listed",
     "supported_firmware": [
       "1.0"
@@ -16,13 +16,13 @@
   "integration": {
     "mode": "adapter",
     "adapter": {
-      "entry_point": "reference_function_generator:create_plugin",
+      "entry_point": "reference_dc_psu:create_plugin",
       "api_version": "1.1",
       "version": "1.0.0",
       "dependencies": [],
       "permissions": [
         "scoped_transport",
-        "artifact_reader"
+        "artifact_writer"
       ]
     }
   },
@@ -64,7 +64,7 @@
     "otdp.adapter/0.1.0",
     "otdp.profile_actions/0.1.0",
     "otdp.measurement/0.1.0",
-    "otdp.function_generator/1.0.0"
+    "otdp.dc_psu/1.0.0"
   ],
   "provenance": {
     "sources": [
@@ -76,7 +76,7 @@
     ],
     "test_vectors": [
       {
-        "id": "function_generator-actions",
+        "id": "dc_psu-actions",
         "path": "class-action-vectors.json",
         "purpose": "Input/output contract examples; not a device simulator"
       }
@@ -88,7 +88,9 @@
       "label": "Reference channel 1",
       "role": "source",
       "quantities": [
-        "voltage"
+        "voltage",
+        "current",
+        "power"
       ],
       "parameter_names": []
     },
@@ -97,31 +99,33 @@
       "label": "Reference channel 2",
       "role": "source",
       "quantities": [
-        "voltage"
+        "voltage",
+        "current",
+        "power"
       ],
       "parameter_names": []
     }
   ],
   "profiles": [
-    "otdp.function_generator/1.0.0"
+    "otdp.dc_psu/1.0.0"
   ],
   "contracts": [
     {
-      "id": "urn:otdp:profile-catalog:0.1.2",
+      "id": "urn:otdp:profile-catalog:0.2.0",
       "path": "device-profile-catalog.json",
-      "sha256": "75db66a242e9916bfc7fe35e711de19ad53f6866c25289c05eac962d60f03796"
+      "sha256": "dc776ec3dd02f3b37e02005f79434597f220b5acb5d6c23c98b844aa3e63d923"
     },
     {
-      "id": "urn:otdp:measurement:0.1.2",
+      "id": "urn:otdp:measurement:0.2.0",
       "path": "otdp-measurement.schema.json",
-      "sha256": "0765a320d837f7099001707127da913374e9a09db3376ac8c981cb5c9a9e3363"
+      "sha256": "e911d0efec92a5167788dc59c40acdbf62e99f82249fcc99bf2e57ffe5331382"
     }
   ],
   "actions": {
-    "otdp.function_generator.configure/1.0.0": {
+    "otdp.dc_psu.configure/1.0.0": {
       "binding": {
         "kind": "adapter",
-        "key": "otdp.function_generator.configure/1.0.0"
+        "key": "otdp.dc_psu.configure/1.0.0"
       },
       "input_constraints": {},
       "timeout_ms": 30000,
@@ -129,10 +133,10 @@
       "cancellable": true,
       "retry": "never"
     },
-    "otdp.function_generator.output/1.0.0": {
+    "otdp.dc_psu.output/1.0.0": {
       "binding": {
         "kind": "adapter",
-        "key": "otdp.function_generator.output/1.0.0"
+        "key": "otdp.dc_psu.output/1.0.0"
       },
       "input_constraints": {},
       "timeout_ms": 30000,
@@ -140,14 +144,14 @@
       "cancellable": true,
       "retry": "never"
     },
-    "otdp.function_generator.upload/1.0.0": {
+    "otdp.dc_psu.measure/1.0.0": {
       "binding": {
         "kind": "adapter",
-        "key": "otdp.function_generator.upload/1.0.0"
+        "key": "otdp.dc_psu.measure/1.0.0"
       },
       "input_constraints": {},
       "timeout_ms": 30000,
-      "side_effect": "state_change",
+      "side_effect": "none",
       "cancellable": true,
       "retry": "never"
     }
