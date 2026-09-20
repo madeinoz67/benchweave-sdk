@@ -29,12 +29,15 @@ rubric's G5 gate is the obligation; this file is the detail behind it.
    sync staying green (`make check-sdk-standards`). A hand-edit is wrong regardless of
    quality; the change belongs in the main repository's canonical corpus.
 
-6. **SDK behavioral changes** → the behavioral test suite lives main-side
-   (`tests/sdk/` in the gateway checkout: `test_standards_sync`, `test_cli_frameworks`,
-   `test_presentation_cli`, `test_presentation_packaging`, `test_preview_server`,
-   `test_preview_cli`, `test_preview_fixtures`, `test_sdk`). A behavior change with no
-   main-side coverage is a required change; name the module that should carry the test.
-   The SDK's own pytest is the release smoke only.
+6. **SDK behavioral changes** → the behavioral test suite lives here (`tests/`:
+   `test_standards_sync`, `test_cli_frameworks`, `test_presentation_cli`,
+   `test_preview_server`, `test_preview_cli`, `test_preview_fixtures`, `test_sdk`, plus the
+   regression modules beside them) and runs in this repository's CI. A behavior change with
+   no coverage here is a required change; name the module that should carry the test.
+   Modules that compare the SDK with the gateway stay main-side (`tests/sdk/` in the
+   gateway checkout: `test_presentation_packaging` and the agreement modules), because
+   only the parent can see both sides; a change to such a property names its main-side
+   module instead.
 
 7. **The renderer** 🪝 (`ui/` main-side builds into `preview_assets/` here) → a fresh
    `npm --prefix ui run build:preview` must leave the committed assets unchanged
@@ -50,7 +53,7 @@ rubric's G5 gate is the obligation; this file is the detail behind it.
 
 | Job | What it catches |
 |---|---|
-| `sdk` | deliberately NO submodules (the self-containment proof); `uv sync --extra test`; `ruff check .`; `mypy src`; `pytest -q` (release smoke); `sync-standards --check` (lock ↔ tree ↔ stamps on the committed state); `benchweave-sdk --version` entry-point smoke |
+| `sdk` | ubuntu, macOS and Windows; deliberately NO submodules (the self-containment proof); `uv sync --locked --extra test`; `ruff check .`; `mypy src`; `pytest -q` (the behavioral suite); `sync-standards --check` (lock ↔ tree ↔ stamps on the committed state); `benchweave-sdk --version` entry-point smoke; a scaffold-and-check run; the publish workflow's installed-wheel smoke |
 | `docs` (main-side) | the docs site builds from this repository's content |
 | `publish` | release integrity — tag, wheel, stamp verification |
 
@@ -60,7 +63,8 @@ exists in the rubric.
 
 ## Testing conventions worth upholding
 
-- **RED-sanity runs main-side** (the proving tests live in the gateway checkout): revert
+- **RED-sanity runs where the proving test lives** (here for SDK behavior, in the gateway
+  checkout for a cross-repo property): revert
   only the fix, watch the test go red, restore, watch it go green, paste both. `no tests
   ran` is a FAILED RED check — pytest exits 5 when it collects nothing; look for the
   collected count, and read counts from `--junitxml` attributes or exit codes, never from

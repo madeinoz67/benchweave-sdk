@@ -65,16 +65,18 @@ pyproject `files = ["src"]`; CI runs `uv run mypy src`, which must agree — a n
 untyped def is a finding), `uv run benchweave-sdk sync-standards --check`, and the
 `uv run benchweave-sdk --version` entry-point smoke. Any failure → **BLOCK**.
 
-**G2 Tests (Tier 2 and 3).** The SDK's own pytest is the release smoke; the behavioral
-suite lives **main-side** (`uv run pytest tests/sdk` from the gateway checkout root, in the
-gateway environment). Run the main-side modules the diff touches and name them. When the
-standalone clone is all you have, **say so plainly and list which main-side modules should
-cover the change** — "couldn't run tests" stated beats a green-looking review that never
-ran them. Read counts from `--junitxml` attributes or exit codes, never from an
-output-filter summary.
+**G2 Tests (Tier 2 and 3).** The behavioral suite lives **here** (`uv run pytest -q` from
+this repository's root); run the modules the diff touches and name them. Properties that
+compare the SDK with the gateway stay **main-side** (`uv run pytest tests/sdk` from the
+gateway checkout root, in the gateway environment: `test_presentation_packaging` and the
+agreement modules). When a change touches such a property and the standalone clone is all
+you have, **say so plainly and list which main-side modules should cover the change** —
+"couldn't run tests" stated beats a green-looking review that never ran them. Read counts
+from `--junitxml` attributes or exit codes, never from an output-filter summary.
 
-**G3 RED-sanity (any PR that claims to fix a bug or add a guard).** The proving tests live
-main-side: revert ONLY the production fix (keep the test), run the test there, watch it go
+**G3 RED-sanity (any PR that claims to fix a bug or add a guard).** Run it where the
+proving test lives (here, or main-side for a cross-repo property): revert ONLY the
+production fix (keep the test), run the test there, watch it go
 **RED**, restore, watch it go **GREEN**, paste both. `no tests ran` is a **FAILED** RED
 check — pytest exits 5 when it collects nothing; look for the collected count. If you
 cannot produce red-then-green, the fix is **unproven** → you may not APPROVE.

@@ -72,14 +72,15 @@ carry the rubric out.
    - `uv run benchweave-sdk sync-standards --check` — the standards self-consistency gate
    - `uv run benchweave-sdk --version` — the entry-point smoke
 
-   **The pytest suite lives main-side.** This repository ships no tests of its own; the
-   SDK's tests are `tests/sdk/` in the parent gateway checkout (`uv run pytest tests/sdk`
-   from the main repository root, in the main repository's environment). When you are in
-   the standalone clone without the parent checkout, say so explicitly and list which
-   main-side test modules the change should be exercised through (`test_standards_sync`,
-   `test_cli_frameworks`, `test_presentation_cli`, `test_presentation_packaging`,
-   `test_preview_server`, `test_preview_cli`, `test_preview_fixtures`, `test_sdk`) — "couldn't run tests" stated plainly beats a green-looking review that
-   never ran them.
+   **The pytest suite lives here.** `uv run pytest -q` from this repository's root runs the
+   SDK's behavioral suite (`tests/`), and this repository's CI runs it on ubuntu, macOS and
+   Windows. Properties that compare the SDK with the gateway stay main-side (`tests/sdk/`
+   in the parent gateway checkout: `test_presentation_packaging` and the agreement
+   modules; `uv run pytest tests/sdk` from the main repository root, in the main
+   repository's environment). When a change touches such a property and you are in the
+   standalone clone without the parent checkout, say so explicitly and list which
+   main-side modules it should be exercised through — "couldn't run tests" stated plainly
+   beats a green-looking review that never ran them.
 
 3. **RED-sanity-check every bug-fix claim.** Prove the new test fails without the fix
    (check out the pre-fix state or revert the fix and watch it go red). A test that passes
@@ -188,7 +189,7 @@ then, most-important-first:
 - **Cross-surface obligations missed**: "you changed X but didn't update Y" (name the Y).
 - **Verification you ran**: ruff/mypy/sync-standards output and the RED-sanity result for
   any bug fix — paste the meaningful lines, don't just say "passed." State plainly when
-  the main-side pytest suite could not be run and which modules it should cover.
+  a main-side module the change needs could not be run, and which one.
 - **Cleanups / smaller notes** (non-blocking), clearly separated from the blocking
   findings.
 - **The closing memory step (not optional):** before finishing, append the review record
