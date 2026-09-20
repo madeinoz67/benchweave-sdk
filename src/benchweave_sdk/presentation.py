@@ -92,10 +92,9 @@ def read_file(path: Path, limit: int = 262144) -> bytes:
     The same three outcomes on every platform: a symlinked component is
     refused as ``path_symlink_component:``; a special file or oversize input
     raises ``ValueError``; everything else keeps its ``OSError`` face — a
-    directory target is ``IsADirectoryError``, and absence, permissions or a
-    regular file sitting where a directory should be report whatever the
-    platform does (``NotADirectoryError`` on POSIX, a not-found error from
-    ``lstat`` on Windows).
+    directory target is ``IsADirectoryError``, a regular file sitting where
+    a directory should be is ``NotADirectoryError``, and absence or
+    permissions report whatever the platform does.
     """
     if limit < 0:
         raise ValueError("Input byte limit exceeded")
@@ -151,8 +150,9 @@ def _read_file_no_dirfd(path: Path, limit: int) -> bytes:
 
     Each component is inspected with ``lstat`` and refused with the same
     ``path_symlink_component:`` prefix the POSIX walk uses when it redirects
-    the name (``_redirects_name``); any other ``lstat`` failure re-raises
-    unchanged, as the POSIX walk does. A same-file check after the open ties
+    the name (``_redirects_name``); a regular file mid-path is named as the
+    ``NotADirectoryError`` the POSIX walk reports, and any ``lstat`` failure
+    re-raises unchanged. A same-file check after the open ties
     the descriptor back to the inspected final component. The residual race
     on intermediate components is accepted for an offline authoring tool; the
     POSIX branch keeps the race-free ``dir_fd`` walk.
@@ -161,6 +161,11 @@ def _read_file_no_dirfd(path: Path, limit: int) -> bytes:
     current = Path(resolved.parts[0])
     details = os.lstat(current)
     for part in resolved.parts[1:]:
+        if not stat.S_ISDIR(details.st_mode):
+            # A regular file sitting where a directory should be. The POSIX
+            # walk reports ENOTDIR; Windows' lstat of the child would only say
+            # the path was not found, so name it here.
+            raise NotADirectoryError(errno.ENOTDIR, os.strerror(errno.ENOTDIR), str(current))
         current = current / part
         details = os.lstat(current)
         if _redirects_name(details):

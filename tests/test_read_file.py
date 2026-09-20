@@ -22,13 +22,6 @@ import pytest
 from benchweave_sdk import presentation
 from benchweave_sdk.presentation import _read_file_no_dirfd, read_file
 
-# A regular file blocking a directory position is not a symlink refusal, so
-# both walks leave the platform's own error alone: POSIX reports ENOTDIR,
-# Windows reports the whole path as not-found at lstat (winerror 3).
-_BLOCKED_COMPONENT_ERROR: type[OSError] = (
-    FileNotFoundError if sys.platform == "win32" else NotADirectoryError
-)
-
 _SYMLINK_REFUSAL = "^path_symlink_component: "
 
 
@@ -93,8 +86,11 @@ def test_rejects_symlinked_directory_component(tmp_path: Path) -> None:
 def test_rejects_file_as_directory_component(tmp_path: Path) -> None:
     blocker = tmp_path / "not-a-dir"
     blocker.write_bytes(b"x")
-    with pytest.raises(_BLOCKED_COMPONENT_ERROR):
+    # The same class and errno on every platform; Windows' own lstat would
+    # only have said the path was not found.
+    with pytest.raises(NotADirectoryError) as raised:
         read_file(blocker / "document.json")
+    assert raised.value.errno == errno.ENOTDIR
 
 
 def test_exact_limit_is_accepted(tmp_path: Path) -> None:
@@ -312,5 +308,6 @@ def test_no_dirfd_rejects_symlinked_directory_component(tmp_path: Path) -> None:
 def test_no_dirfd_rejects_file_as_directory_component(tmp_path: Path) -> None:
     blocker = tmp_path / "not-a-dir"
     blocker.write_bytes(b"x")
-    with pytest.raises(_BLOCKED_COMPONENT_ERROR):
+    with pytest.raises(NotADirectoryError) as raised:
         _read_file_no_dirfd(blocker / "document.json", 64)
+    assert raised.value.errno == errno.ENOTDIR
