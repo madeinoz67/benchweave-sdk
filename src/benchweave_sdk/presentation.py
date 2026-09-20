@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import importlib.util
 import json
@@ -60,17 +61,42 @@ def schemas() -> dict[str, Any]:
     return result
 
 
+def _open_no_follow(part: str, flags: int, directory: int) -> int:
+    """Open one strict component, naming symlink refusals over raw errno prose.
+
+    The O_NOFOLLOW walk refuses a symlinked component as ELOOP on Linux or
+    ENOTDIR on macOS (where /tmp is a symlink); lstat confirms the component
+    really is a symlink before the typed refusal is raised. Every other
+    outcome — a regular file mid-path, a failed confirmation, any other
+    errno — re-raises the original error unchanged.
+    """
+    try:
+        return os.open(part, flags, dir_fd=directory)
+    except OSError as exc:
+        if exc.errno in (errno.ELOOP, errno.ENOTDIR):
+            try:
+                metadata = os.stat(part, dir_fd=directory, follow_symlinks=False)
+            except OSError:
+                raise exc from None  # confirmation failed: never mask the original
+            if stat.S_ISLNK(metadata.st_mode):
+                raise ValueError(
+                    f"path_symlink_component: {part}: canonical paths only, no symlink "
+                    "components (on macOS use /private/tmp rather than /tmp)"
+                ) from exc
+        raise
+
+
 def read_file(path: Path, limit: int = 262144) -> bytes:
     """Open bounded regular files without following symlinks in any component."""
     parts = path.absolute().parts
     directory = os.open(parts[0], os.O_RDONLY | os.O_DIRECTORY)
     try:
         for part in parts[1:-1]:
-            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory)
+            child = _open_no_follow(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, directory)
             os.close(directory)
             directory = child
-        descriptor = os.open(
-            parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory
+        descriptor = _open_no_follow(
+            parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, directory
         )
         with os.fdopen(descriptor, "rb") as stream:
             metadata = os.fstat(stream.fileno())

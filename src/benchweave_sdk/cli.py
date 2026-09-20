@@ -63,13 +63,17 @@ def cli() -> None:
 @_domain_errors
 def new_command(directory: Path, package_name: str, with_ui: bool) -> None:
     """Create a synthetic external plugin project."""
-    create_project(directory, package_name)
+    # Resolve before the first write: `new --with-ui` reads the descriptor back
+    # through the symlink-refusing walk, so a destination reached through a
+    # symlinked ancestor must become its canonical path up front.
+    destination = directory.expanduser().resolve()
+    create_project(destination, package_name)
     if with_ui:
         from .presentation import create_ui_resources
 
-        create_ui_resources(directory, package_name)
+        create_ui_resources(destination, package_name)
     ConsoleOutput().message(
-        f"Created synthetic plugin at {directory}; review before hardware or publication.",
+        f"Created synthetic plugin at {destination}; review before hardware or publication.",
         style="green",
     )
 
