@@ -74,3 +74,9 @@ exists in the rubric.
   proposed to the memory ledger before finishing — `sdk` identity tag riding with at least
   one descriptive tag (`["sdk", "code-review"]`; the validator rejects `["sdk"]` alone, and
   the rejection is the rule working).
+- **Release review gate** (issue #117): a version bump runs the release-review
+  skill against `docs/internal/release-review-matrix.md` between the bump
+  commit and the tag — every version-bearing surface checked against its
+  machine source, contributor window acknowledged (an empty window is a
+  recorded result), post-release verification reads PyPI directly. The matrix,
+  not memory, is the checklist.
