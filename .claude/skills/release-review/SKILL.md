@@ -20,17 +20,20 @@ gate runs after the bump commit exists and before the tag is cut.
    prose where stale, and record the result (updated / correct-as-is / n-a).
    Every row records a result, including empty results; an empty contributor
    window is a recorded result, not a skipped step.
-2. **Prose defers to machine truth.** The matrix's middle column names the
+2. **Registration precedes the tag.** Row 6 lands before the tag is cut:
+   the docs assembly builds each bucket from the version's own tag and reads
+   that tag's own versions list, so a tag missing itself fails the build.
+3. **Prose defers to machine truth.** The matrix's middle column names the
    machine source per row. When prose and machine disagree, the prose is wrong.
    Never edit the machine source to match prose.
-3. **Contributor acknowledgment.** Row 7 is not optional: run the git log, and
+4. **Contributor acknowledgment.** Row 7 is not optional: run the git log, and
    acknowledge new human contributors in the release notes. If the window is
    empty, record that as the result.
-4. **Release notes / tag message** are composed in the principal's voice via
+5. **Release notes / tag message** are composed in the principal's voice via
    the `stephens-digital-twin` skill (GitHub-facing prose directive). The
    publish pipeline replaces the GitHub release body with git-cliff notes; the
    tag message is the permanent record.
-5. **Post-release verification** (after the pipeline runs): PyPI JSON API shows
+6. **Post-release verification** (after the pipeline runs): PyPI JSON API shows
    the new version with wheel + sdist; the docs site selector shows the new
    bucket; the release body is the git-cliff notes. Appearance is not
    existence: read PyPI, do not infer from pipeline status alone.

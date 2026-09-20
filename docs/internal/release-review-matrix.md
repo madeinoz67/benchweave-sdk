@@ -18,6 +18,17 @@
 | 7 | Contributor window | `git log <prev-tag>..HEAD --format='%an'` minus bots and the owner | unacknowledged new human contributors; empty window = recorded result |
 | 8 | Gateway `uv.lock` SDK pin (cross-repo) | the released SDK version | pin behind the release; moves on the gateway's next gateway-side lock run — a note, not a blocker |
 
+## The ordering constraint (row 6 is a pre-tag step)
+
+The registration of the new version in `great-docs.yml` must land **before
+the tag is cut**, not after: the docs assembly builds each version's bucket
+from that version's own tag, and filters the tag's own versions list against
+the requested version. A tag whose list does not contain itself builds zero
+versions and fails (observed: v0.0.4 cut before its registration; the Build
+Docs job failed with `Multi-version build: 0 version(s)` until the tag was
+re-pointed onto the registration commit). v0.0.3 got this right by four
+minutes; the review exists so the next release does not depend on luck.
+
 ## How the rows resolve
 
 - Prose defers to the machine source in the middle column; when they disagree,
