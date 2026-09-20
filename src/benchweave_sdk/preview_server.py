@@ -195,9 +195,11 @@ def _handler(
         def _serve_asset(self, request_path: str) -> None:
             relative = unquote(request_path).lstrip("/") or "index.html"
             pure = PurePosixPath(relative)
-            # A backslash is inert in PurePosixPath but a separator on Windows;
-            # reject it here so the guard means the same thing on every platform.
-            if pure.is_absolute() or ".." in pure.parts or "\\" in relative:
+            # A backslash is inert in PurePosixPath but a separator on Windows,
+            # and a colon is a drive (C:x joins as a drive-relative escape when
+            # the assets sit on another drive) or an alternate data stream;
+            # reject both here so the guard means the same thing everywhere.
+            if pure.is_absolute() or ".." in pure.parts or "\\" in relative or ":" in relative:
                 self._not_found()
                 return
             target = assets.joinpath(*pure.parts)
