@@ -30,7 +30,11 @@ benchweave-sdk = "benchweave_sdk.cli:main"
 packages = ["src/benchweave_sdk"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src", "pyproject.toml", "README.md", "hatch_build.py", "standards-lock.json"]
+# Root files are anchored (/name): hatchling matches include patterns with
+# gitignore depth semantics, so an unanchored "README.md" also picked up
+# .claude/deep-review/README.md. "src" stays unanchored deliberately — it
+# names the whole tree.
+include = ["src", "/pyproject.toml", "/README.md", "/hatch_build.py", "/standards-lock.json"]
 
 [tool.hatch.build.hooks.custom]
 
