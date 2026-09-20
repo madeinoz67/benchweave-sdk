@@ -129,6 +129,8 @@ Run the same check locally from a checkout of the main BenchWeave repository (`s
 uv run --no-project --python 3.13 scripts/sdk_smoke.py --out-dir dist/packages
 ```
 
-On a published GitHub release, a separate job repeats these checks before attaching the SDK wheel and source distribution to that release. Tagging a release triggers the publish workflow, which builds the sdist and wheel, smoke-installs the wheel on four OS/arch lanes, and publishes to PyPI via Trusted Publishing. No release is published simply by editing these files or running the local smoke check.
+On a published GitHub release, a separate job repeats these checks before attaching the SDK wheel and source distribution to that release. Tagging a release triggers the publish workflow, which builds the sdist and wheel, smoke-installs the wheel on five OS/arch lanes (Linux x86-64 and arm64, macOS arm64 and Intel, and Windows), verifies each installed wheel's vendored standards with `benchweave-sdk sync-standards --check`, and publishes to PyPI via Trusted Publishing. No release is published simply by editing these files or running the local smoke check.
+
+An installed SDK can verify its own vendored standards offline: `benchweave-sdk sync-standards --check` compares the packaged lock with the packaged tree and needs no repository checkout. Importing a standards bundle rewrites the source tree, so it is refused outside a checkout (`sync_requires_repo_checkout:`).
 
 When changing the SDK API, canonical contracts, template, gateway bridge or build tooling, update the affected tests and documentation together. Keep SDK distribution metadata, `__version__`, generated development dependency and this compatibility statement aligned; the smoke checks guard the installed distribution and contract resources.
