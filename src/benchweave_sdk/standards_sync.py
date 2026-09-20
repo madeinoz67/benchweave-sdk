@@ -9,11 +9,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shutil
 import tomllib
 from dataclasses import dataclass
 from importlib.resources import files
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Any
 
 LOCK_NAME = "standards-lock.json"
@@ -100,9 +101,19 @@ def _load_bundle(bundle: Path) -> dict[str, Any]:
         if document.get("bundle_version") != 1:
             raise ValueError("bundle_version_unsupported")
         for standard in document["standards"]:
-            _ = standard["id"], standard["version"], standard["status"]
+            identifier = standard["id"]
+            _ = standard["version"], standard["status"]
+            if (problem := _identifier_problem(identifier)) is not None:
+                # The per-standard stamp is written at <tree>/<id>/, and a
+                # standard with no files never reaches _guard_path.
+                raise ValueError(f"bundle_manifest_invalid: standard id {identifier!r} {problem}")
             for file in standard["files"]:
-                _guard_path(standard["id"], file["path"])
+                _guard_path(identifier, file["path"])
+                if not _is_digest(file["sha256"]):
+                    raise ValueError(
+                        f"bundle_manifest_invalid: sha256 for {file['path']} is not "
+                        "64 lowercase hex characters"
+                    )
     except json.JSONDecodeError as exc:
         raise ValueError(f"bundle_manifest_invalid: {exc}") from exc
     except (KeyError, TypeError) as exc:
@@ -110,11 +121,52 @@ def _load_bundle(bundle: Path) -> dict[str, Any]:
     return document
 
 
+_DIGEST = re.compile(r"[0-9a-f]{64}")
+
+
+def _is_digest(value: object) -> bool:
+    return isinstance(value, str) and _DIGEST.fullmatch(value) is not None
+
+
+def _identifier_problem(identifier: object) -> str | None:
+    """Why a standard id cannot name a directory directly under the tree, or None."""
+    if not isinstance(identifier, str) or not identifier:
+        return "is not a non-empty string"
+    if identifier in (".", "..") or any(char in identifier for char in "/\\:"):
+        return "is not a single path segment"
+    return None
+
+
+def _path_problem(identifier: object, path: object) -> str | None:
+    """Why a ``<id>/...`` row cannot be joined onto a tree, or None.
+
+    Judged as a string, never as a path, so the rule means the same thing on
+    every platform: a backslash or a drive colon is an ordinary character to
+    ``PurePosixPath`` but a separator to the ``Path`` that does the write on
+    Windows, and a dot or empty segment is a traversal or an alias to some
+    filesystem. hatch_build.py carries the same rule inline (STD-3).
+    """
+    if not isinstance(path, str):
+        return "is not a string"
+    segments = path.split("/")
+    if len(segments) < 2:
+        return "has no file component"
+    if any(not segment or segment in (".", "..") for segment in segments):
+        return "has an empty or dot segment"
+    if "\\" in path or ":" in path:
+        return "contains a backslash or a drive separator"
+    if segments[0] != identifier:
+        return "is not under its standard's directory"
+    return None
+
+
 def _guard_path(identifier: str, path: str) -> None:
-    """Bundle paths are ``<id>/``-prefixed and must stay inside the tree."""
-    pure = PurePosixPath(path)
-    parts = pure.parts
-    if len(parts) < 2 or pure.is_absolute() or ".." in parts or parts[0] != identifier:
+    """Bundle paths are ``<id>/``-prefixed and must stay inside the tree.
+
+    This is the write boundary for a bundle: nothing is hashed or written
+    for a row it refuses.
+    """
+    if _path_problem(identifier, path) is not None:
         raise ValueError(f"bundle_path_invalid: {path}")
 
 
@@ -214,11 +266,21 @@ def _verify_vendored_tree(sdk_root: Path, lock: dict[str, Any]) -> None:
 
 
 def _verify_tree(tree: Path, lock: dict[str, Any]) -> None:
-    recorded = {
-        file["path"]: file["sha256"]
-        for standard in lock.get("standards", [])
-        for file in standard["files"]
-    }
+    recorded: dict[str, str] = {}
+    try:
+        for standard in lock.get("standards", []):
+            identifier = standard["id"]
+            if (problem := _identifier_problem(identifier)) is not None:
+                raise ValueError(f"lock_invalid: standard id {identifier!r} {problem}")
+            for file in standard["files"]:
+                # A lock row is joined onto the tree and hashed; an unguarded
+                # row would make --check vouch for bytes outside it. The
+                # build hook refuses the same rows (STD-3).
+                if (problem := _path_problem(identifier, file["path"])) is not None:
+                    raise ValueError(f"lock_invalid: path {file['path']!r} {problem}")
+                recorded[file["path"]] = file["sha256"]
+    except (KeyError, TypeError) as exc:
+        raise ValueError(f"lock_invalid: {exc}") from exc
     if not recorded:
         raise ValueError("not_synced: no standards in the lock; run sync-standards first")
     for path, digest in sorted(recorded.items()):

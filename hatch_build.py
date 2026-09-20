@@ -34,11 +34,31 @@ def _validate_preview_assets(package: Path) -> None:
             raise RuntimeError(f"Bundled preview asset is stale or corrupt: {relative}")
 
 
-def _verify_vendored_file(tree: Path, relative: str, digest: str) -> None:
-    path = Path(relative)
-    if path.is_absolute() or ".." in path.parts:
+def _unsafe_row(identifier: object, relative: object) -> bool:
+    """The sync lanes' string rule for ids and ``<id>/...`` rows, inline.
+
+    Inlined because the build hook must stay importable without the package
+    installed; standards_sync._identifier_problem/_path_problem are the
+    reference (STD-3: every lane refuses the same rows).
+    """
+    if not isinstance(identifier, str) or not isinstance(relative, str):
+        return True
+    if not identifier or identifier in (".", "..") or any(c in identifier for c in "/\\:"):
+        return True
+    segments = relative.split("/")
+    return (
+        len(segments) < 2
+        or any(not segment or segment in (".", "..") for segment in segments)
+        or "\\" in relative
+        or ":" in relative
+        or segments[0] != identifier
+    )
+
+
+def _verify_vendored_file(tree: Path, identifier: str, relative: str, digest: str) -> None:
+    if _unsafe_row(identifier, relative):
         raise RuntimeError(f"Unsafe vendored standards path: {relative}")
-    target = tree / path
+    target = tree / relative
     if not target.is_file():
         raise RuntimeError(f"Vendored standards file missing: {relative}")
     if hashlib.sha256(target.read_bytes()).hexdigest() != digest:
@@ -62,11 +82,13 @@ def _validate_vendored_standards(root: Path) -> None:
         stamps: set[str] = set()
         for standard in standards:
             identifier = standard["id"]
+            if _unsafe_row(identifier, f"{identifier}/{STAMP_NAME}"):
+                raise RuntimeError(f"Unsafe vendored standard id: {identifier!r}")
             if not (tree / identifier / STAMP_NAME).is_file():
                 raise RuntimeError(f"Vendored standard stamp missing: {identifier}/{STAMP_NAME}")
             stamps.add(f"{identifier}/{STAMP_NAME}")
             for file in standard["files"]:
-                _verify_vendored_file(tree, file["path"], file["sha256"])
+                _verify_vendored_file(tree, identifier, file["path"], file["sha256"])
                 recorded.add(file["path"])
         # #9: the build-time extras sweep — same rule as every sync lane
         # (lock ∪ stamps ∪ __pycache__; inlined here because the build hook
