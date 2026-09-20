@@ -2,7 +2,7 @@
 
 # BenchWeave plugin developer SDK
 
-Build an external device plugin without importing gateway internals. Python 3.13+, SDK 0.0.2, OTDP 0.1.0 and adapter API 1.1 are the initial baseline. This package is a separate wheel built alongside BenchWeave; published to PyPI as benchweave-sdk.
+Build an external device plugin without importing gateway internals. Python 3.13+, SDK 0.0.4, OTDP 0.2.0 and adapter API 1.1 are the initial baseline. This package is a separate wheel built alongside BenchWeave; published to PyPI as benchweave-sdk.
 
 ## Sister repository
 
@@ -10,7 +10,7 @@ This is the SDK. The BenchWeave gateway and the canonical architecture and contr
 
 ## Community
 
-Questions and discussion happen on the [BenchWeave Discord](https://discord.gg/Y5XPTWQQXr) — permanent invite. SDK bugs and feature requests belong in the [SDK issue tracker](https://github.com/madeinoz67/benchweave-sdk/issues).
+Questions and discussion happen on the [BenchWeave Discord](https://discord.gg/Y5XPTWQQXr) — permanent invite. SDK bugs and feature requests belong in the [gateway issue tracker](https://github.com/madeinoz67/benchweave/issues) — one issue stream for the whole project; the SDK repository's tracker is retired.
 
 ## Installation
 
@@ -36,7 +36,7 @@ To hack on the SDK itself, clone the repository and `uv sync --extra test`.
 
 1. Install the SDK from PyPI (`uv pip install benchweave-sdk`, or see [Installation](#installation)).
 2. Run `benchweave-sdk new plugins/acme/model100 --package benchweave_acme_model100`. Replace `acme/model100` with your manufacturer/device name; the independent project contains `src/benchweave_acme_model100/` and `tests/`.
-3. Change into the generated project (`cd plugins/acme/model100`). Replace the explicitly synthetic protocol with verified device behaviour, then update its descriptor. The generated AI-GUIDE.md describes the design, build, test, review and release steps.
+3. Change into the generated project (`cd plugins/acme/model100`). Replace the explicitly synthetic protocol with verified device behaviour, then update its descriptor. The generated AI-GUIDE.md describes the design, build, test, review and release steps, CLAUDE.md carries agent notes at the root, and the seeded skills under `src/benchweave_acme_model100/skills/` (develop-plugin for authoring, drive-device as the demo driver to rewrite) ship with the package.
 4. Install the plugin with test dependencies, run its tests, and run `benchweave-sdk check src/benchweave_acme_model100/descriptor.json`. Record all applicable S01–S18, C01–C12 and M01–M14 obligations and evidence; basic SDK checks do not cover all of them.
 5. Build with `uv build`, prepare registry metadata and reviewed evidence, and approve the release before publication or hardware qualification. `benchweave-sdk inventory` helps generate hashes, not a complete registry manifest.
 
@@ -57,13 +57,14 @@ benchweave-sdk new plugins/acme/model100 --package benchweave_acme_model100 --wi
 cd plugins/acme/model100
 ```
 
-The destination must not already exist. Omit `--with-ui` for a plugin without presentation metadata.
+The destination must not already exist. A destination reached through a symlinked directory (for example `/tmp/...` on macOS) is canonicalized before any write, and messages report the real path. Omit `--with-ui` for a plugin without presentation metadata.
 
 ```text
 plugins/acme/model100/                 # independent plugin project
 ├── pyproject.toml                     # build configuration and test dependencies
 ├── README.md
 ├── AI-GUIDE.md                        # generated development workflow
+├── CLAUDE.md                          # generated agent notes; root dev tooling
 ├── UI-GUIDE.md                        # generated only with --with-ui
 ├── docs/                              # author-supplied device documentation
 │   ├── compatibility.md               # supported models/firmware and limitations
@@ -79,6 +80,9 @@ plugins/acme/model100/                 # independent plugin project
 │       ├── descriptor.json            # OTDP device/operation contract
 │       ├── protocol.md                # protocol evidence, initially synthetic
 │       ├── vectors.json               # exact exchanges, initially synthetic
+│       ├── skills/                    # seeded agent skills; ship in the wheel
+│       │   ├── develop-plugin/SKILL.md    # authoring workflow, elicitation, release
+│       │   └── drive-device/SKILL.md      # synthetic demo driver; rewrite for the device
 │       ├── config/                    # optional configuration for a headless plugin
 │       │   ├── settings.schema.json   # author-supplied complete-settings schema
 │       │   └── presets/
@@ -140,7 +144,7 @@ Here `--resources` points to the **package root**. The generated envelope's `res
 
 Add `--with-ui` to `benchweave-sdk new` to generate a declarative readings page, presentation envelope and binding catalogue. The default scaffold stays unchanged. Keep presentation assets under the import package's `ui/` directory so wheels carry them; store complete configuration presets alongside their settings schema. Plugins can declare configuration, readings, dataset and registered panel pages, with plots only when appropriate.
 
-Use `benchweave-sdk check-ui` and `benchweave-sdk check-preset` for offline validation before packaging. Validation neither admits a plugin nor approves applying settings. The [plugin presentation guide](https://github.com/madeinoz67/benchweave/blob/main/standards/plugin-ui-v0.1.0/README.md) (main repository) covers the directory structure, preconfigured settings, optional graphs, data bindings and CLI examples.
+Use `benchweave-sdk check-ui` and `benchweave-sdk check-preset` for offline validation before packaging. Validation neither admits a plugin nor approves applying settings. The [plugin presentation guide](https://github.com/madeinoz67/benchweave/blob/main/standards/plugin-ui/0.2.0/README.md) (main repository) covers the directory structure, preconfigured settings, optional graphs, data bindings, per-channel display hints and CLI examples.
 
 ### Local UI preview
 

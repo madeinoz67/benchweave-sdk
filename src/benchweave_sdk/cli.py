@@ -63,13 +63,17 @@ def cli() -> None:
 @_domain_errors
 def new_command(directory: Path, package_name: str, with_ui: bool) -> None:
     """Create a synthetic external plugin project."""
-    create_project(directory, package_name)
+    # Resolve before the first write: `new --with-ui` reads the descriptor back
+    # through the symlink-refusing walk, so a destination reached through a
+    # symlinked ancestor must become its canonical path up front.
+    destination = directory.expanduser().resolve()
+    create_project(destination, package_name)
     if with_ui:
         from .presentation import create_ui_resources
 
-        create_ui_resources(directory, package_name)
+        create_ui_resources(destination, package_name)
     ConsoleOutput().message(
-        f"Created synthetic plugin at {directory}; review before hardware or publication.",
+        f"Created synthetic plugin at {destination}; review before hardware or publication.",
         style="green",
     )
 
@@ -99,7 +103,7 @@ def inventory_command(directory: Path) -> None:
     ConsoleOutput().document(inventory(directory))
 
 
-def _render_report(report: object) -> None:
+def _render_report(report: object, note: str | None = None) -> None:
     output = ConsoleOutput()
     findings = [(row.code, row.path, row.message) for row in report.findings]  # type: ignore[attr-defined]
     findings.extend(("panel_unavailable", str(page), "") for page in report.unavailable_pages)  # type: ignore[attr-defined]
@@ -111,6 +115,8 @@ def _render_report(report: object) -> None:
         "Offline presentation checks passed; not admission or approval to apply settings.",
         style="green",
     )
+    if note is not None:
+        output.message(note, style="yellow")
 
 
 @cli.command("check-ui")
@@ -146,20 +152,45 @@ def check_ui_command(
 @click.option("--descriptor", required=True, type=click.Path(path_type=Path))
 @click.option("--settings-schema", required=True, type=click.Path(path_type=Path))
 @click.option("--firmware", required=True)
+@click.option(
+    "--action",
+    "action",
+    default=None,
+    help="Force the action whose envelope is applied "
+    "(default: resolve from the settings-schema identity)",
+)
 @_domain_errors
 def check_preset_command(
-    preset: Path, descriptor: Path, settings_schema: Path, firmware: str
+    preset: Path, descriptor: Path, settings_schema: Path, firmware: str, action: str | None
 ) -> None:
     """Validate complete settings offline."""
-    from .presentation import read_file, validate_preset
+    from .presentation import read_file, resolve_preset_action, validate_preset
 
     report = validate_preset(
         read_file(preset),
         descriptor_raw=read_file(descriptor),
         settings_schema_raw=read_file(settings_schema),
         firmware=firmware,
+        action_id=action,
     )
-    _render_report(report)
+    note: str | None = None
+    if report.valid:
+        # Recomputed via the same resolver the enforcement uses, so the note
+        # cannot disagree with what was applied.
+        resolved = (
+            action
+            if action is not None
+            else resolve_preset_action(
+                read_file(preset), descriptor_raw=read_file(descriptor)
+            )
+        )
+        note = (
+            f"envelope applied: {resolved}"
+            if resolved is not None
+            else "no descriptor envelope applied (settings schema is not a corpus "
+            "action schema; pass --action to force one)"
+        )
+    _render_report(report, note=note)
 
 
 def _sdk_checkout_root() -> Path | None:

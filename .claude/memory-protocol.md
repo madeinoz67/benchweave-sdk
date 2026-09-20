@@ -56,6 +56,14 @@ it collapsed the analysis that depended on them. A drain with no bar is a pollut
 
 ## How to append
 
+**Recall before you propose.** Before appending a proposal, spend one `muninn_recall` on
+the `benchweave` vault using the fact's own concepts. If the vault already holds the fact,
+do not mint a rival copy: correct the existing engram with `muninn_evolve`, or skip the
+proposal and cite the existing one instead. This is the proposing session's judgment —
+never a hook and never a drain-side gate (see *What the drain deliberately does not do*);
+the pipe stays dumb. Added 2026-09-20: the rtk pytest-counts trap reached four vault copies
+through four independent rediscoveries, none of which recalled first.
+
 **Use the helper.** It validates before it writes, fills in `vault`, and refuses a batch
 rather than queueing a bad line. Every proposal carries **at least one descriptive tag** —
 tags are the recall tag-filter lane, and an untagged memory is invisible to tag-scoped

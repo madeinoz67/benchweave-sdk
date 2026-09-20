@@ -10,8 +10,17 @@ import pytest
 from benchweave_sdk.validation import contract_documents, validate, validate_descriptor
 
 
+def _otdp_key(suffix: str) -> str:
+    """The vendored OTDP document ending in ``suffix``, whatever version main vendors."""
+    matches = [
+        key for key in contract_documents() if key.startswith("otdp/") and key.endswith(suffix)
+    ]
+    assert len(matches) == 1, matches
+    return matches[0]
+
+
 def _reference_descriptor() -> dict[str, Any]:
-    document = contract_documents()["otdp/0.1.0/examples/reference-psu.json"]
+    document = contract_documents()[_otdp_key("/examples/reference-psu.json")]
     return deepcopy(document)
 
 
@@ -43,7 +52,7 @@ def test_s02_accepts_equal_bounds() -> None:
 def test_unknown_schema_file_is_a_clear_error() -> None:
     # snake_case prefix: machine-matchable like its sibling refusals.
     with pytest.raises(ValueError, match="unknown_contract_schema"):
-        validate({}, "otdp/0.1.0/no-such-schema.json")
+        validate({}, "otdp/no-such-version/no-such-schema.json")
 
 
 def test_schema_failure_is_a_domain_error() -> None:
@@ -60,7 +69,7 @@ def test_deep_document_is_a_domain_error_not_a_recursion_crash() -> None:
     for _ in range(20000):
         document = [document]
     with pytest.raises(ValueError, match="Contract validation failed"):
-        validate(document, "otdp/0.1.0/otdp-runtime.schema.json")
+        validate(document, _otdp_key("/otdp-runtime.schema.json"))
 
 
 def test_definition_against_idless_schema_is_a_domain_error(

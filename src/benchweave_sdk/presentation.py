@@ -61,25 +61,41 @@ def schemas() -> dict[str, Any]:
     return result
 
 
-# The errno an O_NOFOLLOW open reports for a symlink varies by kernel: Linux
-# and Darwin say ELOOP, FreeBSD says EMLINK — and with O_DIRECTORY also set,
-# Linux (6.x, measured) and Darwin say ENOTDIR instead, because the directory
-# check runs before the symlink check. The per-component lstat in read_file
-# decides the refusal; this set only classifies the residual window between
-# that lstat and the open, where a component was swapped for a symlink.
-_SYMLINK_ERRNOS = frozenset({errno.ELOOP, errno.EMLINK})
+def _open_no_follow(part: str, flags: int, directory: int) -> int:
+    """Open one strict component, naming symlink refusals over raw errno prose.
+
+    The O_NOFOLLOW walk refuses a symlinked component as ELOOP on Linux or
+    ENOTDIR on macOS (where /tmp is a symlink); lstat confirms the component
+    really is a symlink before the typed refusal is raised. Every other
+    outcome — a regular file mid-path, a failed confirmation, any other
+    errno — re-raises the original error unchanged.
+    """
+    try:
+        return os.open(part, flags, dir_fd=directory)
+    except OSError as exc:
+        if exc.errno in (errno.ELOOP, errno.ENOTDIR):
+            try:
+                metadata = os.stat(part, dir_fd=directory, follow_symlinks=False)
+            except OSError:
+                raise exc from None  # confirmation failed: never mask the original
+            if stat.S_ISLNK(metadata.st_mode):
+                raise ValueError(
+                    f"path_symlink_component: {part}: canonical paths only, no symlink "
+                    "components (on macOS use /private/tmp rather than /tmp)"
+                ) from exc
+        raise
 
 
 def read_file(path: Path, limit: int = 262144) -> bytes:
     """Open bounded regular files without following symlinks in any component.
 
-    Path-shape refusals — symlinked or non-directory components, non-regular
-    targets, oversize input — raise ``ValueError`` on every platform; absence
-    and permission failures keep their ``OSError`` face. On POSIX every
-    component is ``lstat``-ed relative to the walked directory descriptor
-    before it is opened, so a symlink is refused by inspection on every
-    kernel rather than by whichever errno that kernel's ``O_NOFOLLOW`` open
-    happens to report.
+    The same three outcomes on every platform: a symlinked component is
+    refused as ``path_symlink_component:``; a special file or oversize input
+    raises ``ValueError``; everything else keeps its ``OSError`` face — a
+    directory target is ``IsADirectoryError``, and absence, permissions or a
+    regular file sitting where a directory should be report whatever the
+    platform does (``NotADirectoryError`` on POSIX, a not-found error from
+    ``lstat`` on Windows).
     """
     if limit < 0:
         raise ValueError("Input byte limit exceeded")
@@ -89,13 +105,11 @@ def read_file(path: Path, limit: int = 262144) -> bytes:
     directory = os.open(parts[0], os.O_RDONLY | os.O_DIRECTORY)
     try:
         for part in parts[1:-1]:
-            _refuse_symlink(part, directory)
-            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory)
+            child = _open_no_follow(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, directory)
             os.close(directory)
             directory = child
-        _refuse_symlink(parts[-1], directory)
-        descriptor = os.open(
-            parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory
+        descriptor = _open_no_follow(
+            parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, directory
         )
         with os.fdopen(descriptor, "rb") as stream:
             metadata = os.fstat(stream.fileno())
@@ -105,61 +119,60 @@ def read_file(path: Path, limit: int = 262144) -> bytes:
             if len(raw) > limit:
                 raise ValueError("Input byte limit exceeded")
             return raw
-    except OSError as exc:
-        # Align refusal classes with the Windows branch: a path whose SHAPE is
-        # wrong is a domain refusal (ValueError), matching the messages the
-        # explicit checks raise; environment errors (ENOENT, EACCES) pass
-        # through unchanged. A symlink normally never reaches here —
-        # _refuse_symlink saw it first — so the symlink mapping is the
-        # backstop for a component swapped between its lstat and its open.
-        if exc.errno in _SYMLINK_ERRNOS:
-            raise ValueError("Input path must not contain symlinked components") from exc
-        if exc.errno in (errno.ENOTDIR, errno.EISDIR):
-            raise ValueError("Input must be a bounded regular file") from exc
-        raise
     finally:
         os.close(directory)
 
 
-def _refuse_symlink(name: str, directory: int) -> None:
-    """``lstat`` one path component relative to ``directory``; refuse a symlink.
+# IsReparseTagNameSurrogate: set on tags that stand in for another name
+# (symlinks, junctions, mount points, WSL symlinks), clear on tags that only
+# decorate an ordinary file (cloud-file placeholders, app execution aliases).
+_REPARSE_NAME_SURROGATE = 0x20000000
 
-    Inspection, not errno, is what makes the refusal identical on Linux,
-    Darwin and the BSDs. Absence and permission failures propagate as the
-    ``OSError`` they are.
+
+def _redirects_name(details: os.stat_result) -> bool:
+    """Whether an ``lstat`` result describes a component that redirects the path.
+
+    A symlink does, and so does a Windows reparse point whose tag is a name
+    surrogate. A reparse point that is not a name surrogate is an ordinary
+    file that happens to carry a tag — ``os.lstat`` itself reports it as a
+    regular file — so refusing it would refuse, for example, every document
+    in a OneDrive-backed checkout.
     """
-    details = os.stat(name, dir_fd=directory, follow_symlinks=False)
     if stat.S_ISLNK(details.st_mode):
-        raise ValueError("Input path must not contain symlinked components")
+        return True
+    reparse_point = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    if not getattr(details, "st_file_attributes", 0) & reparse_point:
+        return False
+    return bool(getattr(details, "st_reparse_tag", 0) & _REPARSE_NAME_SURROGATE)
 
 
 def _read_file_no_dirfd(path: Path, limit: int) -> bytes:
     """``read_file`` for platforms without ``O_NOFOLLOW``/``dir_fd`` (Windows).
 
-    Each component is inspected with ``lstat`` — refusing symlinks and
-    reparse points (junctions, mount points) — and a same-file check after
-    the open ties the descriptor back to the inspected final component. The
-    residual race on intermediate components is accepted for an offline
-    authoring tool; the POSIX branch keeps the race-free ``dir_fd`` walk.
+    Each component is inspected with ``lstat`` and refused with the same
+    ``path_symlink_component:`` prefix the POSIX walk uses when it redirects
+    the name (``_redirects_name``); any other ``lstat`` failure re-raises
+    unchanged, as the POSIX walk does. A same-file check after the open ties
+    the descriptor back to the inspected final component. The residual race
+    on intermediate components is accepted for an offline authoring tool; the
+    POSIX branch keeps the race-free ``dir_fd`` walk.
     """
     resolved = path.absolute()
-    reparse_point = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
     current = Path(resolved.parts[0])
     details = os.lstat(current)
     for part in resolved.parts[1:]:
         current = current / part
-        try:
-            details = os.lstat(current)
-        except NotADirectoryError as exc:
-            # A regular file sitting where a directory component should be —
-            # the same refusal class the POSIX branch maps ENOTDIR to.
-            raise ValueError("Input must be a bounded regular file") from exc
-        is_reparse = getattr(details, "st_file_attributes", 0) & reparse_point
-        if stat.S_ISLNK(details.st_mode) or is_reparse:
-            raise ValueError("Input path must not contain symlinked components")
+        details = os.lstat(current)
+        if _redirects_name(details):
+            raise ValueError(
+                f"path_symlink_component: {part}: canonical paths only, no symlink, "
+                "junction or mount-point components"
+            )
+    if stat.S_ISDIR(details.st_mode):
+        # The POSIX walk reports a directory target as IsADirectoryError; opening
+        # one on Windows fails as a misleading PermissionError, so say it here.
+        raise IsADirectoryError(errno.EISDIR, os.strerror(errno.EISDIR), str(resolved))
     if not stat.S_ISREG(details.st_mode):
-        # Refuse directories and other non-regular targets before the open,
-        # where Windows would otherwise fail with a platform-specific OSError.
         raise ValueError("Input must be a bounded regular file")
     flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOINHERIT", 0)
     descriptor = os.open(resolved, flags)
@@ -180,7 +193,12 @@ def _read_file_no_dirfd(path: Path, limit: int) -> bytes:
 
 
 def validate_preset(
-    raw: bytes, *, descriptor_raw: bytes, settings_schema_raw: bytes, firmware: str | None
+    raw: bytes,
+    *,
+    descriptor_raw: bytes,
+    settings_schema_raw: bytes,
+    firmware: str | None,
+    action_id: str | None = None,
 ) -> Any:
     validate_descriptor(_contract().parse_document(descriptor_raw))
     return _contract().validate_preset(
@@ -189,7 +207,22 @@ def validate_preset(
         settings_schema_raw=settings_schema_raw,
         schema_documents=schemas(),
         firmware=firmware,
+        action_id=action_id,
     )
+
+
+def resolve_preset_action(raw: bytes, *, descriptor_raw: bytes) -> str | None:
+    """Resolve the corpus action a preset's settings schema identifies.
+
+    The same resolver ``validate_preset`` uses, exported so the CLI's
+    envelope note cannot disagree with the enforcement: ``None`` means the
+    settings schema carries a custom ``$id`` and lane 1 applies no envelope.
+    """
+    validate_descriptor(_contract().parse_document(descriptor_raw))
+    resolved: str | None = _contract().resolve_preset_action(
+        _contract().parse_document(raw), schemas()
+    )
+    return resolved
 
 
 def validate_presentation(
@@ -433,7 +466,7 @@ def create_ui_resources(destination: Path, package: str) -> None:
         raise ValueError("UI scaffolding requires at least one readable descriptor parameter")
     bindings = [{"id": row["id"], "kind": "observation", "target_id": row["id"]} for row in targets]
     manifest = {
-        "contract_version": "0.1.0",
+        "contract_version": "0.2.0",
         "plugin_id": descriptor["id"],
         "descriptor_sha256": descriptor_hash,
         "bindings": bindings,
@@ -449,13 +482,13 @@ def create_ui_resources(destination: Path, package: str) -> None:
     }
     manifest_raw = (json.dumps(manifest, indent=2) + "\n").encode()
     envelope = {
-        "contract_version": "0.1.0",
+        "contract_version": "0.2.0",
         "descriptor_sha256": descriptor_hash,
         "resource_root": "ui",
         "manifest": {"path": "manifest.json", "sha256": hashlib.sha256(manifest_raw).hexdigest()},
     }
     catalogue = {
-        "contract_version": "0.1.0",
+        "contract_version": "0.2.0",
         "descriptor_sha256": descriptor_hash,
         "targets": targets,
     }

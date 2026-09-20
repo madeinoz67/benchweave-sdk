@@ -35,3 +35,6 @@ _great_docs_build/
 # ignores during packaging, silently dropping it from sdists.
 /site/
 /.docs-assembly/
+
+# Design records: private/ holds pre-promotion designs (see .claude/deep-review/README.md)
+.claude/deep-review/private/
