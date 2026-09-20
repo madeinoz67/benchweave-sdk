@@ -55,13 +55,17 @@ plugins/
         ├── pyproject.toml
         ├── README.md
         ├── AI-GUIDE.md
+        ├── CLAUDE.md                   # Agent notes; root dev tooling
         ├── src/benchweave_acme_model100/
         │   ├── __init__.py
         │   ├── adapter.py
         │   ├── protocol.py
         │   ├── descriptor.json
         │   ├── protocol.md
-        │   └── vectors.json
+        │   ├── vectors.json
+        │   └── skills/                 # Seeded agent skills; ship in the wheel
+        │       ├── develop-plugin/SKILL.md
+        │       └── drive-device/SKILL.md
         └── tests/test_plugin.py
 ```
 
