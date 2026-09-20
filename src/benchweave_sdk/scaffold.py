@@ -218,9 +218,13 @@ The SDK implementation lives separately in BenchWeave's packages/sdk/.
 ## Project layout
 
 Run installation, pytest and uv build from the directory containing pyproject.toml.
-The generated project contains README.md, this AI-GUIDE.md, tests/test_plugin.py,
-and src/<package>/ with __init__.py, adapter.py, protocol.py, descriptor.json,
-protocol.md and vectors.json. The latter two begin as synthetic evidence.
+The generated project contains README.md, this AI-GUIDE.md, CLAUDE.md (agent
+notes for the repository root), tests/test_plugin.py, and src/<package>/ with
+__init__.py, adapter.py, protocol.py, descriptor.json, protocol.md, vectors.json
+and skills/ — the seeded agent skills (develop-plugin for the authoring
+workflow, drive-device as the synthetic demo driver to rewrite). The protocol
+and vectors files begin as synthetic evidence; the skills are distributable
+content inside the package.
 
 With --with-ui, the SDK also generates UI-GUIDE.md at the project root and
 presentation.json, binding-catalogue.json and ui/manifest.json inside src/<package>/.
@@ -282,9 +286,13 @@ plugin source package. A preset is configuration, not a retained measurement.
 
 > Build the plugin wheel and source distribution. Prepare the registry manifest,
 > exact payload inventory/hashes, dependency locks, licence, provenance and
-> evidence status required by the registry contract. A Python wheel is not a
-> registry admission bundle. Test the installed plugin against the supported
-> gateway version. Show me the artefacts and remaining gaps before publishing.
+> evidence status required by the registry contract; the seeded skills under
+> src/<package>/skills/ are catalogued with the skill role, while CLAUDE.md is
+> repository tooling - the wheel packages src/<package>/ only, so it reaches a
+> release payload solely by deliberate publisher inclusion (catalogued as
+> documentation). A Python wheel is not a registry admission bundle. Test the
+> installed plugin against the supported gateway version. Show me the artefacts
+> and remaining gaps before publishing.
 
 The SDK does not install a plugin into a live gateway. A Docker deployment needs
 an admitted bundle and gateway deployment configuration; an SDK development
@@ -292,6 +300,201 @@ install changes only the development environment. Capture/profile operations,
 physical providers and complete OTDP conformance require additional work beyond
 this starter. Async test timeouts cannot stop blocking or hostile Python code;
 use an isolated process without bench access for candidate-code execution.
+"""
+
+
+CLAUDE_MD = """# Agent notes for this plugin project
+
+Project: synthetic BenchWeave device plugin (package `__PLUGIN__`). This
+file is developer tooling at the repository root: it never enters the wheel
+(`packages = ["src/__PLUGIN__"]`), and if a release ever ships it, the
+registry manifest catalogues it as `documentation`, not `skill`.
+
+## Commands
+
+- Run the tests: `pytest`
+- Validate the descriptor offline: `benchweave-sdk check src/__PLUGIN__/descriptor.json`
+- Build the wheel and sdist: `uv build`
+- Pin dependencies: `uv lock`
+
+## Where things are
+
+- `AI-GUIDE.md` — the five build-out prompts (facts, implementation,
+  demonstration, review, release)
+- `src/__PLUGIN__/skills/` — the seeded agent skills:
+  `develop-plugin/SKILL.md` (authoring workflow, elicitation questions,
+  release mechanics) and `drive-device/SKILL.md` (the synthetic demo
+  driver; rewrite it for the real device)
+- `src/__PLUGIN__/descriptor.json` — the OTDP descriptor under check
+
+## Safety rails
+
+This project is synthetic: do not contact hardware, flash firmware or
+energise outputs while authoring plugin code, and publish nothing without
+separate authority from the project owner.
+"""
+
+DEVELOP_SKILL = """---
+name: __PLUGIN_DASHED__-plugin-development
+description: Author, implement, check and release the __PLUGIN__ BenchWeave
+  device plugin - elicitation questions keyed to the real descriptor
+  surfaces, adapter discipline, standalone-MCP shape and release mechanics.
+---
+
+# Developing the __PLUGIN__ plugin
+
+Work prompt-first: establish facts before editing, implement against mocks,
+then review and release. The descriptor is the contract; every command you
+wire must trace to evidence. Do not invent commands or capabilities.
+
+## 1. Elicitation - ask before generating
+
+Ask all of these before writing the descriptor, adapter or manifest. Each
+question names the real surface it fills.
+
+**Device identity** (`identity`): manufacturer and exact model? Which
+`strategy` - `scpi_idn`, `uart_identity`, `commissioned` or `adapter`?
+`firmware_policy` `listed` (then which `supported_firmware` versions?) or
+`commissioning_required`?
+
+**Transport** (`transport`, nine types): `serial`, `uart_scpi`,
+`uart_json`, `lan_scpi`, `usbtmc`, `can`, `i2c`, `spi` or `custom`? Which
+`connection_key`? Which settings - serial/uart: `baud`, `data_bits`,
+`parity`, `stop_bits`, `rtscts`, `max_frame_bytes` (uart_json also
+`framing`; uart_scpi also `max_response_bytes`, `read_termination`,
+`write_termination`); lan_scpi: `port`, `protocol`, `read_termination`,
+`write_termination`, `max_response_bytes`; usbtmc: `vid`, `pid`,
+`read_termination`, `write_termination`, `max_response_bytes`; can:
+`receive_id`, `fd`, `extended`, `payload_length`; i2c: `address`; spi:
+`mode`, `speed_hz`, `bits_per_word`; custom: `protocol_reference`?
+
+**Class and profiles** (`profiles`, `actions`): which of the twelve OTDP
+classes - `otdp.dc_psu/1.0.0`, `otdp.dmm/1.0.0`, `otdp.oscilloscope/1.0.0`,
+`otdp.logic_analyser/1.0.0`, `otdp.function_generator/1.0.0`,
+`otdp.electronic_load/1.0.0`, `otdp.smu/1.0.0`, `otdp.daq/1.0.0`,
+`otdp.embedded_controller/1.0.0`, `otdp.switch_matrix/1.0.0`,
+`otdp.spectrum_analyser/1.0.0`, `otdp.vna/1.0.0`? Which profile ids to
+declare, and which class action contracts to adopt?
+
+**Operations** (`capabilities` must equal `operations` keys - S01): which
+of the ten verbs - `identify`, `read`, `write`, `invoke`, `capture`,
+`reset`, `self_test`, `get_errors`, `stream_subscribe`,
+`stream_unsubscribe`? Per verb the operation policy: `timeout_ms`,
+`side_effect` (`none` or `state_change`), `retry` (`never` or
+`idempotent`), `cancellable`, `completion` (`dispatched`, `acknowledged`,
+`readback` or `physical`)?
+
+**Parameters** (`parameters`): per parameter the `name`, `type`
+(`float`, `int`, `bool`, `enum`, `string`), `access` (`ro`, `wo`, `rw`),
+`semantic` (`measurement`, `setpoint`, `state`, `configuration`), `unit`,
+`description`? A `range` or `enum_values`? `string_constraints`?
+`hazard_class` (`unknown`, `none`, `low`, `high`)? `read_policy`
+(`max_age_ms`, `destructive`) and `write_policy` (completion, effect,
+retry, tolerances, settling)? `binding` kind? Names unique (S01), bounds
+not reversed (S02)?
+
+**Channels, capture and streams** (the capture/decode case): `channels`
+entries - `id`, `label`, `role`, `quantities`, `parameter_names`? Which
+`capture_formats` and `capture_limits`? Which `stream_limits`?
+
+**Diagnostics** (`diagnostics`): self-test and error-reporting surface?
+Which of `self_test` / `get_errors` apply?
+
+**Adapter** (`integration.adapter`): `entry_point`, `api_version`,
+`version`, `dependencies`, `permissions` (for example
+`scoped_transport`)?
+
+**Evidence and provenance** (`provenance`): command sources
+(`sources[]` title/reference/revision)? `test_vectors` paths? Evidence
+level per report - `structural`, `simulated` or `hardware`?
+
+**Release**: package `kind` - `profile`, `descriptor` or
+`implementation`? (See section 5.)
+
+**Safety boundary**: what must never be done without separate authority?
+While authoring: do not contact hardware, flash firmware or energise
+outputs, and publish nothing without separate authority.
+
+## 2. Firmware development
+
+Keep vendor source and checksum references under `firmware/` and release
+notes under `firmware/release-notes/`; they document constraints only.
+Decide `listed` (exact supported versions) versus `commissioning_required`
+(no implied tested firmware) from real evidence. The SDK does no firmware
+discovery and no flashing - ever.
+
+## 3. Adapter creation
+
+Implement `protocol.py` and async `adapter.py` against the real adapter
+surface: `open(descriptor, services, context)`, `execute(request,
+context)`, `next_event`, `close`. Keep `create_plugin` no-argument and
+construction/open free of device I/O. Mark dispatch before transmit,
+honour monotonic deadlines and cancellation, never retry silently,
+preserve uncertain outcomes, and keep imports relative within this
+package or standard-library-only for the gateway loader. The SDK's
+`MockHost`/`MockContext` exchanges (see tests/test_plugin.py) are the
+reference pattern for exact-exchange tests.
+
+## 4. Standalone MCP server (workflow, not shipped machinery)
+
+The SDK ships no MCP server. To use this plugin standalone, write a
+project-local MCP server: construct the adapter via `create_plugin()`,
+implement the five-method host contract over a real transport (settings
+from the descriptor) - `transfer(transaction, context)`, `monotonic()`,
+`utc_now()`, `close_transport(context)`, `record_evidence(entry,
+context)` - and expose the descriptor's verbs as MCP tools, keeping the
+dispatch-before-transmit, deadline and uncertain-outcome disciplines.
+Keep it out of the distributed package unless the owner decides
+otherwise.
+
+## 5. Release
+
+Build the wheel and sdist, then prepare the registry manifest with the
+exact payload inventory and hashes (`benchweave-sdk inventory` emits the
+path/bytes/sha256 rows; the manifest assigns roles). File roles for this
+project's files: the skills under `src/__PLUGIN__/skills/` are `skill`;
+`descriptor.json` is `descriptor`; `protocol.md` and `vectors.json` are
+`test` evidence inputs per the registry specification's role list
+(`profile`, `descriptor`, `implementation`, `schema`, `test`,
+`documentation`, `licence`, `sbom`, `build_provenance`,
+`dependency_lock`, `skill`); the root `CLAUDE.md` is `documentation` if
+the publisher ships it at all - it is dev tooling by default. An
+`implementation`-kind payload must contain `implementation`, `sbom`,
+`build_provenance` and `dependency_lock` entries. Evidence reports carry
+their honest level - `structural`, `simulated` or `hardware`; synthetic
+results are never hardware qualification. Publication happens only with
+the owner's review: publish nothing without separate authority.
+"""
+
+DRIVE_SKILL = """---
+name: __PLUGIN_DASHED__-device-operation
+description: Drive the __PLUGIN__ synthetic demo device - identify and read
+  the voltage parameter over the mock exchanges; the template to rewrite
+  for the real instrument.
+---
+
+# Driving the __PLUGIN__ device (synthetic demo)
+
+This skill drives the SEEDED SYNTHETIC PROTOCOL, not a real instrument:
+`ID?` + LF returns `SDK Example,demo,SIM001,1.0.0` + LF; `V?` + LF returns
+a finite ASCII voltage + LF. Supported verbs are `identify` and `read` of
+the `voltage` parameter (unit V, read-only measurement).
+
+Open the adapter via `create_plugin()`, `open(descriptor, services,
+context)`, then execute `identify` (no arguments) and `read`
+(`{"parameter": "voltage"}`). Expect `status: "ok"` with identity fields
+or a measurement value; the mock exchanges in `vectors.json` and
+`tests/test_plugin.py` are the exact reference.
+
+**Rewrite this skill for the real device.** It is the honesty placeholder
+the synthetic `adapter.py` and `protocol.py` already are: replace the
+exchanges, verbs, parameters, error handling and any capture/decode flow
+with the real instrument's evidenced behaviour, and keep every command
+traceable to the manual or captures.
+
+Safety: authoring and driving stay on mocks - do not contact hardware,
+flash firmware or energise outputs from plugin code, and publish nothing
+without separate authority.
 """
 
 
@@ -384,6 +587,19 @@ def descriptor_for(package: str) -> dict[str, Any]:
     }
 
 
+def _parameterize(template: str, package: str) -> str:
+    """Substitute the package tokens in a seeded skill template.
+
+    Frontmatter skill names hyphenate the package (``lumen_probe`` becomes
+    ``lumen-probe-...``), matching the generated ``pyproject.toml`` project
+    name and descriptor id practice — harness skill-name conventions refuse
+    underscores, and names must not collide across plugins.
+    """
+    return template.replace("__PLUGIN_DASHED__", package.replace("_", "-")).replace(
+        "__PLUGIN__", package
+    )
+
+
 def create_project(destination: Path, package: str) -> None:
     """Write a complete synthetic plugin project under ``destination``.
 
@@ -468,6 +684,9 @@ packages = ["src/{package}"]
         )
         + "\n",
         "tests/test_plugin.py": TEST.replace("__PLUGIN__", package),
+        "CLAUDE.md": CLAUDE_MD.replace("__PLUGIN__", package),
+        f"{root}/skills/develop-plugin/SKILL.md": _parameterize(DEVELOP_SKILL, package),
+        f"{root}/skills/drive-device/SKILL.md": _parameterize(DRIVE_SKILL, package),
     }
     for relative, content in contents.items():
         path = destination / relative
