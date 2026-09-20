@@ -1,5 +1,5 @@
 {
-  "status_version": "0.1.0",
+  "status_version": "0.1.1",
   "release": {
     "registry_id": "registry.example",
     "package_id": "example/reference-dmm",
