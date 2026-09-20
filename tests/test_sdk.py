@@ -11,6 +11,28 @@ import pytest
 
 from benchweave_sdk import conformance, packaging, scaffold, testing, validation
 
+# Main-side this is the pinned packages/sdk submodule tree; here it is this
+# checkout's own src tree, which is what an editable install resolves to.
+SDK = Path(__file__).resolve().parents[1] / "src"
+
+
+def test_resolves_from_the_pinned_submodule_tree() -> None:
+    """The SDK under test must be this checkout's tree (#53, as migrated).
+
+    An environment can carry another benchweave_sdk install whose path
+    entries point somewhere else; without this assertion a path-order
+    change silently tests that (possibly stale) tree instead of the commit
+    under test. Main-side the same guard pins the packages/sdk submodule.
+    """
+    module = importlib.import_module("benchweave_sdk")
+    source = module.__file__
+    assert source is not None, "benchweave_sdk resolved without a source file"
+    resolved = Path(source).resolve()
+    assert resolved.is_relative_to(SDK), (
+        f"benchweave_sdk resolved from {resolved}, not the pinned submodule tree "
+        f"{SDK}; an editable install or standalone checkout is shadowing it"
+    )
+
 
 def test_context_preserves_dispatch_and_cancellation() -> None:
     context = testing.MockContext("op-1", deadline_monotonic=1.0)

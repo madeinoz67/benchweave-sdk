@@ -1,5 +1,7 @@
 """SDK UI scaffolding remains optional and operates without device access."""
 
+import errno
+import importlib
 import json
 from pathlib import Path
 
@@ -153,3 +155,120 @@ def test_ui_check_rejects_resource_root_escape(
     document["resource_root"] = "../outside"
     envelope.write_text(json.dumps(document))
     assert check(monkeypatch, package) == 1
+
+
+def test_scaffold_hint_pair_validates_identically(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Metric 1's fourth pair: the scaffold-generated example with an
+    author-added hinted plot vs its unhinted twin, both feature conditions.
+
+    The scaffold emits no plots, so the author-side step mirrors what a plugin
+    developer does: add a receipt-time variable to the catalogue target and a
+    time-series plot to the manifest. check-ui must accept both members
+    identically (P1/P2) — and the scaffold must declare the ACTIVE contract
+    version or this fails before hints are even considered.
+    """
+    hashlib = importlib.import_module("hashlib")
+    presentation = importlib.import_module("benchweave_sdk.presentation")
+    scaffold = importlib.import_module("benchweave_sdk.scaffold")
+
+    def authored(hints: list[dict[str, object]] | None) -> Path:
+        project = tmp_path / ("ui-hinted" if hints is not None else "ui-plain")
+        scaffold.create_project(project, "example_plugin")
+        presentation.create_ui_resources(project, "example_plugin")
+        package = project / "src/example_plugin"
+        catalogue_path = package / "binding-catalogue.json"
+        catalogue = json.loads(catalogue_path.read_bytes())
+        catalogue["targets"][0]["variables"].insert(
+            0,
+            {
+                "id": "time",
+                "type": "number",
+                "unit": "s",
+                "shape": "scalar",
+                "axis_role": "receipt_time",
+            },
+        )
+        catalogue_path.write_text(json.dumps(catalogue, indent=2) + "\n", encoding="utf-8")
+        manifest_path = package / "ui/manifest.json"
+        manifest = json.loads(manifest_path.read_bytes())
+        plot: dict[str, object] = {
+            "kind": "time_series",
+            "binding_id": manifest["bindings"][0]["id"],
+            "x": "time",
+            "y": ["value"],
+        }
+        if hints is not None:
+            plot["channel_hints"] = hints
+        manifest["pages"][0]["plots"] = [plot]
+        manifest_raw = json.dumps(manifest, indent=2) + "\n"
+        # Bytes, not text: the envelope pins these exact bytes, and text mode
+        # on Windows would store CRLF (the main-side original writes text).
+        manifest_path.write_bytes(manifest_raw.encode())
+        envelope_path = package / "presentation.json"
+        envelope = json.loads(envelope_path.read_bytes())
+        envelope["manifest"]["sha256"] = hashlib.sha256(manifest_raw.encode()).hexdigest()
+        envelope_path.write_text(json.dumps(envelope, indent=2) + "\n", encoding="utf-8")
+        return package
+
+    plain = authored(None)
+    hinted = authored([{"variable_id": "value", "color_role": "muted"}])
+    assert check(monkeypatch, plain, firmware="1.0.0") == 0
+    # No --feature flag is the empty supported-feature host; one flag is the
+    # feature-declaring host. Both must accept the hinted twin identically.
+    assert check(monkeypatch, hinted, firmware="1.0.0") == 0
+    assert check(monkeypatch, hinted, firmware="1.0.0", feature="legend/1.0.0") == 0
+
+
+def test_new_with_ui_succeeds_under_symlinked_ancestor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = tmp_path / "real"
+    real.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(real)
+    assert run(monkeypatch, "new", link / "proj", "--with-ui") == 0
+    package = real / "proj/src/example_plugin"
+    for name in (
+        "presentation.json",
+        "binding-catalogue.json",
+        "ui/manifest.json",
+        "ui/fixtures/normal.json",
+    ):
+        assert (package / name).is_file()
+    assert (real / "proj/UI-GUIDE.md").is_file()
+    assert (real / "proj/tests/test_presentation_preview.py").is_file()
+
+    # SRF-1 control: the same package scaffolded through a canonical path must
+    # be byte-identical — the fix changes where writes happen, never what.
+    control = tmp_path / "control"
+    assert run(monkeypatch, "new", control, "--with-ui") == 0
+    generated = sorted(
+        path.relative_to(real / "proj") for path in (real / "proj").rglob("*") if path.is_file()
+    )
+    assert generated == sorted(
+        path.relative_to(control) for path in control.rglob("*") if path.is_file()
+    )
+    for relative in generated:
+        assert (real / "proj" / relative).read_bytes() == (control / relative).read_bytes()
+
+
+def test_check_ui_refuses_symlinked_ancestor_with_prefix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run(monkeypatch, "new", tmp_path / "real", "--with-ui")
+    link = tmp_path / "link"
+    link.symlink_to(tmp_path / "real")
+    assert check(monkeypatch, link / "src/example_plugin") == 1
+    assert "path_symlink_component:" in capsys.readouterr().err
+
+
+def test_read_file_propagates_genuine_not_directory(tmp_path: Path) -> None:
+    presentation = importlib.import_module("benchweave_sdk.presentation")
+    blocker = tmp_path / "blocker"
+    blocker.write_bytes(b"regular file\n")
+    with pytest.raises(OSError) as details:
+        presentation.read_file(blocker / "descriptor.json")
+    assert details.value.errno == errno.ENOTDIR
+    assert "path_symlink_component" not in str(details.value)
