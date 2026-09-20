@@ -78,9 +78,16 @@ run the loop.
    permutation/shuffle null. Report the number.
 7. **Land.** PR into `main` (working branches only — never commit to `main` directly),
    title + body naming what shipped + what's deferred, referencing the design — and
-   **every deferral in the body must cite an open issue, created at PR-open time if
-   absent; an orphan deferral blocks the merge** (main #69). Multiple PRs from one
-   work use **PR stacks**: dependent PRs open with base = the predecessor's branch;
+   **every deferral must cite its home (reviewer-enforced; no mechanical gate yet)**
+   (main #69, amended 2026-09-20 by the backlog triage council): either (a) an open
+   issue, created at PR-open time if absent, whose body names its carrier increment
+   and its reopen trigger (the condition that justifies reopening), or (b) a row in
+   the design record's deferral table that records that same reopen trigger. Issues
+   are reserved for deferrals whose carrier is scheduled or externally arriving — at
+   most ONE follow-on issue per merged PR; all others defer as documentation. Every
+   merge runs a GO/CLOSE pass over its own deferral list; "keep open just in case"
+   fails the gate. Multiple PRs from one work use **PR stacks**: dependent PRs open
+   with base = the predecessor's branch;
    merge bottom-up, retargeting successors to `main`. **A work is complete only when
    every PR it raised — in both repos, when it spans them — is merged.** Watch CI
    to green (`gh pr checks --watch`). Merge when all-green and authorized; otherwise hand
