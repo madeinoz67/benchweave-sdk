@@ -155,6 +155,55 @@ def test_orphaned_staging_never_reaches_a_check_lane_and_is_swept(tmp_path: Path
     _assert_no_sync_debris(sdk)
 
 
+def _park_the_tree(sdk: Path) -> Path:
+    """The state a sync leaves when it dies between the swap's two renames."""
+    tree = sdk / "src/benchweave_sdk/standards"
+    _staging, retired = standards_sync._staging_paths(sdk)
+    retired.parent.mkdir(parents=True)
+    tree.rename(retired)
+    return tree
+
+
+def test_a_parked_tree_is_put_back_before_a_recovery_sync_can_fail(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The parked tree is the only copy; a recovery sync that fails must not cost it."""
+    bundle = _export(tmp_path)
+    sdk = _synced_sdk(tmp_path, bundle)
+    before = _files(sdk / "src/benchweave_sdk/standards")
+    tree = _park_the_tree(sdk)
+    with pytest.raises(ValueError, match="^hash_mismatch: .* missing from the vendored tree"):
+        sync(None, sdk, check_only=True)
+
+    staging, _retired = standards_sync._staging_paths(sdk)
+    original = Path.write_bytes
+
+    def failing_write(self: Path, data: bytes) -> int:
+        if self.is_relative_to(staging):
+            raise OSError("disk full")
+        return original(self, data)
+
+    monkeypatch.setattr(Path, "write_bytes", failing_write)
+    with pytest.raises(OSError, match="disk full"):
+        sync(bundle, sdk)
+    monkeypatch.undo()
+
+    assert _files(tree) == before, "the last good tree must survive a failed recovery sync"
+    _assert_no_sync_debris(sdk)
+    sync(None, sdk, check_only=True)
+
+
+def test_a_recovery_sync_completes_from_the_parked_state(tmp_path: Path) -> None:
+    bundle = _export(tmp_path)
+    sdk = _synced_sdk(tmp_path, bundle)
+    before = _files(sdk / "src/benchweave_sdk/standards")
+    tree = _park_the_tree(sdk)
+    assert sync(bundle, sdk) == SyncReport((), (), (), ())
+    assert _files(tree) == before
+    _assert_no_sync_debris(sdk)
+    sync(None, sdk, check_only=True)
+
+
 def test_single_pass_hashing_still_refuses_an_undeclared_content_change(tmp_path: Path) -> None:
     """One read-and-digest pass feeds classification and the integrity check alike.
 
@@ -193,3 +242,25 @@ def test_verify_inventory_refuses_symlinked_root(tmp_path: Path) -> None:
         pytest.skip("symlinks unavailable (privilege or filesystem)")
     with pytest.raises(ValueError, match="real bundle directory"):
         verify_inventory(alias, listed)
+
+
+@pytest.mark.parametrize("kind", ["dangling", "directory"])
+def test_verify_inventory_refuses_symlinks_met_during_the_walk(tmp_path: Path, kind: str) -> None:
+    """The hash-free walk keeps inventory()'s symlink refusal, not only its real-root one.
+
+    Neither kind counts as a file, so without the in-walk refusal both pass
+    silently as if the bundle held nothing but its listed files.
+    """
+    root = tmp_path / "bundle"
+    root.mkdir()
+    (root / "a.json").write_bytes(b"{}")
+    listed = inventory(root)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    target = elsewhere if kind == "directory" else tmp_path / "absent.json"
+    try:
+        (root / "link").symlink_to(target, target_is_directory=kind == "directory")
+    except OSError:
+        pytest.skip("symlinks unavailable (privilege or filesystem)")
+    with pytest.raises(ValueError, match="^Symlink inventory path$"):
+        verify_inventory(root, listed)

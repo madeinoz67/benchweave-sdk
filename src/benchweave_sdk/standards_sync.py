@@ -418,14 +418,20 @@ def _write_vendored(
     destroyed the tree first) and never leaves staging debris where
     packaging could pick it up. A crash between the swap's two renames
     leaves the old tree parked and the vendored path absent, which
-    ``--check`` reports as missing files; the next sync sweeps both
-    leftovers and stages again. The lock is written only after the swap and
+    ``--check`` reports as missing files; the next sync puts the parked tree
+    back before it stages anything, so a second failure cannot cost the last
+    good copy, and only then sweeps the leftovers. The lock is written only after the swap and
     records the digests recomputed from the bundle's bytes, never the
     manifest's claims (STD-2); a failure between swap and lock surfaces as
     loud ``--check`` drift, never as a silently torn state.
     """
     tree = sdk_root / VENDORED
     staging, retired = _staging_paths(sdk_root)
+    if retired.exists() and not tree.exists():
+        # A sync that died between the swap's two renames left the last good
+        # tree parked and the vendored path absent. It is the only copy, and
+        # the staging below can still fail, so it goes back first.
+        retired.rename(tree)
     for leftover in (staging, retired):
         if leftover.exists():
             shutil.rmtree(leftover)
