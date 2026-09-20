@@ -25,7 +25,7 @@ def contract_documents() -> dict[str, Any]:
     vendored = files("benchweave_sdk").joinpath("standards")
     sets = (
         ("otdp", "0.2.0"),
-        ("registry", "0.1.0"),
+        ("registry", "0.1.1"),
         ("plugin-ui", "0.2.0"),
     )
     if vendored.is_dir():

@@ -2,7 +2,7 @@
   "type": "object",
   "properties": {
     "manifest_version": {
-      "const": "0.1.0"
+      "const": "0.1.1"
     },
     "registry_id": {
       "type": "string",
@@ -412,7 +412,8 @@
                   "licence",
                   "sbom",
                   "build_provenance",
-                  "dependency_lock"
+                  "dependency_lock",
+                  "skill"
                 ]
               },
               "bytes": {

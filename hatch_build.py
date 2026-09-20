@@ -2,7 +2,9 @@
 
 import hashlib
 import json
+import os
 from pathlib import Path
+from typing import Any
 
 from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 
@@ -87,3 +89,29 @@ class CustomBuildHook(BuildHookInterface):
         package = root / "src/benchweave_sdk"
         _validate_preview_assets(package)
         _validate_vendored_standards(root)
+        _drop_vcs_exclusion_force_include(build_data)
+
+
+def _drop_vcs_exclusion_force_include(build_data: dict[str, Any]) -> None:
+    """Stop the sdist builder vendoring VCS exclusion files past the list.
+
+    hatchling's SdistBuilder force-includes VCS exclusion files via
+    build_data (get_build_data: every .gitignore/.hgignore found at the
+    project root is added with its basename as the target), and
+    force-include bypasses include/exclude entirely — an explicit exclude
+    provably cannot stop it, and ignore-vcs only gates the exclude side.
+    The declared five-entry sdist include list is this project's packaging
+    contract, and selection here is include-based, so the vendored ignore
+    file carries no rebuild hygiene either: dropping it changes nothing but
+    the leak. Wheels force-include nothing of the kind; the pop is a no-op
+    for them. The repo is git-only today, so the .hgignore arm is
+    behavior-neutral (verified: identical sdist listing before/after).
+    """
+    exclusion_names = {".gitignore", ".hgignore"}
+    force_include = build_data.get("force_include") or {}
+    for source in [
+        key
+        for key, target in force_include.items()
+        if target in exclusion_names and os.path.basename(key) in exclusion_names
+    ]:
+        force_include.pop(source)

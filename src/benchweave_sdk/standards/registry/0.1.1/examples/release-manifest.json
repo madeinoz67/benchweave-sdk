@@ -1,5 +1,5 @@
 {
-  "manifest_version": "0.1.0",
+  "manifest_version": "0.1.1",
   "registry_id": "registry.example",
   "package_id": "example/reference-dmm",
   "version": "1.0.0",
@@ -145,6 +145,12 @@
       {
         "path": "MIGRATION.md",
         "role": "documentation",
+        "bytes": 0,
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      {
+        "path": "skills/drive-device/SKILL.md",
+        "role": "skill",
         "bytes": 0,
         "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
       }

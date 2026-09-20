@@ -2,7 +2,7 @@
   "type": "object",
   "properties": {
     "status_version": {
-      "const": "0.1.0"
+      "const": "0.1.1"
     },
     "release": {
       "type": "object",
