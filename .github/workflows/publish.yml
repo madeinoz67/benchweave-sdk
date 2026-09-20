@@ -69,10 +69,17 @@ jobs:
           uv venv "$RUNNER_TEMP/sdk-smoke"
           BIN="$RUNNER_TEMP/sdk-smoke/bin"
           [ -d "$BIN" ] || BIN="$RUNNER_TEMP/sdk-smoke/Scripts"
-          uv pip install --python "$BIN/python" dist/*.whl
+          # --python takes the venv directory, not "$BIN/python": on Windows the
+          # interpreter is python.exe and uv does not append the suffix, whereas
+          # bash does resolve the suffix-less entry points used below.
+          uv pip install --python "$RUNNER_TEMP/sdk-smoke" dist/*.whl
           "$BIN/benchweave-sdk" --version | grep -F "version ${TAG#v}"
           "$BIN/benchweave-sdk" new "$RUNNER_TEMP/example" --with-ui
           "$BIN/benchweave-sdk" check "$RUNNER_TEMP/example/src/example_plugin/descriptor.json"
+          # Installed-mode standards verification: proves the packaged lock
+          # (the wheel force-include) and the resource path in
+          # verify_installed before anything reaches PyPI.
+          "$BIN/benchweave-sdk" sync-standards --check
 
   publish:
     name: Publish to PyPI (Trusted Publishing)
