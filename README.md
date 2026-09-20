@@ -57,7 +57,7 @@ benchweave-sdk new plugins/acme/model100 --package benchweave_acme_model100 --wi
 cd plugins/acme/model100
 ```
 
-The destination must not already exist. Omit `--with-ui` for a plugin without presentation metadata.
+The destination must not already exist. A destination reached through a symlinked directory (for example `/tmp/...` on macOS) is canonicalized before any write, and the success message reports the real path. Omit `--with-ui` for a plugin without presentation metadata.
 
 ```text
 plugins/acme/model100/                 # independent plugin project
