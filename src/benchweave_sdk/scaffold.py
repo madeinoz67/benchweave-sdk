@@ -287,11 +287,12 @@ plugin source package. A preset is configuration, not a retained measurement.
 > Build the plugin wheel and source distribution. Prepare the registry manifest,
 > exact payload inventory/hashes, dependency locks, licence, provenance and
 > evidence status required by the registry contract; the seeded skills under
-> src/<package>/skills/ are catalogued with the skill role, and CLAUDE.md ships
-> only if the publisher chooses to include it (as documentation). A Python wheel
-> is not a registry admission bundle. Test the installed plugin against the
-> supported gateway version. Show me the artefacts and remaining gaps before
-> publishing.
+> src/<package>/skills/ are catalogued with the skill role, while CLAUDE.md is
+> repository tooling - the wheel packages src/<package>/ only, so it reaches a
+> release payload solely by deliberate publisher inclusion (catalogued as
+> documentation). A Python wheel is not a registry admission bundle. Test the
+> installed plugin against the supported gateway version. Show me the artefacts
+> and remaining gaps before publishing.
 
 The SDK does not install a plugin into a live gateway. A Docker deployment needs
 an admitted bundle and gateway deployment configuration; an SDK development
@@ -334,7 +335,7 @@ separate authority from the project owner.
 """
 
 DEVELOP_SKILL = """---
-name: __PLUGIN__-plugin-development
+name: __PLUGIN_DASHED__-plugin-development
 description: Author, implement, check and release the __PLUGIN__ BenchWeave
   device plugin - elicitation questions keyed to the real descriptor
   surfaces, adapter discipline, standalone-MCP shape and release mechanics.
@@ -466,7 +467,7 @@ the owner's review: publish nothing without separate authority.
 """
 
 DRIVE_SKILL = """---
-name: __PLUGIN__-device-operation
+name: __PLUGIN_DASHED__-device-operation
 description: Drive the __PLUGIN__ synthetic demo device - identify and read
   the voltage parameter over the mock exchanges; the template to rewrite
   for the real instrument.
@@ -586,6 +587,19 @@ def descriptor_for(package: str) -> dict[str, Any]:
     }
 
 
+def _parameterize(template: str, package: str) -> str:
+    """Substitute the package tokens in a seeded skill template.
+
+    Frontmatter skill names hyphenate the package (``lumen_probe`` becomes
+    ``lumen-probe-...``), matching the generated ``pyproject.toml`` project
+    name and descriptor id practice — harness skill-name conventions refuse
+    underscores, and names must not collide across plugins.
+    """
+    return template.replace("__PLUGIN_DASHED__", package.replace("_", "-")).replace(
+        "__PLUGIN__", package
+    )
+
+
 def create_project(destination: Path, package: str) -> None:
     """Write a complete synthetic plugin project under ``destination``.
 
@@ -671,8 +685,8 @@ packages = ["src/{package}"]
         + "\n",
         "tests/test_plugin.py": TEST.replace("__PLUGIN__", package),
         "CLAUDE.md": CLAUDE_MD.replace("__PLUGIN__", package),
-        f"{root}/skills/develop-plugin/SKILL.md": DEVELOP_SKILL.replace("__PLUGIN__", package),
-        f"{root}/skills/drive-device/SKILL.md": DRIVE_SKILL.replace("__PLUGIN__", package),
+        f"{root}/skills/develop-plugin/SKILL.md": _parameterize(DEVELOP_SKILL, package),
+        f"{root}/skills/drive-device/SKILL.md": _parameterize(DRIVE_SKILL, package),
     }
     for relative, content in contents.items():
         path = destination / relative
