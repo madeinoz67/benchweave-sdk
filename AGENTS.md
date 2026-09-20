@@ -26,6 +26,12 @@ Prose defers to machine sources: when README/guides/site content contradicts sta
 
 ## Two-repo discipline
 
+**Single issue stream:** all issues — for either repository — file on the gateway
+tracker (`madeinoz67/benchweave/issues`); the `benchweave-sdk` tracker is retired
+(principal directive 2026-09-20; first use of the rule was gateway issue #107). SDK
+work tracks under a gateway issue, and the SDK PR body notes that no SDK-side issue
+exists by design.
+
 This repository is both a standalone clone and a submodule. Every change lands as a
 commit **here first, pushed**, and then as a pointer commit in the main repository —
 never a pointer to an unpushed SHA, never main-side edits to SDK files. The main
