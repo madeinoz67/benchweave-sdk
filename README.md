@@ -2,7 +2,7 @@
 
 # BenchWeave plugin developer SDK
 
-Build an external device plugin without importing gateway internals. Python 3.13+, SDK 0.0.2, OTDP 0.2.0 and adapter API 1.1 are the initial baseline. This package is a separate wheel built alongside BenchWeave; published to PyPI as benchweave-sdk.
+Build an external device plugin without importing gateway internals. Python 3.13+, SDK 0.0.3, OTDP 0.2.0 and adapter API 1.1 are the initial baseline. This package is a separate wheel built alongside BenchWeave; published to PyPI as benchweave-sdk.
 
 ## Sister repository
 
@@ -10,7 +10,7 @@ This is the SDK. The BenchWeave gateway and the canonical architecture and contr
 
 ## Community
 
-Questions and discussion happen on the [BenchWeave Discord](https://discord.gg/Y5XPTWQQXr) — permanent invite. SDK bugs and feature requests belong in the [SDK issue tracker](https://github.com/madeinoz67/benchweave-sdk/issues).
+Questions and discussion happen on the [BenchWeave Discord](https://discord.gg/Y5XPTWQQXr) — permanent invite. SDK bugs and feature requests belong in the [gateway issue tracker](https://github.com/madeinoz67/benchweave/issues) — one issue stream for the whole project; the SDK repository's tracker is retired.
 
 ## Installation
 
@@ -57,7 +57,7 @@ benchweave-sdk new plugins/acme/model100 --package benchweave_acme_model100 --wi
 cd plugins/acme/model100
 ```
 
-The destination must not already exist. A destination reached through a symlinked directory (for example `/tmp/...` on macOS) is canonicalized before any write, and the success message reports the real path. Omit `--with-ui` for a plugin without presentation metadata.
+The destination must not already exist. A destination reached through a symlinked directory (for example `/tmp/...` on macOS) is canonicalized before any write, and messages report the real path. Omit `--with-ui` for a plugin without presentation metadata.
 
 ```text
 plugins/acme/model100/                 # independent plugin project

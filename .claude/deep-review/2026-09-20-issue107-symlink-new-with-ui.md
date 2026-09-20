@@ -217,6 +217,13 @@ in the check/preview lanes — they keep refusing.
   adding one name is possible but not required by the invariant's text ("every refusal
   path raises a `snake_case:`-prefixed `ValueError`"), which this change satisfies.
 - Write-phase partial-tree hardening (disk-full) — named as residual above.
+- `expanduser()` rider test coverage — pin `new ~/x` expansion with a test; deferred to a
+  later slice. Failure mode if it ever regresses is the pre-fix literal-`~`-directory
+  behavior (benign, identical to today's base).
+- Refusal-path naming of the resolved destination (adversary F2): refusals such as the
+  existing-destination error print the canonical path the user never typed — disclosed in
+  README/user_guide ("messages report the real path"), accepted rather than made
+  configurable.
 
 ## 5. Invariant impacts
 
@@ -231,8 +238,11 @@ in the check/preview lanes — they keep refusing.
 - **SRF-2**: preview and check-ui share `read_file`; both gain the same refusal shape —
   agreement preserved, not weakened.
 - **STD-1/2/3/5, PKG-1/2/3**: untouched — no vendored bytes, no lock, no packaging, no
-  parent-checkout reads. `sync-standards --check` unchanged. **Not a Tier-3 review**
-  (no standards tree or lock involvement).
+  parent-checkout reads. `sync-standards --check` unchanged. **Tier 3 by the rubric's
+  first-match rule** — the change adds a refusal path/prefix, matching the Tier-3 bullet
+  before any standards-tree bullet is considered. (Erratum 2026-09-20: the original text
+  here said "Not a Tier-3 review"; corrected on pre-PR review, and the mandatory
+  adversarial refute ran and returned DEFENDED.)
 - **TWO-1**: sequencing in §4 (SDK commit pushed first; gateway pointer + tests second;
   SDK PR body carries `Fixes madeinoz67/benchweave#107` and notes no SDK-side issue
   exists by design — retired tracker).

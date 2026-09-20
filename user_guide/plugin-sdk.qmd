@@ -46,7 +46,7 @@ pytest
 
 Keep using the environment containing the SDK wheel; if you create a new environment inside the project, install the wheel there too. For a repeatable `uv lock` against a locally built wheel, configure that wheel or your organisation's package source explicitly.
 
-Replace `acme/model100` with your manufacturer and device/plugin name. The destination controls the directory hierarchy; `--package` controls the Python import package. The SDK creates missing parent directories and refuses to overwrite an existing project. A destination reached through a symlinked directory (for example `/tmp/...` on macOS) is canonicalized before any write, and the success message reports the real path.
+Replace `acme/model100` with your manufacturer and device/plugin name. The destination controls the directory hierarchy; `--package` controls the Python import package. The SDK creates missing parent directories and refuses to overwrite an existing project. A destination reached through a symlinked directory (for example `/tmp/...` on macOS) is canonicalized before any write, and messages report the real path.
 
 ```text
 plugins/
