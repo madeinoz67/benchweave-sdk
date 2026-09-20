@@ -3,6 +3,7 @@
 import errno
 import importlib
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -272,3 +273,45 @@ def test_read_file_propagates_genuine_not_directory(tmp_path: Path) -> None:
         presentation.read_file(blocker / "descriptor.json")
     assert details.value.errno == errno.ENOTDIR
     assert "path_symlink_component" not in str(details.value)
+
+
+# --- Added here, not main-side: the two cases above them assert exit 1 only. ---
+
+
+def test_resource_root_escape_is_refused_by_the_guard_not_by_absence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The escape target exists and is valid, so only the guard can refuse it.
+
+    test_ui_check_rejects_resource_root_escape points at a directory that is
+    not there, so it still exits 1 with the safe_resource_path check deleted.
+    """
+    run(monkeypatch, "new", tmp_path / "ui", "--with-ui")
+    package = tmp_path / "ui/src/example_plugin"
+    shutil.copytree(package / "ui", package.parent / "outside")
+    envelope = package / "presentation.json"
+    document = json.loads(envelope.read_bytes())
+    document["resource_root"] = "../outside"
+    envelope.write_text(json.dumps(document))
+    capsys.readouterr()
+    assert check(monkeypatch, package) == 1
+    assert "Unsafe presentation resource path" in capsys.readouterr().err
+
+
+def test_symlinked_resource_is_refused_as_a_symlink(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Exit 1 alone is also what a missing or non-regular file gives; name the refusal."""
+    run(monkeypatch, "new", tmp_path / "ui", "--with-ui")
+    package = tmp_path / "ui/src/example_plugin"
+    manifest = package / "ui/manifest.json"
+    outside = tmp_path / "outside.json"
+    outside.write_bytes(manifest.read_bytes())
+    manifest.unlink()
+    try:
+        manifest.symlink_to(outside)
+    except OSError:
+        pytest.skip("symlinks unavailable (privilege or filesystem)")
+    capsys.readouterr()
+    assert check(monkeypatch, package) == 1
+    assert "path_symlink_component: " in capsys.readouterr().err

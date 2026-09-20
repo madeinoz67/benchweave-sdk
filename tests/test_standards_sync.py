@@ -327,6 +327,12 @@ def test_parent_traversal_in_a_manifest_row_is_refused_before_any_write(
         pytest.param("/otdp/absolute.json", id="absolute"),
         pytest.param("registry/0.1.0/foreign.json", id="foreign-standard-prefix"),
         pytest.param("otdp", id="no-file-component"),
+        # A backslash is a character to PurePosixPath and a separator to the
+        # Windows writer: refused everywhere, not only where it would escape.
+        pytest.param(f"otdp/..{chr(92)}..{chr(92)}escape.json", id="backslash-traversal"),
+        pytest.param("otdp/./alias.json", id="dot-segment"),
+        pytest.param("otdp//alias.json", id="empty-segment"),
+        pytest.param("otdp/C:escape.json", id="drive-separator"),
     ],
 )
 def test_manifest_row_shape_outside_the_standard_is_refused(tmp_path: Path, path: str) -> None:
@@ -339,6 +345,23 @@ def test_manifest_row_shape_outside_the_standard_is_refused(tmp_path: Path, path
     _rewrite_manifest(bundle, document)
     with pytest.raises(ValueError, match="^bundle_path_invalid: "):
         sync(bundle, sdk)
+
+
+def test_file_less_standard_cannot_put_its_stamp_outside_the_tree(tmp_path: Path) -> None:
+    """The stamp is written at <tree>/<id>/ and a file-less standard never reaches _guard_path."""
+    bundle = _export(tmp_path)
+    sdk = _synced_sdk(tmp_path, bundle)
+    document = _manifest(bundle)
+    document["standards"].append(
+        {"id": "../escaped", "version": "1.0.0", "status": "stable", "files": []}
+    )
+    _rewrite_manifest(bundle, document)
+    with pytest.raises(ValueError, match="^bundle_manifest_invalid: standard id"):
+        sync(bundle, sdk)
+    inside = sdk / "src/benchweave_sdk/standards"
+    stamps = [p for p in sdk.rglob("_GENERATED.txt") if not p.is_relative_to(inside)]
+    assert stamps == [], "no stamp may be written outside the vendored tree"
+    sync(None, sdk, check_only=True)
 
 
 @pytest.mark.parametrize("first_sync", [True, False], ids=["first-sync", "version-bump"])

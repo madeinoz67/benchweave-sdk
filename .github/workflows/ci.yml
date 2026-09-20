@@ -68,3 +68,21 @@ jobs:
             --descriptor "$RUNNER_TEMP/ci-demo/src/ci_demo/descriptor.json" \
             --resources "$RUNNER_TEMP/ci-demo/src/ci_demo" \
             --catalogue "$RUNNER_TEMP/ci-demo/src/ci_demo/binding-catalogue.json"
+
+      - name: Installed-wheel smoke (the publish workflow's block, at PR time)
+        # publish.yml's smoke lane runs only at release, so a mistake in it
+        # surfaces when it is most expensive: its Windows install line was
+        # wrong for a whole review round and nothing could have noticed. The
+        # same commands run here on every OS in the matrix.
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv build --out-dir smoke-dist
+          uv venv "$RUNNER_TEMP/sdk-smoke"
+          BIN="$RUNNER_TEMP/sdk-smoke/bin"
+          [ -d "$BIN" ] || BIN="$RUNNER_TEMP/sdk-smoke/Scripts"
+          uv pip install --python "$RUNNER_TEMP/sdk-smoke" smoke-dist/*.whl
+          "$BIN/benchweave-sdk" --version
+          "$BIN/benchweave-sdk" new "$RUNNER_TEMP/smoke-example" --with-ui
+          "$BIN/benchweave-sdk" check "$RUNNER_TEMP/smoke-example/src/example_plugin/descriptor.json"
+          "$BIN/benchweave-sdk" sync-standards --check

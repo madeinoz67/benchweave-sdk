@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import urllib.error
 import urllib.request
@@ -171,14 +172,23 @@ def test_foreign_host_header_is_rejected(tmp_path: Path) -> None:
 
 
 def test_backslash_asset_paths_are_rejected_on_every_platform(tmp_path: Path) -> None:
-    (tmp_path / "index.html").write_text("preview", encoding="utf-8")
     # A literal-backslash filename is legal on POSIX and on Windows resolves as a
     # directory escape: the guard must reject the path itself, not rely on the
-    # filesystem happening to miss the file.
-    (tmp_path / "..\\..\\leaked.txt").write_text("leaked", encoding="utf-8")
+    # filesystem happening to miss the file. The assets sit two levels down so
+    # that the Windows reading of the request stays inside tmp_path: POSIX gets
+    # the literal name beside index.html, Windows gets the file the traversal
+    # would reach. (Written against tmp_path itself, the literal name lands two
+    # directories above the sandbox on Windows.)
+    assets = tmp_path / "deep" / "er"
+    assets.mkdir(parents=True)
+    (assets / "index.html").write_text("preview", encoding="utf-8")
+    if os.sep == "/":
+        (assets / "..\\..\\leaked.txt").write_text("leaked", encoding="utf-8")
+    else:
+        (tmp_path / "leaked.txt").write_text("leaked", encoding="utf-8")
 
     with (
-        preview_server.PreviewServer(model(), tmp_path) as address,
+        preview_server.PreviewServer(model(), assets) as address,
         pytest.raises(urllib.error.HTTPError) as error,
     ):
         urllib.request.urlopen(address.url + "/..%5C..%5Cleaked.txt", timeout=2)
