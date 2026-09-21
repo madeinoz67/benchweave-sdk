@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -202,6 +203,94 @@ def test_a_recovery_sync_completes_from_the_parked_state(tmp_path: Path) -> None
     assert _files(tree) == before
     _assert_no_sync_debris(sdk)
     sync(None, sdk, check_only=True)
+
+
+def test_a_parked_tree_that_will_not_delete_does_not_stop_the_lock_being_written(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """After the swap, tree and lock must move together even if the old tree cannot be deleted.
+
+    On Windows rmtree fails on a read-only file or one an indexer holds open.
+    If that aborted the sync the new tree would sit under the old lock, and
+    the same leftover would then stop every later sync at its entry sweep.
+    """
+    bundle = _export(tmp_path)
+    sdk = _synced_sdk(tmp_path, bundle)
+    tree = sdk / "src/benchweave_sdk/standards"
+    _staging, retired = standards_sync._staging_paths(sdk)
+    manifest_path = bundle / "bundle-manifest.json"
+    manifest = json.loads(manifest_path.read_bytes())
+    manifest["standards"][0]["version"] = "9.9.9"  # so the lock has to change
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    original = shutil.rmtree
+
+    def undeletable(path: Path, ignore_errors: bool = False, **kwargs: object) -> None:
+        if Path(path) == retired and tree.exists():
+            if not ignore_errors:
+                raise PermissionError(5, "Access is denied", str(path))
+            return
+        original(path, ignore_errors=ignore_errors, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(standards_sync.shutil, "rmtree", undeletable)
+    sync(bundle, sdk)
+    assert retired.is_dir(), "the stand-in left the parked tree in place"
+    lock = json.loads((sdk / "standards-lock.json").read_bytes())
+    assert lock["standards"][0]["version"] == "9.9.9", "the lock must follow the swapped tree"
+    sync(None, sdk, check_only=True)
+    monkeypatch.undo()
+
+    sync(bundle, sdk)
+    _assert_no_sync_debris(sdk)
+
+
+@pytest.mark.parametrize(
+    "blocker", ["a-file-where-the-staging-root-goes", "an-undeletable-leftover"]
+)
+def test_a_blocked_staging_area_is_a_named_refusal_before_anything_moves(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, blocker: str
+) -> None:
+    bundle = _export(tmp_path)
+    sdk = _synced_sdk(tmp_path, bundle)
+    tree = sdk / "src/benchweave_sdk/standards"
+    before = _files(tree)
+    staging, retired = standards_sync._staging_paths(sdk)
+    if blocker == "a-file-where-the-staging-root-goes":
+        staging.parent.write_text("not a directory", encoding="utf-8")
+    else:
+        (retired / "otdp").mkdir(parents=True)
+        original = shutil.rmtree
+
+        def undeletable(path: Path, ignore_errors: bool = False, **kwargs: object) -> None:
+            if Path(path) == retired:
+                return
+            original(path, ignore_errors=ignore_errors, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(standards_sync.shutil, "rmtree", undeletable)
+    with pytest.raises(ValueError, match="^sync_staging_blocked: "):
+        sync(bundle, sdk)
+    assert _files(tree) == before
+    sync(None, sdk, check_only=True)
+
+
+@pytest.mark.parametrize("check_only", [False, True], ids=["import", "check"])
+def test_each_bundle_file_is_read_exactly_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, check_only: bool
+) -> None:
+    """The claim in sync()'s comment, counted: one read per file, import or check."""
+    bundle = _export(tmp_path)
+    sdk = _synced_sdk(tmp_path, bundle)
+    original = standards_sync._bundle_file
+    reads: list[str] = []
+
+    def counting(bundle_path: Path, path: str) -> bytes:
+        reads.append(path)
+        return original(bundle_path, path)
+
+    monkeypatch.setattr(standards_sync, "_bundle_file", counting)
+    sync(bundle, sdk, check_only=check_only)
+    payload = bundle / "files"
+    expected = sorted(p.relative_to(payload).as_posix() for p in payload.rglob("*") if p.is_file())
+    assert sorted(reads) == expected
 
 
 def test_single_pass_hashing_still_refuses_an_undeclared_content_change(tmp_path: Path) -> None:

@@ -446,3 +446,16 @@ def test_duplicate_file_paths_within_a_standard_are_refused(tmp_path: Path) -> N
     _rewrite_manifest(bundle, document)
     with pytest.raises(ValueError, match="^bundle_manifest_invalid: duplicate file path"):
         sync(bundle, sdk)
+
+
+def test_standard_ids_that_differ_only_in_case_are_duplicates(tmp_path: Path) -> None:
+    """OTDP and otdp are one directory on Windows and macOS."""
+    bundle = _export(tmp_path)
+    sdk = _fresh_sdk(tmp_path)
+    document = _manifest(bundle)
+    target = next(s for s in document["standards"] if s["id"] == "otdp")
+    document["standards"].append({**target, "id": "OTDP", "files": []})
+    _rewrite_manifest(bundle, document)
+    with pytest.raises(ValueError, match="^bundle_manifest_invalid: duplicate standard id"):
+        sync(bundle, sdk)
+
