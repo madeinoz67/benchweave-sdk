@@ -2,12 +2,85 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.0] - 2026-09-21
+
+### Bug Fixes
+
+- Keep checkouts LF so standards digests survive Windows
+- Windows-portable read_file; no out-of-package validator fallback
+- Repair the dead S02 bounds check; gate development-only fallbacks
+- Sync-standards --check works from an installed SDK
+- Conformance checks survive python -O via typed ConformanceError
+- Idempotent preview shutdown; browser open off the UI thread
+- Stage project generation atomically
+- Review fixes — no staging deletion, walk-bound samestat, merge repair
+- Address Stephen's review on PR #9 (windows execution, root detection, refusal classes)
+- Refuse symlinked components on POSIX by inspection, not by kernel errno
+- Judge manifest and lock rows as strings, identically in every lane
+- Preview asset guard refuses a colon in the request path
+- A regular file mid-path is NotADirectoryError on Windows, as on POSIX
+- Close what a second adversarial pass found in the portability PR
+- A failed staging swap restores the previous vendored tree
+- Stage the vendored swap outside the package; refuse duplicate manifest ids; prove the atomicity tests
+- A recovery sync puts the parked tree back before it stages anything
+- Read the bundle once for real; a swap that cannot wedge; claims that match the code
+- Plot example binds the first numeric observation target
+- Generated conformance assert carries no trailing comma
+- Refuse an empty standards list at the manifest gate; close the device-alias gap
+- Refuse 8.3 aliases of the stamp path; tighten the device class to COM1-9
+- Refuse segments containing characters Windows cannot write
+- One sync at a time per checkout; NFC-folded duplicate ids
+
+### Documentation
+
+- V0.0.4 release review — sweep stale surfaces, encode the matrix + skill (#38)
+- Installed-mode sync-standards --check and the fifth smoke lane
+- The review protocol says where the behavioural suite lives now
+- Document the testing surface; render all six public surfaces
+- MockHost.transfer's Raises section describes what is actually raised
+- Mark CaptureServices as a provisional, unpinned contract
+- Document what the reference now renders; claims that match the code
+- Previews render declared plots and hints
+- Disclosure names observed targets, not bindings
+- State the 8.3 stamp-alias mechanism precisely
+
+### Features
+
+- Plot_views projection + previewability relaxation
+
+### Miscellaneous
+
+- Sync plugin-ui-preview 0.1.1 (additive plot_views bump)
+- Rebuild bundled renderer assets at ui 0.1.2
+- Rebuild bundled renderer assets for the fold wave
+- Bump 0.1.0 and walk the release-review matrix
+
+### Performance
+
+- Single-pass bundle hashing, atomic vendored swap, cached schemas
+
+### Testing
+
+- Regression coverage for the portability and correctness fixes
+- Bring the SDK behavioural suite home from the parent repository
+- Pin the bundle path guard and manifest self-vouching; macOS lane; honest export docstring
+- Re-sync the migrated suite with the parent's current tests; relock at 0.0.4
+- Pins that reach the guards; the publish smoke at PR time; lock in the gates
+- Finish the protocol truth; reach the guards the homed suite only brushed
+- Bring the migrated suite forward to plugin-ui-preview 0.1.1 and the plot-emitting scaffold
+
+### Ci
+
+- The Windows publish smoke installs into the venv directory; prove installed mode
+- Windows lane, locked syncs, and an end-to-end scaffold check
+- Least-privilege docs workflow, split concurrency, pinned actions
 ## [0.0.4] - 2026-09-20
 
 ### Bug Fixes
 
 - Website version labels follow the release — v0.0.3 latest
 - Resolve destination before writing; name symlink refusals in read_file
+- Register v0.0.4 in great-docs versions — release-time obligation the assembly gate enforces
 
 ### Documentation
 
