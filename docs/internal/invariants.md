@@ -38,7 +38,7 @@ the invariants below anchor there.
   `bundle_manifest_invalid`, `bundle_version_unsupported`, `bundle_path_invalid`,
   `bundle_file_missing`, `lock_invalid`, `lock_missing`, `lock_version_unsupported`,
   `standards_version_required`, `hash_mismatch`, `not_synced`, `stamp_missing`,
-  `unexpected_vendored_file`, `sync_requires_repo_checkout`). A new refusal path that raises
+  `unexpected_vendored_file`, `sync_requires_repo_checkout`, `sync_staging_blocked`). A new refusal path that raises
   bare prose breaks the machine-matchable surface CI and scripts branch on —
   `standards_sync.py`, `cli.py` (the sync lane's checkout-detection refusal). *The prefixes
   are an API even though they live in error text.*

@@ -7,6 +7,7 @@ content changed without a standards version increment is refused outright.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import re
@@ -21,6 +22,7 @@ LOCK_NAME = "standards-lock.json"
 VENDORED = "src/benchweave_sdk/standards"
 STAMP_NAME = "_GENERATED.txt"
 STAMP_LINE = "{path} — Generated from {identifier}@{version} — do not edit"
+STAGING_DIR = ".standards-sync"
 
 
 @dataclass(frozen=True)
@@ -54,6 +56,20 @@ def sync(bundle: Path | None, sdk_root: Path, *, check_only: bool = False) -> Sy
     document = _load_bundle(bundle)
     lock = _read_lock(sdk_root)
     previous = {row["id"]: row for row in lock.get("standards", [])}
+    # One pass reads every bundle file once and keeps its bytes: the digests
+    # serve classification and the integrity check, and an import writes those
+    # same bytes out. Before this, a standard whose version and bytes were
+    # unchanged was hashed twice (once in each of those two places) and an
+    # import read every file again to write it. Added and version-incremented
+    # standards were already hashed only once, so a first sync saves the
+    # second read, not a hash.
+    payloads = {
+        standard["id"]: _bundle_payloads(bundle, standard) for standard in document["standards"]
+    }
+    recomputed = {
+        identifier: {path: hashlib.sha256(raw).hexdigest() for path, raw in files.items()}
+        for identifier, files in payloads.items()
+    }
     added: list[str] = []
     changed: list[str] = []
     deprecated: list[str] = []
@@ -66,7 +82,7 @@ def sync(bundle: Path | None, sdk_root: Path, *, check_only: bool = False) -> Sy
             changed.append(identifier)
             if standard["status"] == "deprecated":
                 deprecated.append(identifier)
-        elif _bundle_hashes(bundle, standard) != _lock_hashes(prior):
+        elif recomputed[identifier] != _lock_hashes(prior):
             raise ValueError(
                 f"standards_version_required: {identifier} content changed without a "
                 "standards version increment"
@@ -75,11 +91,11 @@ def sync(bundle: Path | None, sdk_root: Path, *, check_only: bool = False) -> Sy
             # Status-only transition: same version and bytes, new deprecation.
             deprecated.append(identifier)
     removed = sorted(previous)
-    _verify_bundle_integrity(bundle, document)
+    _verify_bundle_integrity(document, recomputed)
     if check_only:
         _verify_vendored_tree(sdk_root, lock)
     else:
-        _write_vendored(bundle, sdk_root, document)
+        _write_vendored(sdk_root, document, payloads, recomputed)
     return SyncReport(
         tuple(sorted(added)),
         tuple(sorted(changed)),
@@ -102,6 +118,7 @@ def _load_bundle(bundle: Path) -> dict[str, Any]:
             raise ValueError("bundle_manifest_invalid: the manifest is not a JSON object")
         if document.get("bundle_version") != 1:
             raise ValueError("bundle_version_unsupported")
+        seen_ids: set[str] = set()
         for standard in document["standards"]:
             identifier = standard["id"]
             _ = standard["version"], standard["status"]
@@ -109,6 +126,15 @@ def _load_bundle(bundle: Path) -> dict[str, Any]:
                 # The per-standard stamp is written at <tree>/<id>/, and a
                 # standard with no files never reaches _guard_path.
                 raise ValueError(f"bundle_manifest_invalid: standard id {identifier!r} {problem}")
+            if identifier.casefold() in seen_ids:
+                # Every later stage keys per-standard state by id (last
+                # wins); a duplicate would otherwise surface as a bare
+                # KeyError from the integrity check instead of a refusal.
+                # Compared case-folded: OTDP and otdp are one directory on
+                # Windows and macOS.
+                raise ValueError(f"bundle_manifest_invalid: duplicate standard id {identifier!r}")
+            seen_ids.add(identifier.casefold())
+            seen_paths: set[str] = set()
             for file in standard["files"]:
                 _guard_path(identifier, file["path"])
                 if not _is_digest(file["sha256"]):
@@ -116,6 +142,12 @@ def _load_bundle(bundle: Path) -> dict[str, Any]:
                         f"bundle_manifest_invalid: sha256 for {file['path']} is not "
                         "64 lowercase hex characters"
                     )
+                if file["path"].casefold() in seen_paths:
+                    raise ValueError(
+                        f"bundle_manifest_invalid: duplicate file path {file['path']!r} "
+                        f"in {identifier!r}"
+                    )
+                seen_paths.add(file["path"].casefold())
     except json.JSONDecodeError as exc:
         raise ValueError(f"bundle_manifest_invalid: {exc}") from exc
     except (KeyError, TypeError) as exc:
@@ -220,13 +252,13 @@ def _read_lock_file(path: Path) -> dict[str, Any]:
     return lock
 
 
-def _bundle_hashes(bundle: Path, standard: dict[str, Any]) -> dict[str, str]:
-    """Hashes recomputed from the bundle's files, not its manifest claims."""
-    hashes: dict[str, str] = {}
-    for file in standard["files"]:
-        raw = _bundle_file(bundle, file["path"])
-        hashes[file["path"]] = hashlib.sha256(raw).hexdigest()
-    return hashes
+def _bundle_payloads(bundle: Path, standard: dict[str, Any]) -> dict[str, bytes]:
+    """One standard's bundle bytes, read once; digests and the written tree both come from these.
+
+    The corpus is a few dozen small documents, so holding it for the length
+    of a sync costs nothing worth a second pass over the disk.
+    """
+    return {file["path"]: _bundle_file(bundle, file["path"]) for file in standard["files"]}
 
 
 def _bundle_file(bundle: Path, path: str) -> bytes:
@@ -241,15 +273,19 @@ def _lock_hashes(prior: dict[str, Any]) -> dict[str, str]:
     return {file["path"]: file["sha256"] for file in prior["files"]}
 
 
-def _verify_bundle_integrity(bundle: Path, document: dict[str, Any]) -> None:
+def _verify_bundle_integrity(
+    document: dict[str, Any], recomputed: dict[str, dict[str, str]]
+) -> None:
     """The manifest must describe the bytes actually present in the bundle.
 
     sha256 is the anchor: the lock records no sizes, only digests.
+    ``recomputed`` carries the digests already computed from the bundle's
+    files, so the bundle is read exactly once per sync.
     """
     for standard in document["standards"]:
+        actual = recomputed[standard["id"]]
         for file in standard["files"]:
-            digest = hashlib.sha256(_bundle_file(bundle, file["path"])).hexdigest()
-            if digest != file["sha256"]:
+            if actual[file["path"]] != file["sha256"]:
                 raise ValueError(f"hash_mismatch: {file['path']}")
 
 
@@ -364,12 +400,83 @@ def _verify_state(lock_path: Path, tree: Path) -> None:
     _verify_tree(tree, lock)
 
 
-def _write_vendored(bundle: Path, sdk_root: Path, document: dict[str, Any]) -> None:
-    """Rewrite the vendored tree and lock; vendored bytes match the bundle exactly."""
+def _staging_paths(sdk_root: Path) -> tuple[Path, Path]:
+    """Where an in-flight sync stages the new tree and parks the old one.
+
+    Both live under ``<sdk_root>/.standards-sync/`` — outside ``src`` — so a
+    tree orphaned by a crash mid-sync cannot ship: the wheel packages
+    ``src/benchweave_sdk`` and the sdist's include list is explicit, and
+    neither names this directory. It sits inside the checkout, hence on the
+    vendored tree's own filesystem, which is what keeps the swap's renames
+    atomic.
+    """
+    root = sdk_root / STAGING_DIR
+    return root / "new", root / "old"
+
+
+def _clear_staging(staging: Path, retired: Path) -> None:
+    """Sweep what an earlier sync left behind, or say exactly what is in the way.
+
+    Nothing has been touched when this runs, so a leftover that cannot be
+    removed (a file an antivirus scan holds open, a read-only entry, a plain
+    file sitting where the staging directory goes) is a refusal that names
+    the path, not a raw OSError, and the vendored tree is still intact.
+    """
+    root = staging.parent
+    if (root.exists() or root.is_symlink()) and (root.is_symlink() or not root.is_dir()):
+        raise ValueError(
+            f"sync_staging_blocked: {root} is not a directory; remove it and run the sync again"
+        )
+    for leftover in (staging, retired):
+        if leftover.is_symlink() or leftover.is_file():
+            leftover.unlink(missing_ok=True)
+        elif leftover.exists():
+            shutil.rmtree(leftover, ignore_errors=True)
+        if leftover.exists() or leftover.is_symlink():
+            raise ValueError(
+                f"sync_staging_blocked: {leftover} could not be removed; "
+                "delete it and run the sync again"
+            )
+
+
+def _write_vendored(
+    sdk_root: Path,
+    document: dict[str, Any],
+    payloads: dict[str, dict[str, bytes]],
+    recomputed: dict[str, dict[str, str]],
+) -> None:
+    """Rewrite the vendored tree and lock; vendored bytes match the bundle exactly.
+
+    The new tree is staged outside the package (``_staging_paths``) and
+    swapped in at the end, so an interrupted sync can never leave a
+    half-empty vendored tree behind (the old ``rmtree``-then-write order
+    destroyed the tree first) and never leaves staging debris where
+    packaging could pick it up. A crash between the swap's two renames
+    leaves the old tree parked and the vendored path absent, which
+    ``--check`` reports as missing files; the next sync puts the parked tree
+    back before it stages anything, so a second failure cannot cost the last
+    good copy, and only then sweeps the leftovers (``_clear_staging``). Once
+    the swap has happened, failing to delete the parked old tree must not stop
+    the lock being written, so that deletion is best-effort and the next sync
+    sweeps what is left.
+
+    The lock is written only after the swap and records the digests
+    recomputed from the bundle's bytes, never the manifest's claims (STD-2).
+    A failure between swap and lock is ``--check`` drift whenever the bundle's
+    bytes moved. When only a version or a status moved, the bytes still match
+    the old lock, so the committed-state check and the build hook stay green
+    while the stamps run ahead of the lock; a bundle-mode ``--check`` sees it,
+    and the next sync rewrites both.
+    """
     tree = sdk_root / VENDORED
-    if tree.exists():
-        shutil.rmtree(tree)
-    tree.mkdir(parents=True)
+    staging, retired = _staging_paths(sdk_root)
+    if retired.exists() and not tree.exists():
+        # A sync that died between the swap's two renames left the last good
+        # tree parked and the vendored path absent. It is the only copy, and
+        # the staging below can still fail, so it goes back first.
+        retired.rename(tree)
+    _clear_staging(staging, retired)
+    staging.mkdir(parents=True)
     lock: dict[str, Any] = {
         "lock_version": 1,
         "standards": [],
@@ -379,31 +486,58 @@ def _write_vendored(bundle: Path, sdk_root: Path, document: dict[str, Any]) -> N
             "notes": None,
         },
     }
-    for standard in document["standards"]:
-        stamps: list[str] = []
-        rows: list[dict[str, str]] = []
-        for file in standard["files"]:
-            raw = _bundle_file(bundle, file["path"])
-            target = tree / file["path"]
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(raw)
-            stamps.append(
-                STAMP_LINE.format(
-                    path=file["path"], identifier=standard["id"], version=standard["version"]
+    try:
+        for standard in document["standards"]:
+            digests = recomputed[standard["id"]]
+            stamps: list[str] = []
+            rows: list[dict[str, str]] = []
+            for file in standard["files"]:
+                raw = payloads[standard["id"]][file["path"]]
+                target = staging / file["path"]
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(raw)
+                stamps.append(
+                    STAMP_LINE.format(
+                        path=file["path"], identifier=standard["id"], version=standard["version"]
+                    )
                 )
+                rows.append({"path": file["path"], "sha256": digests[file["path"]]})
+            stamp_file = staging / standard["id"] / STAMP_NAME
+            stamp_file.parent.mkdir(parents=True, exist_ok=True)
+            stamp_file.write_text("\n".join(stamps) + "\n", encoding="utf-8")
+            lock["standards"].append(
+                {
+                    "id": standard["id"],
+                    "version": standard["version"],
+                    "status": standard["status"],
+                    "files": rows,
+                }
             )
-            rows.append({"path": file["path"], "sha256": file["sha256"]})
-        stamp_file = tree / standard["id"] / STAMP_NAME
-        stamp_file.parent.mkdir(parents=True, exist_ok=True)
-        stamp_file.write_text("\n".join(stamps) + "\n", encoding="utf-8")
-        lock["standards"].append(
-            {
-                "id": standard["id"],
-                "version": standard["version"],
-                "status": standard["status"],
-                "files": rows,
-            }
-        )
+        if tree.exists():
+            tree.rename(retired)
+            try:
+                staging.rename(tree)
+            except BaseException:
+                # The old tree was already moved aside; put it back so a
+                # failed swap leaves the previous state in place, not a
+                # missing vendored tree.
+                retired.rename(tree)
+                raise
+            # The swap is done. A parked tree that will not delete (a read-only
+            # file, a handle an indexer holds) must not stop the lock below
+            # being written; the next sync sweeps it.
+            shutil.rmtree(retired, ignore_errors=True)
+        else:
+            tree.parent.mkdir(parents=True, exist_ok=True)
+            staging.rename(tree)
+    except BaseException:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    finally:
+        # Empty after a completed swap or a cleaned-up failure; a parked tree
+        # from a crash between the two renames keeps it, deliberately.
+        with contextlib.suppress(OSError):
+            staging.parent.rmdir()
     (sdk_root / LOCK_NAME).write_bytes(_canonical_json(lock))
 
 
