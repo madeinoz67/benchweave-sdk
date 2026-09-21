@@ -472,7 +472,7 @@ def create_ui_resources(destination: Path, package: str) -> None:
         "All preview values and receipts are simulated. check-ui and preview-ui are not\n"
         "admission, hardware qualification or permission to operate hardware.\n"
         "Declared manifest plots and channel hints render in the preview; plot values\n"
-        "are per-scenario snapshots (one simulated value per binding), not history.\n"
+        "are per-scenario snapshots (one simulated value per observed target), not history.\n"
         "Preset selection performs no I/O. Applying settings requires a separately\n"
         "approved procedure. Acquisition and retained observations belong to the gateway.\n",
         encoding="utf-8",
