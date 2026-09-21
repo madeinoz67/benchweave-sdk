@@ -35,8 +35,10 @@ def _validate_preview_assets(package: Path) -> None:
             raise RuntimeError(f"Bundled preview asset is stale or corrupt: {relative}")
 
 
-# The 8.3 short name of _GENERATED.txt: on a volume with short names enabled,
-# a row spelled with the alias resolves to the stamp. Kept identical to
+# The 8.3 short name of _GENERATED.txt. A row spelled with the alias can
+# resolve to the stamp at lookup when the stamp was created first (a
+# hand-crafted tree); this writer's row-before-stamp order avoids that —
+# refused regardless as defense-in-depth. Kept identical to
 # standards_sync._STAMP_SHORT_NAME (STD-3).
 _STAMP_SHORT_NAME = re.compile(r"(?i)_gener~[0-9]+\.txt")
 

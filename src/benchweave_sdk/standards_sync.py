@@ -23,8 +23,10 @@ VENDORED = "src/benchweave_sdk/standards"
 STAMP_NAME = "_GENERATED.txt"
 STAMP_LINE = "{path} — Generated from {identifier}@{version} — do not edit"
 STAGING_DIR = ".standards-sync"
-# The 8.3 short name of _GENERATED.txt: on a volume with short names enabled,
-# a row spelled with the alias resolves to the stamp.
+# The 8.3 short name of _GENERATED.txt. A row spelled with the alias can
+# resolve to the stamp at lookup when the stamp was created first (a
+# hand-crafted tree); this writer's row-before-stamp order avoids that —
+# refused regardless as defense-in-depth.
 _STAMP_SHORT_NAME = re.compile(r"(?i)_gener~[0-9]+\.txt")
 
 
