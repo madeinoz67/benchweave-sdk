@@ -17,25 +17,35 @@ on:
       - main
   pull_request:
 
+# Workflow-wide token is read-only. This workflow also runs on every
+# pull_request — uv sync plus a third-party docs toolchain — so the
+# Pages-deploy and OIDC scopes must not ride along on PR builds. publish-docs,
+# the only job that deploys, carries pages/id-token itself; same minimal-token
+# reasoning as preview-docs, which holds pull-requests: write alone.
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
-concurrency:
-  group: pages
-  cancel-in-progress: true
+# Concurrency is declared per job, not workflow-wide: one shared `pages` group
+# with cancel-in-progress meant a PR build could cancel an in-flight
+# production Pages deployment. Builds group by ref on build-docs; only
+# publish-docs enters the deploy-only `pages` group, and it is never
+# cancelled.
 
 jobs:
   build-docs:
     name: "Build Docs"
     runs-on: ubuntu-latest
+    concurrency:
+      # Ref-scoped: a newer push to the same branch/PR supersedes (cancels)
+      # only its own in-flight build — never anything in the `pages` group.
+      group: docs-${{ github.ref }}
+      cancel-in-progress: true
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # Full history + tags: release-tag detection, git_ref API snapshots, page dates
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.13"
 
@@ -47,10 +57,13 @@ jobs:
           # [svg] is great-docs' supported cairosvg extra — without it raster
           # favicons silently skip (SVG-only). CI runners have no
           # UV_PROJECT_ENVIRONMENT convention; the default .venv is correct here.
-          uv pip install "great-docs[svg]"
+          # Pinned: scripts/assemble_docs_site.py's markup workarounds are
+          # written against great-docs 0.17.0 — bump the pin and the
+          # workarounds together.
+          uv pip install "great-docs[svg]==0.17.0"
 
       - name: Set up Quarto
-        uses: quarto-dev/quarto-actions/setup@v2
+        uses: quarto-dev/quarto-actions/setup@8a96df13519ee81fd526f2dfca5962811136661b # v2.2.0
 
       - name: Assemble versioned docs site
         run: uv run python scripts/assemble_docs_site.py
@@ -58,7 +71,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # changelog fetch; passed through to --from-repo builds
 
       - name: Save docs artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: docs-html
           path: site
@@ -69,7 +82,7 @@ jobs:
         run: uv run great-docs ci notice --run ${{ github.run_id }} --pr ${{ github.event.number }}
 
       - name: Upload build timings
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: build-timings
           path: site/docs/build-timings.json # docs root moved under /docs/ (Task 12)
@@ -80,27 +93,39 @@ jobs:
     runs-on: ubuntu-latest
     needs: "build-docs"
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      # Exactly the two scopes actions/deploy-pages needs, granted only here
+      # so the PR-triggered build and preview jobs never hold a deploy-capable
+      # or OIDC token.
+      pages: write
+      id-token: write
+    concurrency:
+      # Deploy-only group: production Pages deployments queue serially and
+      # are never cancelled. When builds shared this group with
+      # cancel-in-progress, a PR build could kill a main deploy mid-flight.
+      group: pages
+      cancel-in-progress: false
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           name: docs-html
           path: site
 
       - name: Configure Pages
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5.0.0
 
       - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v5
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: site
           include-hidden-files: true
 
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v5
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
 
   preview-docs:
     name: "Preview Docs"
@@ -117,6 +142,6 @@ jobs:
       # token. continue-on-error so fork PRs (read-only token) don't fail the run.
       - name: Post preview instructions to the PR
         continue-on-error: true
-        run: pipx run great-docs ci pr-comment --run ${{ github.run_id }} --pr ${{ github.event.number }}
+        run: pipx run great-docs==0.17.0 ci pr-comment --run ${{ github.run_id }} --pr ${{ github.event.number }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

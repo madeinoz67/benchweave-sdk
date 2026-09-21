@@ -148,8 +148,9 @@ cli:
 # great-docs 0.17.0: the key exists only on upstream main
 # (posit-dev/great-docs, unreleased as of 0.17.0 / 2026-08-13), which
 # hardcodes the switcher order api,cli. Unknown yml keys merge silently,
-# so this line activates itself the day a released great-docs understands
-# it (CI installs great-docs unpinned). Until then the assembly patches the
+# so this line starts working once the great-docs pin in docs.yml moves to a
+# release that understands it (the pin is deliberate: the assembly's repairs
+# are written against 0.17.0). Until then the assembly patches the
 # built order cli-first (scripts/assemble_docs_site.py:
 # reorder_reference_sections); delete that transform when this key activates.
 ref_section_order:
@@ -380,6 +381,12 @@ user_guide:
 #     contents:
 #       - helper_func
 #       - another_func
+# The rendered reference covers all six public surfaces the README
+# advertises (interfaces, testing, conformance, validation, presentation,
+# packaging) — previously only the three re-exported protocols appeared.
+# tests/test_docs_reference.py regenerates this list from the modules: every
+# entry must resolve, and every public name must be listed here or excluded
+# there with a reason.
 reference:
   - title: Protocols
     desc: Protocol / structural-typing interfaces
@@ -387,6 +394,41 @@ reference:
       - Adapter
       - HostServices
       - OperationContext
+      - interfaces.CaptureServices
+  - title: Testing doubles
+    desc: Deterministic, hardware-free host and context doubles
+    contents:
+      - testing.MockHost
+      - testing.MockContext
+      - testing.ConformanceError
+  - title: Conformance
+    desc: Reusable adapter lifecycle and operation checks
+    contents:
+      - conformance.check_operation
+      - conformance.check_lifecycle
+  - title: Validation
+    desc: Offline schema and semantic checks against the vendored contracts
+    contents:
+      - validation.contract_documents
+      - validation.validate
+      - validation.validate_request
+      - validation.validate_result
+      - validation.validate_descriptor
+  - title: Presentation
+    desc: Offline presentation validation and bounded, symlink-refusing reads
+    contents:
+      - presentation.read_file
+      - presentation.check_ui
+      - presentation.validate_preset
+      - presentation.validate_presentation
+      - presentation.load_validated_preview_inputs
+      - presentation.ValidatedPreviewInputs
+      - presentation.resolve_preset_action
+  - title: Packaging
+    desc: Deterministic bundle inventory helpers
+    contents:
+      - packaging.inventory
+      - packaging.verify_inventory
 
 # Inline Methods
 # --------------
