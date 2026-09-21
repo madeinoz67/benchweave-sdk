@@ -40,6 +40,24 @@ minutes; the review exists so the next release does not depend on luck.
   version with wheel + sdist; the docs site shows the new bucket in the
   selector; the release body is the git-cliff notes.
 
+## Result record — v0.1.0 (2026-09-22)
+
+| # | Surface | Result |
+|---|---------|--------|
+| 1 | README stamp | updated → SDK 0.1.0 |
+| 2 | Website hero status | updated — 2 stamps → SDK 0.1.0; OTDP 0.2.0 / adapter API 1.1 correct-as-is against `__init__.py` |
+| 3 | Docs selector | updated — v0.1.0 (latest); v0.0.4 prior option added |
+| 4 | Compatibility tagline | updated — SDK 0.1.0 against main project `>=0.1.0` (lock floor unchanged) |
+| 5 | Standards badges | updated — registry 0.1.0→0.1.1, plugin-ui-preview 0.1.0→0.1.1 vs lock; interface 0.1.0 / plugin-ui 0.2.0 / execution 0.1.0 correct-as-is |
+| 6 | great-docs versions | updated — v0.1.0 `latest: true` registered before the tag; v0.0.4 demoted |
+| 7 | Contributor window `v0.0.4..HEAD` | platima — 35 commits, new human contributor; acknowledged in the tag message and release notes |
+| 8 | Gateway `uv.lock` pin | note — moves on the gateway's next lock run, as designed |
+
+Note: `standards-lock.json` `compatibility.sdk` still reads 0.0.4. The field is
+written by the sync machinery and read by no gate (the matrix rows use the
+`main_project` floor and `standards[].version`); it self-corrects at the next
+standards sync. Recorded, not blocking.
+
 ## Lineage (why this exists)
 
 Found by the v0.0.4 release review (issue #117): the README stamp was re-staled
