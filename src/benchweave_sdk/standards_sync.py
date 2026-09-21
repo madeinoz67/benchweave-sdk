@@ -23,6 +23,9 @@ VENDORED = "src/benchweave_sdk/standards"
 STAMP_NAME = "_GENERATED.txt"
 STAMP_LINE = "{path} — Generated from {identifier}@{version} — do not edit"
 STAGING_DIR = ".standards-sync"
+# The 8.3 short name of _GENERATED.txt: on a volume with short names enabled,
+# a row spelled with the alias resolves to the stamp.
+_STAMP_SHORT_NAME = re.compile(r"(?i)_gener~[0-9]+\.txt")
 
 
 @dataclass(frozen=True)
@@ -173,9 +176,10 @@ def _is_digest(value: object) -> bool:
 # Names Windows resolves to a device whatever directory they appear in, with or
 # without an extension (NUL, con.txt, COM1.json); the superscript digit forms
 # (com¹, lpt²) and the console API names (conin$, conout$) resolve as devices
-# too.
+# too. COM0 is not a device — the class is COM1–COM9 and LPT1–LPT9, plus the
+# superscript forms of 1–3.
 _WINDOWS_DEVICE = re.compile(
-    r"(?i)(con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³]|conin\$|conout\$)(\..*)?"
+    r"(?i)(con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³]|conin\$|conout\$)(\..*)?"
 )
 
 
@@ -221,7 +225,10 @@ def _path_problem(identifier: object, path: object) -> str | None:
             return problem
     if segments[0] != identifier:
         return "is not under its standard's directory"
-    if len(segments) == 2 and segments[1].casefold() == STAMP_NAME.casefold():
+    if len(segments) == 2 and (
+        segments[1].casefold() == STAMP_NAME.casefold()
+        or _STAMP_SHORT_NAME.fullmatch(segments[1])
+    ):
         return "claims the stamp path the writer reserves"
     return None
 

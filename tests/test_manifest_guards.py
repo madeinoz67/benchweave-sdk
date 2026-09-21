@@ -51,6 +51,9 @@ UNSAFE_ROWS = [
     pytest.param("otdp/con.json", id="device-name-with-extension"),
     pytest.param("otdp/_GENERATED.txt", id="reserved-stamp-path"),
     pytest.param("otdp/_generated.TXT", id="reserved-stamp-path-other-case"),
+    # On a volume with 8.3 short names enabled, the alias resolves to the stamp.
+    pytest.param("otdp/_GENER~1.TXT", id="reserved-stamp-8-3-alias"),
+    pytest.param("otdp/_gener~2.txt", id="reserved-stamp-8-3-alias-ordinal"),
     # Windows also resolves the superscript digit forms and the console API
     # names as devices, in any directory, with or without an extension.
     pytest.param("otdp/com¹/x.json", id="device-name-superscript"),
@@ -73,6 +76,11 @@ def test_guard_path_refuses_rows_that_any_filesystem_would_resolve_elsewhere(row
 
 def test_guard_path_accepts_an_ordinary_row() -> None:
     _guard_path("otdp", "otdp/0.2.0/examples/reference-psu.json")
+
+
+def test_com0_is_not_a_device_name() -> None:
+    """COM0 is not in Windows' device list (COM1–COM9 are); the class stays exact."""
+    _guard_path("otdp", "otdp/com0/x.json")
 
 
 @pytest.mark.parametrize(
