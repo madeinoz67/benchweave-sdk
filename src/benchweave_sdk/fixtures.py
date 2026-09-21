@@ -11,6 +11,9 @@ from jsonschema import Draft202012Validator
 
 from .presentation import ValidatedPreviewInputs, read_file
 from .preview_models import (
+    PlotAxis,
+    PlotChannel,
+    PlotView,
     PreviewModel,
     PreviewObservation,
     PreviewScenario,
@@ -37,14 +40,14 @@ def _schema_path() -> Path:
     packaged = (
         Path(__file__).with_name("standards")
         / "plugin-ui-preview"
-        / "0.1.0"
+        / "0.1.1"
         / "fixture.schema.json"
     )
     if packaged.is_file():
         return packaged
     checkout = (
         Path(__file__).resolve().parents[4]
-        / "standards/plugin-ui-preview/0.1.0/fixture.schema.json"
+        / "standards/plugin-ui-preview/0.1.1/fixture.schema.json"
     )
     if checkout.is_file():
         return checkout
@@ -74,18 +77,30 @@ def _target_index(catalogue: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
     }
 
 
-def _variable(target: Mapping[str, Any]) -> Mapping[str, Any]:
+def _observation_value_variable(target: Mapping[str, Any]) -> Mapping[str, Any]:
+    """The value variable of an observation target: the single non-receipt-time
+    scalar, with at most one receipt-time scalar beside it — exactly the shape
+    ``_target_findings`` admits, so the preview is never stricter than the
+    presentation contract whose canonical time-series plot needs both."""
     variables = target.get("variables", [])
-    if (
-        not isinstance(variables, list)
-        or len(variables) != 1
-        or not isinstance(variables[0], Mapping)
+    if not isinstance(variables, list) or any(
+        not isinstance(row, Mapping) for row in variables
     ):
         raise ValueError(f"preview_unsupported_shape: {target.get('id', '<unknown>')}")
-    variable = variables[0]
-    if variable.get("shape") != "scalar":
+    rows: list[Mapping[str, Any]] = list(variables)
+    values = [row for row in rows if row.get("axis_role") != "receipt_time"]
+    times = [row for row in rows if row.get("axis_role") == "receipt_time"]
+    if (
+        len(values) != 1
+        or values[0].get("shape") != "scalar"
+        or len(times) > 1
+        or any(
+            row.get("type") != "number" or row.get("unit") != "s" or row.get("shape") != "scalar"
+            for row in times
+        )
+    ):
         raise ValueError(f"preview_unsupported_shape: {target.get('id', '<unknown>')}")
-    return variable
+    return values[0]
 
 
 def _check_value(path: Path, binding_id: str, value: object, expected: object) -> None:
@@ -113,7 +128,12 @@ def _scenario(
         target = targets.get(binding_id)
         if target is None:
             raise ValueError(f"preview_unknown_binding: {path}: {binding_id}")
-        variable = _variable(target)
+        if target.get("kind") != "observation":
+            # The snapshot data model is one simulated scalar per observation
+            # target; dataset/configuration/procedure bindings stay
+            # unrepresentable in author fixtures.
+            raise ValueError(f"preview_unsupported_shape: {path}: {binding_id}")
+        variable = _observation_value_variable(target)
         if binding["unit"] != variable.get("unit"):
             raise ValueError(
                 f"preview_unit_mismatch: {path}: {binding_id}: expected {variable.get('unit')!r}"
@@ -228,10 +248,18 @@ def _synthetic_value(variable: Mapping[str, Any]) -> bool | int | float | str:
 def generate_baselines(
     catalogue: Mapping[str, Any], manifest: Mapping[str, Any]
 ) -> tuple[PreviewScenario, ...]:
-    """Generate the mandatory scenario set without claiming device evidence."""
+    """Generate the mandatory scenario set without claiming device evidence.
+
+    Non-observation targets contribute no synthetic observations: dataset,
+    configuration and procedure targets are skipped — a disclosed degradation
+    (their declared plots still project, with the renderer owing the no-data
+    disclosure) where the previous behavior refused the whole preview.
+    """
     observations = []
     for binding_id, target in _target_index(catalogue).items():
-        variable = _variable(target)
+        if target.get("kind") != "observation":
+            continue
+        variable = _observation_value_variable(target)
         observations.append(
             PreviewObservation(
                 binding_id=binding_id,
@@ -310,6 +338,72 @@ def _renderer_version() -> str:
     return version
 
 
+def project_plot_views(candidate: ValidatedPreviewInputs) -> tuple[PlotView, ...]:
+    """Project one renderer-ready view per declared manifest plot.
+
+    Reads validated structure only and invents nothing: plot axis membership,
+    numeric/shape rules and channel-hint membership were enforced by the
+    presentation validator that produced ``candidate``; this function is not a
+    second copy of those findings. The input type is the frozen
+    ``ValidatedPreviewInputs`` (built only by ``load_validated_preview_inputs``
+    after a clean report), so an unvalidated manifest is structurally
+    unrepresentable here.
+
+    Deterministic by construction: one view per declared plot in page order
+    then plot order; ``title`` is the page's own title for single-plot pages
+    and ``"{page title} (i/n)"`` otherwise (manifest plots carry no title);
+    labels are variable ids verbatim; units come from the catalogue variables.
+    """
+    targets = _target_index(candidate.binding_catalogue)
+    bindings = {
+        str(row["id"]): row
+        for row in candidate.manifest.get("bindings", [])
+        if isinstance(row, Mapping) and isinstance(row.get("id"), str)
+    }
+    views: list[PlotView] = []
+    for page in candidate.manifest.get("pages", []):
+        plots = page.get("plots", [])
+        count = len(plots)
+        for index, plot in enumerate(plots):
+            binding = bindings.get(str(plot["binding_id"]), {})
+            # Preview observations speak target ids, so the target id — not
+            # the manifest binding's own id — is the renderer's join key.
+            target = targets.get(str(binding.get("target_id", "")), {})
+            variables = {str(row["id"]): row for row in target.get("variables", [])}
+            x_variable = variables.get(str(plot["x"]), {})
+            hints = {
+                str(hint["variable_id"]): hint for hint in plot.get("channel_hints", [])
+            }
+            channels = []
+            for name in plot["y"]:
+                hint = hints.get(str(name))
+                channels.append(
+                    PlotChannel(
+                        variable_id=str(name),
+                        label=str(name),
+                        unit=variables.get(str(name), {}).get("unit"),
+                        color_role=hint.get("color_role") if hint else None,
+                        visible=hint.get("visible") if hint else None,
+                    )
+                )
+            title = (
+                str(page["title"])
+                if count == 1
+                else f"{page['title']} ({index + 1}/{count})"
+            )
+            views.append(
+                PlotView(
+                    page_id=str(page["id"]),
+                    kind=plot["kind"],
+                    binding_id=str(binding.get("target_id", "")),
+                    title=title,
+                    x=PlotAxis(label=str(plot["x"]), unit=x_variable.get("unit")),
+                    channels=tuple(channels),
+                )
+            )
+    return tuple(views)
+
+
 def build_preview_model(candidate: ValidatedPreviewInputs) -> PreviewModel:
     """Build one immutable preview model from the exact validated candidate."""
     baselines = generate_baselines(candidate.binding_catalogue, candidate.manifest)
@@ -321,4 +415,5 @@ def build_preview_model(candidate: ValidatedPreviewInputs) -> PreviewModel:
         renderer_version=_renderer_version(),
         pages=tuple(candidate.manifest.get("pages", [])),
         scenarios=baselines + authored,
+        plot_views=project_plot_views(candidate),
     )
