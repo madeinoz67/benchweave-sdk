@@ -118,8 +118,16 @@ def _load_bundle(bundle: Path) -> dict[str, Any]:
             raise ValueError("bundle_manifest_invalid: the manifest is not a JSON object")
         if document.get("bundle_version") != 1:
             raise ValueError("bundle_version_unsupported")
+        standards = document.get("standards")
+        if not isinstance(standards, list) or not standards:
+            # No row ever reaches a guard here, and the writer would exchange
+            # the whole vendored tree for an empty one — a state every
+            # verification lane refuses only after the destruction.
+            raise ValueError(
+                "bundle_manifest_invalid: the standards list is missing or empty"
+            )
         seen_ids: set[str] = set()
-        for standard in document["standards"]:
+        for standard in standards:
             identifier = standard["id"]
             _ = standard["version"], standard["status"]
             if (problem := _identifier_problem(identifier)) is not None:
@@ -163,8 +171,12 @@ def _is_digest(value: object) -> bool:
 
 
 # Names Windows resolves to a device whatever directory they appear in, with or
-# without an extension (NUL, con.txt, COM1.json).
-_WINDOWS_DEVICE = re.compile(r"(?i)(con|prn|aux|nul|com[0-9]|lpt[0-9])(\..*)?")
+# without an extension (NUL, con.txt, COM1.json); the superscript digit forms
+# (com¹, lpt²) and the console API names (conin$, conout$) resolve as devices
+# too.
+_WINDOWS_DEVICE = re.compile(
+    r"(?i)(con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³]|conin\$|conout\$)(\..*)?"
+)
 
 
 def _segment_problem(segment: str) -> str | None:

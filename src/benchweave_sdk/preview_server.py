@@ -294,9 +294,12 @@ class PreviewServer:
 
     def wait(self) -> None:
         """Block until shutdown while the background server remains responsive."""
-        if self._thread is None:
+        # Captured once: shutdown() nulls _thread under the lifecycle lock, and
+        # a concurrent wait() must not join None between the check and the join.
+        thread = self._thread
+        if thread is None:
             raise RuntimeError("preview_server_not_started")
-        self._thread.join()
+        thread.join()
 
     def shutdown(self) -> None:
         # Idempotent and safe under concurrent callers: the TUI's quit action

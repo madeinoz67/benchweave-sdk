@@ -62,7 +62,13 @@ def _unsafe_identifier(identifier: object) -> bool:
     return any(c in identifier for c in "/\\:") or _unsafe_segment(identifier)
 
 
-_WINDOWS_DEVICE = re.compile(r"(?i)(con|prn|aux|nul|com[0-9]|lpt[0-9])(\..*)?")
+# Names Windows resolves to a device whatever directory they appear in, with or
+# without an extension (NUL, con.txt, COM1.json); the superscript digit forms
+# (com¹, lpt²) and the console API names (conin$, conout$) resolve as devices
+# too. Kept identical to standards_sync._WINDOWS_DEVICE (STD-3).
+_WINDOWS_DEVICE = re.compile(
+    r"(?i)(con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³]|conin\$|conout\$)(\..*)?"
+)
 
 
 def _unsafe_segment(segment: str) -> bool:
