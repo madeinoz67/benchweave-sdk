@@ -21,6 +21,11 @@ body = """
           {% if commit.breaking %} [**BREAKING**]{% endif %}\
     {% endfor %}
 {% endfor %}
+
+### Contributors
+
+{% for author, commits in commits | group_by(attribute="author.name") %}- {% if commits[0].remote.username %}@{{ commits[0].remote.username }}{% else %}{{ author | upper_first }}{% endif %} ({{ commits | length }} commit{% if commits | length > 1 %}s{% endif %})
+{% endfor %}
 """
 trim = true
 footer = ""

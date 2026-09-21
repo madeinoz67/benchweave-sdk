@@ -74,6 +74,13 @@ All notable changes to this project will be documented in this file.
 - The Windows publish smoke installs into the venv directory; prove installed mode
 - Windows lane, locked syncs, and an end-to-end scaffold check
 - Least-privilege docs workflow, split concurrency, pinned actions
+
+
+### Contributors
+
+- Platima (34 commits)
+- Stephen Eaton (9 commits)
+- Madeinoz67 (7 commits)
 ## [0.0.4] - 2026-09-20
 
 ### Bug Fixes
@@ -92,6 +99,11 @@ All notable changes to this project will be documented in this file.
 ### Miscellaneous
 
 - SDK 0.0.4 — the symlinked-destination fix
+
+
+### Contributors
+
+- Stephen Eaton (8 commits)
 ## [0.0.3] - 2026-09-20
 
 ### Bug Fixes
@@ -187,6 +199,11 @@ All notable changes to this project will be documented in this file.
 - Serve site at root, docs under /docs/
 - Fix empty --pr in preview notice (github.event.number, not github.event_number)
 - Push CHANGELOG.md via changelog app token
+
+
+### Contributors
+
+- Stephen Eaton (73 commits)
 ## [0.0.2] - 2026-09-15
 
 ### Bug Fixes
@@ -200,6 +217,11 @@ All notable changes to this project will be documented in this file.
 ### Ci
 
 - Smoke via RUNNER_TEMP - macOS /tmp symlink fails SDK path validation
+
+
+### Contributors
+
+- Stephen Eaton (3 commits)
 ## [0.0.1] - 2026-09-15
 
 ### Bug Fixes
@@ -265,4 +287,9 @@ All notable changes to this project will be documented in this file.
 
 - SDK check pipeline
 - Build once, smoke the wheel on 4 os/arch lanes, publish to PyPI via Trusted Publishing
+
+
+### Contributors
+
+- Stephen Eaton (43 commits)
 
