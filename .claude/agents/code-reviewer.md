@@ -5,8 +5,8 @@ description: >-
   and when reviewing one. Reviews a change for correctness and for adherence to the SDK's
   packaging, scaffold, preview and standards-sync invariants — lock↔tree↔stamps, refusal
   prefixes, wheel contents, two-repo discipline. Runs the real SDK gates (uv: ruff, mypy
-  strict, sync-standards --check); the pytest suite lives in the parent gateway checkout,
-  and the review says how to run it. Produces a review as text; never posts, approves,
+  strict, sync-standards --check); the pytest suite lives in this repository's
+  `tests/`, with the cross-repo agreement modules in the parent gateway checkout. Produces a review as text; never posts, approves,
   or merges.
 tools: ["Read", "Grep", "Glob", "Bash", "mcp__gortex"]
 disallowedTools: ["mcp__gortex__change", "mcp__gortex__edit", "mcp__gortex__refactor", "mcp__gortex__overlay", "mcp__gortex__remember", "mcp__gortex__session", "mcp__gortex__workspace_admin", "mcp__gortex__pr", "mcp__gortex__review", "mcp__gortex__publish_review", "mcp__gortex__response"]
@@ -46,7 +46,7 @@ objective path/keyword rules, run every evidence gate in scope (G0 secrets → G
 G2 tests → G3 RED-sanity → G4 contracts → G5 cross-surface → G6 adversarial refute), and
 attach real pasted output for each. Your verdict is bounded by its confidence floor —
 **APPROVE only when every in-scope gate passed with attached evidence; when you can't satisfy
-a gate with evidence (including a main-side suite you could not run on a Tier-3 change),
+a gate with evidence (including a main-side module a Tier-3 change needed and you could not run),
 DEFER, never approve-on-faith.** Tier 3 here means the standards lock/vendored tree, refusal
 prefixes, scaffold output shape, conformance/validation weakenings, parent-checkout reach,
 or dependencies — those need the G6 second independent pass; if you are the sole reviewer,
@@ -72,14 +72,15 @@ carry the rubric out.
    - `uv run benchweave-sdk sync-standards --check` — the standards self-consistency gate
    - `uv run benchweave-sdk --version` — the entry-point smoke
 
-   **The pytest suite lives main-side.** This repository ships no tests of its own; the
-   SDK's tests are `tests/sdk/` in the parent gateway checkout (`uv run pytest tests/sdk`
-   from the main repository root, in the main repository's environment). When you are in
-   the standalone clone without the parent checkout, say so explicitly and list which
-   main-side test modules the change should be exercised through (`test_standards_sync`,
-   `test_cli_frameworks`, `test_presentation_cli`, `test_presentation_packaging`,
-   `test_preview_server`, `test_preview_cli`, `test_preview_fixtures`, `test_sdk`) — "couldn't run tests" stated plainly beats a green-looking review that
-   never ran them.
+   **The pytest suite lives here.** `uv run pytest -q` from this repository's root runs the
+   SDK's behavioral suite (`tests/`), and this repository's CI runs it on ubuntu, macOS and
+   Windows. Properties that compare the SDK with the gateway stay main-side (`tests/sdk/`
+   in the parent gateway checkout: `test_presentation_packaging` and the agreement
+   modules; `uv run pytest tests/sdk` from the main repository root, in the main
+   repository's environment). When a change touches such a property and you are in the
+   standalone clone without the parent checkout, say so explicitly and list which
+   main-side modules it should be exercised through — "couldn't run tests" stated plainly
+   beats a green-looking review that never ran them.
 
 3. **RED-sanity-check every bug-fix claim.** Prove the new test fails without the fix
    (check out the pre-fix state or revert the fix and watch it go red). A test that passes
@@ -188,7 +189,7 @@ then, most-important-first:
 - **Cross-surface obligations missed**: "you changed X but didn't update Y" (name the Y).
 - **Verification you ran**: ruff/mypy/sync-standards output and the RED-sanity result for
   any bug fix — paste the meaningful lines, don't just say "passed." State plainly when
-  the main-side pytest suite could not be run and which modules it should cover.
+  a main-side module the change needs could not be run, and which one.
 - **Cleanups / smaller notes** (non-blocking), clearly separated from the blocking
   findings.
 - **The closing memory step (not optional):** before finishing, append the review record

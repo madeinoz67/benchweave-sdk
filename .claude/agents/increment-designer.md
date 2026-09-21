@@ -29,9 +29,9 @@ Always, in this order:
    encodes, offline, the standards the gateway enforces at load. A design that reasons
    from memory of what a standard says instead of its vendored text has already failed.
 4. `docs/internal/drift-and-obligations.md` — the cross-surface obligations and the CI
-   map, including which behavioral tests live main-side.
-5. The actual code paths you intend to change, and the tests that pin them (main-side
-   `tests/sdk/`). Cite `file:line`. A design built on what you assume the code does is
+   map, including which tests live here and which stay main-side.
+5. The actual code paths you intend to change, and the tests that pin them (`tests/` here;
+   main-side `tests/sdk/` for a cross-repo property). Cite `file:line`. A design built on what you assume the code does is
    worthless here.
 
 ## What a design must contain

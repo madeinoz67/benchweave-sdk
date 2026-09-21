@@ -27,8 +27,12 @@ uv run pytest -q
 uv run ruff check .
 uv run mypy src
 uv run benchweave-sdk sync-standards --check
+uv lock --check
 uv build
 ```
+
+CI syncs with `--locked`, and `uv.lock` records this package's own version: a version bump
+or a dependency change needs `uv lock` in the same commit, or the sync step fails.
 
 Bug fixes ship test-first: a failing test that reproduces the bug lands in
 the same change as the fix.

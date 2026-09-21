@@ -20,7 +20,11 @@ Prose defers to machine sources: when README/guides/site content contradicts sta
   the canonical standards corpus and its export tooling (`standards/` — machine
   artifacts and prose companions together, one tree), the
   compatibility matrix, the architecture contracts, the acceptance/evidence record, the
-  SDK test suite (`tests/sdk/`), and `docs/plugin-sdk.md` as a stub pointing here. A
+  cross-repo packaging-consistency test (`tests/sdk/test_presentation_packaging.py`,
+  which compares the gateway's validator copy against this repository's), and
+  `docs/plugin-sdk.md` as a stub pointing here. The SDK's own behavioural test suite
+  lives in this repository (`tests/`), so its CI and PyPI releases are gated by the
+  code they ship. A
   standards change never lands here first — it lands in the corpus, is exported as a
   bundle, and arrives via `sync-standards`.
 
