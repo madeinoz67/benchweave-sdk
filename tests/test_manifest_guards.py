@@ -5,7 +5,9 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import os
 import shutil
+import subprocess
 import sys
 import types
 from pathlib import Path
@@ -430,4 +432,63 @@ def test_an_empty_bundle_cannot_exchange_the_vendored_tree_for_an_empty_one(
         sync(bundle, root)
     after = sorted(p.relative_to(tree).as_posix() for p in tree.rglob("*") if p.is_file())
     assert after == before
+
+
+def test_duplicate_ids_that_differ_only_by_normalization_are_refused(
+    tmp_path: Path,
+) -> None:
+    """macOS and Windows resolve NFC and NFD spellings to one directory; a
+    duplicate that differs only by normalization form collapses there while
+    the lock vouches for names that do not exist separately on Linux."""
+    import unicodedata
+
+    nfc = "café"
+    nfd = "café"
+    assert nfc != nfd
+    assert unicodedata.normalize("NFC", nfc) == unicodedata.normalize("NFC", nfd)
+    bundle = _bundle(tmp_path, [_standard(nfc, []), _standard(nfd, [])])
+    with pytest.raises(ValueError, match="^bundle_manifest_invalid: duplicate standard id"):
+        _load_bundle(bundle)
+
+
+# --- One sync at a time: the swap's guarantees are single-flight. ----------------------
+
+
+def _valid_bundle(tmp_path: Path) -> Path:
+    """A one-standard bundle whose bytes match its digest claim."""
+    digest = hashlib.sha256(b"{}").hexdigest()
+    bundle = _bundle(tmp_path, [_standard("otdp", [{"path": "otdp/x.json", "sha256": digest}])])
+    (bundle / "files" / "otdp").mkdir(parents=True)
+    (bundle / "files" / "otdp" / "x.json").write_bytes(b"{}")
+    return bundle
+
+
+def test_a_live_sync_lock_is_refused_with_its_pid(tmp_path: Path) -> None:
+    from benchweave_sdk.standards_sync import STAGING_DIR, sync
+
+    root = _checkout(tmp_path)
+    lock = root / STAGING_DIR / "lock"
+    lock.parent.mkdir(parents=True)
+    lock.write_text(f"{os.getpid()} 0\n", encoding="utf-8")
+    with pytest.raises(
+        ValueError, match=f"sync_staging_blocked: another sync .pid {os.getpid()}."
+    ):
+        sync(_valid_bundle(tmp_path), root)
+    assert lock.exists()  # a refused sync never deletes another owner's lock
+
+
+def test_a_stale_lock_from_a_dead_owner_is_reclaimed(tmp_path: Path) -> None:
+    from benchweave_sdk.standards_sync import STAGING_DIR, sync
+
+    root = _checkout(tmp_path)
+    probe = subprocess.run(
+        [sys.executable, "-c", "import os; print(os.getpid())"], capture_output=True, text=True
+    )
+    dead_pid = int(probe.stdout.strip())
+    lock = root / STAGING_DIR / "lock"
+    lock.parent.mkdir(parents=True)
+    lock.write_text(f"{dead_pid} 0\n", encoding="utf-8")
+    report = sync(_valid_bundle(tmp_path), root)
+    assert report.changed == ("otdp",)  # the sync ran; the lock was not in its way
+    assert not lock.exists()  # the owner cleans up its own lock
 
