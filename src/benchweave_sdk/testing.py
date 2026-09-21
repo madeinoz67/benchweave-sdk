@@ -88,11 +88,15 @@ class MockHost:
 
     The script is an ordered list of ``(expected_transaction, response)``
     pairs. Each ``transfer`` must match the next expected transaction
-    exactly (compared as whole dicts, bytes included) and receives its
-    scripted response — or raises it, when the response is an exception
-    instance. Consumed exchanges are recorded on ``transfers`` and evidence
-    entries on ``evidence``, both deep-copied so later mutation cannot
-    falsify assertions.
+    exactly (compared as whole dicts, bytes included) and receives a deep
+    copy of its scripted response — or raises the scripted exception, when
+    the response is an exception instance. The whole script is deep-copied
+    at construction, so what is raised is a copy of the instance you
+    scripted, not that object, and an exception whose constructor cannot be
+    called with its own ``args`` cannot be scripted at all (the copy fails
+    inside ``MockHost(...)`` with a ``TypeError``). Consumed exchanges are
+    recorded on ``transfers`` and evidence entries on ``evidence``, both
+    deep-copied so later mutation cannot falsify assertions.
 
     Parameters
     ----------
@@ -197,8 +201,8 @@ class MockHost:
         ConnectionError
             If the transport has been closed.
         Exception
-            Any scripted exception response is raised as-is, whatever its
-            type.
+            A scripted exception response is raised, whatever its type: a
+            deep copy of the scripted instance, not the instance itself.
         ConformanceError
             If the transfer is unscripted, mismatched, or transmitted
             without a dispatch marker.
@@ -222,7 +226,11 @@ class MockHost:
         return deepcopy(response)
 
     async def close_transport(self, context: OperationContext) -> None:
-        """Mark the transport closed; later transfers raise ``ConnectionError``.
+        """Mark the transport closed.
+
+        A later transfer on a live context raises ``ConnectionError``; on an
+        expired or cancelled one ``transfer`` still checks the deadline first
+        and raises ``TimeoutError``.
 
         Deliberately performs no deadline or cancellation check: closing the
         transport is cleanup, and cleanup after an expired or cancelled

@@ -216,6 +216,32 @@ def validate_preset(
     firmware: str | None,
     action_id: str | None = None,
 ) -> Any:
+    """Validate one complete configuration preset, offline, from bytes already in hand.
+
+    The descriptor is validated first; the preset is then checked against the
+    plugin's settings schema by the vendored plugin-ui validator, the same
+    bytes the gateway runs. A clean report is not approval to apply settings.
+
+    Parameters
+    ----------
+    raw
+        The preset document.
+    descriptor_raw
+        The plugin's device descriptor.
+    settings_schema_raw
+        The JSON Schema the preset's settings must satisfy.
+    firmware
+        Firmware version the preset is judged against, or None.
+    action_id
+        The configuration action the preset targets, when the descriptor
+        offers more than one.
+
+    Returns
+    -------
+    object
+        The vendored validator's report: ``valid``, ``findings`` (each with
+        ``code``, ``path`` and ``message``) and ``unavailable_pages``.
+    """
     validate_descriptor(_contract().parse_document(descriptor_raw))
     return _contract().validate_preset(
         raw,
@@ -251,6 +277,34 @@ def validate_presentation(
     supported_panels: frozenset[str] = frozenset(),
     firmware: str | None = None,
 ) -> Any:
+    """Validate a presentation candidate, offline, from bytes already in hand.
+
+    No file is read here: the caller supplies the envelope, the descriptor
+    and every resource the envelope's manifest lists (``check_ui`` is the
+    variant that loads them from disk). A clean report is not admission.
+
+    Parameters
+    ----------
+    envelope_raw
+        The presentation envelope.
+    descriptor_raw
+        The plugin's device descriptor.
+    resources
+        Resource bytes keyed by their path under the envelope's resource root.
+    binding_catalogue
+        The parsed binding catalogue the manifest's bindings resolve against.
+    supported_features, supported_panels
+        What the renderer under test supports; pages needing more are reported
+        as unavailable rather than invalid.
+    firmware
+        Firmware version the candidate is judged against, or None.
+
+    Returns
+    -------
+    object
+        The vendored validator's report: ``valid``, ``findings`` (each with
+        ``code``, ``path`` and ``message``) and ``unavailable_pages``.
+    """
     validate_descriptor(_contract().parse_document(descriptor_raw))
     return _contract().validate_presentation(
         envelope_raw,
@@ -325,6 +379,37 @@ def check_ui(
     features: frozenset[str],
     panels: frozenset[str],
 ) -> Any:
+    """Load a presentation candidate from disk and validate it; what ``check-ui`` runs.
+
+    Every file is read through ``read_file``, so a symlinked component is
+    refused, and nothing outside ``root`` is read: a resource root or
+    manifest path that leaves it is refused before any read.
+
+    Parameters
+    ----------
+    envelope_path, descriptor_path, catalogue_path
+        The presentation envelope, the device descriptor and the binding catalogue.
+    root
+        The package resource root the envelope's paths are relative to.
+    firmware
+        Firmware version the candidate is judged against, or None.
+    features, panels
+        What the renderer under test supports.
+
+    Returns
+    -------
+    object
+        The vendored validator's report: ``valid``, ``findings`` (each with
+        ``code``, ``path`` and ``message``) and ``unavailable_pages``.
+
+    Raises
+    ------
+    ValueError
+        For an unsafe resource path, a symlinked component
+        (``path_symlink_component:``) or an oversize input.
+    OSError
+        For a file that is absent or unreadable.
+    """
     report, _ = _load_ui_candidate(
         envelope_path,
         descriptor_path,
@@ -347,6 +432,33 @@ def load_validated_preview_inputs(
     features: frozenset[str],
     panels: frozenset[str],
 ) -> ValidatedPreviewInputs:
+    """Load a presentation candidate as ``check_ui`` does, and insist that it is valid.
+
+    The preview server is built from the parsed inputs this returns, so a
+    candidate the checker rejects can never be previewed (SRF-2).
+
+    Parameters
+    ----------
+    envelope_path, descriptor_path, catalogue_path
+        The presentation envelope, the device descriptor and the binding catalogue.
+    root
+        The package resource root the envelope's paths are relative to.
+    firmware
+        Firmware version the candidate is judged against, or None.
+    features, panels
+        What the renderer under test supports.
+
+    Returns
+    -------
+    ValidatedPreviewInputs
+        The parsed envelope, manifest and binding catalogue, with the resource root.
+
+    Raises
+    ------
+    ValueError
+        ``preview_invalid_presentation:`` with the first finding when the report
+        is not valid; otherwise as ``check_ui``.
+    """
     report, candidate = _load_ui_candidate(
         envelope_path,
         descriptor_path,

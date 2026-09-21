@@ -35,7 +35,7 @@ The generator creates a standalone project — source package, an explicitly syn
 # Documentation
 
 - [Plugin developer guide](user-guide/plugin-sdk.qmd) — install, generate, implement, test, review and release a device plugin.
-- [API reference](reference/index.qmd) — the `Adapter`, `HostServices` and `OperationContext` structural-typing protocols.
+- [API reference](reference/index.qmd) — the structural-typing protocols (`Adapter`, `HostServices`, `OperationContext`, the provisional `CaptureServices`) and the testing, conformance, validation, presentation and packaging surfaces.
 - [CLI reference](reference/cli/index.qmd) — `new`, `check`, `check-ui`, `check-preset`, `preview-ui`, `inventory` and `sync-standards`.
 - [Changelog](changelog.qmd) — release history.
 

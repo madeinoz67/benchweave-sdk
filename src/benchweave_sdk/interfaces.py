@@ -111,7 +111,7 @@ class CaptureServices(HostServices, Protocol):
     """Host services extended with capture artifact storage.
 
     Provisional. Nothing in this SDK or in the gateway implements this
-    protocol yet — :class:`~benchweave_sdk.testing.MockHost` provides
+    protocol yet — ``testing.MockHost`` provides
     :class:`HostServices` only, and the gateway's bridge does not implement
     capture — so the behaviour described here is the intended shape of the
     contract, not a pinned one; no conformance check exercises it. A host
