@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shutil
 import tomllib
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from importlib.resources import files
+from pathlib import Path
 from typing import Any
 
 LOCK_NAME = "standards-lock.json"
@@ -96,12 +98,24 @@ def _load_bundle(bundle: Path) -> dict[str, Any]:
         raise ValueError(f"bundle_manifest_missing: {manifest}")
     try:
         document: dict[str, Any] = json.loads(manifest.read_bytes())
+        if not isinstance(document, dict):
+            raise ValueError("bundle_manifest_invalid: the manifest is not a JSON object")
         if document.get("bundle_version") != 1:
             raise ValueError("bundle_version_unsupported")
         for standard in document["standards"]:
-            _ = standard["id"], standard["version"], standard["status"]
+            identifier = standard["id"]
+            _ = standard["version"], standard["status"]
+            if (problem := _identifier_problem(identifier)) is not None:
+                # The per-standard stamp is written at <tree>/<id>/, and a
+                # standard with no files never reaches _guard_path.
+                raise ValueError(f"bundle_manifest_invalid: standard id {identifier!r} {problem}")
             for file in standard["files"]:
-                _guard_path(standard["id"], file["path"])
+                _guard_path(identifier, file["path"])
+                if not _is_digest(file["sha256"]):
+                    raise ValueError(
+                        f"bundle_manifest_invalid: sha256 for {file['path']} is not "
+                        "64 lowercase hex characters"
+                    )
     except json.JSONDecodeError as exc:
         raise ValueError(f"bundle_manifest_invalid: {exc}") from exc
     except (KeyError, TypeError) as exc:
@@ -109,21 +123,94 @@ def _load_bundle(bundle: Path) -> dict[str, Any]:
     return document
 
 
+_DIGEST = re.compile(r"[0-9a-f]{64}")
+
+
+def _is_digest(value: object) -> bool:
+    return isinstance(value, str) and _DIGEST.fullmatch(value) is not None
+
+
+# Names Windows resolves to a device whatever directory they appear in, with or
+# without an extension (NUL, con.txt, COM1.json).
+_WINDOWS_DEVICE = re.compile(r"(?i)(con|prn|aux|nul|com[0-9]|lpt[0-9])(\..*)?")
+
+
+def _segment_problem(segment: str) -> str | None:
+    """Why one path segment would not name what it says on some filesystem, or None."""
+    if not segment or segment in (".", ".."):
+        return "has an empty or dot segment"
+    if segment != segment.rstrip(". "):
+        # Windows strips trailing dots and spaces, so the name aliases another.
+        return "has a segment ending in a dot or a space"
+    if _WINDOWS_DEVICE.fullmatch(segment):
+        return "names a Windows device"
+    return None
+
+
+def _identifier_problem(identifier: object) -> str | None:
+    """Why a standard id cannot name a directory directly under the tree, or None."""
+    if not isinstance(identifier, str) or not identifier:
+        return "is not a non-empty string"
+    if any(char in identifier for char in "/\\:"):
+        return "is not a single path segment"
+    return _segment_problem(identifier)
+
+
+def _path_problem(identifier: object, path: object) -> str | None:
+    """Why a ``<id>/...`` row cannot be joined onto a tree, or None.
+
+    Judged as a string, never as a path, so the rule means the same thing on
+    every platform: a backslash or a drive colon is an ordinary character to
+    ``PurePosixPath`` but a separator to the ``Path`` that does the write on
+    Windows, and a dot or empty segment is a traversal or an alias to some
+    filesystem. hatch_build.py carries the same rule inline (STD-3).
+    """
+    if not isinstance(path, str):
+        return "is not a string"
+    segments = path.split("/")
+    if len(segments) < 2:
+        return "has no file component"
+    if "\\" in path or ":" in path:
+        return "contains a backslash or a drive separator"
+    for segment in segments:
+        if (problem := _segment_problem(segment)) is not None:
+            return problem
+    if segments[0] != identifier:
+        return "is not under its standard's directory"
+    if len(segments) == 2 and segments[1].casefold() == STAMP_NAME.casefold():
+        return "claims the stamp path the writer reserves"
+    return None
+
+
 def _guard_path(identifier: str, path: str) -> None:
-    """Bundle paths are ``<id>/``-prefixed and must stay inside the tree."""
-    pure = PurePosixPath(path)
-    parts = pure.parts
-    if len(parts) < 2 or pure.is_absolute() or ".." in parts or parts[0] != identifier:
+    """Bundle paths are ``<id>/``-prefixed and must stay inside the tree.
+
+    This is the write boundary for a bundle: nothing is hashed or written
+    for a row it refuses.
+    """
+    if _path_problem(identifier, path) is not None:
         raise ValueError(f"bundle_path_invalid: {path}")
 
 
 def _read_lock(sdk_root: Path) -> dict[str, Any]:
-    path = sdk_root / LOCK_NAME
+    return _read_lock_file(sdk_root / LOCK_NAME)
+
+
+def _read_lock_file(path: Path) -> dict[str, Any]:
     if not path.is_file():
         return {}
     try:
         lock: dict[str, Any] = json.loads(path.read_bytes())
-        _ = lock["lock_version"], lock["standards"]
+        if not isinstance(lock, dict):
+            raise TypeError("the lock is not a JSON object")
+        _ = lock["lock_version"]
+        # Every reader below indexes these fields; checking the shape once
+        # here keeps a malformed row a lock_invalid refusal in every lane,
+        # rather than a bare KeyError from whichever lane meets it first.
+        for standard in lock["standards"]:
+            _ = standard["id"], standard["version"]
+            for file in standard["files"]:
+                _ = file["path"], file["sha256"]
     except json.JSONDecodeError as exc:
         raise ValueError(f"lock_invalid: {exc}") from exc
     except (KeyError, TypeError) as exc:
@@ -189,11 +276,16 @@ def _sweep_vendored_tree(tree: Path, recorded: set[str], stamps: set[str]) -> No
     its bytecode cache appears beside the source; it is gitignored and
     never packaged. Anything else is drift: it would ship in a wheel
     built outside the gated paths."""
-    present = {
-        path.relative_to(tree).as_posix()
-        for path in tree.rglob("*")
-        if path.is_file() and "__pycache__" not in path.relative_to(tree).parts
-    }
+    present: set[str] = set()
+    for entry in tree.rglob("*"):
+        relative = entry.relative_to(tree)
+        if entry.is_symlink() or entry.is_junction():
+            # rglob does not descend a linked directory, so whatever sits
+            # behind it would be invisible here while packaging follows the
+            # link and ships it. Nothing in a vendored tree is a link.
+            raise ValueError(f"unexpected_vendored_file: {relative.as_posix()} is a link")
+        if entry.is_file() and "__pycache__" not in relative.parts:
+            present.add(relative.as_posix())
     for path in sorted(present - recorded - stamps):
         raise ValueError(f"unexpected_vendored_file: {path}")
 
@@ -206,14 +298,27 @@ def _verify_vendored_tree(sdk_root: Path, lock: dict[str, Any]) -> None:
     extras sweep over the whole tree. A stray file or a missing stamp is
     drift here too, not only in the bundle-free lane.
     """
-    recorded = {
-        file["path"]: file["sha256"]
-        for standard in lock.get("standards", [])
-        for file in standard["files"]
-    }
+    _verify_tree(sdk_root / VENDORED, lock)
+
+
+def _verify_tree(tree: Path, lock: dict[str, Any]) -> None:
+    recorded: dict[str, str] = {}
+    try:
+        for standard in lock.get("standards", []):
+            identifier = standard["id"]
+            if (problem := _identifier_problem(identifier)) is not None:
+                raise ValueError(f"lock_invalid: standard id {identifier!r} {problem}")
+            for file in standard["files"]:
+                # A lock row is joined onto the tree and hashed; an unguarded
+                # row would make --check vouch for bytes outside it. The
+                # build hook refuses the same rows (STD-3).
+                if (problem := _path_problem(identifier, file["path"])) is not None:
+                    raise ValueError(f"lock_invalid: path {file['path']!r} {problem}")
+                recorded[file["path"]] = file["sha256"]
+    except (KeyError, TypeError) as exc:
+        raise ValueError(f"lock_invalid: {exc}") from exc
     if not recorded:
         raise ValueError("not_synced: no standards in the lock; run sync-standards first")
-    tree = sdk_root / VENDORED
     for path, digest in sorted(recorded.items()):
         target = tree / path
         if not target.is_file():
@@ -232,8 +337,31 @@ def _verify_self_consistency(sdk_root: Path) -> None:
     unrecorded file in the tree or a missing stamp is drift too: either would
     ride into wheels unnoticed.
     """
-    lock = _read_lock(sdk_root)
-    _verify_vendored_tree(sdk_root, lock)
+    _verify_state(sdk_root / LOCK_NAME, sdk_root / VENDORED)
+
+
+def verify_installed() -> None:
+    """Verify an installed SDK's vendored tree against its packaged lock.
+
+    Installed distributions carry the lock inside the package (wheels since
+    the lock was force-included), so ``sync-standards --check`` can prove
+    integrity without a repository checkout — including the stamp and
+    extras checks the repository lanes run. Importing a bundle still needs
+    the checkout: it rewrites the source tree.
+    """
+    package = Path(str(files("benchweave_sdk")))
+    lock_path = package / LOCK_NAME
+    if not lock_path.is_file():
+        raise ValueError(
+            "lock_missing: this installed SDK does not package its standards lock; "
+            "reinstall a newer benchweave-sdk or run --check from a repository checkout"
+        )
+    _verify_state(lock_path, package / "standards")
+
+
+def _verify_state(lock_path: Path, tree: Path) -> None:
+    lock = _read_lock_file(lock_path)
+    _verify_tree(tree, lock)
 
 
 def _write_vendored(bundle: Path, sdk_root: Path, document: dict[str, Any]) -> None:

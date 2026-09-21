@@ -32,6 +32,8 @@ pip install git+https://github.com/madeinoz67/benchweave-sdk.git
 
 To hack on the SDK itself, clone the repository and `uv sync --extra test`.
 
+An installed SDK can check its vendored standards offline with `benchweave-sdk sync-standards --check`; importing a standards bundle rewrites the source tree and needs a repository checkout.
+
 ## Five steps
 
 1. Install the SDK from PyPI (`uv pip install benchweave-sdk`, or see [Installation](#installation)).

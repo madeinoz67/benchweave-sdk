@@ -47,7 +47,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-15-intel]
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-15-intel, windows-latest]
     env:
       TAG: ${{ github.event.release.tag_name || inputs.tag }}
     steps:
@@ -61,13 +61,25 @@ jobs:
       - name: Install smoke (wheel outside any checkout)
         # $RUNNER_TEMP is a real (non-symlink) path on every runner OS —
         # the SDK's path validation rejects symlinked roots like macOS /tmp.
+        # bash everywhere: the Windows runner otherwise defaults to pwsh,
+        # and its venv puts entry points under Scripts/, not bin/.
+        shell: bash
         run: |
           set -euo pipefail
           uv venv "$RUNNER_TEMP/sdk-smoke"
-          uv pip install --python "$RUNNER_TEMP/sdk-smoke/bin/python" dist/*.whl
-          "$RUNNER_TEMP/sdk-smoke/bin/benchweave-sdk" --version | grep -F "version ${TAG#v}"
-          "$RUNNER_TEMP/sdk-smoke/bin/benchweave-sdk" new "$RUNNER_TEMP/example" --with-ui
-          "$RUNNER_TEMP/sdk-smoke/bin/benchweave-sdk" check "$RUNNER_TEMP/example/src/example_plugin/descriptor.json"
+          BIN="$RUNNER_TEMP/sdk-smoke/bin"
+          [ -d "$BIN" ] || BIN="$RUNNER_TEMP/sdk-smoke/Scripts"
+          # --python takes the venv directory, not "$BIN/python": on Windows the
+          # interpreter is python.exe and uv does not append the suffix, whereas
+          # bash does resolve the suffix-less entry points used below.
+          uv pip install --python "$RUNNER_TEMP/sdk-smoke" dist/*.whl
+          "$BIN/benchweave-sdk" --version | grep -F "version ${TAG#v}"
+          "$BIN/benchweave-sdk" new "$RUNNER_TEMP/example" --with-ui
+          "$BIN/benchweave-sdk" check "$RUNNER_TEMP/example/src/example_plugin/descriptor.json"
+          # Installed-mode standards verification: proves the packaged lock
+          # (the wheel force-include) and the resource path in
+          # verify_installed before anything reaches PyPI.
+          "$BIN/benchweave-sdk" sync-standards --check
 
   publish:
     name: Publish to PyPI (Trusted Publishing)

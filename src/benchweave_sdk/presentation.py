@@ -32,13 +32,13 @@ def _contract() -> Any:
     name = "benchweave_sdk._presentation_contract"
     vendored = Path(__file__).with_name("standards") / "plugin-ui" / "contracts.py"
     if not vendored.is_file():
-        # Editable checkout before the first standards sync only. Distributions
-        # contain the vendored tree, verified against its lock by the build hook.
-        vendored = Path(__file__).resolve().parents[4] / "src/benchweave/presentation/contracts.py"
-        if not vendored.is_file():
-            raise RuntimeError(
-                "SDK presentation validator missing; run sync-standards or reinstall the SDK"
-            )
+        # The vendored tree is committed (and, in distributions, verified
+        # against its lock by the build hook), so a missing validator is an
+        # incomplete tree — never a cue to execute code from outside the
+        # package.
+        raise RuntimeError(
+            "SDK presentation validator missing; run sync-standards or reinstall the SDK"
+        )
     spec = importlib.util.spec_from_file_location(name, vendored)
     if spec is None or spec.loader is None:
         raise RuntimeError("Cannot load the SDK presentation validator")
@@ -87,7 +87,19 @@ def _open_no_follow(part: str, flags: int, directory: int) -> int:
 
 
 def read_file(path: Path, limit: int = 262144) -> bytes:
-    """Open bounded regular files without following symlinks in any component."""
+    """Open bounded regular files without following symlinks in any component.
+
+    The same three outcomes on every platform: a symlinked component is
+    refused as ``path_symlink_component:``; a special file or oversize input
+    raises ``ValueError``; everything else keeps its ``OSError`` face — a
+    directory target is ``IsADirectoryError``, a regular file sitting where
+    a directory should be is ``NotADirectoryError``, and absence or
+    permissions report whatever the platform does.
+    """
+    if limit < 0:
+        raise ValueError("Input byte limit exceeded")
+    if sys.platform == "win32":
+        return _read_file_no_dirfd(path, limit)
     parts = path.absolute().parts
     directory = os.open(parts[0], os.O_RDONLY | os.O_DIRECTORY)
     try:
@@ -108,6 +120,89 @@ def read_file(path: Path, limit: int = 262144) -> bytes:
             return raw
     finally:
         os.close(directory)
+
+
+# IsReparseTagNameSurrogate: set on tags that stand in for another name
+# (symlinks, junctions, mount points, WSL symlinks), clear on tags that only
+# decorate an ordinary file (cloud-file placeholders, app execution aliases).
+_REPARSE_NAME_SURROGATE = 0x20000000
+
+
+def _redirects_name(details: os.stat_result) -> bool:
+    """Whether an ``lstat`` result describes a component that redirects the path.
+
+    A symlink does, and so does a Windows reparse point whose tag is a name
+    surrogate. A reparse point that is not a name surrogate is an ordinary
+    file that happens to carry a tag — ``os.lstat`` itself reports it as a
+    regular file — so refusing it would refuse, for example, every document
+    in a OneDrive-backed checkout.
+    """
+    if stat.S_ISLNK(details.st_mode):
+        return True
+    reparse_point = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    if not getattr(details, "st_file_attributes", 0) & reparse_point:
+        return False
+    return bool(getattr(details, "st_reparse_tag", 0) & _REPARSE_NAME_SURROGATE)
+
+
+def _read_file_no_dirfd(path: Path, limit: int) -> bytes:
+    """``read_file`` for platforms without ``O_NOFOLLOW``/``dir_fd`` (Windows).
+
+    Each component is inspected with ``lstat`` and refused with the same
+    ``path_symlink_component:`` prefix the POSIX walk uses when it redirects
+    the name (``_redirects_name``); a regular file mid-path is named as the
+    ``NotADirectoryError`` the POSIX walk reports, and any ``lstat`` failure
+    re-raises unchanged. A same-file check after the open ties
+    the descriptor back to the inspected final component. The residual race
+    on intermediate components is accepted for an offline authoring tool; the
+    POSIX branch keeps the race-free ``dir_fd`` walk.
+    """
+    # POSIX getcwd() is canonical by definition, so a relative input there is
+    # never refused for how the working directory was reached, whereas
+    # os.getcwd() on Windows keeps a junction it was entered through.
+    # Canonicalise that prefix only: a path the caller spelled out in full
+    # keeps the strict refusal, exactly as it does on POSIX.
+    if path.is_absolute():
+        resolved = path
+    else:
+        resolved = (Path(os.path.realpath(os.getcwd())) / path).absolute()
+    current = Path(resolved.parts[0])
+    details = os.lstat(current)
+    for part in resolved.parts[1:]:
+        if not stat.S_ISDIR(details.st_mode):
+            # A regular file sitting where a directory should be. The POSIX
+            # walk reports ENOTDIR; Windows' lstat of the child would only say
+            # the path was not found, so name it here.
+            raise NotADirectoryError(errno.ENOTDIR, os.strerror(errno.ENOTDIR), str(current))
+        current = current / part
+        details = os.lstat(current)
+        if _redirects_name(details):
+            raise ValueError(
+                f"path_symlink_component: {part}: canonical paths only, no symlink, "
+                "junction or mount-point components"
+            )
+    if stat.S_ISDIR(details.st_mode):
+        # The POSIX walk reports a directory target as IsADirectoryError; opening
+        # one on Windows fails as a misleading PermissionError, so say it here.
+        raise IsADirectoryError(errno.EISDIR, os.strerror(errno.EISDIR), str(resolved))
+    if not stat.S_ISREG(details.st_mode):
+        raise ValueError("Input must be a bounded regular file")
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOINHERIT", 0)
+    descriptor = os.open(resolved, flags)
+    with os.fdopen(descriptor, "rb") as stream:
+        metadata = os.fstat(stream.fileno())
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > limit:
+            raise ValueError("Input must be a bounded regular file")
+        # samestat against the WALK's own lstat of the final component, not a
+        # fresh post-open lstat: the descriptor is thereby tied to the very
+        # file that was verified not to be a symlink or reparse point, which
+        # closes the swap-in/swap-out window a re-run lstat would miss.
+        if not os.path.samestat(metadata, details):
+            raise ValueError("Input path changed while being read")
+        raw = stream.read(limit + 1)
+        if len(raw) > limit:
+            raise ValueError("Input byte limit exceeded")
+        return raw
 
 
 def validate_preset(

@@ -20,6 +20,7 @@ from .preview_models import (
     Severity,
     SimulatedReceipt,
 )
+from .validation import _project_name
 
 BASELINE_IDS = frozenset(
     {
@@ -45,12 +46,14 @@ def _schema_path() -> Path:
     )
     if packaged.is_file():
         return packaged
-    checkout = (
-        Path(__file__).resolve().parents[4]
-        / "standards/plugin-ui-preview/0.1.1/fixture.schema.json"
-    )
-    if checkout.is_file():
-        return checkout
+    # Editable development in the main-project submodule mount only; anywhere
+    # else a missing vendored schema is an incomplete installation, not a cue
+    # to read files from outside the package.
+    root = Path(__file__).resolve().parents[4]
+    if _project_name(root) == "benchweave":
+        checkout = root / "standards/plugin-ui-preview/0.1.1/fixture.schema.json"
+        if checkout.is_file():
+            return checkout
     raise RuntimeError(
         "SDK preview fixture schema missing; run sync-standards or reinstall the SDK"
     )

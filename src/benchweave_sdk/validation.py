@@ -4,14 +4,32 @@ from __future__ import annotations
 
 import json
 import re
+import tomllib
 from functools import cache
 from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
 from jsonschema import Draft202012Validator, FormatChecker
+from jsonschema.exceptions import SchemaError, ValidationError
 from referencing import Registry, Resource
+from referencing.exceptions import Unresolvable
 from referencing.jsonschema import DRAFT202012
+
+
+def _project_name(root: Path) -> str | None:
+    """The ``project.name`` of the pyproject at ``root``, or None when unreadable."""
+    pyproject = root / "pyproject.toml"
+    if not pyproject.is_file():
+        return None
+    try:
+        with pyproject.open("rb") as handle:
+            project = tomllib.load(handle).get("project")
+    except (tomllib.TOMLDecodeError, UnicodeDecodeError, OSError):
+        # tomllib reports bytes that are not UTF-8 as UnicodeDecodeError.
+        return None
+    name = project.get("name") if isinstance(project, dict) else None
+    return name if isinstance(name, str) else None
 
 
 @cache
@@ -36,10 +54,18 @@ def contract_documents() -> dict[str, Any]:
             for identifier, version in sets
         ]
     else:
-        # Editable development before the first standards sync only.
-        checkout = Path(__file__).resolve().parents[4] / "standards"
+        # Editable development in the main-project submodule mount only
+        # (packages/sdk/src/benchweave_sdk/ -> the gateway checkout's corpus).
+        # Anywhere else — a standalone clone or an installed wheel — a missing
+        # vendored tree is an incomplete installation, not a cue to read files
+        # from outside the package.
+        checkout = Path(__file__).resolve().parents[4]
+        if _project_name(checkout) != "benchweave":
+            raise RuntimeError(
+                "SDK standards tree missing; run sync-standards or reinstall the SDK"
+            )
         directories = [
-            (checkout / identifier / version, f"{identifier}/{version}")
+            (checkout / "standards" / identifier / version, f"{identifier}/{version}")
             for identifier, version in sets
         ]
     documents: dict[str, Any] = {}
@@ -94,16 +120,34 @@ def validate(document: Any, schema_file: str, definition: str | None = None) -> 
         If the document is not strictly JSON (finite numbers only) or
         fails the contract.
     """
+    if schema_file not in contract_documents():
+        raise ValueError(f"unknown_contract_schema: {schema_file}")
     try:
         json.dumps(document, allow_nan=False)
         schema = contract_documents()[schema_file]
         if definition:
-            schema = {"$ref": f"{schema['$id']}#/$defs/{definition}"}
+            schema_id = schema.get("$id")
+            if schema_id is None:
+                raise ValueError(
+                    f"schema {schema_file} carries no '$id'; definitions cannot be addressed"
+                )
+            schema = {"$ref": f"{schema_id}#/$defs/{definition}"}
         validator = Draft202012Validator(
             schema, registry=_registry(), format_checker=FormatChecker()
         )
         validator.validate(document)
-    except Exception as exc:
+    except (
+        TypeError,
+        ValueError,
+        RecursionError,
+        SchemaError,
+        ValidationError,
+        Unresolvable,
+    ) as exc:
+        # Only document/schema failures are laundered into the domain error;
+        # a programming error (say, a KeyError) keeps its own face. A deep
+        # enough document overflows the validator's recursion before anything
+        # else runs, so RecursionError is a document failure here too.
         raise ValueError(f"Contract validation failed: {exc}") from exc
 
 
@@ -409,8 +453,10 @@ def validate_descriptor(descriptor: dict[str, Any]) -> None:
     if len(names) != len(set(names)):
         raise ValueError("S01: parameter names must be unique")
     for parameter in descriptor["parameters"]:
+        # The descriptor schema types ``range`` as a two-element [min, max]
+        # array; the earlier mapping-shaped check could never fire.
         bounds = parameter.get("range")
-        if isinstance(bounds, dict) and bounds.get("min", 0) > bounds.get("max", 0):
+        if isinstance(bounds, list | tuple) and len(bounds) == 2 and bounds[0] > bounds[1]:
             raise ValueError("S02: parameter bounds are reversed")
     if "derived_variables" in descriptor:
         _check_derived_variables(descriptor["derived_variables"])
