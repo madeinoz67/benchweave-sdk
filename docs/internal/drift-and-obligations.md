@@ -54,7 +54,7 @@ rubric's G5 gate is the obligation; this file is the detail behind it.
 | Job | What it catches |
 |---|---|
 | `sdk` | ubuntu, macOS and Windows; deliberately NO submodules (the self-containment proof); `uv sync --locked --extra test`; `ruff check .`; `mypy src`; `pytest -q` (the behavioral suite); `sync-standards --check` (lock ↔ tree ↔ stamps on the committed state); `benchweave-sdk --version` entry-point smoke; a scaffold-and-check run; the publish workflow's installed-wheel smoke |
-| `docs` (main-side) | the docs site builds from this repository's content |
+| `docs` | this repository's `docs.yml`: the docs site builds from this repository's content |
 | `publish` | release integrity — tag, wheel, stamp verification |
 
 What CI does **not** catch: every numbered obligation above that names a doc, the user

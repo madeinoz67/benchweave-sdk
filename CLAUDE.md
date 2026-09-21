@@ -86,9 +86,9 @@ Reference docs: `docs/internal/invariants.md` (STD/PKG/SRF/TWO),
    standard text, never against memory of what it says.
 8. **Pin the observable wire, not the source schema.** Serve-time layers normalize;
    the emitted form is the contract.
-9. **The behavioral suite lives main-side.** "Couldn't run tests" stated plainly beats a
-   green-looking review that never ran them; name the main-side modules that cover the
-   change.
+9. **The behavioral suite lives here (`tests/`); cross-repo properties are proven
+   main-side.** "Couldn't run tests" stated plainly beats a green-looking review that
+   never ran them; name the modules that cover the change.
 10. **Minimal, reviewable increments referencing their design (the `increment` skill).**
     Design records are committed (`.claude/deep-review/`) so pre-committed acceptance
     rules are provably pre-committed.
@@ -108,10 +108,12 @@ Reference docs: `docs/internal/invariants.md` (STD/PKG/SRF/TWO),
 2. **Run the real gates, not the diff**: from this repo's root, with
    `UV_PROJECT_ENVIRONMENT=venv` — `uv run ruff check .`, `uv run mypy` (strict;
    `files = ["src"]`; CI's `uv run mypy src` must agree), `uv run benchweave-sdk
-   sync-standards --check`, and the `benchweave-sdk --version` smoke. Then the main-side
-   suite (`uv run pytest tests/sdk` from the gateway checkout) for the touched modules —
+   sync-standards --check`, and the `benchweave-sdk --version` smoke. Then the suite
+   (`uv run pytest -q` here; `uv run pytest tests/sdk` from the gateway checkout when a
+   property that compares the SDK with the gateway moved) for the touched modules —
    read counts from the raw run, never from an output-filter summary line.
-3. **RED-sanity-check bug fixes.** The proving tests live main-side: revert only the fix,
+3. **RED-sanity-check bug fixes.** Run it where the proving test lives (here, or
+   main-side for a cross-repo property): revert only the fix,
    watch the test fail, restore, watch it pass. `no tests ran` is a FAILED check (pytest
    exits 5 when it collects nothing) — look for the collected count.
 4. **Walk the obligations.** `docs/internal/drift-and-obligations.md` is the list; the
@@ -141,8 +143,9 @@ commit is the only version of this that works.
 hard invariants (`docs/internal/invariants.md`), and cross-surface drift, with its own
 verify-build-test protocol. Use it (or the `/code-review` skill) when reviewing a change,
 and proactively before opening a PR. It routes by what the diff touches and follows
-`docs/internal/review-rubric.md` as the authority. Behavioral tests live main-side
-(`tests/sdk/` in the gateway checkout); the reviewer says when it could not run them.
+`docs/internal/review-rubric.md` as the authority. Behavioral tests live here (`tests/`);
+the modules that compare the SDK with the gateway stay main-side (`tests/sdk/` in the
+gateway checkout), and the reviewer says when it could not run one a change needed.
 
 ---
 

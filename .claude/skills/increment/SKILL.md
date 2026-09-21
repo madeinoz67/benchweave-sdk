@@ -1,6 +1,6 @@
 ---
 name: increment
-description: The repeatable build loop the plugin SDK holds itself to — design, build RED-first (proving tests main-side), independently vet, adversarially refute, MEASURE real value on real data, then PR/CI/land. Use for any non-trivial feature or fix ("build X", "add Y", "next increment"). Encodes the discipline that keeps us shipping real, measured value instead of smoke-and-mirrors.
+description: The repeatable build loop the plugin SDK holds itself to — design, build RED-first (proving tests in `tests/`), independently vet, adversarially refute, MEASURE real value on real data, then PR/CI/land. Use for any non-trivial feature or fix ("build X", "add Y", "next increment"). Encodes the discipline that keeps us shipping real, measured value instead of smoke-and-mirrors.
 ---
 
 # increment — the SDK build loop
@@ -33,7 +33,7 @@ run the loop.
    value, or a gate can't be cleared, HOLD and report — don't dress up noise. A killed
    idea is a real result.
 4. **Never trust a sub-agent's "green."** Independently re-run ruff, mypy,
-   `sync-standards --check` and the main-side suite yourself, and read the counts from
+   `sync-standards --check` and the suite (`uv run pytest -q`) yourself, and read the counts from
    the run, not from a summary line.
 5. **Minimal, reviewable increments referencing their design.** No sprawling PRs. Name
    what you defer. Design docs live in `.claude/deep-review/` — committed artifacts, so
@@ -56,12 +56,14 @@ run the loop.
    otherwise pick the defensible default and proceed. For a contested call, run the
    `panel` skill.
 3. **Build, RED-first.** The `increment-builder` agent works in a fresh worktree off
-   `origin/main` (`UV_PROJECT_ENVIRONMENT=venv`), writing its proving tests main-side
-   (`tests/sdk/` in the gateway checkout). For every behavior change: write the test,
+   `origin/main` (`UV_PROJECT_ENVIRONMENT=venv`), writing its proving tests in this
+   repository's `tests/` (main-side, in the gateway checkout's `tests/sdk/`, only for a
+   property that compares the SDK with the gateway). For every behavior change: write the test,
    show it FAILS without the code, then implement.
 4. **Vet (you, independently).** `uv run ruff check .`, `uv run mypy` (strict;
    `files = ["src"]`), `uv run benchweave-sdk sync-standards --check`, the
-   `benchweave-sdk --version` smoke — then the main-side suite for the touched modules.
+   `benchweave-sdk --version` smoke — then `uv run pytest -q` for the touched modules,
+   plus the main-side agreement modules when a cross-repo property moved.
    RED-check the key guards discriminate (toggle off → fail) using a `cp` backup, NEVER
    `git checkout` on files with uncommitted work.
 5. **Adversarial refute.** Spawn the `adversary` agent with a REFUTE mandate. **Tier-3
@@ -109,9 +111,10 @@ do a small follow-up PR. Still hold the bar (Tier-3 refute, CI green).
 ## Golden projects and the main-side suite
 
 Prove scaffold and conformance behavior against pinned golden projects and the vendored
-corpus before claiming anything about the gateway — and remember the behavioral proof
-lives main-side (`tests/sdk/` in the gateway checkout). "Couldn't run the main-side
-suite" stated plainly beats a green-looking review that never ran it. A change that
+corpus before claiming anything about the gateway — and remember where each proof
+lives: SDK behavior here (`tests/`), anything that compares the SDK with the gateway
+main-side (`tests/sdk/` in the gateway checkout). "Couldn't run the main-side suite"
+stated plainly beats a green-looking review that never ran it, when the change needed it. A change that
 expects a main-side counterpart (corpus re-sync, renderer rebuild, pointer advance)
 names that counterpart in its PR.
 

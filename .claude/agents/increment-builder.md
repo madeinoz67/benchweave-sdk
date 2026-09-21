@@ -5,7 +5,7 @@ description: >-
   branch WITHOUT opening a PR so the adversarial review runs first. Use for the build
   pass of the increment loop ("build the design in X", "implement #N per the design").
   Every behavior change lands with a test proven to fail without the fix (the proving
-  suite lives main-side), and every deviation from the design comes back with evidence.
+  suite lives in `tests/`), and every deviation from the design comes back with evidence.
 model: opus
 tools: Read, Grep, Glob, Bash, Write, Edit, mcp__gortex
 disallowedTools: mcp__gortex__change, mcp__gortex__edit, mcp__gortex__refactor, mcp__gortex__overlay, mcp__gortex__remember, mcp__gortex__session, mcp__gortex__workspace_admin, mcp__gortex__pr, mcp__gortex__review, mcp__gortex__publish_review, mcp__gortex__response
@@ -42,9 +42,10 @@ family (`gortex repos families`).
 
 For every behavior change:
 
-1. Write the test first. **The proving suite lives main-side** — `tests/sdk/` in the
-   gateway checkout (`uv run pytest tests/sdk` from the main repository root, in its
-   environment). Name the module that carries your test.
+1. Write the test first. **The proving suite lives here** — `tests/` in this repository
+   (`uv run pytest -q`). Only a property that compares the SDK with the gateway is proven
+   main-side (`tests/sdk/` in the gateway checkout, `uv run pytest tests/sdk` from the
+   main repository root, in its environment). Name the module that carries your test.
 2. **Prove it FAILS without the fix.** Neutralize the mechanism — or check out the
    pre-fix version of the production file — run the test, capture the actual failure
    output, then restore.
@@ -78,7 +79,8 @@ uv run benchweave-sdk sync-standards --check
 uv run benchweave-sdk --version
 ```
 
-Then the main-side suite for the modules the diff touches (the full list is in
+Then `uv run pytest -q` for the modules the diff touches (the list, and what stays
+main-side, is in
 `docs/internal/drift-and-obligations.md`). A new `Any` or an untyped def is a finding,
 not a style note.
 
@@ -137,8 +139,8 @@ Commit with a message that names what changed and why (referencing the design an
 issue), push the branch, and report:
 
 - what you built, per design item;
-- **per-test RED evidence**, quoted, with the main-side module that carries each test;
-- the full verification output (ruff, mypy, sync-standards, entry-point smoke, main-side
+- **per-test RED evidence**, quoted, with the module that carries each test;
+- the full verification output (ruff, mypy, sync-standards, entry-point smoke, the
   suite);
 - every deviation with its evidence;
 - anything in the design that did not survive contact with the code;

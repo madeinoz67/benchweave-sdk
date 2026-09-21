@@ -22,6 +22,12 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
+    defaults:
+      run:
+        # bash on every OS. pwsh, the Windows default, reports only the LAST
+        # command's exit code from a multi-line run, so a failing `ruff check`
+        # followed by a passing `mypy` left the Windows lane green.
+        shell: bash
     steps:
       # Deliberately NO submodules: this lane proves the SDK repository is
       # self-contained and never reads the gateway checkout.

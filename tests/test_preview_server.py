@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -169,6 +170,41 @@ def test_foreign_host_header_is_rejected(tmp_path: Path) -> None:
         urllib.request.urlopen(request, timeout=2)
 
     assert error.value.code == 403
+
+
+# --- Added here, not main-side: the case above sends a port-less Host header, which returns
+# --- before the port comparison, the loopback decision and the bracketed-IPv6 parse.
+
+
+def _status_for_host(address: object, host: str) -> int:
+    request = urllib.request.Request(
+        address.url + "/api/v1/preview",  # type: ignore[attr-defined]
+        headers={"Host": host},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=2) as response:
+            return int(response.status)
+    except urllib.error.HTTPError as error:
+        return int(error.code)
+
+
+def test_host_header_with_a_port_is_judged_on_name_and_port(tmp_path: Path) -> None:
+    """A browser under DNS rebinding sends the attacker's name WITH this listener's port."""
+    (tmp_path / "index.html").write_text("preview", encoding="utf-8")
+    with preview_server.PreviewServer(model(), tmp_path) as address:
+        port = urllib.parse.urlsplit(address.url).port
+        assert port is not None
+        expected = {
+            f"attacker.example:{port}": 403,
+            f"127.0.0.1:{port + 1}": 403,
+            f"127.0.0.1:{port}": 200,
+            f"localhost:{port}": 200,
+            f"[::1]:{port}": 200,
+            f"[::1:{port}": 403,
+            f"[attacker.example]:{port}": 403,
+        }
+        observed = {host: _status_for_host(address, host) for host in expected}
+    assert observed == expected
 
 
 def test_backslash_asset_paths_are_rejected_on_every_platform(tmp_path: Path) -> None:

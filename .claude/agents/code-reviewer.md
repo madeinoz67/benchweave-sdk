@@ -5,8 +5,8 @@ description: >-
   and when reviewing one. Reviews a change for correctness and for adherence to the SDK's
   packaging, scaffold, preview and standards-sync invariants — lock↔tree↔stamps, refusal
   prefixes, wheel contents, two-repo discipline. Runs the real SDK gates (uv: ruff, mypy
-  strict, sync-standards --check); the pytest suite lives in the parent gateway checkout,
-  and the review says how to run it. Produces a review as text; never posts, approves,
+  strict, sync-standards --check); the pytest suite lives in this repository's
+  `tests/`, with the cross-repo agreement modules in the parent gateway checkout. Produces a review as text; never posts, approves,
   or merges.
 tools: ["Read", "Grep", "Glob", "Bash", "mcp__gortex"]
 disallowedTools: ["mcp__gortex__change", "mcp__gortex__edit", "mcp__gortex__refactor", "mcp__gortex__overlay", "mcp__gortex__remember", "mcp__gortex__session", "mcp__gortex__workspace_admin", "mcp__gortex__pr", "mcp__gortex__review", "mcp__gortex__publish_review", "mcp__gortex__response"]
@@ -46,7 +46,7 @@ objective path/keyword rules, run every evidence gate in scope (G0 secrets → G
 G2 tests → G3 RED-sanity → G4 contracts → G5 cross-surface → G6 adversarial refute), and
 attach real pasted output for each. Your verdict is bounded by its confidence floor —
 **APPROVE only when every in-scope gate passed with attached evidence; when you can't satisfy
-a gate with evidence (including a main-side suite you could not run on a Tier-3 change),
+a gate with evidence (including a main-side module a Tier-3 change needed and you could not run),
 DEFER, never approve-on-faith.** Tier 3 here means the standards lock/vendored tree, refusal
 prefixes, scaffold output shape, conformance/validation weakenings, parent-checkout reach,
 or dependencies — those need the G6 second independent pass; if you are the sole reviewer,

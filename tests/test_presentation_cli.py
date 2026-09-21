@@ -11,6 +11,14 @@ import pytest
 from benchweave_sdk import cli, presentation, scaffold
 
 
+def _symlink_or_skip(link: Path, target: Path) -> None:
+    """Not main-side: a Windows host without symlink privilege skips instead of failing."""
+    try:
+        link.symlink_to(target)
+    except OSError:
+        pytest.skip("symlinks unavailable (privilege or filesystem)")
+
+
 def run(monkeypatch: pytest.MonkeyPatch, *arguments: str | Path) -> int:
     exit_code: int = cli.main([*map(str, arguments)])
     return exit_code
@@ -228,7 +236,7 @@ def test_new_with_ui_succeeds_under_symlinked_ancestor(
     real = tmp_path / "real"
     real.mkdir()
     link = tmp_path / "link"
-    link.symlink_to(real)
+    _symlink_or_skip(link, real)
     assert run(monkeypatch, "new", link / "proj", "--with-ui") == 0
     package = real / "proj/src/example_plugin"
     for name in (
@@ -260,7 +268,7 @@ def test_check_ui_refuses_symlinked_ancestor_with_prefix(
 ) -> None:
     run(monkeypatch, "new", tmp_path / "real", "--with-ui")
     link = tmp_path / "link"
-    link.symlink_to(tmp_path / "real")
+    _symlink_or_skip(link, tmp_path / "real")
     assert check(monkeypatch, link / "src/example_plugin") == 1
     assert "path_symlink_component:" in capsys.readouterr().err
 
@@ -278,24 +286,39 @@ def test_read_file_propagates_genuine_not_directory(tmp_path: Path) -> None:
 # --- Added here, not main-side: the two cases above them assert exit 1 only. ---
 
 
-def test_resource_root_escape_is_refused_by_the_guard_not_by_absence(
+def test_resource_root_escape_is_refused_before_anything_outside_is_read(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """The escape target exists and is valid, so only the guard can refuse it.
+    """What the guard guarantees is that nothing outside --resources is read; record the reads.
 
-    test_ui_check_rejects_resource_root_escape points at a directory that is
-    not there, so it still exits 1 with the safe_resource_path check deleted.
+    test_ui_check_rejects_resource_root_escape asserts exit 1 only, and exit 1
+    is also what the envelope schema gives a ``..`` root on its own. So this
+    case plants a real manifest where the escape points, records every
+    ``read_file`` call, and asserts none of them left the resources root. With
+    the guard deleted the planted manifest is read before validation refuses.
     """
     run(monkeypatch, "new", tmp_path / "ui", "--with-ui")
     package = tmp_path / "ui/src/example_plugin"
-    shutil.copytree(package / "ui", package.parent / "outside")
+    outside = package.parent / "outside"
+    shutil.copytree(package / "ui", outside)
     envelope = package / "presentation.json"
     document = json.loads(envelope.read_bytes())
     document["resource_root"] = "../outside"
     envelope.write_text(json.dumps(document))
+
+    reads: list[Path] = []
+    real_read = presentation.read_file
+
+    def recording_read(path: Path, limit: int = 262144) -> bytes:
+        reads.append(Path(path))
+        return real_read(path, limit)
+
+    monkeypatch.setattr(presentation, "read_file", recording_read)
     capsys.readouterr()
     assert check(monkeypatch, package) == 1
     assert "Unsafe presentation resource path" in capsys.readouterr().err
+    escaped = [path for path in reads if path.resolve().is_relative_to(outside.resolve())]
+    assert escaped == [], "nothing outside the resources root may be read"
 
 
 def test_symlinked_resource_is_refused_as_a_symlink(

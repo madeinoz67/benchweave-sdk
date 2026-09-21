@@ -347,6 +347,21 @@ def test_manifest_row_shape_outside_the_standard_is_refused(tmp_path: Path, path
         sync(bundle, sdk)
 
 
+def test_a_standard_dropped_from_the_bundle_is_reported_and_removed(tmp_path: Path) -> None:
+    """The removal half of the writer: reported, gone from the tree, gone from the lock."""
+    bundle = _export(tmp_path)
+    sdk = _synced_sdk(tmp_path, bundle)
+    document = _manifest(bundle)
+    dropped = document["standards"].pop()["id"]
+    _rewrite_manifest(bundle, document)
+    report = sync(bundle, sdk)
+    assert report == SyncReport((), (), (), (dropped,))
+    assert not (sdk / "src/benchweave_sdk/standards" / dropped).exists()
+    lock = json.loads((sdk / "standards-lock.json").read_bytes())
+    assert dropped not in {standard["id"] for standard in lock["standards"]}
+    sync(None, sdk, check_only=True)
+
+
 def test_file_less_standard_cannot_put_its_stamp_outside_the_tree(tmp_path: Path) -> None:
     """The stamp is written at <tree>/<id>/ and a file-less standard never reaches _guard_path."""
     bundle = _export(tmp_path)

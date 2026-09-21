@@ -67,7 +67,8 @@ Given a change, or a design that has not been built yet.
 - A green run that ran nothing. `no tests ran` is a FAILED check — pytest exits 5 when it
   collects nothing. Confirm the collected count and your test's name in the output, not
   just the exit code, and read counts from the raw run, never from an output-filter
-  summary. Remember the proving suite for SDK behavior lives main-side (`tests/sdk/`).
+  summary. The proving suite for SDK behavior lives here (`tests/`);
+  properties that compare the SDK with the gateway are proven main-side (`tests/sdk/`).
 
 **On a design**, attack the premise before the machinery. What must be true about the
 standards, the generated projects, or the plugin authors for this to work at all — and is

@@ -109,8 +109,8 @@ compared:
 - **APPROVE WITH REQUIRED CHANGES** — gates pass but a G5 obligation or a small, named fix
   is outstanding. List them numbered.
 - **NEEDS WORK** — a gate failed or a real defect was found.
-- **DEFER (human)** — you cannot satisfy a gate with evidence (including: the main-side
-  suite could not be run for a Tier 3 change), the Tier-3 panel is split, or the change
+- **DEFER (human)** — you cannot satisfy a gate with evidence (including: a main-side
+  module a Tier 3 change needed could not be run), the Tier-3 panel is split, or the change
   turns on standards semantics owned by the main repository's canonical corpus — say what
   specifically needs a corpus owner and why. **Never guess, never approve-on-faith.**
 
@@ -119,7 +119,8 @@ compared:
 Answer these literally. Any "no" downgrades the verdict to DEFER:
 - Did I attach real pasted output for G1 — counts read from the run itself, not an
   output-filter summary?
-- If I claim a fix works, did I show the RED-sanity red-then-green output (main-side)?
+- If I claim a fix works, did I show the RED-sanity red-then-green output, run where the
+  proving test lives?
 - If Tier 3, did a genuinely independent second pass (G6) run, and do I state its verdict?
 - Did I verify each invariant I cite against the live code, not just quote the doc?
 - Did I append the full findings record — every severity, LOW and NIT included, each with
@@ -135,7 +136,7 @@ Re-run it or DEFER.
 ## Why this is safe enough to trust without a human on routine changes
 
 The human doesn't disappear. The human is **escalated to only when the system is honestly not
-confident** — a failed gate, a main-side suite that couldn't run, a split adversarial panel,
+confident** — a failed gate, a needed main-side module that couldn't run, a split adversarial panel,
 or standards semantics owned by the main repository. Everything else is approved on
 mechanical evidence that a weak model can produce as reliably as a strong one: ruff either
 passes or it doesn't, the standards self-check either agrees with the lock or it doesn't, a
