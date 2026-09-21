@@ -296,7 +296,20 @@ def _preview_fixture(target: dict[str, Any], *, suffix: str, severity: str) -> d
     }
 
 
-def _write_preview_examples(destination: Path, package: str, targets: list[dict[str, Any]]) -> None:
+def _write_preview_examples(
+    destination: Path, package: str, targets: list[dict[str, Any]], *, with_plot: bool
+) -> None:
+    # The generated conformance test asserts the projection outcome the
+    # scaffold actually produced: a plot example when a numeric observation
+    # target exists, its documented absence when none does.
+    plot_assert = (
+        '    assert model.plot_views, "the scaffold plot must project",'
+        if with_plot
+        else (
+            '    assert model.plot_views == (), '
+            '"no numeric observation target means no example plot",'
+        )
+    )
     fixtures = destination / "src" / package / "ui" / "fixtures"
     fixtures.mkdir()
     for filename, severity in (("normal", "neutral"), ("warning", "warning")):
@@ -336,7 +349,7 @@ def _write_preview_examples(destination: Path, package: str, targets: list[dict[
         "    model = build_preview_model(candidate)",
         "    scenarios = model.scenarios",
         "    assert BASELINE_IDS <= {row.id for row in scenarios}",
-        "    assert model.plot_views, \"the scaffold plot must project\","
+        plot_assert,
         "",
     ]
     test_path = destination / "tests" / "test_presentation_preview.py"
@@ -387,43 +400,60 @@ def create_ui_resources(destination: Path, package: str) -> None:
     if not targets:
         raise ValueError("UI scaffolding requires at least one readable descriptor parameter")
     bindings = [{"id": row["id"], "kind": "observation", "target_id": row["id"]} for row in targets]
-    # Every new plugin ships a working plot example: the first observation
-    # target gains the receipt-time axis a valid time-series plot requires
-    # (exactly the {receipt_time, value} shape the presentation contract
-    # admits), and the readings page declares one hinted plot over it.
-    targets[0]["variables"].insert(
-        0,
-        {
-            "id": "time",
-            "type": "number",
-            "unit": "s",
-            "shape": "scalar",
-            "axis_role": "receipt_time",
-        },
+    # Every new plugin ships a working plot example: the first NUMERIC
+    # observation target — the same number/integer test the presentation
+    # validator applies to plot axes — gains the receipt-time axis a valid
+    # time-series plot requires (exactly the {receipt_time, value} shape the
+    # contract admits), and the readings page declares one hinted plot over
+    # it. Pinning the example to targets[0] shipped a plot check-ui rejects
+    # whenever a bool/string parameter sorts first (_ui_targets admits them;
+    # _plot_findings refuses non-numeric axes). A descriptor with no numeric
+    # observation target gets no example plot — a disclosed degradation, not
+    # a refusal.
+    plot_index = next(
+        (
+            index
+            for index, row in enumerate(targets)
+            if row["variables"][0]["type"] in ("number", "integer")
+        ),
+        None,
     )
+    plots: list[dict[str, Any]] = []
+    if plot_index is not None:
+        targets[plot_index]["variables"].insert(
+            0,
+            {
+                "id": "time",
+                "type": "number",
+                "unit": "s",
+                "shape": "scalar",
+                "axis_role": "receipt_time",
+            },
+        )
+        plots.append(
+            {
+                "kind": "time_series",
+                "binding_id": bindings[plot_index]["id"],
+                "x": "time",
+                "y": ["value"],
+                "channel_hints": [{"variable_id": "value", "color_role": "muted"}],
+            }
+        )
+    readings_page: dict[str, Any] = {
+        "id": "readings",
+        "title": "Readings",
+        "kind": "readings",
+        "bindings": [row["id"] for row in bindings],
+        "required": True,
+    }
+    if plots:
+        readings_page["plots"] = plots
     manifest = {
         "contract_version": "0.2.0",
         "plugin_id": descriptor["id"],
         "descriptor_sha256": descriptor_hash,
         "bindings": bindings,
-        "pages": [
-            {
-                "id": "readings",
-                "title": "Readings",
-                "kind": "readings",
-                "bindings": [row["id"] for row in bindings],
-                "required": True,
-                "plots": [
-                    {
-                        "kind": "time_series",
-                        "binding_id": bindings[0]["id"],
-                        "x": "time",
-                        "y": ["value"],
-                        "channel_hints": [{"variable_id": "value", "color_role": "muted"}],
-                    }
-                ],
-            }
-        ],
+        "pages": [readings_page],
     }
     manifest_raw = (json.dumps(manifest, indent=2) + "\n").encode()
     envelope = {
@@ -441,7 +471,7 @@ def create_ui_resources(destination: Path, package: str) -> None:
     (root / "ui/manifest.json").write_bytes(manifest_raw)
     for name, document in (("presentation.json", envelope), ("binding-catalogue.json", catalogue)):
         (root / name).write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
-    _write_preview_examples(destination, package, targets)
+    _write_preview_examples(destination, package, targets, with_plot=plot_index is not None)
     (destination / "UI-GUIDE.md").write_text(
         "# Optional plugin presentation\n\n"
         "The starter declares read-only observations. It adds no device actions.\n"
@@ -473,6 +503,7 @@ def create_ui_resources(destination: Path, package: str) -> None:
         "admission, hardware qualification or permission to operate hardware.\n"
         "Declared manifest plots and channel hints render in the preview; plot values\n"
         "are per-scenario snapshots (one simulated value per observed target), not history.\n"
+        "A descriptor with no numeric observation target ships no example plot.\n"
         "Preset selection performs no I/O. Applying settings requires a separately\n"
         "approved procedure. Acquisition and retained observations belong to the gateway.\n",
         encoding="utf-8",
