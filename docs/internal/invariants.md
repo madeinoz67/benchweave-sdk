@@ -51,7 +51,9 @@ the invariants below anchor there.
   repository's paths — `.github/workflows/ci.yml`. *The submodule mount makes parent paths
   exist on a developer machine and not in CI, so the breakage is invisible exactly where
   it matters most.*
-- **[PKG-2]** The wheel packages `src/benchweave_sdk` only; the sdist include list is
+- **[PKG-2]** The wheel packages `src/benchweave_sdk` only, plus one force-included file:
+  the root `standards-lock.json`, placed at `benchweave_sdk/standards-lock.json` so an
+  installed SDK can verify its vendored tree offline; the sdist include list is
   explicit (`src`, `pyproject.toml`, `README.md`, `hatch_build.py`,
   `standards-lock.json`); `.claude/`, `.mcp.json`, `AGENTS.md` and `CLAUDE.md` must never
   appear in either artifact; `hatch_build.py` validates the vendored standards and the

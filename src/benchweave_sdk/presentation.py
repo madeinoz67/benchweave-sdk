@@ -157,7 +157,15 @@ def _read_file_no_dirfd(path: Path, limit: int) -> bytes:
     on intermediate components is accepted for an offline authoring tool; the
     POSIX branch keeps the race-free ``dir_fd`` walk.
     """
-    resolved = path.absolute()
+    # POSIX getcwd() is canonical by definition, so a relative input there is
+    # never refused for how the working directory was reached, whereas
+    # os.getcwd() on Windows keeps a junction it was entered through.
+    # Canonicalise that prefix only: a path the caller spelled out in full
+    # keeps the strict refusal, exactly as it does on POSIX.
+    if path.is_absolute():
+        resolved = path
+    else:
+        resolved = (Path(os.path.realpath(os.getcwd())) / path).absolute()
     current = Path(resolved.parts[0])
     details = os.lstat(current)
     for part in resolved.parts[1:]:

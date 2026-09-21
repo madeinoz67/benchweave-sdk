@@ -43,6 +43,14 @@ UNSAFE_ROWS = [
     pytest.param("/otdp/absolute.json", id="absolute"),
     pytest.param("registry/0.1.0/foreign.json", id="foreign-standard"),
     pytest.param("otdp", id="no-file-component"),
+    # Windows strips a trailing dot or space and resolves device names in any
+    # directory, so these alias another file or no file at all.
+    pytest.param("otdp/alias.json.", id="trailing-dot"),
+    pytest.param("otdp/alias.json ", id="trailing-space"),
+    pytest.param("otdp/NUL", id="device-name"),
+    pytest.param("otdp/con.json", id="device-name-with-extension"),
+    pytest.param("otdp/_GENERATED.txt", id="reserved-stamp-path"),
+    pytest.param("otdp/_generated.TXT", id="reserved-stamp-path-other-case"),
 ]
 
 
@@ -71,6 +79,10 @@ def test_guard_path_accepts_an_ordinary_row() -> None:
         pytest.param("..", id="dot-dot"),
         pytest.param("", id="empty"),
         pytest.param(5, id="not-a-string"),
+        pytest.param("NUL", id="device-name"),
+        pytest.param("con.d", id="device-name-with-extension"),
+        pytest.param("otdp.", id="trailing-dot"),
+        pytest.param("otdp ", id="trailing-space"),
     ],
 )
 def test_standard_ids_are_a_single_segment_even_with_no_files(
@@ -111,18 +123,26 @@ def test_well_formed_manifest_loads(tmp_path: Path) -> None:
 # --- STD-3: a poisoned lock row is refused by every lane ------------------------------
 
 
-def _poisoned_checkout(tmp_path: Path) -> Path:
-    """A copy of the committed state whose first lock row points outside the tree.
-
-    The out-of-tree file exists and its digest matches, so only a path guard
-    can refuse it: an unguarded lane hashes the outside file and vouches for it.
-    """
+def _checkout(tmp_path: Path) -> Path:
+    """A copy of the committed lock and vendored tree, laid out like a checkout."""
     root = tmp_path / "checkout"
     tree = root / "src/benchweave_sdk/standards"
     tree.parent.mkdir(parents=True)
     shutil.copytree(
         REPO / "src/benchweave_sdk/standards", tree, ignore=shutil.ignore_patterns("__pycache__")
     )
+    shutil.copy(REPO / "standards-lock.json", root / "standards-lock.json")
+    return root
+
+
+def _poisoned_checkout(tmp_path: Path) -> Path:
+    """A copy of the committed state whose first lock row points outside the tree.
+
+    The out-of-tree file exists and its digest matches, so only a path guard
+    can refuse it: an unguarded lane hashes the outside file and vouches for it.
+    """
+    root = _checkout(tmp_path)
+    tree = root / "src/benchweave_sdk/standards"
     lock = json.loads((REPO / "standards-lock.json").read_bytes())
     row = lock["standards"][0]["files"][0]
     identifier = lock["standards"][0]["id"]
@@ -187,3 +207,140 @@ def test_build_hook_and_sync_lanes_agree_row_by_row(row: str) -> None:
 
     assert _hatch_build()._unsafe_row("otdp", row) is True
     assert _path_problem("otdp", row) is not None
+
+
+def test_manifest_that_is_not_an_object_is_manifest_invalid(tmp_path: Path) -> None:
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    (bundle / "bundle-manifest.json").write_text("[]", encoding="utf-8")
+    with pytest.raises(ValueError, match="^bundle_manifest_invalid: the manifest is not"):
+        _load_bundle(bundle)
+
+
+# --- The standard id is guarded in every lane too, not only the rows. -----------------
+
+
+def _checkout_with_lock_id(tmp_path: Path, identifier: str) -> Path:
+    root = _checkout(tmp_path)
+    lock = json.loads((root / "standards-lock.json").read_bytes())
+    lock["standards"][0]["id"] = identifier
+    (root / "standards-lock.json").write_text(json.dumps(lock), encoding="utf-8")
+    return root
+
+
+def test_sync_check_lanes_refuse_a_lock_standard_id_outside_the_tree(tmp_path: Path) -> None:
+    root = _checkout_with_lock_id(tmp_path, "../escaped")
+    with pytest.raises(ValueError, match="^lock_invalid: standard id "):
+        _verify_state(root / "standards-lock.json", root / "src/benchweave_sdk/standards")
+
+
+def test_build_hook_refuses_the_same_lock_standard_id(tmp_path: Path) -> None:
+    root = _checkout_with_lock_id(tmp_path, "../escaped")
+    with pytest.raises(RuntimeError, match="^Unsafe vendored standard id: "):
+        _hatch_build()._validate_vendored_standards(root)
+
+
+@pytest.mark.parametrize(
+    "identifier",
+    ["../escaped", "a/b", f"a{BACKSLASH}b", "C:", "..", "", "NUL", "con.d", "otdp.", "otdp ", 5],
+)
+def test_build_hook_and_sync_lanes_agree_id_by_id(identifier: Any) -> None:
+    from benchweave_sdk.standards_sync import _identifier_problem
+
+    assert _hatch_build()._unsafe_identifier(identifier) is True
+    assert _identifier_problem(identifier) is not None
+
+
+def test_both_rules_accept_every_committed_row() -> None:
+    """The agreement above is about refusals; this is the other half."""
+    from benchweave_sdk.standards_sync import _identifier_problem, _path_problem
+
+    hook = _hatch_build()
+    lock = json.loads((REPO / "standards-lock.json").read_bytes())
+    for standard in lock["standards"]:
+        assert _identifier_problem(standard["id"]) is None
+        assert hook._unsafe_identifier(standard["id"]) is False
+        for file in standard["files"]:
+            assert _path_problem(standard["id"], file["path"]) is None, file["path"]
+            assert hook._unsafe_row(standard["id"], file["path"]) is False, file["path"]
+
+
+# --- A malformed lock is lock_invalid in every lane, never a bare KeyError. ------------
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        pytest.param(
+            lambda lock: lock["standards"][0]["files"][0].pop("sha256"), id="row-no-digest"
+        ),
+        pytest.param(lambda lock: lock["standards"][0].pop("version"), id="standard-no-version"),
+        pytest.param(lambda lock: lock.__setitem__("standards", "otdp"), id="standards-not-a-list"),
+    ],
+)
+def test_malformed_lock_rows_are_lock_invalid(tmp_path: Path, mutate: Any) -> None:
+    from benchweave_sdk.standards_sync import _read_lock_file
+
+    lock = json.loads((REPO / "standards-lock.json").read_bytes())
+    mutate(lock)
+    path = tmp_path / "standards-lock.json"
+    path.write_text(json.dumps(lock), encoding="utf-8")
+    with pytest.raises(ValueError, match="^lock_invalid: "):
+        _read_lock_file(path)
+
+
+def test_lock_that_is_not_an_object_is_lock_invalid(tmp_path: Path) -> None:
+    from benchweave_sdk.standards_sync import _read_lock_file
+
+    path = tmp_path / "standards-lock.json"
+    path.write_text("[]", encoding="utf-8")
+    with pytest.raises(ValueError, match="^lock_invalid: "):
+        _read_lock_file(path)
+
+
+# --- A linked directory hides what is behind it from the sweep; packaging follows it. ---
+
+
+def _link_directory(link: Path, target: Path) -> None:
+    """A directory link that needs no privilege: a junction on Windows, a symlink elsewhere."""
+    if sys.platform == "win32":
+        import _winapi
+
+        _winapi.CreateJunction(str(target), str(link))
+    else:
+        link.symlink_to(target, target_is_directory=True)
+
+
+def _checkout_with_a_linked_directory(tmp_path: Path) -> Path:
+    root = _checkout(tmp_path)
+    smuggled = tmp_path / "smuggled"
+    smuggled.mkdir()
+    (smuggled / "unrecorded.json").write_bytes(b"{}")
+    standard = json.loads((root / "standards-lock.json").read_bytes())["standards"][0]["id"]
+    _link_directory(root / "src/benchweave_sdk/standards" / standard / "linked", smuggled)
+    return root
+
+
+def test_sync_check_lanes_refuse_a_linked_directory_in_the_tree(tmp_path: Path) -> None:
+    root = _checkout_with_a_linked_directory(tmp_path)
+    with pytest.raises(ValueError, match=r"^unexpected_vendored_file: .*/linked is a link$"):
+        _verify_state(root / "standards-lock.json", root / "src/benchweave_sdk/standards")
+
+
+def test_build_hook_refuses_a_linked_directory_in_the_tree(tmp_path: Path) -> None:
+    root = _checkout_with_a_linked_directory(tmp_path)
+    with pytest.raises(RuntimeError, match=r"^unexpected_vendored_file: .*/linked is a link$"):
+        _hatch_build()._validate_vendored_standards(root)
+
+
+def test_wheel_force_include_places_the_lock_where_verify_installed_reads_it() -> None:
+    """verify_installed reads <package>/standards-lock.json; only pyproject puts it there."""
+    import tomllib
+
+    from benchweave_sdk.standards_sync import LOCK_NAME
+
+    with (REPO / "pyproject.toml").open("rb") as handle:
+        wheel = tomllib.load(handle)["tool"]["hatch"]["build"]["targets"]["wheel"]
+    assert wheel["packages"] == ["src/benchweave_sdk"]
+    assert wheel["force-include"] == {LOCK_NAME: f"benchweave_sdk/{LOCK_NAME}"}
+

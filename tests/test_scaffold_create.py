@@ -32,8 +32,25 @@ def test_create_project_refuses_dangling_symlink_destination(tmp_path: Path) -> 
         destination.symlink_to(tmp_path / "nowhere")
     except OSError:
         pytest.skip("symlinks unavailable (privilege or filesystem)")
-    with pytest.raises(FileExistsError, match="already exists"):
+    # The full prefix, not "already exists": on Windows the rename this guard
+    # pre-empts fails with WinError 183, whose text also says "already exists".
+    with pytest.raises(FileExistsError, match="^Destination already exists: "):
         create_project(destination, "demo_plugin")
+    assert destination.is_symlink(), "the link itself must be left alone"
+
+
+def test_create_project_refuses_an_existing_staging_path_and_leaves_it_alone(
+    tmp_path: Path,
+) -> None:
+    """A leftover ``.partial`` sibling is not ours to delete: it may be the user's own directory."""
+    destination = tmp_path / "demo"
+    staging = tmp_path / "demo.partial"
+    staging.mkdir()
+    (staging / "notes.txt").write_text("the user's own file", encoding="utf-8")
+    with pytest.raises(FileExistsError, match="^Staging path already exists: "):
+        create_project(destination, "demo_plugin")
+    assert (staging / "notes.txt").read_text(encoding="utf-8") == "the user's own file"
+    assert not destination.exists()
 
 
 def test_interrupted_generation_leaves_no_destination(

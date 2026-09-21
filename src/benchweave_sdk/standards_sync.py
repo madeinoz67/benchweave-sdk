@@ -98,6 +98,8 @@ def _load_bundle(bundle: Path) -> dict[str, Any]:
         raise ValueError(f"bundle_manifest_missing: {manifest}")
     try:
         document: dict[str, Any] = json.loads(manifest.read_bytes())
+        if not isinstance(document, dict):
+            raise ValueError("bundle_manifest_invalid: the manifest is not a JSON object")
         if document.get("bundle_version") != 1:
             raise ValueError("bundle_version_unsupported")
         for standard in document["standards"]:
@@ -128,13 +130,30 @@ def _is_digest(value: object) -> bool:
     return isinstance(value, str) and _DIGEST.fullmatch(value) is not None
 
 
+# Names Windows resolves to a device whatever directory they appear in, with or
+# without an extension (NUL, con.txt, COM1.json).
+_WINDOWS_DEVICE = re.compile(r"(?i)(con|prn|aux|nul|com[0-9]|lpt[0-9])(\..*)?")
+
+
+def _segment_problem(segment: str) -> str | None:
+    """Why one path segment would not name what it says on some filesystem, or None."""
+    if not segment or segment in (".", ".."):
+        return "has an empty or dot segment"
+    if segment != segment.rstrip(". "):
+        # Windows strips trailing dots and spaces, so the name aliases another.
+        return "has a segment ending in a dot or a space"
+    if _WINDOWS_DEVICE.fullmatch(segment):
+        return "names a Windows device"
+    return None
+
+
 def _identifier_problem(identifier: object) -> str | None:
     """Why a standard id cannot name a directory directly under the tree, or None."""
     if not isinstance(identifier, str) or not identifier:
         return "is not a non-empty string"
-    if identifier in (".", "..") or any(char in identifier for char in "/\\:"):
+    if any(char in identifier for char in "/\\:"):
         return "is not a single path segment"
-    return None
+    return _segment_problem(identifier)
 
 
 def _path_problem(identifier: object, path: object) -> str | None:
@@ -151,12 +170,15 @@ def _path_problem(identifier: object, path: object) -> str | None:
     segments = path.split("/")
     if len(segments) < 2:
         return "has no file component"
-    if any(not segment or segment in (".", "..") for segment in segments):
-        return "has an empty or dot segment"
     if "\\" in path or ":" in path:
         return "contains a backslash or a drive separator"
+    for segment in segments:
+        if (problem := _segment_problem(segment)) is not None:
+            return problem
     if segments[0] != identifier:
         return "is not under its standard's directory"
+    if len(segments) == 2 and segments[1].casefold() == STAMP_NAME.casefold():
+        return "claims the stamp path the writer reserves"
     return None
 
 
@@ -179,7 +201,16 @@ def _read_lock_file(path: Path) -> dict[str, Any]:
         return {}
     try:
         lock: dict[str, Any] = json.loads(path.read_bytes())
-        _ = lock["lock_version"], lock["standards"]
+        if not isinstance(lock, dict):
+            raise TypeError("the lock is not a JSON object")
+        _ = lock["lock_version"]
+        # Every reader below indexes these fields; checking the shape once
+        # here keeps a malformed row a lock_invalid refusal in every lane,
+        # rather than a bare KeyError from whichever lane meets it first.
+        for standard in lock["standards"]:
+            _ = standard["id"], standard["version"]
+            for file in standard["files"]:
+                _ = file["path"], file["sha256"]
     except json.JSONDecodeError as exc:
         raise ValueError(f"lock_invalid: {exc}") from exc
     except (KeyError, TypeError) as exc:
@@ -245,11 +276,16 @@ def _sweep_vendored_tree(tree: Path, recorded: set[str], stamps: set[str]) -> No
     its bytecode cache appears beside the source; it is gitignored and
     never packaged. Anything else is drift: it would ship in a wheel
     built outside the gated paths."""
-    present = {
-        path.relative_to(tree).as_posix()
-        for path in tree.rglob("*")
-        if path.is_file() and "__pycache__" not in path.relative_to(tree).parts
-    }
+    present: set[str] = set()
+    for entry in tree.rglob("*"):
+        relative = entry.relative_to(tree)
+        if entry.is_symlink() or entry.is_junction():
+            # rglob does not descend a linked directory, so whatever sits
+            # behind it would be invisible here while packaging follows the
+            # link and ships it. Nothing in a vendored tree is a link.
+            raise ValueError(f"unexpected_vendored_file: {relative.as_posix()} is a link")
+        if entry.is_file() and "__pycache__" not in relative.parts:
+            present.add(relative.as_posix())
     for path in sorted(present - recorded - stamps):
         raise ValueError(f"unexpected_vendored_file: {path}")
 

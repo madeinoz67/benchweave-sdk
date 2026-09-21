@@ -24,9 +24,11 @@ def _project_name(root: Path) -> str | None:
         return None
     try:
         with pyproject.open("rb") as handle:
-            name = tomllib.load(handle).get("project", {}).get("name")
-    except (tomllib.TOMLDecodeError, OSError):
+            project = tomllib.load(handle).get("project")
+    except (tomllib.TOMLDecodeError, UnicodeDecodeError, OSError):
+        # tomllib reports bytes that are not UTF-8 as UnicodeDecodeError.
         return None
+    name = project.get("name") if isinstance(project, dict) else None
     return name if isinstance(name, str) else None
 
 

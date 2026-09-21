@@ -20,8 +20,20 @@ def _server() -> PreviewServer:
 def test_shutdown_is_idempotent() -> None:
     server = _server()
     server.start()
+    closes: list[int] = []
+    close = server._server.server_close
+
+    def counting_close() -> None:
+        closes.append(1)
+        close()
+
+    server._server.server_close = counting_close  # type: ignore[method-assign]
     server.shutdown()
     server.shutdown()  # TUI quit + CLI finally both land here; must not raise
+    # "Must not raise" was already true before the closed flag existed: closing
+    # a socket twice is harmless. What the flag adds is that the second caller
+    # does no work at all.
+    assert closes == [1]
 
 
 def test_shutdown_without_start() -> None:

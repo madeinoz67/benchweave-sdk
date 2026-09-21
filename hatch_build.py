@@ -3,6 +3,7 @@
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -41,17 +42,35 @@ def _unsafe_row(identifier: object, relative: object) -> bool:
     installed; standards_sync._identifier_problem/_path_problem are the
     reference (STD-3: every lane refuses the same rows).
     """
-    if not isinstance(identifier, str) or not isinstance(relative, str):
-        return True
-    if not identifier or identifier in (".", "..") or any(c in identifier for c in "/\\:"):
+    if _unsafe_identifier(identifier) or not isinstance(relative, str):
         return True
     segments = relative.split("/")
     return (
         len(segments) < 2
-        or any(not segment or segment in (".", "..") for segment in segments)
         or "\\" in relative
         or ":" in relative
+        or any(_unsafe_segment(segment) for segment in segments)
         or segments[0] != identifier
+        or (len(segments) == 2 and segments[1].casefold() == STAMP_NAME.casefold())
+    )
+
+
+def _unsafe_identifier(identifier: object) -> bool:
+    """A standard id names one directory directly under the tree, nothing else."""
+    if not isinstance(identifier, str):
+        return True
+    return any(c in identifier for c in "/\\:") or _unsafe_segment(identifier)
+
+
+_WINDOWS_DEVICE = re.compile(r"(?i)(con|prn|aux|nul|com[0-9]|lpt[0-9])(\..*)?")
+
+
+def _unsafe_segment(segment: str) -> bool:
+    return (
+        not segment
+        or segment in (".", "..")
+        or segment != segment.rstrip(". ")
+        or _WINDOWS_DEVICE.fullmatch(segment) is not None
     )
 
 
@@ -82,7 +101,7 @@ def _validate_vendored_standards(root: Path) -> None:
         stamps: set[str] = set()
         for standard in standards:
             identifier = standard["id"]
-            if _unsafe_row(identifier, f"{identifier}/{STAMP_NAME}"):
+            if _unsafe_identifier(identifier):
                 raise RuntimeError(f"Unsafe vendored standard id: {identifier!r}")
             if not (tree / identifier / STAMP_NAME).is_file():
                 raise RuntimeError(f"Vendored standard stamp missing: {identifier}/{STAMP_NAME}")
@@ -94,11 +113,15 @@ def _validate_vendored_standards(root: Path) -> None:
         # (lock ∪ stamps ∪ __pycache__; inlined here because the build hook
         # must stay importable without the package installed). A stray file
         # must not ship in a wheel built outside the gated paths.
-        present = {
-            path.relative_to(tree).as_posix()
-            for path in tree.rglob("*")
-            if path.is_file() and "__pycache__" not in path.relative_to(tree).parts
-        }
+        present: set[str] = set()
+        for entry in tree.rglob("*"):
+            relative = entry.relative_to(tree)
+            if entry.is_symlink() or entry.is_junction():
+                # Same rule as the sync lanes: rglob does not descend a linked
+                # directory, but the wheel builder follows it and ships it.
+                raise RuntimeError(f"unexpected_vendored_file: {relative.as_posix()} is a link")
+            if entry.is_file() and "__pycache__" not in relative.parts:
+                present.add(relative.as_posix())
         for path in sorted(present - recorded - stamps):
             raise RuntimeError(f"unexpected_vendored_file: {path}")
     except (json.JSONDecodeError, KeyError, TypeError) as exc:

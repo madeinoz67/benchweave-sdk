@@ -311,3 +311,50 @@ def test_no_dirfd_rejects_file_as_directory_component(tmp_path: Path) -> None:
     with pytest.raises(NotADirectoryError) as raised:
         _read_file_no_dirfd(blocker / "document.json", 64)
     assert raised.value.errno == errno.ENOTDIR
+
+
+def test_no_dirfd_refuses_a_file_swapped_between_inspection_and_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The samestat tie-back is what bounds the walk's race; without it a swapped file is read.
+
+    ``other.json`` exists alongside the target, so the two are distinct files
+    by construction (no reused inode); the stand-in ``open`` renames it over
+    the target after the walk has inspected the original.
+    """
+    target = tmp_path / "document.json"
+    target.write_bytes(b'{"inspected": true}')
+    other = tmp_path / "other.json"
+    other.write_bytes(b'{"swapped": true}')
+
+    def swapping_open(path: str, flags: int, mode: int, dir_fd: int | None) -> int:
+        os.replace(other, path)
+        return os.open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(presentation, "os", _KernelLikeOS(swapping_open))
+    with pytest.raises(ValueError, match="^Input path changed while being read$"):
+        _read_file_no_dirfd(target, 64)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="only Windows keeps a junction in getcwd()")
+def test_relative_path_is_anchored_at_the_real_working_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """POSIX getcwd() is canonical, so a relative read never trips on how the cwd was reached.
+
+    Windows keeps the junction in os.getcwd(); without canonicalising that
+    prefix, ``check descriptor.json`` run from a junction-reached directory is
+    refused for a component the user never typed. Spelled out in full, the
+    junction is still refused, exactly as a symlink is on POSIX.
+    """
+    import _winapi
+
+    real = tmp_path / "real"
+    (real / "src").mkdir(parents=True)
+    (real / "src" / "document.json").write_bytes(b"{}")
+    junction = tmp_path / "work"
+    _winapi.CreateJunction(str(real), str(junction))
+    monkeypatch.chdir(junction / "src")
+    assert read_file(Path("document.json")) == b"{}"
+    with pytest.raises(ValueError, match=_SYMLINK_REFUSAL):
+        read_file(junction / "src" / "document.json")
