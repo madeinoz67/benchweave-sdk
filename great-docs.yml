@@ -529,9 +529,12 @@ hero:
 # introspecting the package at that git tag; an entry without git_ref renders
 # the current working tree. `prerelease: true` marks the dev bucket.
 versions:
+  - tag: v0.1.0
+    label: v0.1.0
+    latest: true          # latest stable lives at the docs/ root (landing version; site root is the static site)
+    git_ref: v0.1.0
   - tag: v0.0.4
     label: v0.0.4
-    latest: true          # latest stable lives at the docs/ root (landing version; site root is the static site)
     git_ref: v0.0.4
   - tag: v0.0.3
     label: v0.0.3
