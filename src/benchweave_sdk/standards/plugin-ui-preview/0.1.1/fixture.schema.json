@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://benchweave.dev/contracts/plugin-ui-preview/0.1.0/fixture.schema.json",
-  "title": "BenchWeave plugin UI preview fixture",
+  "$id": "https://benchweave.dev/contracts/plugin-ui-preview/0.1.1/fixture.schema.json",
+  "title": "BenchWeave plugin UI preview fixture 0.1.1",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -19,7 +19,7 @@
     "request_outcomes"
   ],
   "properties": {
-    "contract_version": { "const": "0.1.0" },
+    "contract_version": { "const": "0.1.1" },
     "id": { "$ref": "#/$defs/id" },
     "title": { "type": "string", "minLength": 1, "maxLength": 120 },
     "description": { "type": "string", "minLength": 1, "maxLength": 500 },
