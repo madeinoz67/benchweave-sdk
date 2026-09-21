@@ -187,38 +187,18 @@ def test_scaffold_hint_pair_validates_identically(
         scaffold.create_project(project, "example_plugin")
         presentation.create_ui_resources(project, "example_plugin")
         package = project / "src/example_plugin"
-        catalogue_path = package / "binding-catalogue.json"
-        catalogue = json.loads(catalogue_path.read_bytes())
-        catalogue["targets"][0]["variables"].insert(
-            0,
-            {
-                "id": "time",
-                "type": "number",
-                "unit": "s",
-                "shape": "scalar",
-                "axis_role": "receipt_time",
-            },
-        )
-        catalogue_path.write_text(json.dumps(catalogue, indent=2) + "\n", encoding="utf-8")
-        manifest_path = package / "ui/manifest.json"
-        manifest = json.loads(manifest_path.read_bytes())
-        plot: dict[str, object] = {
-            "kind": "time_series",
-            "binding_id": manifest["bindings"][0]["id"],
-            "x": "time",
-            "y": ["value"],
-        }
-        if hints is not None:
-            plot["channel_hints"] = hints
-        manifest["pages"][0]["plots"] = [plot]
-        manifest_raw = json.dumps(manifest, indent=2) + "\n"
-        # Bytes, not text: the envelope pins these exact bytes, and text mode
-        # on Windows would store CRLF (the main-side original writes text).
-        manifest_path.write_bytes(manifest_raw.encode())
-        envelope_path = package / "presentation.json"
-        envelope = json.loads(envelope_path.read_bytes())
-        envelope["manifest"]["sha256"] = hashlib.sha256(manifest_raw.encode()).hexdigest()
-        envelope_path.write_text(json.dumps(envelope, indent=2) + "\n", encoding="utf-8")
+        if hints is None:
+            manifest_path = package / "ui/manifest.json"
+            manifest = json.loads(manifest_path.read_bytes())
+            manifest["pages"][0]["plots"][0].pop("channel_hints", None)
+            manifest_raw = json.dumps(manifest, indent=2) + "\n"
+            # Bytes, not text: the envelope pins these exact bytes, and text mode
+            # on Windows would store CRLF (the main-side original writes text).
+            manifest_path.write_bytes(manifest_raw.encode())
+            envelope_path = package / "presentation.json"
+            envelope = json.loads(envelope_path.read_bytes())
+            envelope["manifest"]["sha256"] = hashlib.sha256(manifest_raw.encode()).hexdigest()
+            envelope_path.write_text(json.dumps(envelope, indent=2) + "\n", encoding="utf-8")
         return package
 
     plain = authored(None)
