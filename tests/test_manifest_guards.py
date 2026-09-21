@@ -60,6 +60,15 @@ UNSAFE_ROWS = [
     pytest.param("otdp/lpt².json", id="device-name-superscript-with-extension"),
     pytest.param("otdp/conin$/x.json", id="conin-device-name"),
     pytest.param("otdp/conout$.json", id="conout-device-name"),
+    # Characters a Windows filesystem cannot write at all: the write would
+    # fail mid-sync on one platform for a row every guard passed.
+    pytest.param("otdp/a?b.json", id="windows-invalid-question"),
+    pytest.param("otdp/a*b.json", id="windows-invalid-star"),
+    pytest.param("otdp/a<b.json", id="windows-invalid-lt"),
+    pytest.param("otdp/a>b.json", id="windows-invalid-gt"),
+    pytest.param("otdp/a|b.json", id="windows-invalid-pipe"),
+    pytest.param('otdp/a"b.json', id="windows-invalid-quote"),
+    pytest.param("otdp/a\x01b.json", id="windows-invalid-control-char"),
 ]
 
 

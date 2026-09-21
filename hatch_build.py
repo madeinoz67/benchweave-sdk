@@ -85,12 +85,16 @@ _WINDOWS_DEVICE = re.compile(
 )
 
 
+_WINDOWS_UNWRITABLE = re.compile(r'[<>:"|?*\x00-\x1f]')
+
+
 def _unsafe_segment(segment: str) -> bool:
     return (
         not segment
         or segment in (".", "..")
         or segment != segment.rstrip(". ")
         or _WINDOWS_DEVICE.fullmatch(segment) is not None
+        or _WINDOWS_UNWRITABLE.search(segment) is not None
     )
 
 

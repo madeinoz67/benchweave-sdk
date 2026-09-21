@@ -181,6 +181,10 @@ def _is_digest(value: object) -> bool:
 _WINDOWS_DEVICE = re.compile(
     r"(?i)(con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³]|conin\$|conout\$)(\..*)?"
 )
+# Characters a Windows filesystem cannot write in a name at all; the row and
+# id rules are judged as strings so the sync refuses them on every platform
+# rather than failing mid-write only where they are unwritable.
+_WINDOWS_UNWRITABLE = re.compile(r"[<>:\"|?*\x00-\x1f]")
 
 
 def _segment_problem(segment: str) -> str | None:
@@ -192,6 +196,8 @@ def _segment_problem(segment: str) -> str | None:
         return "has a segment ending in a dot or a space"
     if _WINDOWS_DEVICE.fullmatch(segment):
         return "names a Windows device"
+    if _WINDOWS_UNWRITABLE.search(segment):
+        return "has a character a Windows filesystem cannot write"
     return None
 
 
