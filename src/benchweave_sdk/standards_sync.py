@@ -10,9 +10,13 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
+import os
 import re
 import shutil
+import time
 import tomllib
+import unicodedata
+from collections.abc import Iterator
 from dataclasses import dataclass
 from importlib.resources import files
 from pathlib import Path
@@ -23,6 +27,11 @@ VENDORED = "src/benchweave_sdk/standards"
 STAMP_NAME = "_GENERATED.txt"
 STAMP_LINE = "{path} — Generated from {identifier}@{version} — do not edit"
 STAGING_DIR = ".standards-sync"
+# The 8.3 short name of _GENERATED.txt. A row spelled with the alias can
+# resolve to the stamp at lookup when the stamp was created first (a
+# hand-crafted tree); this writer's row-before-stamp order avoids that —
+# refused regardless as defense-in-depth.
+_STAMP_SHORT_NAME = re.compile(r"(?i)_gener~[0-9]+\.txt")
 
 
 @dataclass(frozen=True)
@@ -95,7 +104,8 @@ def sync(bundle: Path | None, sdk_root: Path, *, check_only: bool = False) -> Sy
     if check_only:
         _verify_vendored_tree(sdk_root, lock)
     else:
-        _write_vendored(sdk_root, document, payloads, recomputed)
+        with _sync_mutex(sdk_root):
+            _write_vendored(sdk_root, document, payloads, recomputed)
     return SyncReport(
         tuple(sorted(added)),
         tuple(sorted(changed)),
@@ -118,22 +128,31 @@ def _load_bundle(bundle: Path) -> dict[str, Any]:
             raise ValueError("bundle_manifest_invalid: the manifest is not a JSON object")
         if document.get("bundle_version") != 1:
             raise ValueError("bundle_version_unsupported")
+        standards = document.get("standards")
+        if not isinstance(standards, list) or not standards:
+            # No row ever reaches a guard here, and the writer would exchange
+            # the whole vendored tree for an empty one — a state every
+            # verification lane refuses only after the destruction.
+            raise ValueError(
+                "bundle_manifest_invalid: the standards list is missing or empty"
+            )
         seen_ids: set[str] = set()
-        for standard in document["standards"]:
+        for standard in standards:
             identifier = standard["id"]
             _ = standard["version"], standard["status"]
             if (problem := _identifier_problem(identifier)) is not None:
                 # The per-standard stamp is written at <tree>/<id>/, and a
                 # standard with no files never reaches _guard_path.
                 raise ValueError(f"bundle_manifest_invalid: standard id {identifier!r} {problem}")
-            if identifier.casefold() in seen_ids:
+            if unicodedata.normalize("NFC", identifier).casefold() in seen_ids:
                 # Every later stage keys per-standard state by id (last
                 # wins); a duplicate would otherwise surface as a bare
                 # KeyError from the integrity check instead of a refusal.
-                # Compared case-folded: OTDP and otdp are one directory on
-                # Windows and macOS.
+                # Compared case-folded and NFC-normalized: OTDP and otdp are
+                # one directory on Windows and macOS, and so are the NFC and
+                # NFD spellings of the same name.
                 raise ValueError(f"bundle_manifest_invalid: duplicate standard id {identifier!r}")
-            seen_ids.add(identifier.casefold())
+            seen_ids.add(unicodedata.normalize("NFC", identifier).casefold())
             seen_paths: set[str] = set()
             for file in standard["files"]:
                 _guard_path(identifier, file["path"])
@@ -163,8 +182,17 @@ def _is_digest(value: object) -> bool:
 
 
 # Names Windows resolves to a device whatever directory they appear in, with or
-# without an extension (NUL, con.txt, COM1.json).
-_WINDOWS_DEVICE = re.compile(r"(?i)(con|prn|aux|nul|com[0-9]|lpt[0-9])(\..*)?")
+# without an extension (NUL, con.txt, COM1.json); the superscript digit forms
+# (com¹, lpt²) and the console API names (conin$, conout$) resolve as devices
+# too. COM0 is not a device — the class is COM1–COM9 and LPT1–LPT9, plus the
+# superscript forms of 1–3.
+_WINDOWS_DEVICE = re.compile(
+    r"(?i)(con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³]|conin\$|conout\$)(\..*)?"
+)
+# Characters a Windows filesystem cannot write in a name at all; the row and
+# id rules are judged as strings so the sync refuses them on every platform
+# rather than failing mid-write only where they are unwritable.
+_WINDOWS_UNWRITABLE = re.compile(r"[<>:\"|?*\x00-\x1f]")
 
 
 def _segment_problem(segment: str) -> str | None:
@@ -176,6 +204,8 @@ def _segment_problem(segment: str) -> str | None:
         return "has a segment ending in a dot or a space"
     if _WINDOWS_DEVICE.fullmatch(segment):
         return "names a Windows device"
+    if _WINDOWS_UNWRITABLE.search(segment):
+        return "has a character a Windows filesystem cannot write"
     return None
 
 
@@ -209,7 +239,10 @@ def _path_problem(identifier: object, path: object) -> str | None:
             return problem
     if segments[0] != identifier:
         return "is not under its standard's directory"
-    if len(segments) == 2 and segments[1].casefold() == STAMP_NAME.casefold():
+    if len(segments) == 2 and (
+        segments[1].casefold() == STAMP_NAME.casefold()
+        or _STAMP_SHORT_NAME.fullmatch(segments[1])
+    ):
         return "claims the stamp path the writer reserves"
     return None
 
@@ -437,6 +470,72 @@ def _clear_staging(staging: Path, retired: Path) -> None:
                 f"sync_staging_blocked: {leftover} could not be removed; "
                 "delete it and run the sync again"
             )
+
+
+@contextlib.contextmanager
+def _sync_mutex(sdk_root: Path) -> Iterator[None]:
+    """One sync at a time per checkout: the swap's guarantees are single-flight.
+
+    A plain ``O_CREAT | O_EXCL`` lock file beside the staging directories,
+    carrying the owner's pid. A concurrent sync refuses here — before the
+    recovery, the sweep, or any staging — naming the live pid, so the advice
+    can never be to delete another running sync's staging. A lock whose owner
+    is gone (a crashed sync) is reclaimed; the residual is pid reuse: a new
+    process holding a dead sync's pid makes the lock look live, and the
+    refusal names the lock path for an operator to remove.
+    """
+    lock_path = sdk_root / STAGING_DIR / "lock"
+    try:
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+    except FileExistsError:
+        # Something other than a directory sits where the staging root goes;
+        # the sweep below would refuse it, but the lock comes first.
+        raise ValueError(
+            f"sync_staging_blocked: {lock_path.parent} is not a directory; "
+            "remove it and run the sync again"
+        ) from None
+    try:
+        fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
+        alive = False
+        pid: int | None = None
+        try:
+            holder = lock_path.read_text(encoding="utf-8").split()
+            pid = int(holder[0])
+            try:
+                os.kill(pid, 0)
+            except PermissionError:
+                alive = True  # exists but is not ours to signal
+            except OSError:
+                alive = False  # the owner is gone
+            else:
+                alive = True
+        except (OSError, ValueError, IndexError):
+            # An empty or unreadable lock is crash debris between create and write.
+            pid = None
+        if alive:
+            raise ValueError(
+                f"sync_staging_blocked: another sync (pid {pid}) is running in "
+                f"{sdk_root}; let it finish and run the sync again"
+            ) from None
+        lock_path.unlink(missing_ok=True)
+        try:
+            fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            raise ValueError(
+                f"sync_staging_blocked: {lock_path} is held by another sync; "
+                "let it finish and run the sync again"
+            ) from None
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(f"{os.getpid()} {int(time.time())}\n")
+    try:
+        yield
+    finally:
+        lock_path.unlink(missing_ok=True)
+        # Leave no staging root behind on a clean exit; if a parked tree or
+        # debris survives (a failed sync), the occupied directory stays.
+        with contextlib.suppress(OSError):
+            lock_path.parent.rmdir()
 
 
 def _write_vendored(

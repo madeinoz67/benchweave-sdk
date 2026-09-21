@@ -5,7 +5,9 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import os
 import shutil
+import subprocess
 import sys
 import types
 from pathlib import Path
@@ -51,6 +53,24 @@ UNSAFE_ROWS = [
     pytest.param("otdp/con.json", id="device-name-with-extension"),
     pytest.param("otdp/_GENERATED.txt", id="reserved-stamp-path"),
     pytest.param("otdp/_generated.TXT", id="reserved-stamp-path-other-case"),
+    # On a volume with 8.3 short names enabled, the alias resolves to the stamp.
+    pytest.param("otdp/_GENER~1.TXT", id="reserved-stamp-8-3-alias"),
+    pytest.param("otdp/_gener~2.txt", id="reserved-stamp-8-3-alias-ordinal"),
+    # Windows also resolves the superscript digit forms and the console API
+    # names as devices, in any directory, with or without an extension.
+    pytest.param("otdp/com¹/x.json", id="device-name-superscript"),
+    pytest.param("otdp/lpt².json", id="device-name-superscript-with-extension"),
+    pytest.param("otdp/conin$/x.json", id="conin-device-name"),
+    pytest.param("otdp/conout$.json", id="conout-device-name"),
+    # Characters a Windows filesystem cannot write at all: the write would
+    # fail mid-sync on one platform for a row every guard passed.
+    pytest.param("otdp/a?b.json", id="windows-invalid-question"),
+    pytest.param("otdp/a*b.json", id="windows-invalid-star"),
+    pytest.param("otdp/a<b.json", id="windows-invalid-lt"),
+    pytest.param("otdp/a>b.json", id="windows-invalid-gt"),
+    pytest.param("otdp/a|b.json", id="windows-invalid-pipe"),
+    pytest.param('otdp/a"b.json', id="windows-invalid-quote"),
+    pytest.param("otdp/a\x01b.json", id="windows-invalid-control-char"),
 ]
 
 
@@ -69,6 +89,11 @@ def test_guard_path_accepts_an_ordinary_row() -> None:
     _guard_path("otdp", "otdp/0.2.0/examples/reference-psu.json")
 
 
+def test_com0_is_not_a_device_name() -> None:
+    """COM0 is not in Windows' device list (COM1–COM9 are); the class stays exact."""
+    _guard_path("otdp", "otdp/com0/x.json")
+
+
 @pytest.mark.parametrize(
     "identifier",
     [
@@ -81,6 +106,8 @@ def test_guard_path_accepts_an_ordinary_row() -> None:
         pytest.param(5, id="not-a-string"),
         pytest.param("NUL", id="device-name"),
         pytest.param("con.d", id="device-name-with-extension"),
+        pytest.param("com¹", id="device-name-superscript"),
+        pytest.param("conin$", id="conin-device-name"),
         pytest.param("otdp.", id="trailing-dot"),
         pytest.param("otdp ", id="trailing-space"),
     ],
@@ -242,7 +269,21 @@ def test_build_hook_refuses_the_same_lock_standard_id(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     "identifier",
-    ["../escaped", "a/b", f"a{BACKSLASH}b", "C:", "..", "", "NUL", "con.d", "otdp.", "otdp ", 5],
+    [
+        "../escaped",
+        "a/b",
+        f"a{BACKSLASH}b",
+        "C:",
+        "..",
+        "",
+        "NUL",
+        "con.d",
+        "com¹",
+        "conin$",
+        "otdp.",
+        "otdp ",
+        5,
+    ],
 )
 def test_build_hook_and_sync_lanes_agree_id_by_id(identifier: Any) -> None:
     from benchweave_sdk.standards_sync import _identifier_problem
@@ -343,4 +384,111 @@ def test_wheel_force_include_places_the_lock_where_verify_installed_reads_it() -
         wheel = tomllib.load(handle)["tool"]["hatch"]["build"]["targets"]["wheel"]
     assert wheel["packages"] == ["src/benchweave_sdk"]
     assert wheel["force-include"] == {LOCK_NAME: f"benchweave_sdk/{LOCK_NAME}"}
+
+
+# --- An empty bundle has no rows to guard; the writer must not be the lane that
+# decides an empty corpus is valid. -----------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "standards_value",
+    [
+        pytest.param([], id="empty-list"),
+        pytest.param({}, id="empty-dict"),
+        pytest.param(None, id="absent"),
+    ],
+)
+def test_an_empty_standards_list_is_refused_at_the_manifest_gate(
+    tmp_path: Path, standards_value: Any
+) -> None:
+    """No row ever reaches a guard, so only the list itself can be refused."""
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    (bundle / "bundle-manifest.json").write_text(
+        json.dumps({"bundle_version": 1, "standards": standards_value}), encoding="utf-8"
+    )
+    with pytest.raises(ValueError, match="^bundle_manifest_invalid: the standards list"):
+        _load_bundle(bundle)
+
+
+def test_an_empty_bundle_cannot_exchange_the_vendored_tree_for_an_empty_one(
+    tmp_path: Path,
+) -> None:
+    """End to end: the wipe. An empty manifest used to pass every guard, the
+    sync would swap in an empty tree and write an empty lock, and every
+    verification lane refuses that state only after the destruction."""
+    from benchweave_sdk.standards_sync import sync
+
+    root = _checkout(tmp_path)
+    tree = root / "src/benchweave_sdk/standards"
+    before = sorted(p.relative_to(tree).as_posix() for p in tree.rglob("*") if p.is_file())
+    assert before  # the checkout copy carries the real vendored tree
+    bundle = tmp_path / "empty-bundle"
+    bundle.mkdir()
+    (bundle / "bundle-manifest.json").write_text(
+        json.dumps({"bundle_version": 1, "standards": []}), encoding="utf-8"
+    )
+    with pytest.raises(ValueError, match="^bundle_manifest_invalid: the standards list"):
+        sync(bundle, root)
+    after = sorted(p.relative_to(tree).as_posix() for p in tree.rglob("*") if p.is_file())
+    assert after == before
+
+
+def test_duplicate_ids_that_differ_only_by_normalization_are_refused(
+    tmp_path: Path,
+) -> None:
+    """macOS and Windows resolve NFC and NFD spellings to one directory; a
+    duplicate that differs only by normalization form collapses there while
+    the lock vouches for names that do not exist separately on Linux."""
+    import unicodedata
+
+    nfc = "café"
+    nfd = "café"
+    assert nfc != nfd
+    assert unicodedata.normalize("NFC", nfc) == unicodedata.normalize("NFC", nfd)
+    bundle = _bundle(tmp_path, [_standard(nfc, []), _standard(nfd, [])])
+    with pytest.raises(ValueError, match="^bundle_manifest_invalid: duplicate standard id"):
+        _load_bundle(bundle)
+
+
+# --- One sync at a time: the swap's guarantees are single-flight. ----------------------
+
+
+def _valid_bundle(tmp_path: Path) -> Path:
+    """A one-standard bundle whose bytes match its digest claim."""
+    digest = hashlib.sha256(b"{}").hexdigest()
+    bundle = _bundle(tmp_path, [_standard("otdp", [{"path": "otdp/x.json", "sha256": digest}])])
+    (bundle / "files" / "otdp").mkdir(parents=True)
+    (bundle / "files" / "otdp" / "x.json").write_bytes(b"{}")
+    return bundle
+
+
+def test_a_live_sync_lock_is_refused_with_its_pid(tmp_path: Path) -> None:
+    from benchweave_sdk.standards_sync import STAGING_DIR, sync
+
+    root = _checkout(tmp_path)
+    lock = root / STAGING_DIR / "lock"
+    lock.parent.mkdir(parents=True)
+    lock.write_text(f"{os.getpid()} 0\n", encoding="utf-8")
+    with pytest.raises(
+        ValueError, match=f"sync_staging_blocked: another sync .pid {os.getpid()}."
+    ):
+        sync(_valid_bundle(tmp_path), root)
+    assert lock.exists()  # a refused sync never deletes another owner's lock
+
+
+def test_a_stale_lock_from_a_dead_owner_is_reclaimed(tmp_path: Path) -> None:
+    from benchweave_sdk.standards_sync import STAGING_DIR, sync
+
+    root = _checkout(tmp_path)
+    probe = subprocess.run(
+        [sys.executable, "-c", "import os; print(os.getpid())"], capture_output=True, text=True
+    )
+    dead_pid = int(probe.stdout.strip())
+    lock = root / STAGING_DIR / "lock"
+    lock.parent.mkdir(parents=True)
+    lock.write_text(f"{dead_pid} 0\n", encoding="utf-8")
+    report = sync(_valid_bundle(tmp_path), root)
+    assert report.changed == ("otdp",)  # the sync ran; the lock was not in its way
+    assert not lock.exists()  # the owner cleans up its own lock
 

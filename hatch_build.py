@@ -35,6 +35,14 @@ def _validate_preview_assets(package: Path) -> None:
             raise RuntimeError(f"Bundled preview asset is stale or corrupt: {relative}")
 
 
+# The 8.3 short name of _GENERATED.txt. A row spelled with the alias can
+# resolve to the stamp at lookup when the stamp was created first (a
+# hand-crafted tree); this writer's row-before-stamp order avoids that —
+# refused regardless as defense-in-depth. Kept identical to
+# standards_sync._STAMP_SHORT_NAME (STD-3).
+_STAMP_SHORT_NAME = re.compile(r"(?i)_gener~[0-9]+\.txt")
+
+
 def _unsafe_row(identifier: object, relative: object) -> bool:
     """The sync lanes' string rule for ids and ``<id>/...`` rows, inline.
 
@@ -51,7 +59,13 @@ def _unsafe_row(identifier: object, relative: object) -> bool:
         or ":" in relative
         or any(_unsafe_segment(segment) for segment in segments)
         or segments[0] != identifier
-        or (len(segments) == 2 and segments[1].casefold() == STAMP_NAME.casefold())
+        or (
+            len(segments) == 2
+            and (
+                segments[1].casefold() == STAMP_NAME.casefold()
+                or _STAMP_SHORT_NAME.fullmatch(segments[1]) is not None
+            )
+        )
     )
 
 
@@ -62,7 +76,18 @@ def _unsafe_identifier(identifier: object) -> bool:
     return any(c in identifier for c in "/\\:") or _unsafe_segment(identifier)
 
 
-_WINDOWS_DEVICE = re.compile(r"(?i)(con|prn|aux|nul|com[0-9]|lpt[0-9])(\..*)?")
+# Names Windows resolves to a device whatever directory they appear in, with or
+# without an extension (NUL, con.txt, COM1.json); the superscript digit forms
+# (com¹, lpt²) and the console API names (conin$, conout$) resolve as devices
+# too. COM0 is not a device — the class is COM1–COM9 and LPT1–LPT9, plus the
+# superscript forms of 1–3. Kept identical to standards_sync._WINDOWS_DEVICE
+# (STD-3).
+_WINDOWS_DEVICE = re.compile(
+    r"(?i)(con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³]|conin\$|conout\$)(\..*)?"
+)
+
+
+_WINDOWS_UNWRITABLE = re.compile(r'[<>:"|?*\x00-\x1f]')
 
 
 def _unsafe_segment(segment: str) -> bool:
@@ -71,6 +96,7 @@ def _unsafe_segment(segment: str) -> bool:
         or segment in (".", "..")
         or segment != segment.rstrip(". ")
         or _WINDOWS_DEVICE.fullmatch(segment) is not None
+        or _WINDOWS_UNWRITABLE.search(segment) is not None
     )
 
 
