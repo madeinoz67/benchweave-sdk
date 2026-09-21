@@ -11,9 +11,9 @@ from jsonschema import Draft202012Validator
 from benchweave_sdk import fixtures, presentation, preview_models, scaffold
 
 REPO = Path(__file__).resolve().parents[1]
-FIXTURE_SCHEMA = REPO / "src/benchweave_sdk/standards/plugin-ui-preview/0.1.0/fixture.schema.json"
+FIXTURE_SCHEMA = REPO / "src/benchweave_sdk/standards/plugin-ui-preview/0.1.1/fixture.schema.json"
 DOCUMENT_SCHEMA = (
-    REPO / "src/benchweave_sdk/standards/plugin-ui-preview/0.1.0/preview-document.schema.json"
+    REPO / "src/benchweave_sdk/standards/plugin-ui-preview/0.1.1/preview-document.schema.json"
 )
 
 
@@ -41,7 +41,7 @@ def catalogue() -> dict[str, object]:
 
 def author_fixture(binding_id: str = "voltage", unit: str | None = "V") -> dict[str, object]:
     return {
-        "contract_version": "0.1.0",
+        "contract_version": "0.1.1",
         "id": "high-load",
         "title": "High load",
         "description": "Synthetic high-load state",
@@ -70,7 +70,7 @@ def test_fixture_schema_is_closed_and_versioned() -> None:
 
     Draft202012Validator.check_schema(schema)
     assert schema["$id"] == (
-        "https://benchweave.dev/contracts/plugin-ui-preview/0.1.0/fixture.schema.json"
+        "https://benchweave.dev/contracts/plugin-ui-preview/0.1.1/fixture.schema.json"
     )
     assert schema["additionalProperties"] is False
 

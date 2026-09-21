@@ -14,6 +14,21 @@ paths, scaffold output, packaging): read the real implementation, no compressed 
 The full per-tool catalog and workflow load via `tools/list` at session start; until this
 checkout is tracked, fall back to `Read` and say so — do not start a daemon.
 
+### Edit routing — which write path applies
+
+One decision point, not a per-edit judgment call. The mandate binds the main
+session's own edits, not only dispatched agents.
+
+| Situation | Path |
+|---|---|
+| File indexed, primary checkout | `mcp__gortex__edit` — `change(operation:"impact")` before, `change(operation:"detect")` after; signatures also `verify` |
+| Linked worktree overlay | gortex single-file edit when freshness reports `exact: true` with `actual_view` naming the worktree; otherwise native Edit, and the bypass names the caveat |
+| Branch-new / untracked file | native Write; visible to the graph after the next index pass |
+| Generated files (`src/benchweave_sdk/preview_assets/`, `CHANGELOG_AUTO.md`, `.docs-assembly/`, `site/`, vendored standards trees) | never hand-edited — regenerated via their tool |
+
+Every native bypass states which row covers it. Guessing `pytest -k` filters is
+the anti-pattern this table replaces — `change(operation:"tests")` names the files.
+
 ---
 
 This file governs how AI agents work in this repo: what the SDK *is*, the principles that
