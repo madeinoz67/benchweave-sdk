@@ -303,11 +303,11 @@ def _write_preview_examples(
     # scaffold actually produced: a plot example when a numeric observation
     # target exists, its documented absence when none does.
     plot_assert = (
-        '    assert model.plot_views, "the scaffold plot must project",'
+        '    assert model.plot_views, "the scaffold plot must project"'
         if with_plot
         else (
             '    assert model.plot_views == (), '
-            '"no numeric observation target means no example plot",'
+            '"no numeric observation target means no example plot"'
         )
     )
     fixtures = destination / "src" / package / "ui" / "fixtures"
