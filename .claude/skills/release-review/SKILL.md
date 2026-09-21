@@ -28,7 +28,12 @@ gate runs after the bump commit exists and before the tag is cut.
    Never edit the machine source to match prose.
 4. **Contributor acknowledgment.** Row 7 is not optional: run the git log, and
    acknowledge new human contributors in the release notes. If the window is
-   empty, record that as the result.
+   empty, record that as the result. The acknowledgment must land in the
+   RENDERED release notes and CHANGELOG.md — the cliff template renders a
+   Contributors section with @mentions (GITHUB_TOKEN wired in publish.yml);
+   the tag message is the permanent record, never the only home. If the
+   rendered notes somehow lack the section (template regression, token
+   missing), append it to the release body by hand before the review closes.
 5. **Release notes / tag message** are composed in the principal's voice via
    the `stephens-digital-twin` skill (GitHub-facing prose directive). The
    publish pipeline replaces the GitHub release body with git-cliff notes; the

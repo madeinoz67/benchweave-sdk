@@ -189,6 +189,9 @@ jobs:
           args: --latest --strip header
         env:
           OUTPUT: RELEASE_NOTES.md
+          # Activates git-cliff's remote integration: commit emails resolve to
+          # GitHub usernames, so the Contributors section renders @mentions.
+          GITHUB_TOKEN: ${{ github.token }}
       - name: Replace the release body with generated notes
         env:
           GH_TOKEN: ${{ github.token }}
@@ -200,6 +203,7 @@ jobs:
           config: cliff.toml
         env:
           OUTPUT: CHANGELOG.md
+          GITHUB_TOKEN: ${{ github.token }}
       - name: Commit CHANGELOG.md to main
         if: steps.wiring.outputs.ready == 'true'
         run: |
