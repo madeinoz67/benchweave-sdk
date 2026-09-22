@@ -37,7 +37,7 @@ In your development directory, create an environment and install the built wheel
 ```sh
 uv venv --python 3.13
 source .venv/bin/activate
-uv pip install dist/sdk/benchweave_sdk-0.0.2-py3-none-any.whl
+uv pip install dist/sdk/benchweave_sdk-0.1.0-py3-none-any.whl
 benchweave-sdk new plugins/acme/model100 --package benchweave_acme_model100
 cd plugins/acme/model100
 uv pip install -e '.[test]'
