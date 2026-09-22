@@ -39,7 +39,7 @@ def contract_documents() -> dict[str, Any]:
 
     Documents load once from the vendored ``standards/`` tree (falling
     back to the repository checkout during editable development) under
-    keys such as ``otdp/0.2.0/otdp-runtime.schema.json``.
+    keys such as ``otdp/0.2.1/otdp-runtime.schema.json``.
     """
     vendored = files("benchweave_sdk").joinpath("standards")
     sets = (
@@ -110,7 +110,7 @@ def validate(document: Any, schema_file: str, definition: str | None = None) -> 
         Parsed JSON document to validate.
     schema_file
         Contract key from ``contract_documents()``, for example
-        ``"otdp/0.2.0/otdp-runtime.schema.json"``.
+        ``"otdp/0.2.1/otdp-runtime.schema.json"``.
     definition
         Optional ``$defs`` entry to validate against, for example
         ``"operationRequest"``.

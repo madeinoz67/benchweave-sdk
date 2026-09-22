@@ -2,7 +2,7 @@
 
 # BenchWeave plugin developer SDK
 
-Build an external device plugin without importing gateway internals. Python 3.13+, SDK 0.1.0, OTDP 0.2.1 and adapter API 1.1 are the initial baseline. This package is a separate wheel built alongside BenchWeave; published to PyPI as benchweave-sdk.
+Build an external device plugin without importing gateway internals. Python 3.13+, SDK 0.1.0, OTDP 0.2.1 and adapter API 1.1 are the baseline. This package is a separate wheel built alongside BenchWeave; published to PyPI as benchweave-sdk.
 
 ## Sister repository
 
@@ -170,7 +170,7 @@ Every preview is labelled `SIMULATED PRESENTATION DATA`. Control interactions cr
 
 - `interfaces`: structural async `Adapter`, `HostServices`, `OperationContext` and optional `CaptureServices` definitions. No SDK superclass is required.
 - `testing`: deterministic `MockContext` and `MockHost`, exact scripted transfers, dispatch markers, cancellation and a manually advanced clock. These are test doubles, not qualified host services.
-- `validation`: pinned local schemas, strict finite JSON, format validation, runtime correlation and basic descriptor S01/S02 checks. Unresolved schema references fail without network retrieval.
+- `validation`: pinned local schemas, strict finite JSON, format validation, runtime correlation and basic descriptor S01/S02/S04 checks. Unresolved schema references fail without network retrieval.
 - `conformance`: reusable operation and quiet lifecycle checks, with configurable wall-clock timeouts for cooperative async calls. Authors must add device-specific failure, profile and measurement tests. Use process isolation for blocking code or code that suppresses cancellation.
 - `presentation`: bounded offline validation of presentation resources and complete configuration presets, using the same validator bytes as the gateway.
 - `packaging`: inventory and integrity checks for a prepared bundle, including duplicate/path/symlink rejection. No installation, signing, publication or dependency execution.

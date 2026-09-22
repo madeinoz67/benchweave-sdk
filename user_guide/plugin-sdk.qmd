@@ -6,7 +6,7 @@ The SDK gives you a small starting point for developing a BenchWeave device plug
 
 The device is the hardware; the plugin is its Python integration and descriptor. Follow the [developer directory convention](https://github.com/madeinoz67/benchweave/blob/main/docs/device-developer-guide.md#repository-layout-for-device-plugins): `plugins/<manufacturer>/<name>/`, with `src/<python_package>/` inside that project. The name normally identifies the device model, such as `fnirsi/dps150`.
 
-The first SDK is `benchweave-sdk` 0.0.2 for Python 3.13+, OTDP 0.2.1 and adapter API 1.1, with registry 0.1.1 schemas. Its source lives in this repository, mounted at `packages/sdk` in the [main BenchWeave repository](https://github.com/madeinoz67/benchweave), and is built separately from the gateway. It supplies structural typing interfaces, offline contract validation, a scripted mock host, bounded async conformance helpers, an external project generator and file-inventory helpers.
+The current SDK is `benchweave-sdk` 0.1.0 for Python 3.13+, OTDP 0.2.1 and adapter API 1.1, with registry 0.1.1 schemas. Its source lives in this repository, mounted at `packages/sdk` in the [main BenchWeave repository](https://github.com/madeinoz67/benchweave), and is built separately from the gateway. It supplies structural typing interfaces, offline contract validation, a scripted mock host, bounded async conformance helpers, an external project generator and file-inventory helpers.
 
 ## 1. Install the SDK and generate your project
 
@@ -93,7 +93,7 @@ uv build
 
 Generated tests cover identify/read, quiet lifecycle, invalid inputs, pre-dispatch cancellation/expiry and uncertain malformed/transport responses. Extend them for your actual operations, failure modes and evidence. `check_operation` validates request/result schemas and correlation. `check_lifecycle` checks a quiet lifecycle and repeated cleanup. Both bound cooperative async calls with a configurable wall-clock timeout; blocking Python or code that suppresses cancellation needs process-level isolation.
 
-Descriptor checks currently cover its schema, matching capabilities/policies, unique parameter names and ordered ranges. These are **partial checks**, not all S01–S18, C01–C12 or M01–M14 obligations. The SDK provides no physical transport provider, complete profile/capture test harness or hardware qualification certificate.
+Descriptor checks currently cover its schema, matching capabilities/policies, unique parameter names, ordered ranges and transport-provider declarations (next subsection). These are **partial checks**, not all S01–S18, C01–C12 or M01–M14 obligations. The SDK provides no physical transport provider, complete profile/capture test harness or hardware qualification certificate.
 
 ### Transport providers (custom transports) {#transport-providers}
 
