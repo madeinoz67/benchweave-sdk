@@ -528,7 +528,31 @@ version, it does not kill the increment.
    a `transport-provider` standard admission (GOVERNANCE's new-standard path) is the
    honest move, not smuggling instances into otdp.
 
-## 8. DON'T-BUILD check
+## 8. RedTeam wave dispositions (2026-09-22, 8 attackers, all findings dispatcher-verified)
+
+**Folded in code (`8596836`, gates + CI green):** OSError-family pin-read wrap (3× convergence) · cap-growth reclassification · RecursionError guards at both sites (the pprint depth-bomb and check_schema's except tuple, with the SDK-owned nesting cap) · presentation-side descriptor typing · malformed-declaration typed refusals · vendored-derived mirror-regex pins · the inert split-test cure · website badge + wheel cite + release-matrix row-5 widening · the AI-GUIDE provider pointer · the §6.4 placement row (provider declarations require adapter mode).
+
+**Recorded here (no code change is the disposition):**
+
+| Finding (attacker) | Disposition |
+|---|---|
+| Hardlink pin admitted; containment is path-based, not inode-based (PT-1) | Disclosed posture: the pin's security is the sha256 (the attacker must already know the bytes); containment governs path resolution only. Increment 3 may add st_nlink posture; not an offline defect |
+| UTF-16/BOM provider documents admitted (EN-3) | Routed to PR A's equivalence checklist — only the main-side module can prove gateway agreement |
+| `$ref`-loop and external-URL grammars admitted, no egress (EN-7) | By contract: the SDK meta-validates and resolves nothing; gateway owns resolution. Record-only |
+| Reserved-kind frozenset: corpus growth leaves both pins stale-narrow (EN-7, AR-6, IN-4) | Extends deferral row 8; a corpus census fixture (derivation-vectors style) is the fix shape when it opens |
+| Lock compat block records no increment-2/3 pairing constraint (AR-6) | Routed to PR A: the compat notes field carries the constraint when the pointer lands |
+| Draft-07 keywords silently no-op under 2020-12 (EN-7) | Recorded: metaschema-validity cannot see dead keywords; a draft-provenance check is a future hardening row |
+| Dotless `otdp/1.0` admitted (PT-1) | Outside both the claim's and the corpus's dotted scoping — boundary note only |
+| MockHost provider vacuum + hardcoded receive-set (AR-6) | Corpus-unspecified (§8.1's dispatch-marker semantics for provider kinds); records as Increment-3 design input |
+| Approval expiry judged nowhere offline (AR-6) | §7's disclosed offline boundary; the check lane may grow an advisory, never a refusal |
+| id-agreement is an SDK-added fourth equality (AR-6) | Kept — defensible (the pin names the reviewed document); noted so Increment 3 decides knowingly |
+| Corpus-known derivation admits any future feature-shaped const (AR-6) | Accepted risk: both sides consume the same lock-pinned bytes; divergence needs a corpus revision AND different methods |
+| Two-component feature versions: schema admits, prose equality forbids (AR-6) | Intra-corpus tension — routed to PR A as a 0.2.2 errata candidate |
+| `effective` conditioning is an SDK determinization (AR-6) | Collapses into the folded §6.4 row for the provider lane |
+| jsonschema/referencing unbounded above; zero decision flips floor→current (EN-7) | Honest negative; the mode is version-dependent by construction |
+| Commit transcript reads process-first (IN-4) | Moot under squash merge |
+
+## 9. DON'T-BUILD check
 
 Built, and narrowly. The trigger is met by three real devices; the corpus contains a
 normative sentence promising this exact lane with no mechanism behind it; the minimal
@@ -539,7 +563,7 @@ That is the issue's chosen sequencing, and the alternatives are worse — an `x-
 declaration is barred by the corpus's own text (grounding 10), and waiting for the
 gateway increment first would have it encoding an unreviewed shape.
 
-## 9. Owner forks (surfaced, not decided)
+## 10. Owner forks (surfaced, not decided)
 
 - **F1 — version class:** 0.2.1 (recommended; additive by GOVERNANCE's shape test) vs
   0.3.0 (if "errata" reads as corrections-only). §2.
