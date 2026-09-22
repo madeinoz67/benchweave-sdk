@@ -118,11 +118,29 @@ The SDK's runtime dependencies are Click, jsonschema (+ referencing, rfc3339-val
 
 Operational notes: `preview-ui` is an interactive tool — with output redirected (or `--no-open`) it serves until interrupted by design, exiting 0 on SIGINT as a normal stop; a fixed `--port` can hit a short `EADDRINUSE` window on immediate restart (deliberate anti-port-steal posture — prefer the default ephemeral port); request bodies have no handler timeout, which only matters for untrusted peers under the explicitly acknowledged `--allow-network` mode.
 
+## Capture without a gateway (standalone writer)
+
+Plugin and bench development happens on machines that never run the gateway. `benchweave_sdk.capture.StandaloneCaptureWriter` implements the three capture methods an adapter calls in gateway mode — `artifact_append`, `artifact_finalise`, `artifact_abort` — over one directory per capture on a local filesystem. It is three of the eight `CaptureServices` members: device I/O still comes from a transport a composing runtime supplies.
+
+```python
+from benchweave_sdk.capture import StandaloneCaptureWriter
+
+writer = StandaloneCaptureWriter()          # or StandaloneCaptureWriter(some_path)
+await writer.artifact_append("cap-demo-1", chunk, context)
+manifest = await writer.artifact_finalise("cap-demo-1", {
+    "format": "waveform_f64le",
+    "started_at": "2026-09-22T00:00:00Z",
+    "sample_count": 1024, "sample_interval_s": 0.001, "unit": "V",
+}, context)
+```
+
+The capture root is an explicit constructor argument, then the `BENCHWEAVE_CAPTURE_DIR` environment variable, then `captures/` under the current working directory; a root inside the installed package tree is refused (a reinstall or upgrade wipes it, and the SDK's inventory verification refuses unlisted files). Each capture event is one directory — `manifest.json`, a `staging/` tree while chunks accumulate, the primary artifact (`<capture_id>.f64` for `waveform_f64le`, `.bin` for `raw_binary`, `.csv`/`.txt`/`.vcd` for declared extension formats, `.data` otherwise) and an optional `renderings/` tree the plugin writes itself. The manifest's `sha256`, `byte_length` and `artifact_id` (`art-<sha256>`) are computed over the real published bytes, and standalone extras live under `x-standalone-*` keys. The finalise format must be in the constructor's declared set (`formats=`, the two core formats by default; an empty set refuses everything); a capture that appended nothing is refused rather than published empty; an abort deletes only `staging/` and the in-flight primary, so a published capture and `renderings/` survive an unconditional `finally`-cleanup abort. There is no automatic import of standalone captures into the gateway — ingest is a separate, deliberate path.
+
 ## 4. Review compatibility and deployment
 
 Use the [AI device integration reviewer](https://github.com/madeinoz67/benchweave/blob/main/docs/ai-device-reviewer.md) (main repository) with the exact revision and test evidence. Its SDK maintenance checklist covers public interfaces, contracts, generated projects, mocks, gateway compatibility and release artefacts.
 
-The gateway now has an explicit `load_otdp_plugin`/`OTDPBridge` path for async adapter API 1.1. Its supported host operations are **identify, scalar read and scalar write**. The release smoke exercises a generated multi-module plugin through identify/read; separate bridge tests cover write conversion and rejection paths. Profile actions, capture and streaming remain unsupported by this bridge. The existing simulator loader is retained for its separate synchronous interface.
+The gateway now has an explicit `load_otdp_plugin`/`OTDPBridge` path for async adapter API 1.1. Its supported host operations are **identify, scalar read, scalar write and single-channel capture** — the `capture` verb with pre-dispatch bounds checks, staged appends and a host-computed manifest (the step's `timeout_ms` is the capture budget). The release smoke exercises a generated multi-module plugin through identify/read; separate bridge tests cover write conversion and rejection paths. Profile actions and streaming remain unsupported by this bridge. The existing simulator loader is retained for its separate synchronous interface.
 
 A gateway integrator must first complete admission, supply the verified manifest/cache and descriptor, inject authorised scoped services, and use the same monotonic timebase as the host's deadlines. The loader rechecks all listed file hashes and imports verified package code/resources in memory. This is integrity checking and namespace isolation, not an operating-system sandbox. Adapters remain trusted Python.
 

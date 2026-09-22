@@ -110,11 +110,16 @@ class HostServices(Protocol):
 class CaptureServices(HostServices, Protocol):
     """Host services extended with capture artifact storage.
 
-    Provisional. Nothing in this SDK or in the gateway implements this
-    protocol yet — ``testing.MockHost`` provides
-    :class:`HostServices` only, and the gateway's bridge does not implement
-    capture — so the behaviour described here is the intended shape of the
-    contract, not a pinned one; no conformance check exercises it. A host
+    First partial implementation:
+    :class:`benchweave_sdk.capture.StandaloneCaptureWriter` implements the
+    three capture methods of this eight-member protocol over a filesystem
+    backend (one capture in flight per instance) for hostless development
+    and bench testing; the gateway's capture path is a separate
+    implementation of the same three methods over its store. The writer is
+    three of eight members — it supplies no ``transfer``/``close_transport``
+    and no clocks, so a full ``CaptureServices`` still awaits a composing
+    runtime that binds a transport-backed services object around a writer,
+    and no conformance check exercises the composed protocol yet. A host
     without capture support should hand adapters plain
     :class:`HostServices`. An implementation should turn the data appended
     under one ``capture_id`` into a single artifact when finalised and

@@ -502,3 +502,32 @@ def test_a_crash_across_finalise_never_leaves_a_half_written_primary(
     assert not (event / "manifest.json").exists()  # not published
 
 
+# --- S4: the honest docstring and the compatibility sentence -------------------
+
+
+def test_capture_services_docstring_names_the_writer_and_its_true_size() -> None:
+    """The B14 honest 3-of-8 wording: the protocol's own docstring must name
+    the standalone writer as the first implementation of the three capture
+    methods and say the full eight-member protocol awaits a composing
+    runtime — not "nothing implements this protocol yet"."""
+    import inspect
+
+    from benchweave_sdk.interfaces import CaptureServices
+
+    doc = inspect.getdoc(CaptureServices) or ""
+    assert "StandaloneCaptureWriter" in doc
+    assert "Nothing in this SDK or in the gateway implements" not in doc
+
+
+def test_user_guide_compatibility_sentence_covers_capture() -> None:
+    """The guide's bridge-compatibility sentence (user_guide/plugin-sdk.qmd,
+    §4) must not claim capture is unsupported once the capture slice lands;
+    streaming and profile actions stay unsupported."""
+    guide = (
+        Path(__file__).resolve().parents[1] / "user_guide" / "plugin-sdk.qmd"
+    ).read_text(encoding="utf-8")
+    assert "capture and streaming remain unsupported" not in guide
+    assert "single-channel capture" in guide
+    assert "streaming remain unsupported" in guide
+
+
