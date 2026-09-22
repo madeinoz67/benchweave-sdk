@@ -2,7 +2,9 @@
 
 - Date: 2026-09-22
 - Status: design (pre-implementation; this record precedes any corpus or SDK change on
-  `feat/147-transport-providers`)
+  `feat/147-transport-providers`); refute fold 2026-09-22 — mechanism-critic F1–F11
+  folded into this record and the corpus branch by owner directive; adversary lane
+  pending, its findings fold as a late wave
 - References: gateway issue [#147](https://github.com/madeinoz67/benchweave/issues/147)
   (carrier for deferral row 6 of the #43 design of record, re-keyed to transport by
   Amendment 3), gateway issues #43 and #95; SDK base `4ba28b9`
@@ -243,12 +245,14 @@ scoped transport. No new permission name.
 |---|---|---|
 | `provider.feature_id` ∈ `required_features` | S04 (extended) | `provider_feature_missing:` |
 | an `otdp.transport.*` id in `required_features` with no matching `transport.provider` | S04 (extended, orphan sweep) | `provider_transport_undeclared:` |
-| pinned provider document exists at the package-relative path and hashes to `sha256` | S14-family (package-relative paths) | `provider_contract_missing:` / `provider_contract_hash_mismatch:` |
-| provider document passes `otdp-transport-provider.schema.json` and its `feature_id`/version agree with the declaration | admission (new) | `provider_contract_invalid:` |
+| any `otdp.*` id in `required_features` that is neither corpus-known (lanes, catalog profiles) nor declared via a `transport.provider` — the namespace is corpus-owned and closed offline (critic F2; typo'd `otdp.transports.*` must not sail through SDK-green) | S04 (extended, namespace closure) | `unknown_otdp_feature:` |
+| pinned provider document exists at the descriptor-relative path and hashes to `sha256` (F5: the provider triple resolves **descriptor-relative** — §1's bundle-root rule governs the root `contracts` array; owner decision 2026-09-22, matching the built suite, Inc-2 text, and corpus example) | S14-family (package-relative paths) | `provider_contract_missing:` / `provider_contract_hash_mismatch:` |
+| provider document passes `otdp-transport-provider.schema.json`; its grammar subschemas (`request_schema`/`result_schema`) meta-validate as Draft 2020-12 (F1 — the schema's `{"type":"object"}` holders admit invalid schemas otherwise; verified live); grammar `kind`s are unique as strings, not entries (F4 — `uniqueItems` catches exact dups only; verified live); and the three identity equalities hold — urn-embedded version == `version`, feature_id-embedded version == `version`, feature_id name segment == urn name segment (F3) | admission (new) + SDK `validate_transport_provider` | `provider_contract_invalid:` |
 | `connection_key` resolves to a connection backed by the **same** admitted contract (exact id+version+sha256) | S12 (extended) | gateway-side (needs commissioned state — honestly not offline-checkable; disclosed) |
 | provider transactions match the admitted grammar; `security_scope` respected | runtime | gateway-side |
+| gateway admission validates provider-contract instances against the vendored `otdp-transport-provider.schema.json` — `security_scope` is a boundary only once this exists (F8) | admission (Inc 3) | gateway-side |
 
-The last two rows are the honest boundary of offline checking: the SDK proves the
+The last three rows are the honest boundary of offline checking: the SDK proves the
 declaration is *well-formed and self-consistent*; only the gateway can prove the
 *grant* — because commissioned state and the provider runtime live there.
 
@@ -283,9 +287,11 @@ successor to that hand-rolled hundred lines) is deferral row 7.
 
 The machine delta is additive by GOVERNANCE's own shape test: one optional object on
 `$defs/customTransport`, one new schema file in the normative set, new examples;
-nothing removed, nothing retyped, no existing document changes meaning. Old descriptors
-validate identically under 0.2.1; provider descriptors are new documents that old
-hosts refuse — which is the designed exact-matching posture, not a break. That is the
+nothing removed, nothing retyped, no existing document changes meaning: a descriptor
+declaring 0.2.0 keeps validating under its own pinned version, unchanged (critic F9
+reword — "validates identically under 0.2.1" overclaimed; a 0.2.0-declaring document
+fails the 0.2.1 const by construction); provider descriptors are new documents that
+old hosts refuse — which is the designed exact-matching posture, not a break. That is the
 `approver_token` class → PATCH. It also matches the minimal-bumps directive (#69, and
 the owner's stated baby-steps preference). The 48-hour window is clear (0.2.0 released
 2026-09-19).
@@ -332,9 +338,11 @@ SDK PR → main PR A (corpus + pointer + equivalence) → main PR C (admission s
 
 **Increment 2 — SDK sync + offline conformance (this repo; unblocked by 1 alone).**
 `sync-standards` to 0.2.1 (lock + vendored tree move version-first; STD-2 guards it);
-`validate_descriptor` gains the S04 provider-consistency checks; the `check` lane
-resolves and verifies the pinned provider document relative to the descriptor file;
-new `validate_transport_provider` against the vendored schema; the five refusal
+`validate_descriptor` gains the S04 provider-consistency checks (1.4's rows,
+including the F2 namespace closure); the `check` lane resolves and verifies the
+pinned provider document descriptor-relative (F5); new `validate_transport_provider`
+against the vendored schema — carrying F1's grammar-subschema meta-validation, F3's
+three identity equalities, and F4's kind-string uniqueness; the six refusal
 prefixes of 1.4 added to the STD-4 API list; fixture-lattice tests (§4); a short
 user-guide subsection (obligation 1 — `check` gains CLI-visible refusals; the README
 five-steps do not change). **No scaffold change** — the scaffolded descriptor uses the
@@ -436,10 +444,11 @@ version, it does not kill the increment.
 
 - **STD-1/2/3** — content moves version-first (0.2.1) through the bundle; lock ↔ tree
   ↔ stamps symmetric across the three check lanes; no hand edits anywhere.
-- **STD-4** — five new refusal prefixes join the machine-matchable API:
+- **STD-4** — six new refusal prefixes join the machine-matchable API:
   `provider_feature_missing`, `provider_transport_undeclared`,
-  `provider_contract_missing`, `provider_contract_hash_mismatch`,
-  `provider_contract_invalid` (invariants.md's list gains them; ordinary schema-shape
+  `unknown_otdp_feature`, `provider_contract_missing`,
+  `provider_contract_hash_mismatch`, `provider_contract_invalid` (critic F2 adds the
+  namespace-closure prefix; invariants.md's list gains them; ordinary schema-shape
   failures keep flowing through the existing descriptor-validation error surface).
 - **STD-5/TWO-1** — no normative byte moves SDK-side first; corpus lands main-side,
   is exported, arrives via sync; this repo's commit is pushed before the pointer.
