@@ -615,3 +615,37 @@ def test_append_then_finalise_after_a_failed_finalise_recovers(tmp_path):
     asyncio.run(_append(writer, "cap-1", [b"\x02" * 8]))
     manifest = _finalise(writer, "cap-1", dict(_WAVEFORM, sample_count=2))
     assert manifest["byte_length"] == 16
+
+
+# --- S-F2: the published manifest must be strict JSON --------------------------------
+
+
+def test_an_infinite_interval_is_refused_and_every_manifest_is_strict_json(
+    tmp_path,
+):
+    """The SDK-lane refutation F2: sample_interval_s=+inf passed the >0
+    gate and json.dumps' default wrote the bare token Infinity — RFC-8259
+    ILLEGAL, so jq and every strict parser refuse the whole file while a
+    Python consumer round-trips it blind. The interval gate now requires
+    finiteness AND the manifest dump carries allow_nan=False (the
+    structural seam — no non-finite float can reach the file)."""
+    writer = _writer(tmp_path)
+    asyncio.run(_append(writer, "cap-1", [b"\x01" * 8]))
+    with pytest.raises(ValueError, match="finite"):
+        _finalise(
+            writer,
+            "cap-1",
+            dict(_WAVEFORM, sample_count=1, sample_interval_s=float("inf")),
+        )
+
+    def refuse_constants(token: str) -> None:
+        raise AssertionError(f"non-strict JSON token {token!r} in manifest")
+
+    writer2 = _writer(tmp_path / "two")
+    asyncio.run(_append(writer2, "cap-2", [b"\x01" * 8]))
+    _finalise(writer2, "cap-2", dict(_WAVEFORM, sample_count=1))
+    import json as json_module
+
+    published = (tmp_path / "two" / "captures" / "cap-2" / "manifest.json").read_text()
+    assert "Infinity" not in published and "NaN" not in published
+    json_module.loads(published, parse_constant=refuse_constants)  # strict re-parse

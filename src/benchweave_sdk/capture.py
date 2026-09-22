@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import shutil
 import unicodedata
@@ -148,7 +149,7 @@ def _write_manifest(event: Path, manifest: dict[str, Any]) -> None:
     Manifest presence is the publication marker: a crash between the primary
     rename and this write leaves a complete primary and an UNPUBLISHED event.
     """
-    payload = json.dumps(manifest, indent=2, sort_keys=True).encode()
+    payload = json.dumps(manifest, indent=2, sort_keys=True, allow_nan=False).encode()
     temp = event / "manifest.json.tmp"
     temp.write_bytes(payload)
     os.replace(temp, event / "manifest.json")
@@ -171,9 +172,13 @@ def _waveform_fields(metadata: dict[str, Any]) -> dict[str, Any]:
         isinstance(interval, bool)
         or not isinstance(interval, (int, float))
         or not interval > 0
+        or not math.isfinite(interval)
     ):
+        # math.isfinite: +inf passes "> 0" but is unrepresentable in JSON —
+        # the published manifest must be strict JSON (RFC 8259 has no
+        # Infinity token).
         raise ValueError(
-            "waveform_f64le finalise requires a positive sample_interval_s"
+            "waveform_f64le finalise requires a positive finite sample_interval_s"
         )
     unit = metadata.get("unit")
     if not isinstance(unit, str) or not unit:
