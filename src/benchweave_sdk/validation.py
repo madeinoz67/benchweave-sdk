@@ -423,11 +423,13 @@ def verify_provider_pin(
     root** — the descriptor's directory — so a plugin and its pinned
     contract travel one package (transport-providers §2; the bundle-root
     rule governs only the root ``contracts`` array). The pin must name a
-    contained regular file — no traversal, no absolute path, no symlinked
-    component — hash to the pinned ``sha256``, parse, pass
-    :func:`validate_transport_provider`, and agree with the declaration's
-    ``feature_id`` and ``id`` (the feature-id agreement transport-providers
-    §7 lists as offline-provable).
+    contained regular file — no traversal, no absolute path, no drive-colon
+    segment, no symlinked component — hash to the pinned ``sha256``, parse,
+    pass :func:`validate_transport_provider`, and agree with the
+    declaration's ``feature_id`` and ``id`` (the feature-id agreement
+    transport-providers §7 lists as offline-provable). Direct callers
+    passing a dict that never saw the schema get the same typed refusals,
+    not KeyErrors.
 
     Raises
     ------
@@ -444,11 +446,15 @@ def verify_provider_pin(
     provider = transport.get("provider") if isinstance(transport, dict) else None
     if not isinstance(provider, dict):
         return None
-    relative = provider["path"]
+    relative = provider.get("path")
     if (
         not isinstance(relative, str)
         or not relative
         or "\\" in relative
+        # A colon segment anchors a Windows join outside the package
+        # (drive-anchored or drive-relative); judged as a string so the
+        # rule is platform-blind, not a Windows-only backstop.
+        or ":" in relative
         or PurePosixPath(relative).is_absolute()
         or any(part in (".", "..") for part in relative.split("/"))
         or any(not part for part in relative.split("/"))
@@ -478,18 +484,36 @@ def verify_provider_pin(
     # refusal must still name its prefix: the cap is an SDK resource bound,
     # not a semantic disagreement the gateway shares. Sized before the read
     # so the refusal is this one, not the reader's bare cap prose.
-    if target.stat().st_size > INPUT_BYTE_LIMIT:
+    size = target.stat().st_size
+    if size > INPUT_BYTE_LIMIT:
         raise ValueError(
-            f"provider_contract_invalid: {relative!r} is {target.stat().st_size} bytes, "
+            f"provider_contract_invalid: {relative!r} is {size} bytes, "
             f"above the SDK's {INPUT_BYTE_LIMIT}-byte bounded-read cap; the cap is an "
             "SDK resource bound, not a semantic disagreement with the contract"
         )
-    raw = read_file(target)
+    try:
+        raw = read_file(target)
+    except ValueError as exc:
+        # The bounded reader refuses path-posture failures — a symlinked
+        # ancestor of the package, a special file — with its own bare prose;
+        # this lane owns the prefix, so the refusal stays machine-matchable.
+        raise ValueError(
+            f"provider_contract_missing: {relative!r} could not be read through "
+            f"the SDK's bounded reader: {exc}"
+        ) from exc
+    pinned = provider.get("sha256")
+    if not isinstance(pinned, str):
+        # No pinned digest is an invalid declaration, not a mismatch: there
+        # is nothing to compare the bytes against.
+        raise ValueError(
+            f"provider_contract_invalid: the declaration pinning {relative!r} "
+            "carries no sha256 digest to verify against"
+        )
     digest = hashlib.sha256(raw).hexdigest()
-    if digest != provider["sha256"]:
+    if digest != pinned:
         raise ValueError(
             f"provider_contract_hash_mismatch: {relative!r} hashes to {digest} but the "
-            f"descriptor pins {provider['sha256']}"
+            f"descriptor pins {pinned}"
         )
     try:
         parsed: Any = json.loads(raw)
@@ -502,8 +526,8 @@ def verify_provider_pin(
     document: dict[str, Any] = parsed
     validate_transport_provider(document)
     if (
-        document.get("feature_id") != provider["feature_id"]
-        or document.get("id") != provider["id"]
+        document.get("feature_id") != provider.get("feature_id")
+        or document.get("id") != provider.get("id")
     ):
         raise ValueError(
             f"provider_contract_invalid: the pinned contract at {relative!r} does not "

@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Callable
+from copy import deepcopy
 from importlib.resources import files
 from pathlib import Path
 from typing import Any
@@ -498,6 +499,85 @@ def test_symlinked_pin_is_contract_missing(tmp_path: Path) -> None:
     result = _check(package / "descriptor.json")
     assert result.exit_code == 1
     assert "provider_contract_missing:" in result.output
+
+
+def test_drive_colon_pin_path_is_refused_platform_blind(tmp_path: Path) -> None:
+    # C1b: a drive-colon segment anchors outside the package on Windows
+    # (Path(pkg) / "C:..." is drive-relative); POSIX treats it as an ordinary
+    # name, so a file actually named that in the package is ADMITTED on POSIX
+    # today — the precheck must refuse the shape as a string, on every OS.
+    descriptor, contract = _minimal_pair()
+    descriptor["transport"]["provider"]["path"] = "C:escape.json"
+    package = tmp_path / "colon"
+    package.mkdir()
+    raw = (json.dumps(contract, indent=2) + "\n").encode()
+    (package / "C:escape.json").write_bytes(raw)
+    descriptor["transport"]["provider"]["sha256"] = hashlib.sha256(raw).hexdigest()
+    (package / "descriptor.json").write_text(json.dumps(descriptor, indent=2) + "\n")
+    result = _check(package / "descriptor.json")
+    assert result.exit_code == 1, result.output
+    assert "provider_contract_missing:" in result.output
+    # The slashed drive shape is the same rule.
+    descriptor["transport"]["provider"]["path"] = "C:/escape.json"
+    (package / "descriptor.json").write_text(json.dumps(descriptor, indent=2) + "\n")
+    result = _check(package / "descriptor.json")
+    assert result.exit_code == 1
+    assert "provider_contract_missing:" in result.output
+
+
+def test_symlinked_package_ancestor_pin_refuses_prefixed(tmp_path: Path) -> None:
+    # C2: read_file refuses a symlinked ancestor anywhere in the absolute
+    # path with its own bare prose (the macOS /tmp shape); the pin lane owns
+    # the prefix. The descriptor itself is read plainly here so the wrapped
+    # pin read is what the arm exercises.
+    real = tmp_path / "real"
+    real.mkdir()
+    linked = tmp_path / "linked"
+    try:
+        linked.symlink_to(real)
+    except OSError:
+        pytest.skip("symlinks unavailable (privilege or filesystem)")
+    descriptor, contract = _minimal_pair()
+    raw = (json.dumps(contract, indent=2) + "\n").encode()
+    (linked / "reference-provider.json").write_bytes(raw)
+    descriptor["transport"]["provider"]["sha256"] = hashlib.sha256(raw).hexdigest()
+    descriptor_path = linked / "descriptor.json"
+    descriptor_path.write_text(json.dumps(descriptor, indent=2) + "\n")
+    with pytest.raises(ValueError, match="provider_contract_missing:"):
+        verify_provider_pin(descriptor, descriptor_path)
+
+
+def test_direct_caller_with_unvalidated_provider_gets_typed_refusals(tmp_path: Path) -> None:
+    # C1a: a direct verify_provider_pin caller with a dict that never saw
+    # the schema gets KeyError today; each missing field is a typed refusal
+    # at its site's meaning — a missing path is a missing pin, a missing
+    # digest or identity field is an invalid declaration.
+    descriptor, contract = _minimal_pair()
+    package = tmp_path / "unvalidated"
+    package.mkdir()
+    raw = (json.dumps(contract, indent=2) + "\n").encode()
+    (package / "reference-provider.json").write_bytes(raw)
+    descriptor["transport"]["provider"]["sha256"] = hashlib.sha256(raw).hexdigest()
+
+    no_path = deepcopy(descriptor)
+    del no_path["transport"]["provider"]["path"]
+    with pytest.raises(ValueError, match="provider_contract_missing:"):
+        verify_provider_pin(no_path, package / "descriptor.json")
+
+    no_digest = deepcopy(descriptor)
+    del no_digest["transport"]["provider"]["sha256"]
+    with pytest.raises(ValueError, match="provider_contract_invalid:"):
+        verify_provider_pin(no_digest, package / "descriptor.json")
+
+    no_feature = deepcopy(descriptor)
+    del no_feature["transport"]["provider"]["feature_id"]
+    with pytest.raises(ValueError, match="provider_contract_invalid:"):
+        verify_provider_pin(no_feature, package / "descriptor.json")
+
+    no_identity = deepcopy(descriptor)
+    del no_identity["transport"]["provider"]["id"]
+    with pytest.raises(ValueError, match="provider_contract_invalid:"):
+        verify_provider_pin(no_identity, package / "descriptor.json")
 
 
 def test_pinned_contract_must_agree_with_the_declaration(tmp_path: Path) -> None:
