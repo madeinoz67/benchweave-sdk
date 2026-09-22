@@ -138,6 +138,33 @@ _DEFAULT_FORMATS = frozenset({"waveform_f64le", "raw_binary"})
 _DEFAULT_MAX_BYTES = 16 * 1024 * 1024
 
 
+def _declared_formats(formats: Any) -> frozenset[str]:
+    """Normalise and type-validate the declared-format constructor
+    argument (S-F4): a bare string is REFUSED (a plural parameter taking a
+    string is always a mistake — char-splitting it silently declared
+    {'c','s','v'} instead of {'csv'}); every element must be a non-empty
+    string, refused naming the offending value. An empty iterable stays
+    legal (B12: an empty set refuses everything, by design)."""
+    if isinstance(formats, str):
+        raise ValueError(
+            "formats must be a set or iterable of format names, not a bare "
+            f"string ({formats!r} would char-split); pass {{{formats!r}}}"
+        )
+    try:
+        elements = list(formats)
+    except TypeError as error:
+        raise ValueError(
+            f"formats must be an iterable of format names, not {type(formats).__name__}"
+        ) from error
+    for element in elements:
+        if not isinstance(element, str) or not element:
+            raise ValueError(
+                "formats must contain only non-empty format-name strings; "
+                f"got {element!r}"
+            )
+    return frozenset(elements)
+
+
 def _context_is_cancelled(context: Any) -> bool:
     """Cancellation is honoured at append (spec §8); a None context never is."""
     return context is not None and bool(context.is_cancelled())
@@ -208,7 +235,7 @@ class StandaloneCaptureWriter:
         max_bytes: int = _DEFAULT_MAX_BYTES,
     ) -> None:
         self._root = capture_root(root)
-        self._formats = frozenset(formats)
+        self._formats = _declared_formats(formats)
         self._max_bytes = max_bytes
         self._current: str | None = None
         self._event: Path | None = None

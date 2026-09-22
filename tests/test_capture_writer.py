@@ -658,3 +658,27 @@ def test_an_infinite_interval_is_refused_and_every_manifest_is_strict_json(
     published = (tmp_path / "two" / "captures" / "cap-2" / "manifest.json").read_text()
     assert "Infinity" not in published and "NaN" not in published
     json_module.loads(published, parse_constant=refuse_constants)  # strict re-parse
+
+
+# --- S-F4: the declared-format constructor argument is type-validated --------
+
+
+def test_a_bare_string_formats_argument_is_refused_naming_the_fix(tmp_path):
+    """The SDK-lane refutation F4: formats="csv" char-split into
+    {'c','s','v'} and silently refused the format the caller declared.
+    CHOICE (disclosed): a bare string is REFUSED at construction — a
+    plural parameter taking a string is always a mistake, and wrapping it
+    would hide it."""
+    with pytest.raises(ValueError, match="set or iterable of format names"):
+        capture.StandaloneCaptureWriter(tmp_path / "captures", formats="csv")
+
+
+def test_non_string_format_elements_are_refused_naming_the_value(tmp_path):
+    with pytest.raises(ValueError, match="3"):
+        capture.StandaloneCaptureWriter(
+            tmp_path / "captures", formats=["csv", 3]
+        )
+    with pytest.raises(ValueError, match="None"):
+        capture.StandaloneCaptureWriter(
+            tmp_path / "captures", formats=frozenset({"csv", None})
+        )
