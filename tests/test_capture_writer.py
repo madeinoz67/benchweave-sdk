@@ -520,14 +520,19 @@ def test_capture_services_docstring_names_the_writer_and_its_true_size() -> None
 
 
 def test_user_guide_compatibility_sentence_covers_capture() -> None:
-    """The guide's bridge-compatibility sentence (user_guide/plugin-sdk.qmd,
-    §4) must not claim capture is unsupported once the capture slice lands;
-    streaming and profile actions stay unsupported."""
-    guide = (
-        Path(__file__).resolve().parents[1] / "user_guide" / "plugin-sdk.qmd"
-    ).read_text(encoding="utf-8")
-    assert "capture and streaming remain unsupported" not in guide
-    assert "single-channel capture" in guide
+    """S-F3: BOTH compatibility surfaces (user_guide/plugin-sdk.qmd §4 and
+    README.md's 'Compatibility and limits') must not claim capture is
+    unsupported once the capture slice lands; streaming and profile
+    actions stay unsupported. The guard sweeps the whole README too, so a
+    regressed sentence ANYWHERE in either file fails the pin."""
+    repo = Path(__file__).resolve().parents[1]
+    guide = (repo / "user_guide" / "plugin-sdk.qmd").read_text(encoding="utf-8")
+    readme = (repo / "README.md").read_text(encoding="utf-8")
+    for surface, text in (("guide", guide), ("readme", readme)):
+        assert "capture and streaming remain unsupported" not in text, surface
+        assert "capture and streaming are not implemented" not in text, surface
+        assert "single-channel capture" in text, surface
+        assert "streaming" in text and "unsupported" in text or "pending" in text, surface
     assert "streaming remain unsupported" in guide
 
 
