@@ -26,7 +26,10 @@ filesystem.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
+import shutil
 import unicodedata
 from pathlib import Path
 from typing import Any
@@ -139,6 +142,48 @@ def _context_is_cancelled(context: Any) -> bool:
     return context is not None and bool(context.is_cancelled())
 
 
+def _write_manifest(event: Path, manifest: dict[str, Any]) -> None:
+    """Write ``manifest.json`` atomically (temp + rename, same directory).
+
+    Manifest presence is the publication marker: a crash between the primary
+    rename and this write leaves a complete primary and an UNPUBLISHED event.
+    """
+    payload = json.dumps(manifest, indent=2, sort_keys=True).encode()
+    temp = event / "manifest.json.tmp"
+    temp.write_bytes(payload)
+    os.replace(temp, event / "manifest.json")
+
+
+def _waveform_fields(metadata: dict[str, Any]) -> dict[str, Any]:
+    """Validate the mandatory waveform metadata (corpus ``$defs/captureManifest``
+    allOf: ``sample_count``, ``sample_interval_s``, ``unit`` are required when
+    the format is ``waveform_f64le``); presence and shape only — the
+    count×8 rule is spec §7 prose the GATEWAY's G1/G4 enforce, not the
+    standalone writer, which never interprets the bytes it digests."""
+    fields: dict[str, Any] = {}
+    sample_count = metadata.get("sample_count")
+    if type(sample_count) is not int or sample_count < 1:
+        raise ValueError(
+            "waveform_f64le finalise requires an integer sample_count >= 1"
+        )
+    interval = metadata.get("sample_interval_s")
+    if (
+        isinstance(interval, bool)
+        or not isinstance(interval, (int, float))
+        or not interval > 0
+    ):
+        raise ValueError(
+            "waveform_f64le finalise requires a positive sample_interval_s"
+        )
+    unit = metadata.get("unit")
+    if not isinstance(unit, str) or not unit:
+        raise ValueError("waveform_f64le finalise requires a non-empty unit")
+    fields.update(
+        sample_count=sample_count, sample_interval_s=interval, unit=unit
+    )
+    return fields
+
+
 class StandaloneCaptureWriter:
     """The three capture methods over one event directory per capture.
 
@@ -242,9 +287,111 @@ class StandaloneCaptureWriter:
     async def artifact_finalise(
         self, capture_id: str, metadata: dict[str, Any], context: Any
     ) -> dict[str, Any]:
-        """Publish the capture (atomic primary, then the manifest)."""
-        raise NotImplementedError("finalise lands with the S3 commit")
+        """Publish the capture: atomic primary, then the manifest.
+
+        The format must be in the constructor's declared set (the refusal
+        names the set); waveform metadata is validated for presence and
+        shape (the corpus allOf); the digest and length are computed over
+        the REAL bytes as they are concatenated into the primary — a temp
+        file in the same directory renamed into place, so a crash across
+        finalise leaves a ``.tmp`` remnant, never a half-written primary.
+        Nothing is interpreted: the count×8 rule is the gateway's G1/G4.
+        """
+        if self._terminal is not None:
+            raise ValueError(
+                f"capture {self._current!r} is closed ({self._terminal}); "
+                "finalise is refused"
+            )
+        if self._current is None or capture_id != self._current:
+            raise ValueError(
+                f"no open capture {capture_id!r} to finalise (nothing appended, "
+                "a foreign id, or a second finalise)"
+            )
+        if not isinstance(metadata, dict):
+            raise ValueError("finalise metadata must be an object")
+        accepted = frozenset(
+            {"format", "started_at", "sample_count", "sample_interval_s", "unit", "renderings"}
+        )
+        unknown = sorted(set(metadata) - accepted)
+        if unknown:
+            raise ValueError(
+                f"unknown finalise metadata keys {unknown}; accepted: {sorted(accepted)}"
+            )
+        fmt = metadata.get("format")
+        if not isinstance(fmt, str) or fmt not in self._formats:
+            raise ValueError(
+                f"format {fmt!r} is not in the declared set {sorted(self._formats)}"
+            )
+        started_at = metadata.get("started_at")
+        if not isinstance(started_at, str) or not started_at:
+            raise ValueError("finalise metadata requires a non-empty started_at string")
+        renderings = metadata.get("renderings")
+        if renderings is not None and (
+            not isinstance(renderings, list)
+            or not all(isinstance(entry, dict) for entry in renderings)
+        ):
+            raise ValueError(
+                "renderings must be a list of {file, byte_length, sha256} objects"
+            )
+        event = self._event
+        if event is None:  # pragma: no cover — an open capture always has one
+            raise RuntimeError("writer invariant violated: open capture without event")
+        staging = event / "staging"
+        extension = _FORMAT_EXTENSIONS.get(fmt, _DEFAULT_EXTENSION)
+        primary = event / f"{capture_id}{extension}"
+        temp = event / f"{capture_id}{extension}.tmp"
+        hasher = hashlib.sha256()
+        total = 0
+        with temp.open("wb") as out:
+            for index in range(self._chunks):
+                chunk = (staging / f"{index}.part").read_bytes()
+                hasher.update(chunk)
+                out.write(chunk)
+                total += len(chunk)
+        if total == 0:
+            temp.unlink(missing_ok=True)
+            raise ValueError(
+                "zero-byte finalise refused: failed/incomplete captures are "
+                "aborted, not published as complete"
+            )
+        os.replace(temp, primary)
+        shutil.rmtree(staging, ignore_errors=True)
+        digest = hasher.hexdigest()
+        manifest: dict[str, Any] = {
+            "capture_id": capture_id,
+            "format": fmt,
+            "artifact_id": "art-" + digest,
+            "byte_length": total,
+            "sha256": digest,
+            "started_at": started_at,
+        }
+        if fmt == "waveform_f64le":
+            manifest.update(_waveform_fields(metadata))
+        manifest["x-standalone-state"] = "finalised"
+        manifest["x-standalone-manifest-version"] = 1
+        if renderings is not None:
+            manifest["x-standalone-renderings"] = renderings
+        _write_manifest(event, manifest)
+        self._terminal = "finalised"
+        return manifest
 
     async def artifact_abort(self, capture_id: str) -> None:
-        """Discard the capture; idempotent, publishes nothing."""
-        raise NotImplementedError("abort lands with the S3 commit")
+        """Discard staging and the in-flight primary; publish nothing.
+
+        A no-op retract after finalise (a published capture stands) and for
+        an id this writer never opened — the unconditional
+        ``finally: artifact_abort()`` idiom can neither unpublish nor touch
+        another event, and ``renderings/`` is never deleted.
+        """
+        if self._terminal is not None:
+            return
+        if self._current is None or capture_id != self._current:
+            return
+        event = self._event
+        if event is None:  # pragma: no cover — an open capture always has one
+            return
+        shutil.rmtree(event / "staging", ignore_errors=True)
+        for candidate in event.glob(f"{capture_id}.*"):
+            if candidate.is_file():
+                candidate.unlink()
+        self._terminal = "aborted"

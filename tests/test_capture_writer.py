@@ -229,3 +229,276 @@ def test_case_folded_collision_is_refused_at_append(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="capture_id collision"):
         asyncio.run(writer.artifact_append("CAPTURE-ONE", b"data", Context()))
 
+
+# --- S3: atomic finalise, real-digest manifest, abort scoping ------------------
+
+_WAVEFORM = {
+    "format": "waveform_f64le",
+    "started_at": "2026-09-22T00:00:00Z",
+    "sample_count": 3,
+    "sample_interval_s": 0.001,
+    "unit": "V",
+}
+
+
+def _capture_manifest_def() -> dict[str, Any]:
+    """``$defs/captureManifest`` from the vendored corpus, at test time."""
+    from benchweave_sdk.validation import contract_documents
+
+    matches = [
+        key
+        for key in contract_documents()
+        if key.startswith("otdp/") and key.endswith("/otdp-runtime.schema.json")
+    ]
+    assert len(matches) == 1, matches
+    runtime = contract_documents()[matches[0]]
+    defs = runtime["$defs"]["captureManifest"]
+    assert isinstance(defs, dict)
+    return defs
+
+
+def _finalise(writer: Any, capture_id: str, metadata: dict[str, Any]) -> dict[str, Any]:
+    return asyncio.run(writer.artifact_finalise(capture_id, metadata, Context()))
+
+
+def test_finalise_digest_is_recomputed_over_the_published_file(tmp_path: Path) -> None:
+    import hashlib
+
+    writer = _writer(tmp_path)
+    chunks = [b"\x00" * 8, b"\x01" * 8, b"\x02" * 8]
+    asyncio.run(_append(writer, "cap-1", chunks))
+    manifest = _finalise(writer, "cap-1", dict(_WAVEFORM))
+    primary = tmp_path / "captures" / "cap-1" / "cap-1.f64"
+    published = primary.read_bytes()
+    digest = hashlib.sha256(published).hexdigest()  # over the FILE, not the buffers
+    assert published == b"".join(chunks)
+    assert manifest["sha256"] == digest
+    assert manifest["byte_length"] == len(published)
+    # B10: artifact_id = art-<sha256> over the real bytes — the same
+    # construction as the gateway's content store, no store needed.
+    assert manifest["artifact_id"] == "art-" + digest
+
+
+def test_finalise_manifest_json_matches_the_returned_manifest(tmp_path: Path) -> None:
+    import json as json_module
+
+    writer = _writer(tmp_path)
+    asyncio.run(_append(writer, "cap-1", [b"data-bytes"]))
+    manifest = _finalise(writer, "cap-1", dict(_WAVEFORM, sample_count=1))
+    written = json_module.loads(
+        (tmp_path / "captures" / "cap-1" / "manifest.json").read_text()
+    )
+    assert written == manifest
+
+
+def test_core_manifest_contains_the_corpus_required_keys_and_validates(
+    tmp_path: Path,
+) -> None:
+    """R9 (B10 form): CONTAINS, not equality — ``x-standalone-*`` extension
+    keys are schema-legal beside the corpus-required set, and a core-format
+    manifest must validate against ``$defs/captureManifest`` itself. The
+    writer enforces presence/shape only; the count×8 rule is spec §7 prose
+    enforced by the GATEWAY's G1/G4 — the standalone writer names, digests
+    and lengths bytes, it never interprets them (Decision 9)."""
+    import jsonschema
+
+    schema = _capture_manifest_def()
+    writer = _writer(tmp_path)
+    asyncio.run(_append(writer, "cap-1", [b"\x00" * 8]))
+    manifest = _finalise(writer, "cap-1", dict(_WAVEFORM))
+    required = set(schema["required"])  # derived from the corpus at test time
+    assert required <= set(manifest), required - set(manifest)
+    jsonschema.validate(manifest, schema)
+
+
+def test_raw_binary_manifest_validates_against_the_corpus_def(tmp_path: Path) -> None:
+    import jsonschema
+
+    schema = _capture_manifest_def()
+    writer = _writer(tmp_path)
+    asyncio.run(_append(writer, "cap-raw", [b"\xff" * 5]))
+    manifest = _finalise(
+        writer,
+        "cap-raw",
+        {"format": "raw_binary", "started_at": "2026-09-22T00:00:00Z"},
+    )
+    assert (tmp_path / "captures" / "cap-raw" / "cap-raw.bin").exists()
+    jsonschema.validate(manifest, schema)
+
+
+def test_standalone_extras_live_under_x_standalone_keys(tmp_path: Path) -> None:
+    writer = _writer(tmp_path)
+    asyncio.run(_append(writer, "cap-1", [b"\x00" * 8]))
+    manifest = _finalise(
+        writer,
+        "cap-1",
+        dict(
+            _WAVEFORM,
+            renderings=[{"file": "plot.svg", "byte_length": 12, "sha256": "0" * 64}],
+        ),
+    )
+    assert manifest["x-standalone-state"] == "finalised"
+    assert manifest["x-standalone-manifest-version"] == 1
+    assert manifest["x-standalone-renderings"] == [
+        {"file": "plot.svg", "byte_length": 12, "sha256": "0" * 64}
+    ]
+    # No non-corpus key outside the x-standalone namespace.
+    schema = _capture_manifest_def()
+    allowed = set(schema["properties"]) | {
+        "x-standalone-state",
+        "x-standalone-renderings",
+        "x-standalone-manifest-version",
+    }
+    assert set(manifest) <= allowed, set(manifest) - allowed
+
+
+def test_finalise_refuses_an_undeclared_format_naming_the_declared_set(
+    tmp_path: Path,
+) -> None:
+    writer = _writer(tmp_path)  # default declared set: the two core formats
+    asyncio.run(_append(writer, "cap-1", [b"data"]))
+    with pytest.raises(ValueError, match=r"declared set \['raw_binary', 'waveform_f64le'\]"):
+        _finalise(writer, "cap-1", {"format": "csv", "started_at": "2026-09-22T00:00:00Z"})
+    # An empty declared set refuses everything (B12, named).
+    empty = _writer(tmp_path / "empty", formats=frozenset())
+    asyncio.run(_append(empty, "cap-2", [b"data"]))
+    with pytest.raises(ValueError, match="declared set \[\]"):
+        _finalise(empty, "cap-2", {"format": "csv", "started_at": "2026-09-22T00:00:00Z"})
+
+
+def test_a_declared_extension_format_publishes_with_its_extension(
+    tmp_path: Path,
+) -> None:
+    known = _writer(tmp_path / "csv", formats=frozenset({"csv"}))
+    asyncio.run(_append(known, "cap-csv", [b"a,b\n1,2\n"]))
+    _finalise(known, "cap-csv", {"format": "csv", "started_at": "2026-09-22T00:00:00Z"})
+    assert (tmp_path / "csv" / "captures" / "cap-csv" / "cap-csv.csv").exists()
+    unknown = _writer(tmp_path / "custom", formats=frozenset({"custom-format"}))
+    asyncio.run(_append(unknown, "cap-x", [b"z"]))
+    _finalise(
+        unknown, "cap-x", {"format": "custom-format", "started_at": "2026-09-22T00:00:00Z"}
+    )
+    assert (tmp_path / "custom" / "captures" / "cap-x" / "cap-x.data").exists()
+
+
+def test_finalise_requires_the_mandatory_waveform_metadata(tmp_path: Path) -> None:
+    """Derived from ``$defs/captureManifest``'s allOf: sample_count,
+    sample_interval_s and unit are REQUIRED when format == waveform_f64le."""
+    for missing in ("sample_count", "sample_interval_s", "unit"):
+        writer = _writer(tmp_path / missing)
+        asyncio.run(_append(writer, "cap-1", [b"\x00" * 8]))
+        metadata = dict(_WAVEFORM)
+        del metadata[missing]
+        with pytest.raises(ValueError, match=missing):
+            _finalise(writer, "cap-1", metadata)
+
+
+def test_zero_byte_publication_is_refused_in_both_modes(tmp_path: Path) -> None:
+    """B11 parity: an adapter that appends nothing and finalises is refused —
+    the same adapter behavior the gateway's zero-byte finalise refusal pins —
+    and nothing is published (no primary, no manifest)."""
+    writer = _writer(tmp_path)
+    with pytest.raises(ValueError):
+        _finalise(writer, "cap-empty", dict(_WAVEFORM))
+    event = tmp_path / "captures" / "cap-empty"
+    assert not event.exists()
+
+
+def test_finalise_refuses_unknown_metadata_keys_and_foreign_ids(
+    tmp_path: Path,
+) -> None:
+    writer = _writer(tmp_path)
+    asyncio.run(_append(writer, "cap-1", [b"data"]))
+    with pytest.raises(ValueError, match="unknown finalise metadata keys"):
+        _finalise(writer, "cap-1", dict(_WAVEFORM, extra_field="x"))
+    with pytest.raises(ValueError, match="no open capture"):
+        _finalise(writer, "cap-foreign", dict(_WAVEFORM))
+
+
+def test_finalise_removes_staging_and_marks_the_event_published(tmp_path: Path) -> None:
+    writer = _writer(tmp_path)
+    asyncio.run(_append(writer, "cap-1", [b"\x00" * 8]))
+    _finalise(writer, "cap-1", dict(_WAVEFORM))
+    event = tmp_path / "captures" / "cap-1"
+    assert not (event / "staging").exists()
+    # The publication marker is manifest presence (B13).
+    assert (event / "manifest.json").exists()
+
+
+def test_abort_leaves_zero_chunk_residue_and_no_publication(tmp_path: Path) -> None:
+    writer = _writer(tmp_path)
+    asyncio.run(_append(writer, "cap-1", [b"one", b"two"]))
+    asyncio.run(writer.artifact_abort("cap-1"))
+    event = tmp_path / "captures" / "cap-1"
+    assert not (event / "staging").exists()
+    assert not any(event.glob("cap-1.*"))
+    assert not (event / "manifest.json").exists()
+
+
+def test_abort_is_a_no_op_retract_after_finalise(tmp_path: Path) -> None:
+    """R9: an unconditional post-finalise ``artifact_abort`` (the adapter's
+    ``finally`` idiom) must NOT delete the published artifact or the user's
+    renderings."""
+    writer = _writer(tmp_path)
+    asyncio.run(_append(writer, "cap-1", [b"\x00" * 8]))
+    _finalise(writer, "cap-1", dict(_WAVEFORM))
+    event = tmp_path / "captures" / "cap-1"
+    renderings = event / "renderings"
+    renderings.mkdir()
+    (renderings / "plot.svg").write_bytes(b"<svg/>")
+    asyncio.run(writer.artifact_abort("cap-1"))
+    assert (event / "cap-1.f64").exists()
+    assert (event / "manifest.json").exists()
+    assert (renderings / "plot.svg").exists()
+
+
+def test_abort_for_an_id_this_writer_never_opened_is_a_no_op(tmp_path: Path) -> None:
+    writer = _writer(tmp_path)
+    asyncio.run(writer.artifact_abort("never-opened"))
+    assert not (tmp_path / "captures").exists()
+
+
+def test_appends_after_terminal_are_refused(tmp_path: Path) -> None:
+    writer = _writer(tmp_path)
+    asyncio.run(_append(writer, "cap-1", [b"\x00" * 8]))
+    _finalise(writer, "cap-1", dict(_WAVEFORM))
+    with pytest.raises(ValueError, match="appends after terminal are refused"):
+        asyncio.run(writer.artifact_append("cap-1", b"more", Context()))
+    aborted = _writer(tmp_path / "other")
+    asyncio.run(_append(aborted, "cap-2", [b"data"]))
+    asyncio.run(aborted.artifact_abort("cap-2"))
+    with pytest.raises(ValueError, match="appends after terminal are refused"):
+        asyncio.run(aborted.artifact_append("cap-2", b"more", Context()))
+
+
+def test_second_finalise_after_terminal_is_refused(tmp_path: Path) -> None:
+    writer = _writer(tmp_path)
+    asyncio.run(_append(writer, "cap-1", [b"\x00" * 8]))
+    _finalise(writer, "cap-1", dict(_WAVEFORM))
+    with pytest.raises(ValueError, match="closed"):
+        _finalise(writer, "cap-1", dict(_WAVEFORM))
+
+
+def test_a_crash_across_finalise_never_leaves_a_half_written_primary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """B13's crash shape: the primary is written atomically (temp + rename in
+    the same directory). A process death between the rename and the manifest
+    write leaves a COMPLETE primary and no manifest — the event is not
+    published (manifest presence is the marker); stale-``.tmp`` residue
+    cleanup is deferred to the runner scope and named, not silently claimed."""
+    writer = _writer(tmp_path)
+    chunks = [b"\x00" * 8, b"\x01" * 8]
+    asyncio.run(_append(writer, "cap-1", chunks))
+
+    def exploding_manifest(event: Path, manifest: dict[str, Any]) -> None:
+        raise RuntimeError("simulated crash before manifest write")
+
+    monkeypatch.setattr(capture, "_write_manifest", exploding_manifest)
+    with pytest.raises(RuntimeError, match="simulated crash"):
+        _finalise(writer, "cap-1", dict(_WAVEFORM))
+    event = tmp_path / "captures" / "cap-1"
+    assert (event / "cap-1.f64").read_bytes() == b"".join(chunks)  # complete
+    assert not (event / "manifest.json").exists()  # not published
+
+
