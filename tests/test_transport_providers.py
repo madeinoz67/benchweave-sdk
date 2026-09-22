@@ -609,3 +609,65 @@ def test_verify_provider_pin_is_none_without_a_declaration(tmp_path: Path) -> No
     package.mkdir()
     (package / "descriptor.json").write_text(json.dumps(descriptor, indent=2) + "\n")
     assert verify_provider_pin(descriptor, package / "descriptor.json") is None
+
+
+def test_long_segment_pin_path_is_contract_missing_without_host_paths(tmp_path: Path) -> None:
+    # RedTeam OSError fold: the provider object's path is minLength-1 only, so
+    # the schema admits a segment no filesystem can name; the walk's resolve()
+    # surfaced bare OSError (errno 63 reproduced) carrying the ABSOLUTE host
+    # path. The refusal names the relative pin and the errno only.
+    descriptor, _ = _minimal_pair()
+    descriptor["transport"]["provider"]["path"] = "a" * 300 + ".json"
+    descriptor_path = _write_package(tmp_path, "longseg", descriptor, None)
+    result = _check(descriptor_path)
+    assert result.exit_code == 1, result.output
+    assert "provider_contract_missing:" in result.output
+    assert str(tmp_path) not in result.output
+
+
+def test_unreadable_pin_is_contract_missing_without_host_paths(tmp_path: Path) -> None:
+    # The permission face of the same fold: a chmod-000 contract escapes as a
+    # bare PermissionError with the absolute path today.
+    import os
+    import sys
+
+    if sys.platform == "win32":
+        pytest.skip("POSIX permission bits do not deny on Windows")
+    if os.geteuid() == 0:
+        pytest.skip("root ignores permission bits")
+    descriptor, contract = _minimal_pair()
+    package = tmp_path / "unreadable"
+    package.mkdir()
+    raw = (json.dumps(contract, indent=2) + "\n").encode()
+    pinned = package / "reference-provider.json"
+    pinned.write_bytes(raw)
+    pinned.chmod(0o000)
+    descriptor["transport"]["provider"]["sha256"] = hashlib.sha256(raw).hexdigest()
+    (package / "descriptor.json").write_text(json.dumps(descriptor, indent=2) + "\n")
+    try:
+        result = _check(package / "descriptor.json")
+    finally:
+        pinned.chmod(0o644)
+    assert result.exit_code == 1, result.output
+    assert "provider_contract_missing:" in result.output
+    assert str(tmp_path) not in result.output
+
+
+def test_growth_past_the_cap_during_the_read_is_the_cap_class(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # EN-3: a file growing past INPUT_BYTE_LIMIT between the size precheck
+    # and the read lands in the reader's cap prose; the C2 wrap had it
+    # escaping as provider_contract_missing, but the invariant assigns the
+    # cap to provider_contract_invalid. Simulated (a real growth race is
+    # not deterministic): the reader raises the precheck-passing cap prose.
+    from benchweave_sdk import presentation
+
+    def grown(_target: Path) -> bytes:
+        raise ValueError("Input must be a bounded regular file")
+
+    monkeypatch.setattr(presentation, "read_file", grown)
+    descriptor, contract = _minimal_pair()
+    descriptor_path = _write_package(tmp_path, "grown", descriptor, contract)
+    with pytest.raises(ValueError, match="provider_contract_invalid:"):
+        verify_provider_pin(json.loads(descriptor_path.read_text()), descriptor_path)

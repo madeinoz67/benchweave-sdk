@@ -196,6 +196,13 @@ _SANCTIONED_PROVIDER_FEATURE = re.compile(
     r"^otdp\.transport\.[a-z][a-z0-9-]*/[0-9]+\.[0-9]+(?:\.[0-9]+)?$"
 )
 
+#: The bounded reader's cap-prose messages (presentation.py's literals): a
+#: read-path hit after the size precheck passed means the file changed under
+#: the check — the cap's own refusal class, not a missing pin.
+_READER_BOUND_MESSAGES = frozenset(
+    {"Input must be a bounded regular file", "Input byte limit exceeded"}
+)
+
 #: The generic §8.1 transfer kinds (specification §8.1; transport-providers
 #: §3): a provider grammar introduces NEW kinds and never shadows one. The
 #: set is prose-carried — the vendored runtime schema does not enumerate the
@@ -464,42 +471,64 @@ def verify_provider_pin(
         )
     package_root = descriptor_path.parent
     target = package_root
-    for part in PurePosixPath(relative).parts:
-        target = target / part
-        if target.is_symlink():
-            raise ValueError(
-                f"provider_contract_missing: {relative!r} crosses a symlink; the SDK "
-                "reads provider pins through a strict no-follow posture — stricter "
-                "than the corpus's after-symlink-resolution containment"
-            )
-    if not target.is_file() or not target.resolve().is_relative_to(package_root.resolve()):
-        raise ValueError(
-            f"provider_contract_missing: {relative!r} does not name a contained regular "
-            "file in the descriptor's package"
-        )
-    from .presentation import INPUT_BYTE_LIMIT, read_file  # local: presentation imports this module
-
-    # The pin read inherits the SDK-wide bounded-read cap. A corpus-valid
-    # contract can exceed it (description carries no maxLength), and the
-    # refusal must still name its prefix: the cap is an SDK resource bound,
-    # not a semantic disagreement the gateway shares. Sized before the read
-    # so the refusal is this one, not the reader's bare cap prose.
-    size = target.stat().st_size
-    if size > INPUT_BYTE_LIMIT:
-        raise ValueError(
-            f"provider_contract_invalid: {relative!r} is {size} bytes, "
-            f"above the SDK's {INPUT_BYTE_LIMIT}-byte bounded-read cap; the cap is an "
-            "SDK resource bound, not a semantic disagreement with the contract"
-        )
     try:
-        raw = read_file(target)
-    except ValueError as exc:
-        # The bounded reader refuses path-posture failures — a symlinked
-        # ancestor of the package, a special file — with its own bare prose;
-        # this lane owns the prefix, so the refusal stays machine-matchable.
+        for part in PurePosixPath(relative).parts:
+            target = target / part
+            if target.is_symlink():
+                raise ValueError(
+                    f"provider_contract_missing: {relative!r} crosses a symlink; the SDK "
+                    "reads provider pins through a strict no-follow posture — stricter "
+                    "than the corpus's after-symlink-resolution containment"
+                )
+        if not target.is_file() or not target.resolve().is_relative_to(
+            package_root.resolve()
+        ):
+            raise ValueError(
+                f"provider_contract_missing: {relative!r} does not name a contained regular "
+                "file in the descriptor's package"
+            )
+        # Local import: presentation imports this module.
+        from .presentation import INPUT_BYTE_LIMIT, read_file
+
+        # The pin read inherits the SDK-wide bounded-read cap. A corpus-valid
+        # contract can exceed it (description carries no maxLength), and the
+        # refusal must still name its prefix: the cap is an SDK resource bound,
+        # not a semantic disagreement the gateway shares. Sized before the read
+        # so the refusal is this one, not the reader's bare cap prose.
+        size = target.stat().st_size
+        if size > INPUT_BYTE_LIMIT:
+            raise ValueError(
+                f"provider_contract_invalid: {relative!r} is {size} bytes, "
+                f"above the SDK's {INPUT_BYTE_LIMIT}-byte bounded-read cap; the cap is an "
+                "SDK resource bound, not a semantic disagreement with the contract"
+            )
+        try:
+            raw = read_file(target)
+        except ValueError as exc:
+            if str(exc) in _READER_BOUND_MESSAGES:
+                # The pin passed the size precheck, so a read-path bound hit
+                # means the file changed under the check — grown past the cap.
+                # The cap is the cap's own refusal class, never a missing pin.
+                raise ValueError(
+                    f"provider_contract_invalid: {relative!r} failed the SDK's bounded "
+                    f"read after passing the size precheck: {exc}"
+                ) from exc
+            # The bounded reader refuses path-posture failures — a symlinked
+            # ancestor of the package, a special file — with its own bare prose;
+            # this lane owns the prefix, so the refusal stays machine-matchable.
+            raise ValueError(
+                f"provider_contract_missing: {relative!r} could not be read through "
+                f"the SDK's bounded reader: {exc}"
+            ) from exc
+    except OSError as exc:
+        # ENAMETOOLONG paths the schema admits, permission-denied pins, and the
+        # race faces (ENOENT, ELOOP): all are pins this check could not resolve
+        # or read. The message names the relative pin and the errno only — the
+        # OSError's own text carries the absolute host path, which is not ours
+        # to print (RedTeam EN-3).
         raise ValueError(
-            f"provider_contract_missing: {relative!r} could not be read through "
-            f"the SDK's bounded reader: {exc}"
+            f"provider_contract_missing: {relative!r} could not be resolved or read "
+            f"(os error {exc.errno})"
         ) from exc
     pinned = provider.get("sha256")
     if not isinstance(pinned, str):
