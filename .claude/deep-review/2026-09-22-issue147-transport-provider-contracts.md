@@ -255,6 +255,7 @@ scoped transport. No new permission name.
 | provider document passes `otdp-transport-provider.schema.json`; its grammar subschemas (`request_schema`/`result_schema`) meta-validate as Draft 2020-12 (F1 — the schema's `{"type":"object"}` holders admit invalid schemas otherwise; verified live); grammar `kind`s are unique as strings, not entries (F4 — `uniqueItems` catches exact dups only; verified live); and the three identity equalities hold — urn-embedded version == `version`, feature_id-embedded version == `version`, feature_id name segment == urn name segment (F3) | admission (new) + SDK `validate_transport_provider` | `provider_contract_invalid:` |
 | `connection_key` resolves to a connection backed by the **same** admitted contract (exact id+version+sha256) | S12 (extended) | gateway-side (needs commissioned state — honestly not offline-checkable; disclosed) |
 | provider transactions match the admitted grammar; `security_scope` respected | runtime | gateway-side |
+| a provider grammar's kinds are disjoint from the seven generic §8.1 transfer kinds — "extends" is additive, never an override (corpus transport-providers §3 names the rule and the seven verbatim; the SDK's hand-carried frozenset is pinned by a spelling test with the spec cite — review finding 1) | provider validation (SDK + admission) | `provider_contract_invalid:` |
 | gateway admission validates provider-contract instances against the vendored `otdp-transport-provider.schema.json` — `security_scope` is a boundary only once this exists (F8) | admission (Inc 3) | gateway-side |
 
 The last three rows are the honest boundary of offline checking: the SDK proves the
@@ -409,10 +410,15 @@ Written before any fixture was built or any number looked at.
 provider descriptors: 4 valid variants (minimal provider declaration; provider + class
 profile features together; provider with x- settings extensions; the corpus reference
 descriptor itself) and 8 single-fault permutations (feature_id absent from
-required_features; orphan `otdp.transport.*` feature; provider on a non-custom
-transport; provider without adapter mode; pinned path escaping the package; sha256
-malformed; provider object with additional properties; settings additionalProperties
-violation). Requirement: the SDK lane (validate + check, run from the descriptor's
+required_features; orphan `otdp.transport.*` feature; **unknown `otdp.*` feature id —
+the namespace-closure fault, 1.4 row 3's lattice slot**; provider on a non-custom
+transport; provider without adapter mode; pinned path escaping the package; **a
+well-formed WRONG sha256** (a pattern-malformed digest is schema surface, refused
+before hashing — proven by an extra arm); provider object with additional properties).
+*Amended 2026-09-22 at Increment-2 review: the original list's settings-additionalProperties
+slot was replaced by the closure fault — the shipped 0.2.1 schema catches that fault (and
+two others of the eight) at the schema surface, which is the honest mapping; five of eight
+prove the new prefixes, three prove the schema.* Requirement: the SDK lane (validate + check, run from the descriptor's
 package root) and the corpus-0.2.1 rules applied through the main-side equivalence
 module **agree accept/refuse on 12/12**, and each invalid fixture refuses with its
 named prefix from 1.4.
@@ -423,8 +429,10 @@ named prefix from 1.4.
   declared fields; multi-fault compositions are excluded by design (residual, tracked
   as deferral 6).
 
-**Metric 2 — RED control (the mechanism proof).** On the SDK branch, revert **only**
-the provider-check commits: the 8 invalid fixtures must stop refusing with the named
+**Metric 2 — RED control (the mechanism proof).** On the SDK branch, neutralize **only**
+the provider-check mechanisms (API-preserving no-op bodies; a raw file revert makes the
+lattice uncollectable because the test module imports the new API — the re-instrument
+clause below covers exactly this): the 8 invalid fixtures must stop refusing with the named
 prefixes (pass, or fail differently), the 4 valid ones still pass; restore, green
 again. Paste both runs (raw pytest output, collected counts — `no tests ran` is a
 FAILED check).
@@ -435,7 +443,10 @@ FAILED check).
 
 **Metric 3 — goldens.** Post-sync: `sync-standards --check` green in all three lanes
 (committed state, bundle mode, hatch build — STD-3 symmetry); scaffold output
-byte-identical to the pre-change golden (SRF-1); lock records every 0.2.1 file, stamps
+**shape-identical** to the pre-change golden (SRF-1; amended 2026-09-22: literal
+byte-identity is unsatisfiable across an OTDP const bump — the measured delta is the
+version cites only, the descriptor's `otdp_version` value and the AI-GUIDE corpus cite
+riding the train); lock records every 0.2.1 file, stamps
 intact.
 - **Ship:** all three green. **Kill:** any lane asymmetry or scaffold drift.
 
