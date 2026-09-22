@@ -48,7 +48,7 @@ minutes; the review exists so the next release does not depend on luck.
 | 2 | Website hero status | updated — 2 stamps → SDK 0.1.0; OTDP 0.2.0 / adapter API 1.1 correct-as-is against `__init__.py` |
 | 3 | Docs selector | updated — v0.1.0 (latest); v0.0.4 prior option added |
 | 4 | Compatibility tagline | updated — SDK 0.1.0 against main project `>=0.1.0` (lock floor unchanged) |
-| 5 | Standards badges | updated — registry 0.1.0→0.1.1, plugin-ui-preview 0.1.0→0.1.1 vs lock; interface 0.1.0 / plugin-ui 0.2.0 / execution 0.1.0 correct-as-is |
+| 5 | Standards badges | updated — registry 0.1.0→0.1.1, plugin-ui-preview 0.1.0→0.1.1 vs lock; interface 0.1.0 / plugin-ui 0.2.0 / execution 0.1.0 correct-as-is; otdp 0.2.0 also correct-as-is at that point but UNCHECKED — the row's list omitted otdp entirely, the miss #147's RedTeam EN-6 caught at the website badge; the instrument now enumerates all six standards (otdp, registry, interface, plugin-ui, execution, plugin-ui-preview) against the lock |
 | 6 | great-docs versions | updated — v0.1.0 `latest: true` registered before the tag; v0.0.4 demoted |
 | 7 | Contributor window `v0.0.4..HEAD` | platima — 35 commits, new human contributor; acknowledged in the tag message and release notes |
 | 8 | Gateway `uv.lock` pin | note — moves on the gateway's next lock run, as designed |

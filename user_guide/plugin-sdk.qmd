@@ -6,7 +6,7 @@ The SDK gives you a small starting point for developing a BenchWeave device plug
 
 The device is the hardware; the plugin is its Python integration and descriptor. Follow the [developer directory convention](https://github.com/madeinoz67/benchweave/blob/main/docs/device-developer-guide.md#repository-layout-for-device-plugins): `plugins/<manufacturer>/<name>/`, with `src/<python_package>/` inside that project. The name normally identifies the device model, such as `fnirsi/dps150`.
 
-The first SDK is `benchweave-sdk` 0.0.2 for Python 3.13+, OTDP 0.2.0 and adapter API 1.1, with registry 0.1.1 schemas. Its source lives in this repository, mounted at `packages/sdk` in the [main BenchWeave repository](https://github.com/madeinoz67/benchweave), and is built separately from the gateway. It supplies structural typing interfaces, offline contract validation, a scripted mock host, bounded async conformance helpers, an external project generator and file-inventory helpers.
+The current SDK is `benchweave-sdk` 0.1.0 for Python 3.13+, OTDP 0.2.1 and adapter API 1.1, with registry 0.1.1 schemas. Its source lives in this repository, mounted at `packages/sdk` in the [main BenchWeave repository](https://github.com/madeinoz67/benchweave), and is built separately from the gateway. It supplies structural typing interfaces, offline contract validation, a scripted mock host, bounded async conformance helpers, an external project generator and file-inventory helpers.
 
 ## 1. Install the SDK and generate your project
 
@@ -37,7 +37,7 @@ In your development directory, create an environment and install the built wheel
 ```sh
 uv venv --python 3.13
 source .venv/bin/activate
-uv pip install dist/sdk/benchweave_sdk-0.0.2-py3-none-any.whl
+uv pip install dist/sdk/benchweave_sdk-0.1.0-py3-none-any.whl
 benchweave-sdk new plugins/acme/model100 --package benchweave_acme_model100
 cd plugins/acme/model100
 uv pip install -e '.[test]'
@@ -93,7 +93,22 @@ uv build
 
 Generated tests cover identify/read, quiet lifecycle, invalid inputs, pre-dispatch cancellation/expiry and uncertain malformed/transport responses. Extend them for your actual operations, failure modes and evidence. `check_operation` validates request/result schemas and correlation. `check_lifecycle` checks a quiet lifecycle and repeated cleanup. Both bound cooperative async calls with a configurable wall-clock timeout; blocking Python or code that suppresses cancellation needs process-level isolation.
 
-Descriptor checks currently cover its schema, matching capabilities/policies, unique parameter names and ordered ranges. These are **partial checks**, not all S01–S18, C01–C12 or M01–M14 obligations. The SDK provides no physical transport provider, complete profile/capture test harness or hardware qualification certificate.
+Descriptor checks currently cover its schema, matching capabilities/policies, unique parameter names, ordered ranges and transport-provider declarations (next subsection). These are **partial checks**, not all S01–S18, C01–C12 or M01–M14 obligations. The SDK provides no physical transport provider, complete profile/capture test harness or hardware qualification certificate.
+
+### Transport providers (custom transports) {#transport-providers}
+
+A `custom` transport may declare a pinned **transport-provider contract** (OTDP 0.2.1): an optional `provider` object on the transport carrying the required `feature_id` and an `{id, path, sha256}` pin to the reviewed contract document inside your plugin package. `benchweave-sdk check` verifies the whole declaration offline and refuses with named, machine-matchable prefixes:
+
+- `provider_feature_missing:` — the provider's `feature_id` is not in `required_features`.
+- `provider_transport_undeclared:` — an `otdp.transport.*` feature is required but no provider on the custom transport declares it, or the provider's `feature_id` is not a sanctioned `otdp.transport.<name>/<semver>` id (a declaration nothing admissible can ever back).
+- `unknown_otdp_feature:` — an `otdp.*` feature id that is neither corpus-known nor declared through a provider; the namespace is corpus-owned, and a typo or a fake version does not pass.
+- `provider_contract_missing:` — the pin does not resolve to a contained regular file. Provider pins are **descriptor-relative** (the contract ships beside your descriptor, subdirectories allowed) and refuse traversal, absolute paths and symlinked components.
+- `provider_contract_hash_mismatch:` — the pinned bytes do not hash to the pinned `sha256`.
+- `provider_contract_invalid:` — the pinned document fails the transport-provider contract schema, its grammar subschemas are not valid Draft 2020-12 schemas, its kinds are not unique strings, a kind shadows a generic transfer kind, or its identity fields disagree — including disagreeing with the descriptor's own declaration.
+
+A misplaced provider (on a non-custom transport, or without the adapter integration mode) and provider-object shape faults refuse through the ordinary schema-validation error surface. A `custom` transport **without** a provider stays valid: that is the honestly-incomplete posture, not a refusal. The Python entry points behind these checks are `validation.validate_transport_provider` (contract documents) and `validation.verify_provider_pin` (pin resolution).
+
+These checks prove the declaration **well-formed and self-consistent** only. Only the gateway can prove the grant: that your host has admitted the pinned contract and that `connection_key` resolves to a connection it backs. An offline pass is not an admission claim.
 
 ## Local UI preview (simulated)
 

@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import tomllib
 from functools import cache
 from importlib.resources import files
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from jsonschema import Draft202012Validator, FormatChecker
@@ -38,11 +39,11 @@ def contract_documents() -> dict[str, Any]:
 
     Documents load once from the vendored ``standards/`` tree (falling
     back to the repository checkout during editable development) under
-    keys such as ``otdp/0.2.0/otdp-runtime.schema.json``.
+    keys such as ``otdp/0.2.1/otdp-runtime.schema.json``.
     """
     vendored = files("benchweave_sdk").joinpath("standards")
     sets = (
-        ("otdp", "0.2.0"),
+        ("otdp", "0.2.1"),
         ("registry", "0.1.1"),
         ("plugin-ui", "0.2.0"),
     )
@@ -109,7 +110,7 @@ def validate(document: Any, schema_file: str, definition: str | None = None) -> 
         Parsed JSON document to validate.
     schema_file
         Contract key from ``contract_documents()``, for example
-        ``"otdp/0.2.0/otdp-runtime.schema.json"``.
+        ``"otdp/0.2.1/otdp-runtime.schema.json"``.
     definition
         Optional ``$defs`` entry to validate against, for example
         ``"operationRequest"``.
@@ -147,13 +148,22 @@ def validate(document: Any, schema_file: str, definition: str | None = None) -> 
         # Only document/schema failures are laundered into the domain error;
         # a programming error (say, a KeyError) keeps its own face. A deep
         # enough document overflows the validator's recursion before anything
-        # else runs, so RecursionError is a document failure here too.
-        raise ValueError(f"Contract validation failed: {exc}") from exc
+        # else runs, so RecursionError is a document failure here too. The
+        # message itself renders lazily — jsonschema formats a ValidationError
+        # through pprint on demand, and a document deep enough to validate but
+        # too deep to pprint blows the stack HERE, inside the handler, where
+        # the tuple above cannot catch it (RedTeam PT-7); the construction is
+        # guarded and length-bounded instead.
+        try:
+            detail = str(exc)
+        except RecursionError:
+            detail = f"{type(exc).__name__}: message unformattable at this document depth"
+        raise ValueError(f"Contract validation failed: {detail[:500]}") from exc
 
 
 def validate_request(request: dict[str, Any]) -> None:
     """Validate an OTDP operation request envelope against its contract."""
-    validate(request, "otdp/0.2.0/otdp-runtime.schema.json", "operationRequest")
+    validate(request, "otdp/0.2.1/otdp-runtime.schema.json", "operationRequest")
 
 
 def validate_result(result: dict[str, Any], request: dict[str, Any]) -> None:
@@ -175,9 +185,467 @@ def validate_result(result: dict[str, Any], request: dict[str, Any]) -> None:
         correlate.
     """
     validate_request(request)
-    validate(result, "otdp/0.2.0/otdp-runtime.schema.json", "operationResult")
+    validate(result, "otdp/0.2.1/otdp-runtime.schema.json", "operationResult")
     if (result["operation_id"], result["verb"]) != (request["operation_id"], request["verb"]):
         raise ValueError("Result correlation does not match the request")
+
+
+# ---------------------------------------------------------------------------
+# Transport providers (0.2.1): declaration census, contract validation, pins
+# ---------------------------------------------------------------------------
+
+#: The sanctioned provider sub-namespace (transport-providers §2).
+_PROVIDER_FEATURE_NAMESPACE = "otdp.transport."
+
+#: The sanctioned declaration-site feature_id shape — the transport-provider
+#: contract schema's own ``feature_id`` pattern, verbatim: the contract side
+#: refuses anything else in ``otdp.*``, so a descriptor declaration outside
+#: this shape can never link to an admissible contract and declares nothing.
+_SANCTIONED_PROVIDER_FEATURE = re.compile(
+    r"^otdp\.transport\.[a-z][a-z0-9-]*/[0-9]+\.[0-9]+(?:\.[0-9]+)?$"
+)
+
+#: The bounded reader's cap-prose messages (presentation.py's literals): a
+#: read-path hit after the size precheck passed means the file changed under
+#: the check — the cap's own refusal class, not a missing pin.
+_READER_BOUND_MESSAGES = frozenset(
+    {"Input must be a bounded regular file", "Input byte limit exceeded"}
+)
+
+#: The generic §8.1 transfer kinds (specification §8.1; transport-providers
+#: §3): a provider grammar introduces NEW kinds and never shadows one. The
+#: set is prose-carried — the vendored runtime schema does not enumerate the
+#: transaction kinds — so it is spelled here and moves with the corpus.
+_RESERVED_TRANSFER_KINDS = frozenset(
+    {
+        "stream_send",
+        "stream_receive",
+        "stream_exchange",
+        "can_receive",
+        "can_send",
+        "i2c_transfer",
+        "spi_transfer",
+    }
+)
+
+#: The required_features id shape (the descriptor schema's items pattern).
+_FEATURE_ID = re.compile(r"^[a-z][a-z0-9_.-]*/[0-9]+\.[0-9]+(?:\.[0-9]+)?$")
+
+
+def _otdp_document(suffix: str) -> str:
+    """The one vendored OTDP document ending in ``suffix``, any version."""
+    matches = [
+        key
+        for key in contract_documents()
+        if key.startswith("otdp/") and key.endswith(f"/{suffix}")
+    ]
+    if len(matches) != 1:
+        raise ValueError(
+            f"unknown_contract_schema: expected one vendored otdp {suffix!r}, found {matches}"
+        )
+    return matches[0]
+
+
+@cache
+def _corpus_known_otdp_features() -> frozenset[str]:
+    """The corpus-known ``otdp.*`` feature ids, derived from the vendored tree.
+
+    The lanes are the feature-shaped ``const`` values the vendored descriptor
+    schema itself carries — its ``required_features`` contains-conditions
+    spell exactly the core lanes (five at 0.2.1) — and the profiles are the
+    vendored catalog's ``profiles[].id`` (twelve at 0.2.1). The closure rule
+    is transport-providers §2: an ``otdp.*`` identifier that is neither
+    corpus-known (the core lanes and catalog profile ids) nor declared
+    through a transport-provider object is a refusal at every admission
+    point — the namespace is corpus-owned, and a typo must not sail through.
+    """
+    documents = contract_documents()
+    lanes: set[str] = set()
+
+    def sweep(node: object) -> None:
+        if isinstance(node, dict):
+            const = node.get("const")
+            if isinstance(const, str) and _FEATURE_ID.fullmatch(const):
+                lanes.add(const)
+            for value in node.values():
+                sweep(value)
+        elif isinstance(node, list):
+            for item in node:
+                sweep(item)
+
+    sweep(documents[_otdp_document("otdp-device-descriptor.schema.json")])
+    catalog = documents[_otdp_document("device-profile-catalog.json")]
+    profiles = {profile["id"] for profile in catalog["profiles"]}
+    return frozenset(lanes | profiles)
+
+
+def _check_provider_placement(descriptor: dict[str, Any]) -> None:
+    """The §6.4 placement row: a provider declaration rides an adapter-mode
+    integration.
+
+    The schema's declarative row already refuses custom+declarative, so
+    post-schema this is belt-and-braces; it earns its keep in two other
+    places — direct callers of the census, and the schema-refused document,
+    where validate_descriptor runs it (the S19 posture) so the fault surfaces
+    with its actionable census prefix instead of a generic schema error.
+    Defensive by design: a malformed section is a non-event here, the schema
+    or the fuller census owns it.
+    """
+    if not isinstance(descriptor, dict):
+        return
+    transport = descriptor.get("transport")
+    provider = transport.get("provider") if isinstance(transport, dict) else None
+    if not isinstance(provider, dict):
+        return
+    integration = descriptor.get("integration")
+    mode = integration.get("mode") if isinstance(integration, dict) else None
+    if mode != "adapter":
+        raise ValueError(
+            "provider_transport_undeclared: a transport provider requires the "
+            "adapter integration mode (specification §6.4)"
+        )
+
+
+def _check_provider_features(descriptor: dict[str, Any]) -> None:
+    """S04 (extended): provider declarations and the closed ``otdp.*`` namespace.
+
+    Five refusals, in this order so each single fault lands on its named
+    prefix (transport-providers §2; specification §6.4):
+
+    - ``provider_transport_undeclared:`` a provider whose ``feature_id`` is
+      not a sanctioned transport-provider id — outside the
+      ``otdp.transport.<name>/<semver>`` sub-namespace entirely, or a
+      malformed name segment. The declaration site owns its namespace: no
+      admissible contract can ever register such a feature, so the
+      declaration is not effective (R1; the refute proved both shapes
+      admitted before this row);
+    - ``provider_transport_undeclared:`` a provider declaration on a
+      non-adapter integration — ``_check_provider_placement``, the §6.4 row;
+    - ``provider_feature_missing:`` a pinned provider whose feature the
+      integration does not require;
+    - ``provider_transport_undeclared:`` an ``otdp.transport.*`` feature with
+      no effective declaration — no provider object at all, or one pinning
+      a different feature. A declaration is effective only on the ``custom``
+      transport of an adapter-mode integration (specification §6.4); the
+      schema itself refuses the misplaced shapes — the transport arms are
+      closed objects, and the declarative row's enum names custom's
+      non-members — so this sweep runs after it and judges the census;
+    - ``unknown_otdp_feature:`` any other ``otdp.*`` id that is neither
+      corpus-known nor declared. The ``otdp.transport.*`` sub-namespace is
+      the sweep's own to judge, so the closure never double-reports it.
+    """
+    transport = descriptor["transport"]
+    provider = transport.get("provider")
+    required = descriptor["required_features"]
+    _check_provider_placement(descriptor)
+    if isinstance(provider, dict):
+        declared = provider.get("feature_id")
+        if (
+            not isinstance(declared, str)
+            or _SANCTIONED_PROVIDER_FEATURE.fullmatch(declared) is None
+        ):
+            raise ValueError(
+                f"provider_transport_undeclared: {declared!r} is not a sanctioned "
+                "transport-provider feature id; a declaration must live in the "
+                "otdp.transport.<name>/<semver> sub-namespace exactly (the contract "
+                "schema's feature_id pattern)"
+            )
+    if isinstance(provider, dict) and provider.get("feature_id") not in required:
+        raise ValueError(
+            f"provider_feature_missing: {provider.get('feature_id')!r} is pinned by "
+            "the transport provider but is not in required_features"
+        )
+    effective = (
+        isinstance(provider, dict)
+        and transport.get("type") == "custom"
+        and descriptor["integration"]["mode"] == "adapter"
+    )
+    for feature in required:
+        if not feature.startswith(_PROVIDER_FEATURE_NAMESPACE):
+            continue
+        if effective and feature == provider.get("feature_id"):
+            continue
+        if not isinstance(provider, dict):
+            detail = "no transport provider is declared"
+        else:
+            detail = "the declared provider pins a different feature_id"
+        raise ValueError(
+            f"provider_transport_undeclared: {feature!r} is required but {detail}"
+        )
+    known = _corpus_known_otdp_features()
+    for feature in required:
+        if not feature.startswith("otdp.") or feature.startswith(_PROVIDER_FEATURE_NAMESPACE):
+            continue
+        if feature not in known:
+            raise ValueError(
+                f"unknown_otdp_feature: {feature!r} is neither a corpus feature nor "
+                "declared through a transport provider; the otdp.* namespace is "
+                "corpus-owned"
+            )
+
+
+#: The grammar subschema nesting cap the SDK enforces on its own: well under
+#: the measured RecursionError depths of the metaschema walk (98 under a deep
+#: stack, 900 at top level — RedTeam EN-7), and the same bound the S19
+#: derivation grammar uses, so one number governs both grammar depths.
+_GRAMMAR_SUBSCHEMA_MAX_DEPTH = 32
+
+
+def _exceeds_depth(node: object, limit: int) -> bool:
+    """Whether ``node`` nests containers deeper than ``limit`` (iterative: a
+    recursive walker would itself crash on the depth it is measuring)."""
+    stack: list[tuple[object, int]] = [(node, 1)]
+    while stack:
+        current, depth = stack.pop()
+        if depth > limit:
+            return True
+        if isinstance(current, dict):
+            stack.extend((value, depth + 1) for value in current.values())
+        elif isinstance(current, list):
+            stack.extend((item, depth + 1) for item in current)
+    return False
+
+
+def validate_transport_provider(document: Any) -> None:
+    """Validate a transport-provider contract document offline (0.2.1).
+
+    The vendored ``otdp-transport-provider.schema.json`` — which also holds
+    the ``otdp.transport.*`` namespace rule for the contract's own
+    ``feature_id`` — plus the checks JSON Schema cannot express
+    (transport-providers §1/§3):
+
+    - each grammar entry's ``request_schema``/``result_schema`` meta-validates
+      as Draft 2020-12: the schema's ``{"type": "object"}`` holders admit
+      any object, including schemas the metaschema refuses;
+    - grammar kinds are unique as strings across the grammar: the schema's
+      ``uniqueItems`` refuses byte-identical entries only;
+    - no grammar kind reuses a generic §8.1 transfer kind: provider grammars
+      extend the table, never shadow it;
+    - the three identity equalities hold: urn-embedded version == ``version``,
+      feature_id-embedded version == ``version``, and the feature_id name
+      segment == the urn name segment.
+
+    Raises
+    ------
+    ValueError
+        ``provider_contract_invalid:`` — structure only; JSON validity grants
+        no authority, and admission stays a host-side act.
+    """
+    try:
+        validate(document, "otdp/0.2.1/otdp-transport-provider.schema.json")
+    except ValueError as exc:
+        raise ValueError(f"provider_contract_invalid: {exc}") from exc
+    grammar = document["transaction_grammar"]
+    kinds: list[str] = []
+    for entry in grammar:
+        kind = entry["kind"]
+        if kind in _RESERVED_TRANSFER_KINDS:
+            raise ValueError(
+                f"provider_contract_invalid: grammar kind {kind!r} reuses a generic "
+                "transfer-table kind; a provider grammar extends the table and never "
+                "shadows it"
+            )
+        for field in ("request_schema", "result_schema"):
+            if _exceeds_depth(entry[field], _GRAMMAR_SUBSCHEMA_MAX_DEPTH):
+                raise ValueError(
+                    f"provider_contract_invalid: {kind}.{field} nests deeper than "
+                    f"{_GRAMMAR_SUBSCHEMA_MAX_DEPTH} levels; the SDK refuses grammar "
+                    "subschemas beyond its own nesting cap"
+                )
+            try:
+                Draft202012Validator.check_schema(entry[field])
+            except (SchemaError, RecursionError) as exc:
+                raise ValueError(
+                    f"provider_contract_invalid: {kind}.{field} is not a valid "
+                    "Draft 2020-12 schema"
+                ) from exc
+        kinds.append(kind)
+    if len(set(kinds)) != len(kinds):
+        raise ValueError(
+            "provider_contract_invalid: grammar kinds must be unique strings across "
+            "transaction_grammar"
+        )
+    version = document["version"]
+    urn_parts = document["id"].split(":")
+    urn_name, urn_version = urn_parts[3], urn_parts[4]
+    feature_name, _, feature_version = (
+        document["feature_id"][len(_PROVIDER_FEATURE_NAMESPACE) :].rpartition("/")
+    )
+    if urn_version != version:
+        raise ValueError(
+            f"provider_contract_invalid: the id embeds version {urn_version!r} but the "
+            f"contract is version {version!r}"
+        )
+    if feature_version != version:
+        raise ValueError(
+            f"provider_contract_invalid: the feature_id embeds version {feature_version!r} "
+            f"but the contract is version {version!r}"
+        )
+    if feature_name != urn_name:
+        raise ValueError(
+            f"provider_contract_invalid: the feature_id names {feature_name!r} but the "
+            f"id names {urn_name!r}"
+        )
+
+
+def verify_provider_pin(
+    descriptor: dict[str, Any], descriptor_path: Path
+) -> dict[str, Any] | None:
+    """Resolve and verify the descriptor's pinned provider contract (check lane).
+
+    The provider triple resolves **relative to the descriptor's own package
+    root** — the descriptor's directory — so a plugin and its pinned
+    contract travel one package (transport-providers §2; the bundle-root
+    rule governs only the root ``contracts`` array). The pin must name a
+    contained regular file — no traversal, no absolute path, no drive-colon
+    segment, no symlinked component — hash to the pinned ``sha256``, parse,
+    pass :func:`validate_transport_provider`, and agree with the
+    declaration's ``feature_id`` and ``id`` (the feature-id agreement
+    transport-providers §7 lists as offline-provable). Direct callers
+    passing a dict that never saw the schema get the same typed refusals,
+    not KeyErrors.
+
+    Raises
+    ------
+    ValueError
+        ``provider_contract_missing:`` (the pin does not resolve inside the
+        package), ``provider_contract_hash_mismatch:`` (bytes disagree with
+        the pin), or ``provider_contract_invalid:`` (the document is not a
+        valid, agreeing contract — or exceeds the SDK's shared bounded-read
+        cap, an SDK resource bound rather than a semantic judgement). Returns
+        None when the descriptor declares no provider: the unbacked custom
+        transport stays the honestly-incomplete posture, not a refusal.
+    """
+    if not isinstance(descriptor, dict):
+        # A direct caller may hand this function anything; the docstring
+        # promises typed refusals, and a non-object descriptor cannot carry a
+        # verifiable pin.
+        raise ValueError(
+            "provider_contract_invalid: the descriptor is not a JSON object; the "
+            "provider pin cannot be verified against it"
+        )
+    transport = descriptor.get("transport")
+    provider = transport.get("provider") if isinstance(transport, dict) else None
+    if provider is None:
+        return None
+    if not isinstance(provider, dict):
+        # Present but malformed is NOT the honest no-declaration posture the
+        # None return stands for — a malformed declaration is a refusal
+        # (RedTeam EN-7 #2).
+        raise ValueError(
+            f"provider_contract_invalid: the transport provider declaration is a "
+            f"{type(provider).__name__}, not an object"
+        )
+    relative = provider.get("path")
+    if (
+        not isinstance(relative, str)
+        or not relative
+        or "\\" in relative
+        # A colon segment anchors a Windows join outside the package
+        # (drive-anchored or drive-relative); judged as a string so the
+        # rule is platform-blind, not a Windows-only backstop.
+        or ":" in relative
+        or PurePosixPath(relative).is_absolute()
+        or any(part in (".", "..") for part in relative.split("/"))
+        or any(not part for part in relative.split("/"))
+    ):
+        raise ValueError(
+            f"provider_contract_missing: {relative!r} is not a package-relative pin path"
+        )
+    package_root = descriptor_path.parent
+    target = package_root
+    try:
+        for part in PurePosixPath(relative).parts:
+            target = target / part
+            if target.is_symlink():
+                raise ValueError(
+                    f"provider_contract_missing: {relative!r} crosses a symlink; the SDK "
+                    "reads provider pins through a strict no-follow posture — stricter "
+                    "than the corpus's after-symlink-resolution containment"
+                )
+        if not target.is_file() or not target.resolve().is_relative_to(
+            package_root.resolve()
+        ):
+            raise ValueError(
+                f"provider_contract_missing: {relative!r} does not name a contained regular "
+                "file in the descriptor's package"
+            )
+        # Local import: presentation imports this module.
+        from .presentation import INPUT_BYTE_LIMIT, read_file
+
+        # The pin read inherits the SDK-wide bounded-read cap. A corpus-valid
+        # contract can exceed it (description carries no maxLength), and the
+        # refusal must still name its prefix: the cap is an SDK resource bound,
+        # not a semantic disagreement the gateway shares. Sized before the read
+        # so the refusal is this one, not the reader's bare cap prose.
+        size = target.stat().st_size
+        if size > INPUT_BYTE_LIMIT:
+            raise ValueError(
+                f"provider_contract_invalid: {relative!r} is {size} bytes, "
+                f"above the SDK's {INPUT_BYTE_LIMIT}-byte bounded-read cap; the cap is an "
+                "SDK resource bound, not a semantic disagreement with the contract"
+            )
+        try:
+            raw = read_file(target)
+        except ValueError as exc:
+            if str(exc) in _READER_BOUND_MESSAGES:
+                # The pin passed the size precheck, so a read-path bound hit
+                # means the file changed under the check — grown past the cap.
+                # The cap is the cap's own refusal class, never a missing pin.
+                raise ValueError(
+                    f"provider_contract_invalid: {relative!r} failed the SDK's bounded "
+                    f"read after passing the size precheck: {exc}"
+                ) from exc
+            # The bounded reader refuses path-posture failures — a symlinked
+            # ancestor of the package, a special file — with its own bare prose;
+            # this lane owns the prefix, so the refusal stays machine-matchable.
+            raise ValueError(
+                f"provider_contract_missing: {relative!r} could not be read through "
+                f"the SDK's bounded reader: {exc}"
+            ) from exc
+    except OSError as exc:
+        # ENAMETOOLONG paths the schema admits, permission-denied pins, and the
+        # race faces (ENOENT, ELOOP): all are pins this check could not resolve
+        # or read. The message names the relative pin and the errno only — the
+        # OSError's own text carries the absolute host path, which is not ours
+        # to print (RedTeam EN-3).
+        raise ValueError(
+            f"provider_contract_missing: {relative!r} could not be resolved or read "
+            f"(os error {exc.errno})"
+        ) from exc
+    pinned = provider.get("sha256")
+    if not isinstance(pinned, str):
+        # No pinned digest is an invalid declaration, not a mismatch: there
+        # is nothing to compare the bytes against.
+        raise ValueError(
+            f"provider_contract_invalid: the declaration pinning {relative!r} "
+            "carries no sha256 digest to verify against"
+        )
+    digest = hashlib.sha256(raw).hexdigest()
+    if digest != pinned:
+        raise ValueError(
+            f"provider_contract_hash_mismatch: {relative!r} hashes to {digest} but the "
+            f"descriptor pins {pinned}"
+        )
+    try:
+        parsed: Any = json.loads(raw)
+    except ValueError as exc:
+        raise ValueError(f"provider_contract_invalid: {relative!r} is not JSON: {exc}") from exc
+    if not isinstance(parsed, dict):
+        raise ValueError(
+            f"provider_contract_invalid: {relative!r} is not a JSON object"
+        )
+    document: dict[str, Any] = parsed
+    validate_transport_provider(document)
+    if (
+        document.get("feature_id") != provider.get("feature_id")
+        or document.get("id") != provider.get("id")
+    ):
+        raise ValueError(
+            f"provider_contract_invalid: the pinned contract at {relative!r} does not "
+            "declare the descriptor's provider feature and identity"
+        )
+    return document
 
 
 #: The grammar's ``digits`` are exactly ASCII 0-9 (the OTDP schema
@@ -411,8 +879,9 @@ def validate_descriptor(descriptor: dict[str, Any]) -> None:
 
     Beyond the schema, enforces the pinned semantic checks:
     capabilities and operation policies must describe the same verbs and
-    parameter names must be unique (S01), and parameter bounds must not
-    be reversed (S02).
+    parameter names must be unique (S01), parameter bounds must not
+    be reversed (S02), and provider declarations must cohere with
+    ``required_features`` and the corpus-owned ``otdp.*`` namespace (S04).
 
     Parameters
     ----------
@@ -433,16 +902,19 @@ def validate_descriptor(descriptor: dict[str, Any]) -> None:
     ...     json.loads(Path("src/demo_plugin/descriptor.json").read_text()))
     """
     try:
-        validate(descriptor, "otdp/0.2.0/otdp-device-descriptor.schema.json")
+        validate(descriptor, "otdp/0.2.1/otdp-device-descriptor.schema.json")
     except ValueError:
         # When derived_variables is present, S19 runs even on a
         # schema-invalid document: the derivation_*: reason is the
         # actionable one for the author, and both checkers (this lane and
         # the gateway admission seam) then agree on the census prefixes.
-        if isinstance(descriptor, dict) and isinstance(
-            descriptor.get("derived_variables"), list
-        ):
-            _check_derived_variables(descriptor["derived_variables"])
+        # The provider placement row joins it (§6.4): a custom+declarative
+        # provider declaration refuses with its census prefix, not the
+        # generic schema error the declarative enum produces.
+        if isinstance(descriptor, dict):
+            if isinstance(descriptor.get("derived_variables"), list):
+                _check_derived_variables(descriptor["derived_variables"])
+            _check_provider_placement(descriptor)
         raise
     capabilities = descriptor["capabilities"]
     if len(capabilities) != len(set(capabilities)) or set(capabilities) != set(
@@ -458,5 +930,6 @@ def validate_descriptor(descriptor: dict[str, Any]) -> None:
         bounds = parameter.get("range")
         if isinstance(bounds, list | tuple) and len(bounds) == 2 and bounds[0] > bounds[1]:
             raise ValueError("S02: parameter bounds are reversed")
+    _check_provider_features(descriptor)
     if "derived_variables" in descriptor:
         _check_derived_variables(descriptor["derived_variables"])

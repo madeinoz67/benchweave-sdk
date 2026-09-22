@@ -318,3 +318,24 @@ def test_symlinked_resource_is_refused_as_a_symlink(
     capsys.readouterr()
     assert check(monkeypatch, package) == 1
     assert "path_symlink_component: " in capsys.readouterr().err
+
+
+def test_overdeep_descriptor_is_a_finding_not_a_bare_document_error() -> None:
+    """RedTeam PT-7 E4: a malformed/over-deep DESCRIPTOR leaked the reader's
+    bare "Document nesting limit exceeded" while the same fault in the preset
+    is a typed limit_exceeded finding — the descriptor side now matches the
+    preset side's typing (a findings report, path "descriptor")."""
+    deep = b'{"a": ' + b"[" * 1000 + b"]" * 1000 + b"}"
+    report = presentation.validate_preset(
+        b"{}", descriptor_raw=deep, settings_schema_raw=b"{}", firmware="1.0"
+    )
+    assert report.valid is False
+    assert [(f.code, f.path) for f in report.findings] == [("limit_exceeded", "descriptor")]
+
+
+def test_overdeep_descriptor_in_resolve_preset_action_is_typed() -> None:
+    """The resolver cannot return a report; its descriptor read faults surface
+    as a typed, code-carrying ValueError instead of a bare DocumentError."""
+    deep = b'{"a": ' + b"[" * 1000 + b"]" * 1000 + b"}"
+    with pytest.raises(ValueError, match="descriptor_document_limit_exceeded:"):
+        presentation.resolve_preset_action(b"{}", descriptor_raw=deep)

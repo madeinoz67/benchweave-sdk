@@ -1,0 +1,68 @@
+{
+  "otdp_version": "0.2.1",
+  "descriptor_version": "1.0.0",
+  "id": "dev.local.reference-rawlink",
+  "display_name": "Illustrative reference-rawlink",
+  "description": "Reference declaration only; the custom transport is deliberately unbacked by a provider contract, so the integration is honestly incomplete.",
+  "identity": {
+    "strategy": "adapter",
+    "manufacturer": "OTDP Reference",
+    "model": "reference-rawlink",
+    "firmware_policy": "listed",
+    "supported_firmware": [
+      "1.0"
+    ]
+  },
+  "integration": {
+    "mode": "adapter",
+    "adapter": {
+      "entry_point": "reference_rawlink:create_plugin",
+      "api_version": "1.1",
+      "version": "1.0.0",
+      "dependencies": [],
+      "permissions": [
+        "scoped_transport"
+      ]
+    }
+  },
+  "transport": {
+    "type": "custom",
+    "connection_key": "raw_link",
+    "settings": {
+      "protocol_reference": "Undocumented link; no provider contract is declared and none may be implied by the connection key"
+    }
+  },
+  "capabilities": [
+    "identify"
+  ],
+  "operations": {
+    "identify": {
+      "timeout_ms": 2000,
+      "side_effect": "none",
+      "retry": "never",
+      "cancellable": false,
+      "completion": "acknowledged"
+    }
+  },
+  "parameters": [],
+  "required_features": [
+    "otdp.core/0.1.0",
+    "otdp.adapter/0.1.0"
+  ],
+  "provenance": {
+    "sources": [
+      {
+        "title": "OTDP core specification",
+        "reference": "../otdp-specification.md",
+        "revision": "0.2.1"
+      }
+    ],
+    "test_vectors": [
+      {
+        "id": "reference-rawlink-structure",
+        "path": "reference-protocols.md",
+        "purpose": "Structural example only; an unbacked custom transport defines no wire exchanges"
+      }
+    ]
+  }
+}

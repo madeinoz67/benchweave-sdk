@@ -89,7 +89,13 @@ def _open_no_follow(part: str, flags: int, directory: int) -> int:
         raise
 
 
-def read_file(path: Path, limit: int = 262144) -> bytes:
+#: The bounded-read cap every SDK file read shares (256 KiB). The provider-pin
+#: path names this bound in its own refusal — a pinned document above it is
+#: an SDK resource bound, not a semantic disagreement with the contract.
+INPUT_BYTE_LIMIT = 262144
+
+
+def read_file(path: Path, limit: int = INPUT_BYTE_LIMIT) -> bytes:
     """Open bounded regular files without following symlinks in any component.
 
     The same three outcomes on every platform: a symlinked component is
@@ -242,8 +248,18 @@ def validate_preset(
         The vendored validator's report: ``valid``, ``findings`` (each with
         ``code``, ``path`` and ``message``) and ``unavailable_pages``.
     """
-    validate_descriptor(_contract().parse_document(descriptor_raw))
-    return _contract().validate_preset(
+    contract = _contract()
+    try:
+        descriptor = contract.parse_document(descriptor_raw)
+    except contract.DocumentError as exc:
+        # The preset side types a reader-refused document as a finding; the
+        # descriptor side matches it instead of leaking the bare
+        # DocumentError (RedTeam PT-7 E4).
+        return contract.ValidationReport(
+            (contract.Finding(exc.code, "descriptor", str(exc)),)
+        )
+    validate_descriptor(descriptor)
+    return contract.validate_preset(
         raw,
         descriptor_raw=descriptor_raw,
         settings_schema_raw=settings_schema_raw,
@@ -260,7 +276,14 @@ def resolve_preset_action(raw: bytes, *, descriptor_raw: bytes) -> str | None:
     envelope note cannot disagree with the enforcement: ``None`` means the
     settings schema carries a custom ``$id`` and lane 1 applies no envelope.
     """
-    validate_descriptor(_contract().parse_document(descriptor_raw))
+    try:
+        descriptor = _contract().parse_document(descriptor_raw)
+    except _contract().DocumentError as exc:
+        # The resolver returns str | None, so a reader-refused descriptor
+        # surfaces as a typed, code-carrying ValueError — never the bare
+        # DocumentError (RedTeam PT-7 E4).
+        raise ValueError(f"descriptor_document_{exc.code}: {exc}") from exc
+    validate_descriptor(descriptor)
     resolved: str | None = _contract().resolve_preset_action(
         _contract().parse_document(raw), schemas()
     )
@@ -305,8 +328,15 @@ def validate_presentation(
         The vendored validator's report: ``valid``, ``findings`` (each with
         ``code``, ``path`` and ``message``) and ``unavailable_pages``.
     """
-    validate_descriptor(_contract().parse_document(descriptor_raw))
-    return _contract().validate_presentation(
+    contract = _contract()
+    try:
+        descriptor = contract.parse_document(descriptor_raw)
+    except contract.DocumentError as exc:
+        return contract.ValidationReport(
+            (contract.Finding(exc.code, "descriptor", str(exc)),)
+        )
+    validate_descriptor(descriptor)
+    return contract.validate_presentation(
         envelope_raw,
         descriptor_raw=descriptor_raw,
         resources=resources,

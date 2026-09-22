@@ -253,7 +253,7 @@ plugin source package. A preset is configuration, not a retained measurement.
 
 > Inspect this project and my supplied device manual/protocol evidence. List
 > exact model/firmware support, intended operations, command sources, ranges,
-> transport bounds, side effects and unknowns. Map them to OTDP 0.2.0 and adapter
+> transport bounds, side effects and unknowns. Map them to OTDP 0.2.1 and adapter
 > API 1.1. Do not invent commands. Propose a small implementation plan before
 > editing. Do not contact hardware, flash firmware, energise outputs or publish.
 
@@ -262,10 +262,13 @@ plugin source package. A preset is configuration, not a retained measurement.
 > Implement the agreed protocol in protocol.py and async adapter.py. Update the
 > descriptor and trace every command to evidence. Keep create_plugin no-argument,
 > construction/open free of device I/O, and transport behind supplied scoped
-> services. Mark dispatch before transmit, honour monotonic deadlines and
-> cancellation, never retry silently, and preserve uncertain outcomes. Keep
-> imports relative within this package or standard-library-only for the current
-> gateway loader. Run the synthetic identify/read example before replacing it.
+> services — a device needing a non-scoped transport declares a pinned
+> transport-provider contract (see the vendored otdp-transport-provider schema;
+> benchweave-sdk check verifies the pin offline). Mark dispatch before transmit,
+> honour monotonic deadlines and cancellation, never retry silently, and
+> preserve uncertain outcomes. Keep imports relative within this package or
+> standard-library-only for the current gateway loader. Run the synthetic
+> identify/read example before replacing it.
 
 ## 3. Demonstrate behaviour
 
@@ -503,7 +506,7 @@ def descriptor_for(package: str) -> dict[str, Any]:
     """Build the synthetic plugin descriptor for ``package``.
 
     The descriptor advertises the synthetic identify/read protocol
-    (OTDP descriptor 0.2.0, adapter API 1.1) with
+    (OTDP descriptor 0.2.1, adapter API 1.1) with
     ``<package>.adapter:create_plugin`` as its entry point.
 
     Parameters
@@ -524,7 +527,7 @@ def descriptor_for(package: str) -> dict[str, Any]:
         "completion": "acknowledged",
     }
     return {
-        "otdp_version": "0.2.0",
+        "otdp_version": "0.2.1",
         "descriptor_version": "0.1.0",
         "id": f"dev.example.{package.replace('_', '-')}",
         "display_name": "SDK synthetic example",

@@ -1,5 +1,5 @@
 {
-  "otdp_version": "0.2.0",
+  "otdp_version": "0.2.1",
   "descriptor_version": "1.0.0",
   "id": "dev.local.reference-psu",
   "display_name": "Illustrative reference-psu",
