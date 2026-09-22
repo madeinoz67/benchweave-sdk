@@ -24,6 +24,7 @@ from click.testing import CliRunner
 
 from benchweave_sdk.validation import (
     _corpus_known_otdp_features,
+    _RESERVED_TRANSFER_KINDS,
     contract_documents,
     validate_descriptor,
     validate_transport_provider,
@@ -309,6 +310,30 @@ def test_known_feature_census_is_derived_from_the_vendored_tree() -> None:
     derived = _corpus_known_otdp_features()
     assert derived == expected
     assert len(expected) == 17  # five lanes + twelve catalog profiles at 0.2.1
+
+
+#: The generic §8.1 transfer kinds, cited from transport-providers §3 —
+#: the disjointness guard's constant is prose-carried (the vendored runtime
+#: schema does not enumerate transaction kinds), so this pin mirrors _LANES:
+#: spelled from the corpus text, a silent shrink of the guard's set fails
+#: here. The refute wave proved the suite alone did not catch that ablation
+#: (six of seven deleted stayed green while an i2c_transfer shadow was
+#: admitted) — this arm is the missing self-arm.
+_RESERVED_KINDS = frozenset(
+    {
+        "stream_send",
+        "stream_receive",
+        "stream_exchange",
+        "can_receive",
+        "can_send",
+        "i2c_transfer",
+        "spi_transfer",
+    }
+)
+
+
+def test_reserved_transfer_kinds_are_pinned_from_the_corpus_text() -> None:
+    assert _RESERVED_TRANSFER_KINDS == _RESERVED_KINDS
 
 
 def test_transport_namespace_typo_is_unknown_not_orphan() -> None:
