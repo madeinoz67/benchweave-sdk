@@ -262,10 +262,13 @@ plugin source package. A preset is configuration, not a retained measurement.
 > Implement the agreed protocol in protocol.py and async adapter.py. Update the
 > descriptor and trace every command to evidence. Keep create_plugin no-argument,
 > construction/open free of device I/O, and transport behind supplied scoped
-> services. Mark dispatch before transmit, honour monotonic deadlines and
-> cancellation, never retry silently, and preserve uncertain outcomes. Keep
-> imports relative within this package or standard-library-only for the current
-> gateway loader. Run the synthetic identify/read example before replacing it.
+> services — a device needing a non-scoped transport declares a pinned
+> transport-provider contract (see the vendored otdp-transport-provider schema;
+> benchweave-sdk check verifies the pin offline). Mark dispatch before transmit,
+> honour monotonic deadlines and cancellation, never retry silently, and
+> preserve uncertain outcomes. Keep imports relative within this package or
+> standard-library-only for the current gateway loader. Run the synthetic
+> identify/read example before replacing it.
 
 ## 3. Demonstrate behaviour
 
