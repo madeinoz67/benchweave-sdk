@@ -222,13 +222,14 @@ def _fault_provider_on_serial() -> Fault:
 
 
 def _fault_without_adapter_mode() -> Fault:
-    # The schema's declarative row enumerates the declarative transports and
-    # custom is not among them, so declarative + custom + provider is
-    # refused by the schema, not by the S04 census.
+    # The schema's declarative row refuses custom+declarative on its own; the
+    # §6.4 fold (AR-6 row 1) gives that fault its actionable census prefix —
+    # the census's placement row runs even on the schema-refused document
+    # (the S19 posture) instead of leaving a generic schema error.
     descriptor, contract = _minimal_pair()
     descriptor["integration"] = {"mode": "declarative"}
     descriptor["required_features"].remove("otdp.adapter/0.1.0")
-    return descriptor, contract, "Contract validation failed"
+    return descriptor, contract, "provider_transport_undeclared:"
 
 
 def _fault_escaping_pin_path() -> Fault:

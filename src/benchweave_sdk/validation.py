@@ -279,11 +279,38 @@ def _corpus_known_otdp_features() -> frozenset[str]:
     return frozenset(lanes | profiles)
 
 
+def _check_provider_placement(descriptor: dict[str, Any]) -> None:
+    """The §6.4 placement row: a provider declaration rides an adapter-mode
+    integration.
+
+    The schema's declarative row already refuses custom+declarative, so
+    post-schema this is belt-and-braces; it earns its keep in two other
+    places — direct callers of the census, and the schema-refused document,
+    where validate_descriptor runs it (the S19 posture) so the fault surfaces
+    with its actionable census prefix instead of a generic schema error.
+    Defensive by design: a malformed section is a non-event here, the schema
+    or the fuller census owns it.
+    """
+    if not isinstance(descriptor, dict):
+        return
+    transport = descriptor.get("transport")
+    provider = transport.get("provider") if isinstance(transport, dict) else None
+    if not isinstance(provider, dict):
+        return
+    integration = descriptor.get("integration")
+    mode = integration.get("mode") if isinstance(integration, dict) else None
+    if mode != "adapter":
+        raise ValueError(
+            "provider_transport_undeclared: a transport provider requires the "
+            "adapter integration mode (specification §6.4)"
+        )
+
+
 def _check_provider_features(descriptor: dict[str, Any]) -> None:
     """S04 (extended): provider declarations and the closed ``otdp.*`` namespace.
 
-    Four refusals, in this order so each single fault lands on its named
-    prefix (transport-providers §2):
+    Five refusals, in this order so each single fault lands on its named
+    prefix (transport-providers §2; specification §6.4):
 
     - ``provider_transport_undeclared:`` a provider whose ``feature_id`` is
       not a sanctioned transport-provider id — outside the
@@ -292,6 +319,8 @@ def _check_provider_features(descriptor: dict[str, Any]) -> None:
       admissible contract can ever register such a feature, so the
       declaration is not effective (R1; the refute proved both shapes
       admitted before this row);
+    - ``provider_transport_undeclared:`` a provider declaration on a
+      non-adapter integration — ``_check_provider_placement``, the §6.4 row;
     - ``provider_feature_missing:`` a pinned provider whose feature the
       integration does not require;
     - ``provider_transport_undeclared:`` an ``otdp.transport.*`` feature with
@@ -308,6 +337,7 @@ def _check_provider_features(descriptor: dict[str, Any]) -> None:
     transport = descriptor["transport"]
     provider = transport.get("provider")
     required = descriptor["required_features"]
+    _check_provider_placement(descriptor)
     if isinstance(provider, dict):
         declared = provider.get("feature_id")
         if (
@@ -878,10 +908,13 @@ def validate_descriptor(descriptor: dict[str, Any]) -> None:
         # schema-invalid document: the derivation_*: reason is the
         # actionable one for the author, and both checkers (this lane and
         # the gateway admission seam) then agree on the census prefixes.
-        if isinstance(descriptor, dict) and isinstance(
-            descriptor.get("derived_variables"), list
-        ):
-            _check_derived_variables(descriptor["derived_variables"])
+        # The provider placement row joins it (§6.4): a custom+declarative
+        # provider declaration refuses with its census prefix, not the
+        # generic schema error the declarative enum produces.
+        if isinstance(descriptor, dict):
+            if isinstance(descriptor.get("derived_variables"), list):
+                _check_derived_variables(descriptor["derived_variables"])
+            _check_provider_placement(descriptor)
         raise
     capabilities = descriptor["capabilities"]
     if len(capabilities) != len(set(capabilities)) or set(capabilities) != set(
