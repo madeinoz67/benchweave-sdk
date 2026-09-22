@@ -24,7 +24,9 @@ import pytest
 from click.testing import CliRunner
 
 from benchweave_sdk.validation import (
+    _FEATURE_ID,
     _RESERVED_TRANSFER_KINDS,
+    _SANCTIONED_PROVIDER_FEATURE,
     _corpus_known_otdp_features,
     contract_documents,
     validate_descriptor,
@@ -277,27 +279,21 @@ def test_fault_lattice_refuses_on_the_check_lane(
     assert expected in result.output
 
 
-@pytest.mark.parametrize("build_fault", list(FAULT_LATTICE.values()), ids=list(FAULT_LATTICE))
-def test_fault_lattice_document_lane_behaves_as_declared(
-    tmp_path: Path, build_fault: Callable[[], Fault]
-) -> None:
+@pytest.mark.parametrize("name", list(FAULT_LATTICE), ids=list(FAULT_LATTICE))
+def test_fault_lattice_document_lane_behaves_as_declared(tmp_path: Path, name: str) -> None:
     """Document-lane faults refuse at validate_descriptor; check-lane faults pass it.
 
-    The split is the honest offline boundary: an escaping path or a wrong
-    digest is invisible without the package on disk.
+    The split is CONSUMED from CHECK_LANE_FAULTS — the set that names the
+    check-lane faults — so the table and the branch cannot drift apart
+    (IN-4 #1: the old pair-assertion restated a same-file literal and proved
+    nothing).
     """
-    descriptor, _, expected = build_fault()
-    if expected in ("provider_contract_missing:", "provider_contract_hash_mismatch:"):
+    descriptor, _, expected = FAULT_LATTICE[name]()
+    if name in CHECK_LANE_FAULTS:
         validate_descriptor(descriptor)
     else:
         with pytest.raises(ValueError, match=expected):
             validate_descriptor(descriptor)
-
-
-def test_check_lane_fault_split_matches_the_table() -> None:
-    # The document lane passes exactly the two check-lane faults; the table
-    # and the split must not drift apart silently.
-    assert CHECK_LANE_FAULTS.issubset(FAULT_LATTICE)
 
 
 # --------------------------------------------------------------------------
@@ -335,6 +331,30 @@ _RESERVED_KINDS = frozenset(
 
 def test_reserved_transfer_kinds_are_pinned_from_the_corpus_text() -> None:
     assert _RESERVED_TRANSFER_KINDS == _RESERVED_KINDS
+
+
+def test_provider_feature_patterns_mirror_the_vendored_schema_bytes() -> None:
+    # RedTeam IN-4/PT-5: _FEATURE_ID and _SANCTIONED_PROVIDER_FEATURE were
+    # hand-copplied regexes of vendored schema patterns with no equality arm —
+    # the disease 1090fe3 cured for the reserved-kinds set. The derivation
+    # kills the whole class: the expected pattern is READ from the vendored
+    # schema itself, so any future hand-copy drift (either direction) fails
+    # here. These are drift pins against the future, not RED arms — the
+    # constants match the vendored bytes today by construction.
+    descriptor_schema = contract_documents()[
+        _otdp_key("/otdp-device-descriptor.schema.json")
+    ]
+    provider_schema = contract_documents()[
+        _otdp_key("/otdp-transport-provider.schema.json")
+    ]
+    assert (
+        _FEATURE_ID.pattern
+        == descriptor_schema["properties"]["required_features"]["items"]["pattern"]
+    )
+    assert (
+        _SANCTIONED_PROVIDER_FEATURE.pattern
+        == provider_schema["properties"]["feature_id"]["pattern"]
+    )
 
 
 def test_transport_namespace_typo_is_unknown_not_orphan() -> None:
