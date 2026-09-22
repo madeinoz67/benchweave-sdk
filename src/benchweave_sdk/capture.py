@@ -26,6 +26,7 @@ filesystem.
 
 from __future__ import annotations
 
+import datetime
 import hashlib
 import json
 import math
@@ -357,6 +358,20 @@ class StandaloneCaptureWriter:
         started_at = metadata.get("started_at")
         if not isinstance(started_at, str) or not started_at:
             raise ValueError("finalise metadata requires a non-empty started_at string")
+        # S-F5: the corpus annotates started_at {"format": "date-time"} —
+        # non-emptiness alone let any string through, and bare
+        # jsonschema.validate is blind to format annotations. Validation
+        # bound (disclosed): datetime.fromisoformat is the validator — it
+        # parses RFC 3339 date-times incl. the Z suffix and numeric
+        # offsets; the corpus's exact grammar is approximated by the
+        # stdlib (a full RFC 3339 validator is already a runtime
+        # dependency if the runner ever needs the stricter form).
+        try:
+            datetime.datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+        except ValueError as error:
+            raise ValueError(
+                f"started_at {started_at!r} is not an RFC 3339 date-time"
+            ) from error
         renderings = metadata.get("renderings")
         if renderings is not None and (
             not isinstance(renderings, list)

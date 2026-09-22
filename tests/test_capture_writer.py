@@ -682,3 +682,41 @@ def test_non_string_format_elements_are_refused_naming_the_value(tmp_path):
         capture.StandaloneCaptureWriter(
             tmp_path / "captures", formats=frozenset({"csv", None})
         )
+
+
+# --- S-F5: started_at is validated against the corpus date-time annotation ------
+
+
+def test_an_unparseable_started_at_is_refused(tmp_path):
+    """The SDK-lane refutation F5: the corpus annotates started_at
+    {"format": "date-time"} but the writer checked non-emptiness only —
+    and bare jsonschema.validate is structurally blind to format
+    annotations, so a manifest could satisfy the R9 machine check while
+    violating the annotated contract."""
+    writer = _writer(tmp_path)
+    asyncio.run(_append(writer, "cap-1", [b"\x01" * 8]))
+    with pytest.raises(ValueError, match="RFC 3339"):
+        _finalise(writer, "cap-1", dict(_WAVEFORM, sample_count=1, started_at="banana"))
+    # The refused finalise left the capture retryable (S-F1's ordering).
+    manifest = _finalise(writer, "cap-1", dict(_WAVEFORM, sample_count=1))
+    assert manifest["started_at"] == "2026-09-22T00:00:00Z"
+
+
+def test_started_at_accepts_the_rfc3339_shapes_the_stdlib_parses(tmp_path):
+    """The validation bound (disclosed): datetime.fromisoformat is the
+    validator — Python 3.13 parses RFC 3339 date-times including the Z
+    suffix and numeric offsets; the corpus's exact grammar is approximated
+    by the stdlib (a full RFC 3339 validator is already a runtime
+    dependency if the runner ever needs the stricter form)."""
+    writer = _writer(tmp_path)
+    asyncio.run(_append(writer, "cap-1", [b"\x01" * 8]))
+    manifest = _finalise(
+        writer,
+        "cap-1",
+        dict(
+            _WAVEFORM,
+            sample_count=1,
+            started_at="2026-09-22T00:00:00+08:00",
+        ),
+    )
+    assert manifest["started_at"] == "2026-09-22T00:00:00+08:00"
