@@ -102,11 +102,40 @@ canonical corpus/gateway source.
     export + report regen via the family writer. The SDK vendors machine artifacts
     only; prose companions are not digest-pinned.
 
-12. **Trigger.** Three real integrations already meet deferral row 6's trigger (a real
-    logic analyser, a real USB power meter, the webcam integration tracked at gateway
-    issue #95). The #43 design of record's row-6 reopen condition — "a device class in
-    scope whose transport is not one of the scoped primitives" — fired, and Amendment 3
-    re-keyed the row to transport and gave it this carrier.
+12. **Trigger and lineage.** Three real integrations already meet deferral row 6's
+    trigger (a real logic analyser, a real USB power meter, the webcam integration
+    tracked at gateway issue #95). The merged design of record (main-side
+    `.claude/deep-review/2026-09-21-issue43-capture-streaming-design.md`, current
+    through Amendment 3, PR #145, merge `3160ec3`) states row 6 verbatim:
+
+    > | 6 | Transport providers (UVC, vendor SDKs) | Documentation here | A device class
+    > in scope whose transport is not one of the scoped primitives |
+
+    and §11's disposition row: "**Defer** (row 6): separately reviewed host-provider
+    contracts (extension-contract §6 says so verbatim)." The re-key is Amendment 3's,
+    from the external review's second ask: the row was originally keyed to device
+    class ("UVC, vendor SDKs"), but extension-contract §6 names USB-HID verbatim and
+    *transport* is the right key — re-keying "would let the next plugin author see
+    where they stand." The owner actioned it: row 6 re-keyed to transport with this
+    issue as carrier. Neighbour rows that may interact: row 10 (external-tool capture
+    adopt/ingest — sigrok-cli/ffmpeg-shaped workflows) and row 11 (thread-level
+    watchdog for non-yielding adapter cleanup). Neither shares a surface with this
+    design's corpus increment; row 10's adopted-capture workflows are a likely *user*
+    of provider transports (a standalone capture tool speaking a provider grammar),
+    not a collision — noted, not actioned here.
+
+13. **Slice 1 of the #43 record is in flight (gateway issue #155, started this
+    session).** Its own pins make the corpus surfaces disjoint by construction: "No
+    standards bytes move in either repo; `sync-standards --check` stays green." Its
+    gateway leg includes "Permission gating at registry admission — new read of
+    `integration.adapter.permissions` (nothing reads it today)" — the one real
+    adjacency with this design's increment 3 (see §3.1). Its SDK leg is one new
+    additive module (standalone capture services) whose own text says "device I/O
+    composed from a transport by the runner" — the composition seam §1.5 types. Its
+    unchanged pins are `tests/contract/test_host_abi.py`, `tests/sdk/
+    test_adapter_agreement.py`, `tests/integration/test_otdp_loading.py`; this design
+    moves none of them (adapter ABI stays 1.1, so the adapter-agreement pin is
+    untouched by construction).
 
 ## 1. Mechanism
 
@@ -223,6 +252,33 @@ The last two rows are the honest boundary of offline checking: the SDK proves th
 declaration is *well-formed and self-consistent*; only the gateway can prove the
 *grant* — because commissioned state and the provider runtime live there.
 
+### 1.5 Standalone composition — the Decision 9 interplay
+
+The #43 record's Decision 9 (standalone capture, Amendment 2) claims "one shape, two
+backends" — an adapter running unchanged against the gateway's capture services or
+the SDK's standalone filesystem writer. Amendment 3 scoped that claim to the capture
+path, because for any adapter that talks to hardware it is not true as stated: nobody
+supplies device I/O standalone while transport providers are deferred (external-review
+finding 2 — the protocol is eight members including transport, and Decision 9
+specified only a file writer). The evidence of what plugin authors do in the lane's
+absence already exists: a contributor fork hand-rolled a serial host-services object
+implementing all eight members, about a hundred lines, to make one adapter run
+standalone at all.
+
+This mechanism is what makes that composition standard instead of hand-rolled, on both
+backends. The provider contract's `transaction_grammar` is the shared artifact: the
+gateway validates provider transfers against the admitted contract; the #155
+standalone leg composes "device I/O … from a transport by the runner"; and a
+standalone provider backend implements the same grammar the MockHost already scripts.
+One shape, three backends — gateway provider runtime, standalone provider backend,
+MockHost — with the grammar, not any implementation, as the contract.
+
+Where standalone provider backends live: author-side or harness-side, **not
+SDK-shipped**. The SDK's wheel is self-contained and must not grow native HID/USB
+dependencies (PKG-1/PKG-2); what the SDK ships is the schema validation and the
+grammar-agnostic MockHost. A reference standalone provider backend (the documented
+successor to that hand-rolled hundred lines) is deferral row 7.
+
 ## 2. Versioning — recommendation: OTDP 0.2.1 (PATCH)
 
 The machine delta is additive by GOVERNANCE's own shape test: one optional object on
@@ -286,6 +342,38 @@ The issue's stated order is corpus → gateway → SDK; this plan runs SDK secon
 it is the cheapest falsification of the corpus shape — the offline lattice exercises
 the 0.2.1 schema before the gateway bakes it in. **Owner fork F3** (sequencing);
 recommendation as stated, increment 3 unchanged either way.
+
+### 3.1 Disjointness and adjacency with capture slice 1 (#155, in flight)
+
+Slice 1 of the #43 record started under gateway issue #155 — staged-append writer,
+`dispatch(capture)`, capture-aware failure classification, and an SDK standalone-leg.
+Its own pins and this design's shape give the surface map:
+
+- **Corpus surface — disjoint by construction.** #155 moves no standards bytes in
+  either repo (its own constraint); increment 1 is the only standards-bytes mover on
+  this train. No bump-window interaction (only one OTDP bump exists).
+- **SDK surface — different files, same repo main.** #155's SDK leg adds one new
+  module (standalone capture services); this design's SDK leg touches the vendored
+  tree + lock + `validation.py`/`conformance.py`/`cli.py` + tests. No shared file, but
+  per the #69 discipline same-repo PRs serialize: #155's SDK leg is already in flight,
+  so this design's SDK branch **rebases on it**, and each side runs a merge-result
+  pre-check before push. Concretely: do not assume today's SDK `main` — it moves
+  under this design.
+- **Gateway admission — the one real adjacency; sequence, do not parallel.** #155
+  lands "permission gating at registry admission — a new read of
+  `integration.adapter.permissions`" in the same region this design's increment 3
+  adds transport/provider validation. **Recommendation: increment 3 rebases on
+  #155's admission read** — their slice is in flight, and their permissions wiring is
+  machinery this design's provider-permission model builds on (`scoped_transport`
+  rides the same read). Landing ours first would force a gratuitous rebase of an
+  in-flight branch and duplicate the admission seam.
+- **Pins — none moved.** #155 pins `tests/contract/test_host_abi.py`,
+  `tests/sdk/test_adapter_agreement.py`, `tests/integration/test_otdp_loading.py`
+  unchanged; this design's ABI stays at 1.1 so the adapter-agreement pin is untouched
+  by construction, and the equivalence extension is confined to
+  `tests/sdk/test_descriptor_equivalence.py` — not a #155 pin. If implementation
+  discovers a need to move any pinned file, that is a collision to name loudly on both
+  issues, not a silent pin-break.
 
 ## 4. Measurable proof — pre-committed acceptance rule
 
@@ -365,6 +453,7 @@ version, it does not kill the increment.
 | 4 | Registry exposure (published plugins declaring provider dependencies) | Registry-standard queue | First shared/published provider-dependent plugin |
 | 5 | Typed SDK helpers for provider transaction kinds beyond generic `transfer` scripting | Gateway tracker (single stream) | A second provider contract lands and MockHost scripting proves repetitive |
 | 6 | Multi-fault fixture compositions + provider-grammar fuzzing | Follow-on to increment 2 | The §4 underpowered signal fires (all green, zero fixes) |
+| 7 | Reference standalone provider backend (the documented successor to a contributor's hand-rolled eight-member serial host services; author/harness-side — SDK-shipped backends rejected on PKG-1/2 grounds, the SDK ships schema validation + MockHost only) | Gateway tracker (single stream), documentation in the provider companion prose | First provider-backed adapter needing standalone runs (the Decision 9 composition demand, §1.5) |
 
 ## 7. Top risks — each with its falsifier
 
@@ -378,7 +467,8 @@ version, it does not kill the increment.
 2. **Grant shape strains under a real provider.** If the first real integration (the
    webcam's capture-shaped traffic is the likely stress case) needs semantics
    `transfer` cannot express — device enumeration events, buffer streaming — the
-   grammar-extension choice shows cracks. *Falsifier:* the first provider
+   grammar-extension choice shows cracks; a standalone backend composes the same
+   grammar, so it strains identically (§1.5). *Falsifier:* the first provider
    implementation needing a non-transfer call shape; then a services-surface row
    (new HostServices methods, adapter_api bump) opens as a design row, not a patch.
 3. **Provider instances blur into corpus governance.** The design keeps provider
