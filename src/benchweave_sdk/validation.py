@@ -462,8 +462,9 @@ def verify_provider_pin(
         target = target / part
         if target.is_symlink():
             raise ValueError(
-                f"provider_contract_missing: {relative!r} crosses a symlink; a provider "
-                "pin resolves inside the plugin's own package only"
+                f"provider_contract_missing: {relative!r} crosses a symlink; the SDK "
+                "reads provider pins through a strict no-follow posture — stricter "
+                "than the corpus's after-symlink-resolution containment"
             )
     if not target.is_file() or not target.resolve().is_relative_to(package_root.resolve()):
         raise ValueError(
