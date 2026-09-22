@@ -38,10 +38,16 @@ the invariants below anchor there.
   `bundle_manifest_invalid`, `bundle_version_unsupported`, `bundle_path_invalid`,
   `bundle_file_missing`, `lock_invalid`, `lock_missing`, `lock_version_unsupported`,
   `standards_version_required`, `hash_mismatch`, `not_synced`, `stamp_missing`,
-  `unexpected_vendored_file`, `sync_requires_repo_checkout`, `sync_staging_blocked`, `unknown_contract_schema`). A new refusal path that raises
+  `unexpected_vendored_file`, `sync_requires_repo_checkout`, `sync_staging_blocked`, `unknown_contract_schema`,
+  `provider_feature_missing`, `provider_transport_undeclared`, `unknown_otdp_feature`,
+  `provider_contract_missing`, `provider_contract_hash_mismatch`,
+  `provider_contract_invalid` — the last six are the 0.2.1 transport-provider lane;
+  ordinary descriptor schema-shape failures keep the existing
+  descriptor-validation error surface). A new refusal path that raises
   bare prose breaks the machine-matchable surface CI and scripts branch on —
   `standards_sync.py`, `cli.py` (the sync lane's checkout-detection refusal),
-  `validation.py` (the descriptor lane's unknown-schema refusal). *The prefixes
+  `validation.py` (the descriptor lane's unknown-schema refusal and the
+  provider lane's six prefixes). *The prefixes
   are an API even though they live in error text.*
 - **[STD-5]** The stamps say *generated — do not edit*: a hand-edit to a vendored file is
   wrong no matter how good the edit is; the change belongs in the main repository's

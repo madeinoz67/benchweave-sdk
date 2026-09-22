@@ -95,6 +95,21 @@ Generated tests cover identify/read, quiet lifecycle, invalid inputs, pre-dispat
 
 Descriptor checks currently cover its schema, matching capabilities/policies, unique parameter names and ordered ranges. These are **partial checks**, not all S01–S18, C01–C12 or M01–M14 obligations. The SDK provides no physical transport provider, complete profile/capture test harness or hardware qualification certificate.
 
+### Transport providers (custom transports) {#transport-providers}
+
+A `custom` transport may declare a pinned **transport-provider contract** (OTDP 0.2.1): an optional `provider` object on the transport carrying the required `feature_id` and an `{id, path, sha256}` pin to the reviewed contract document inside your plugin package. `benchweave-sdk check` verifies the whole declaration offline and refuses with named, machine-matchable prefixes:
+
+- `provider_feature_missing:` — the provider's `feature_id` is not in `required_features`.
+- `provider_transport_undeclared:` — an `otdp.transport.*` feature is required but no provider on the custom transport declares it.
+- `unknown_otdp_feature:` — an `otdp.*` feature id that is neither corpus-known nor declared through a provider; the namespace is corpus-owned, and a typo or a fake version does not pass.
+- `provider_contract_missing:` — the pin does not resolve to a contained regular file. Provider pins are **descriptor-relative** (the contract ships beside your descriptor, subdirectories allowed) and refuse traversal, absolute paths and symlinked components.
+- `provider_contract_hash_mismatch:` — the pinned bytes do not hash to the pinned `sha256`.
+- `provider_contract_invalid:` — the pinned document fails the transport-provider contract schema, its grammar subschemas are not valid Draft 2020-12 schemas, its kinds are not unique strings, a kind shadows a generic transfer kind, or its identity fields disagree — including disagreeing with the descriptor's own declaration.
+
+A misplaced provider (on a non-custom transport, or without the adapter integration mode) and provider-object shape faults refuse through the ordinary schema-validation error surface. A `custom` transport **without** a provider stays valid: that is the honestly-incomplete posture, not a refusal. The Python entry points behind these checks are `validation.validate_transport_provider` (contract documents) and `validation.verify_provider_pin` (pin resolution).
+
+These checks prove the declaration **well-formed and self-consistent** only. Only the gateway can prove the grant: that your host has admitted the pinned contract and that `connection_key` resolves to a connection it backs. An offline pass is not an admission claim.
+
 ## Local UI preview (simulated)
 
 [`benchweave-sdk check-ui`](../reference/cli/check_ui.qmd), [`check-preset`](../reference/cli/check_preset.qmd) and [`preview-ui`](../reference/cli/preview_ui.qmd) validate presentation candidates and preview them offline. `preview-ui` serves the versioned preview API and the bundled React renderer on loopback only; every scenario, observation and control receipt is simulated and labelled as such — the preview path has no gateway, registry or hardware reach. An external development renderer (`--renderer-url`, e.g. a local Vite dev server) must also name a loopback host; non-loopback renderer origins are rejected because plugin authors can suggest command lines. The served document's shape is pinned by [plugin-ui-preview-v1](https://github.com/madeinoz67/benchweave/blob/main/standards/plugin-ui-preview-v1/preview-document.schema.json) (main repository), validated from both the Python emitter and the renderer's decoder. Previews render the manifest's declared plots and channel hints from per-scenario snapshot values — one simulated value per observed target, not observation history.

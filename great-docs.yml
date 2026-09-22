@@ -414,6 +414,8 @@ reference:
       - validation.validate_request
       - validation.validate_result
       - validation.validate_descriptor
+      - validation.validate_transport_provider
+      - validation.verify_provider_pin
   - title: Presentation
     desc: Offline presentation validation and bounded, symlink-refusing reads
     contents:

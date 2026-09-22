@@ -16,7 +16,7 @@ from . import __version__
 from .console import ConsoleOutput
 from .packaging import inventory
 from .scaffold import create_project
-from .validation import validate_descriptor
+from .validation import validate_descriptor, verify_provider_pin
 
 
 def _domain_errors[**P, R](function: Callable[P, R]) -> Callable[P, R]:
@@ -87,9 +87,13 @@ def check_command(descriptor: Path) -> None:
 
     from .presentation import read_file
 
-    validate_descriptor(json.loads(read_file(descriptor)))
+    document = json.loads(read_file(descriptor))
+    validate_descriptor(document)
+    # The provider pin is the one check that needs the package on disk: it
+    # resolves descriptor-relative and hashes the pinned bytes.
+    verify_provider_pin(document, descriptor)
     ConsoleOutput().message(
-        "Descriptor schema and basic S01/S02 checks passed; "
+        "Descriptor schema and basic S01/S02/S04 checks passed; "
         "full conformance and hardware evidence remain separate.",
         style="green",
     )
