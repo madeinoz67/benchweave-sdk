@@ -1,5 +1,5 @@
 {
-  "purpose": "Normative census for the OTDP 0.2.0 derived-variable grammar and evaluator (measurement-model.md section 8, M15; otdp-specification.md S19). Grammar and static rows pin both independent checkers (gateway admission and the SDK authoring lane) to one machine truth; evaluation rows pin the gateway evaluator's exact binary64 outputs and in-band failure semantics. Values are synthetic; no real bench, device or operator is represented.",
+  "purpose": "Normative census for the OTDP 0.2.1 derived-variable grammar and evaluator (measurement-model.md section 8, M15; otdp-specification.md S19). Grammar and static rows pin both independent checkers (gateway admission and the SDK authoring lane) to one machine truth; evaluation rows pin the gateway evaluator's exact binary64 outputs and in-band failure semantics. Values are synthetic; no real bench, device or operator is represented.",
   "grammar": [
     {
       "id": "g-01",

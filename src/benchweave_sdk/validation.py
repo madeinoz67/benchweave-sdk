@@ -42,7 +42,7 @@ def contract_documents() -> dict[str, Any]:
     """
     vendored = files("benchweave_sdk").joinpath("standards")
     sets = (
-        ("otdp", "0.2.0"),
+        ("otdp", "0.2.1"),
         ("registry", "0.1.1"),
         ("plugin-ui", "0.2.0"),
     )
@@ -153,7 +153,7 @@ def validate(document: Any, schema_file: str, definition: str | None = None) -> 
 
 def validate_request(request: dict[str, Any]) -> None:
     """Validate an OTDP operation request envelope against its contract."""
-    validate(request, "otdp/0.2.0/otdp-runtime.schema.json", "operationRequest")
+    validate(request, "otdp/0.2.1/otdp-runtime.schema.json", "operationRequest")
 
 
 def validate_result(result: dict[str, Any], request: dict[str, Any]) -> None:
@@ -175,7 +175,7 @@ def validate_result(result: dict[str, Any], request: dict[str, Any]) -> None:
         correlate.
     """
     validate_request(request)
-    validate(result, "otdp/0.2.0/otdp-runtime.schema.json", "operationResult")
+    validate(result, "otdp/0.2.1/otdp-runtime.schema.json", "operationResult")
     if (result["operation_id"], result["verb"]) != (request["operation_id"], request["verb"]):
         raise ValueError("Result correlation does not match the request")
 
@@ -433,7 +433,7 @@ def validate_descriptor(descriptor: dict[str, Any]) -> None:
     ...     json.loads(Path("src/demo_plugin/descriptor.json").read_text()))
     """
     try:
-        validate(descriptor, "otdp/0.2.0/otdp-device-descriptor.schema.json")
+        validate(descriptor, "otdp/0.2.1/otdp-device-descriptor.schema.json")
     except ValueError:
         # When derived_variables is present, S19 runs even on a
         # schema-invalid document: the derivation_*: reason is the

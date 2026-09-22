@@ -2,7 +2,7 @@
   "type": "object",
   "properties": {
     "otdp_version": {
-      "const": "0.2.0"
+      "const": "0.2.1"
     },
     "descriptor_version": {
       "type": "string",
@@ -488,9 +488,9 @@
   },
   "additionalProperties": false,
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:otdp:device-descriptor:0.2.0",
-  "title": "OTDP 0.2.0 device descriptor \u2014 STG architecture contract",
-  "description": "OTDP 0.2.0 device and class declarations. Read core specification, measurement-model.md, device-classes.md and the pinned profile catalog. Schema validation is followed by class/action/constraint and dataset semantic checks.",
+  "$id": "urn:otdp:device-descriptor:0.2.1",
+  "title": "OTDP 0.2.1 device descriptor \u2014 STG architecture contract",
+  "description": "OTDP 0.2.1 device and class declarations. Read core specification, measurement-model.md, device-classes.md and the pinned profile catalog. Schema validation is followed by class/action/constraint and dataset semantic checks.",
   "$defs": {
     "operationPolicy": {
       "type": "object",
@@ -1907,6 +1907,36 @@
             "^x-[a-z0-9]+-[a-z0-9_-]+$": {}
           },
           "additionalProperties": false
+        },
+        "provider": {
+          "type": "object",
+          "properties": {
+            "feature_id": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_.-]*/[0-9]+\\.[0-9]+(?:\\.[0-9]+)?$",
+              "description": "The provider feature this integration requires, in the required_features pattern. It must also appear in required_features (S04) and the host must have admitted the pinned contract."
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            }
+          },
+          "required": [
+            "feature_id",
+            "id",
+            "path",
+            "sha256"
+          ],
+          "additionalProperties": false,
+          "description": "Pinned transport-provider contract (otdp-transport-provider.schema.json). id/path/sha256 is the contracts item shape verbatim: package-relative, digest-pinned, resolved inside the admitted bundle after symlink resolution. The pin names the bytes that were reviewed; the host operator's admission of the contract grants authority."
         }
       },
       "required": [
@@ -1918,7 +1948,7 @@
         "^x-[a-z0-9]+-[a-z0-9_-]+$": {}
       },
       "additionalProperties": false,
-      "description": "connection_key resolves to a commissioned, scoped host transport. Addresses/paths/credentials are not granted by this descriptor."
+      "description": "connection_key resolves to a commissioned, scoped host transport. Addresses/paths/credentials are not granted by this descriptor. When provider is present, the connection is backed by that admitted transport-provider contract; when absent, the integration is honestly incomplete for this device."
     },
     "transport": {
       "oneOf": [

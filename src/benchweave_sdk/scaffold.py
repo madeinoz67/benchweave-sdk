@@ -503,7 +503,7 @@ def descriptor_for(package: str) -> dict[str, Any]:
     """Build the synthetic plugin descriptor for ``package``.
 
     The descriptor advertises the synthetic identify/read protocol
-    (OTDP descriptor 0.2.0, adapter API 1.1) with
+    (OTDP descriptor 0.2.1, adapter API 1.1) with
     ``<package>.adapter:create_plugin`` as its entry point.
 
     Parameters
@@ -524,7 +524,7 @@ def descriptor_for(package: str) -> dict[str, Any]:
         "completion": "acknowledged",
     }
     return {
-        "otdp_version": "0.2.0",
+        "otdp_version": "0.2.1",
         "descriptor_version": "0.1.0",
         "id": f"dev.example.{package.replace('_', '-')}",
         "display_name": "SDK synthetic example",

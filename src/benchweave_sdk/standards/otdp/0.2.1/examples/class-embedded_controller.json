@@ -1,13 +1,13 @@
 {
-  "otdp_version": "0.2.0",
+  "otdp_version": "0.2.1",
   "descriptor_version": "1.0.0",
-  "id": "dev.local.class-dmm",
-  "display_name": "Structural reference: Digital multimeter",
+  "id": "dev.local.class-embedded-controller",
+  "display_name": "Structural reference: Embedded-controller telemetry and control",
   "description": "Class-contract fixture, not a verified real device or implemented adapter.",
   "identity": {
     "strategy": "adapter",
     "manufacturer": "OTDP Reference",
-    "model": "dmm",
+    "model": "embedded_controller",
     "firmware_policy": "listed",
     "supported_firmware": [
       "1.0"
@@ -16,7 +16,7 @@
   "integration": {
     "mode": "adapter",
     "adapter": {
-      "entry_point": "reference_dmm:create_plugin",
+      "entry_point": "reference_embedded_controller:create_plugin",
       "api_version": "1.1",
       "version": "1.0.0",
       "dependencies": [],
@@ -40,7 +40,9 @@
   },
   "capabilities": [
     "identify",
-    "invoke"
+    "invoke",
+    "read",
+    "write"
   ],
   "operations": {
     "identify": {
@@ -56,15 +58,53 @@
       "retry": "never",
       "cancellable": true,
       "completion": "acknowledged"
+    },
+    "read": {
+      "timeout_ms": 2000,
+      "side_effect": "none",
+      "retry": "never",
+      "cancellable": false,
+      "completion": "acknowledged"
+    },
+    "write": {
+      "timeout_ms": 2000,
+      "side_effect": "state_change",
+      "retry": "never",
+      "cancellable": false,
+      "completion": "readback"
     }
   },
-  "parameters": [],
+  "parameters": [
+    {
+      "name": "led_enabled",
+      "description": "Synthetic control reference",
+      "type": "bool",
+      "access": "rw",
+      "semantic": "state",
+      "hazard_class": "unknown",
+      "binding": {
+        "kind": "adapter",
+        "key": "led_enabled"
+      },
+      "read_policy": {
+        "max_age_ms": 0,
+        "destructive": false
+      },
+      "write_policy": {
+        "effect": "actuate",
+        "completion": "readback",
+        "verification_parameter": "led_enabled",
+        "settling_timeout_ms": 1000,
+        "retry": "never"
+      }
+    }
+  ],
   "required_features": [
     "otdp.core/0.1.0",
     "otdp.adapter/0.1.0",
     "otdp.profile_actions/0.1.0",
     "otdp.measurement/0.1.0",
-    "otdp.dmm/1.0.0"
+    "otdp.embedded_controller/1.0.0"
   ],
   "provenance": {
     "sources": [
@@ -76,7 +116,7 @@
     ],
     "test_vectors": [
       {
-        "id": "dmm-actions",
+        "id": "embedded_controller-actions",
         "path": "class-action-vectors.json",
         "purpose": "Input/output contract examples; not a device simulator"
       }
@@ -95,48 +135,50 @@
     {
       "id": "ch2",
       "label": "Reference channel 2",
-      "role": "measure",
+      "role": "digital_output",
       "quantities": [
-        "voltage"
+        "digital_level"
       ],
-      "parameter_names": []
+      "parameter_names": [
+        "led_enabled"
+      ]
     }
   ],
   "profiles": [
-    "otdp.dmm/1.0.0"
+    "otdp.embedded_controller/1.0.0"
   ],
   "contracts": [
     {
-      "id": "urn:otdp:profile-catalog:0.2.0",
+      "id": "urn:otdp:profile-catalog:0.2.1",
       "path": "device-profile-catalog.json",
-      "sha256": "dc776ec3dd02f3b37e02005f79434597f220b5acb5d6c23c98b844aa3e63d923"
+      "sha256": "a81d5ed9176e1c32dabbf1f8b144cd06fd33611cfd9a9fb2b60524165df1b464"
     },
     {
-      "id": "urn:otdp:measurement:0.2.0",
+      "id": "urn:otdp:measurement:0.2.1",
       "path": "otdp-measurement.schema.json",
-      "sha256": "e911d0efec92a5167788dc59c40acdbf62e99f82249fcc99bf2e57ffe5331382"
+      "sha256": "100f4a9120ab671d18bc40c129e5040e838d1f25619920b602896ddfc305da07"
     }
   ],
   "actions": {
-    "otdp.dmm.configure/1.0.0": {
+    "otdp.embedded_controller.telemetry/1.0.0": {
       "binding": {
         "kind": "adapter",
-        "key": "otdp.dmm.configure/1.0.0"
-      },
-      "input_constraints": {},
-      "timeout_ms": 30000,
-      "side_effect": "state_change",
-      "cancellable": true,
-      "retry": "never"
-    },
-    "otdp.dmm.measure/1.0.0": {
-      "binding": {
-        "kind": "adapter",
-        "key": "otdp.dmm.measure/1.0.0"
+        "key": "otdp.embedded_controller.telemetry/1.0.0"
       },
       "input_constraints": {},
       "timeout_ms": 30000,
       "side_effect": "none",
+      "cancellable": true,
+      "retry": "never"
+    },
+    "otdp.embedded_controller.set_control/1.0.0": {
+      "binding": {
+        "kind": "adapter",
+        "key": "otdp.embedded_controller.set_control/1.0.0"
+      },
+      "input_constraints": {},
+      "timeout_ms": 30000,
+      "side_effect": "state_change",
       "cancellable": true,
       "retry": "never"
     }

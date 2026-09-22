@@ -2,7 +2,7 @@
 
 # BenchWeave plugin developer SDK
 
-Build an external device plugin without importing gateway internals. Python 3.13+, SDK 0.1.0, OTDP 0.2.0 and adapter API 1.1 are the initial baseline. This package is a separate wheel built alongside BenchWeave; published to PyPI as benchweave-sdk.
+Build an external device plugin without importing gateway internals. Python 3.13+, SDK 0.1.0, OTDP 0.2.1 and adapter API 1.1 are the initial baseline. This package is a separate wheel built alongside BenchWeave; published to PyPI as benchweave-sdk.
 
 ## Sister repository
 

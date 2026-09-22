@@ -1,13 +1,13 @@
 {
-  "otdp_version": "0.2.0",
+  "otdp_version": "0.2.1",
   "descriptor_version": "1.0.0",
-  "id": "dev.local.class-dc-psu",
-  "display_name": "Structural reference: DC power supply",
+  "id": "dev.local.class-daq",
+  "display_name": "Structural reference: Data acquisition and digitiser",
   "description": "Class-contract fixture, not a verified real device or implemented adapter.",
   "identity": {
     "strategy": "adapter",
     "manufacturer": "OTDP Reference",
-    "model": "dc_psu",
+    "model": "daq",
     "firmware_policy": "listed",
     "supported_firmware": [
       "1.0"
@@ -16,7 +16,7 @@
   "integration": {
     "mode": "adapter",
     "adapter": {
-      "entry_point": "reference_dc_psu:create_plugin",
+      "entry_point": "reference_daq:create_plugin",
       "api_version": "1.1",
       "version": "1.0.0",
       "dependencies": [],
@@ -64,7 +64,7 @@
     "otdp.adapter/0.1.0",
     "otdp.profile_actions/0.1.0",
     "otdp.measurement/0.1.0",
-    "otdp.dc_psu/1.0.0"
+    "otdp.daq/1.0.0"
   ],
   "provenance": {
     "sources": [
@@ -76,7 +76,7 @@
     ],
     "test_vectors": [
       {
-        "id": "dc_psu-actions",
+        "id": "daq-actions",
         "path": "class-action-vectors.json",
         "purpose": "Input/output contract examples; not a device simulator"
       }
@@ -86,46 +86,42 @@
     {
       "id": "ch1",
       "label": "Reference channel 1",
-      "role": "source",
+      "role": "analogue_input",
       "quantities": [
-        "voltage",
-        "current",
-        "power"
+        "voltage"
       ],
       "parameter_names": []
     },
     {
       "id": "ch2",
       "label": "Reference channel 2",
-      "role": "source",
+      "role": "analogue_input",
       "quantities": [
-        "voltage",
-        "current",
-        "power"
+        "voltage"
       ],
       "parameter_names": []
     }
   ],
   "profiles": [
-    "otdp.dc_psu/1.0.0"
+    "otdp.daq/1.0.0"
   ],
   "contracts": [
     {
-      "id": "urn:otdp:profile-catalog:0.2.0",
+      "id": "urn:otdp:profile-catalog:0.2.1",
       "path": "device-profile-catalog.json",
-      "sha256": "dc776ec3dd02f3b37e02005f79434597f220b5acb5d6c23c98b844aa3e63d923"
+      "sha256": "a81d5ed9176e1c32dabbf1f8b144cd06fd33611cfd9a9fb2b60524165df1b464"
     },
     {
-      "id": "urn:otdp:measurement:0.2.0",
+      "id": "urn:otdp:measurement:0.2.1",
       "path": "otdp-measurement.schema.json",
-      "sha256": "e911d0efec92a5167788dc59c40acdbf62e99f82249fcc99bf2e57ffe5331382"
+      "sha256": "100f4a9120ab671d18bc40c129e5040e838d1f25619920b602896ddfc305da07"
     }
   ],
   "actions": {
-    "otdp.dc_psu.configure/1.0.0": {
+    "otdp.daq.configure/1.0.0": {
       "binding": {
         "kind": "adapter",
-        "key": "otdp.dc_psu.configure/1.0.0"
+        "key": "otdp.daq.configure/1.0.0"
       },
       "input_constraints": {},
       "timeout_ms": 30000,
@@ -133,10 +129,10 @@
       "cancellable": true,
       "retry": "never"
     },
-    "otdp.dc_psu.output/1.0.0": {
+    "otdp.daq.arm/1.0.0": {
       "binding": {
         "kind": "adapter",
-        "key": "otdp.dc_psu.output/1.0.0"
+        "key": "otdp.daq.arm/1.0.0"
       },
       "input_constraints": {},
       "timeout_ms": 30000,
@@ -144,14 +140,36 @@
       "cancellable": true,
       "retry": "never"
     },
-    "otdp.dc_psu.measure/1.0.0": {
+    "otdp.daq.fetch/1.0.0": {
       "binding": {
         "kind": "adapter",
-        "key": "otdp.dc_psu.measure/1.0.0"
+        "key": "otdp.daq.fetch/1.0.0"
       },
       "input_constraints": {},
       "timeout_ms": 30000,
       "side_effect": "none",
+      "cancellable": true,
+      "retry": "never"
+    },
+    "otdp.daq.abort/1.0.0": {
+      "binding": {
+        "kind": "adapter",
+        "key": "otdp.daq.abort/1.0.0"
+      },
+      "input_constraints": {},
+      "timeout_ms": 30000,
+      "side_effect": "state_change",
+      "cancellable": true,
+      "retry": "never"
+    },
+    "otdp.daq.trigger/1.0.0": {
+      "binding": {
+        "kind": "adapter",
+        "key": "otdp.daq.trigger/1.0.0"
+      },
+      "input_constraints": {},
+      "timeout_ms": 30000,
+      "side_effect": "state_change",
       "cancellable": true,
       "retry": "never"
     }
