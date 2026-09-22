@@ -262,6 +262,16 @@ The last three rows are the honest boundary of offline checking: the SDK proves 
 declaration is *well-formed and self-consistent*; only the gateway can prove the
 *grant* — because commissioned state and the provider runtime live there.
 
+**Disclosed divergence (owner-ruled 2026-09-22, refute LOW-2):** the SDK's pin
+resolution refuses ANY symlink on the path — including a symlink that never leaves
+the plugin's own package — while corpus §2 and the provider schema's own description
+say the triple resolves "after symlink resolution". The strict posture is deliberate
+(consistent with the SDK's no-follow reader) and STANDS; the refusal's error text
+names the actual rule rather than overstating containment; and increment 3's gateway
+admission must decide its own posture against this divergence KNOWINGLY — the
+annoying direction (check refuses what admission admits) is accepted for the SDK
+lane, not accidental.
+
 ### 1.5 Standalone composition — the Decision 9 interplay
 
 The #43 record's Decision 9 (standalone capture, Amendment 2) claims "one shape, two
