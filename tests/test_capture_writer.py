@@ -362,7 +362,7 @@ def test_finalise_refuses_an_undeclared_format_naming_the_declared_set(
     # An empty declared set refuses everything (B12, named).
     empty = _writer(tmp_path / "empty", formats=frozenset())
     asyncio.run(_append(empty, "cap-2", [b"data"]))
-    with pytest.raises(ValueError, match="declared set \[\]"):
+    with pytest.raises(ValueError, match=r"declared set \[\]"):
         _finalise(empty, "cap-2", {"format": "csv", "started_at": "2026-09-22T00:00:00Z"})
 
 
