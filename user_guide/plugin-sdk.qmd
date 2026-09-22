@@ -100,7 +100,7 @@ Descriptor checks currently cover its schema, matching capabilities/policies, un
 A `custom` transport may declare a pinned **transport-provider contract** (OTDP 0.2.1): an optional `provider` object on the transport carrying the required `feature_id` and an `{id, path, sha256}` pin to the reviewed contract document inside your plugin package. `benchweave-sdk check` verifies the whole declaration offline and refuses with named, machine-matchable prefixes:
 
 - `provider_feature_missing:` — the provider's `feature_id` is not in `required_features`.
-- `provider_transport_undeclared:` — an `otdp.transport.*` feature is required but no provider on the custom transport declares it.
+- `provider_transport_undeclared:` — an `otdp.transport.*` feature is required but no provider on the custom transport declares it, or the provider's `feature_id` is not a sanctioned `otdp.transport.<name>/<semver>` id (a declaration nothing admissible can ever back).
 - `unknown_otdp_feature:` — an `otdp.*` feature id that is neither corpus-known nor declared through a provider; the namespace is corpus-owned, and a typo or a fake version does not pass.
 - `provider_contract_missing:` — the pin does not resolve to a contained regular file. Provider pins are **descriptor-relative** (the contract ships beside your descriptor, subdirectories allowed) and refuse traversal, absolute paths and symlinked components.
 - `provider_contract_hash_mismatch:` — the pinned bytes do not hash to the pinned `sha256`.

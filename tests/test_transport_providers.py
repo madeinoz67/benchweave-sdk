@@ -345,6 +345,36 @@ def test_transport_namespace_typo_is_unknown_not_orphan() -> None:
         validate_descriptor(descriptor)
 
 
+def test_declaration_feature_id_outside_the_subnamespace_is_refused() -> None:
+    # R1 shape 1 (refute-proven admitted before the fold): a provider
+    # feature_id outside otdp.* entirely. Nothing in the census owned it —
+    # A passes (it is required), B owns otdp.transport.* only, C owns the
+    # rest of otdp.* — so the preset/presentation lanes inherited a
+    # fail-open. The declaration site owns its namespace now.
+    descriptor, _ = _minimal_pair()
+    descriptor["transport"]["provider"]["feature_id"] = "com.example.power/1.0.0"
+    descriptor["required_features"] = [
+        feature if not feature.startswith("otdp.transport.") else "com.example.power/1.0.0"
+        for feature in descriptor["required_features"]
+    ]
+    with pytest.raises(ValueError, match="provider_transport_undeclared:"):
+        validate_descriptor(descriptor)
+
+
+def test_declaration_feature_id_with_an_empty_name_segment_is_refused() -> None:
+    # R1 shape 2 (refute-proven admitted): the descriptor schema's generic
+    # feature pattern accepts otdp.transport./1.0.0, and the census had no
+    # name-segment rule of its own.
+    descriptor, _ = _minimal_pair()
+    descriptor["transport"]["provider"]["feature_id"] = "otdp.transport./1.0.0"
+    descriptor["required_features"] = [
+        feature if not feature.startswith("otdp.transport.") else "otdp.transport./1.0.0"
+        for feature in descriptor["required_features"]
+    ]
+    with pytest.raises(ValueError, match="provider_transport_undeclared:"):
+        validate_descriptor(descriptor)
+
+
 def test_pattern_malformed_sha_is_the_schema_surface() -> None:
     # A 63-hex sha256 violates the provider object's pattern; the corpus
     # assigns that fault to the schema, not to a named provider prefix.

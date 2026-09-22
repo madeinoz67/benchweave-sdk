@@ -188,6 +188,14 @@ def validate_result(result: dict[str, Any], request: dict[str, Any]) -> None:
 #: The sanctioned provider sub-namespace (transport-providers §2).
 _PROVIDER_FEATURE_NAMESPACE = "otdp.transport."
 
+#: The sanctioned declaration-site feature_id shape — the transport-provider
+#: contract schema's own ``feature_id`` pattern, verbatim: the contract side
+#: refuses anything else in ``otdp.*``, so a descriptor declaration outside
+#: this shape can never link to an admissible contract and declares nothing.
+_SANCTIONED_PROVIDER_FEATURE = re.compile(
+    r"^otdp\.transport\.[a-z][a-z0-9-]*/[0-9]+\.[0-9]+(?:\.[0-9]+)?$"
+)
+
 #: The generic §8.1 transfer kinds (specification §8.1; transport-providers
 #: §3): a provider grammar introduces NEW kinds and never shadows one. The
 #: set is prose-carried — the vendored runtime schema does not enumerate the
@@ -258,9 +266,16 @@ def _corpus_known_otdp_features() -> frozenset[str]:
 def _check_provider_features(descriptor: dict[str, Any]) -> None:
     """S04 (extended): provider declarations and the closed ``otdp.*`` namespace.
 
-    Three refusals, in this order so each single fault lands on its named
+    Four refusals, in this order so each single fault lands on its named
     prefix (transport-providers §2):
 
+    - ``provider_transport_undeclared:`` a provider whose ``feature_id`` is
+      not a sanctioned transport-provider id — outside the
+      ``otdp.transport.<name>/<semver>`` sub-namespace entirely, or a
+      malformed name segment. The declaration site owns its namespace: no
+      admissible contract can ever register such a feature, so the
+      declaration is not effective (R1; the refute proved both shapes
+      admitted before this row);
     - ``provider_feature_missing:`` a pinned provider whose feature the
       integration does not require;
     - ``provider_transport_undeclared:`` an ``otdp.transport.*`` feature with
@@ -277,6 +292,18 @@ def _check_provider_features(descriptor: dict[str, Any]) -> None:
     transport = descriptor["transport"]
     provider = transport.get("provider")
     required = descriptor["required_features"]
+    if isinstance(provider, dict):
+        declared = provider.get("feature_id")
+        if (
+            not isinstance(declared, str)
+            or _SANCTIONED_PROVIDER_FEATURE.fullmatch(declared) is None
+        ):
+            raise ValueError(
+                f"provider_transport_undeclared: {declared!r} is not a sanctioned "
+                "transport-provider feature id; a declaration must live in the "
+                "otdp.transport.<name>/<semver> sub-namespace exactly (the contract "
+                "schema's feature_id pattern)"
+            )
     if isinstance(provider, dict) and provider.get("feature_id") not in required:
         raise ValueError(
             f"provider_feature_missing: {provider.get('feature_id')!r} is pinned by "
