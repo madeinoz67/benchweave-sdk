@@ -531,3 +531,87 @@ def test_user_guide_compatibility_sentence_covers_capture() -> None:
     assert "streaming remain unsupported" in guide
 
 
+
+
+# --- S-F1: a finalise failure after staging removal must not wedge the writer
+
+
+def test_a_manifest_write_failure_keeps_the_retry_path_alive(tmp_path):
+    """The SDK-lane refutation F1: staging removal ran BEFORE the manifest
+    write, so a manifest-write I/O failure (ENOSPC mid-capture is an
+    ordinary bench event) left a complete primary + no staging + a writer
+    still open — and both natural recoveries raised raw FileNotFoundError,
+    off the mirrored §8 contract. FIX OPTION CHOSEN: staging teardown moves
+    AFTER the manifest write (the publication marker), so the failed
+    finalise leaves the capture fully retryable; a typed guard at concat
+    entry covers the externally-mangled shape. Retries must never raise a
+    bare OSError and must never destroy the complete primary."""
+    writer = _writer(tmp_path)
+    chunks = [b"\x01" * 8, b"\x02" * 8]
+    asyncio.run(_append(writer, "cap-1", chunks))
+
+    def failing_manifest(event: Path, manifest: dict) -> None:
+        raise OSError(28, "No space left on device")
+
+    monkeypatch_manifest = failing_manifest
+    original = capture._write_manifest
+    capture._write_manifest = monkeypatch_manifest  # type: ignore[assignment]
+    try:
+        with pytest.raises(OSError, match="No space"):
+            _finalise(writer, "cap-1", dict(_WAVEFORM, sample_count=2))
+    finally:
+        capture._write_manifest = original  # type: ignore[assignment]
+    event = tmp_path / "captures" / "cap-1"
+    assert (event / "cap-1.f64").read_bytes() == b"".join(chunks)  # complete
+    assert (event / "staging").is_dir()  # the retry path is intact
+    assert not (event / "manifest.json").exists()  # not published
+    assert writer._terminal is None  # still open, not wedged
+    # Natural recovery A: retry finalise — no bare FileNotFoundError.
+    manifest = _finalise(writer, "cap-1", dict(_WAVEFORM, sample_count=2))
+    assert manifest["sha256"] == __import__("hashlib").sha256(b"".join(chunks)).hexdigest()
+    assert (event / "manifest.json").exists()
+    assert not (event / "staging").exists()  # success tears staging down
+
+
+def test_a_crashed_finalise_leaves_staging_for_the_retry(tmp_path, monkeypatch):
+    """The crash-window shape (the landed crash test's sibling): a process
+    death between the primary rename and the manifest write now leaves the
+    complete primary AND staging (the retry path) — coherent with the
+    reordering, and the residue-cleanup deferral to the runner is
+    unchanged (a successful retry leaves no residue)."""
+    writer = _writer(tmp_path)
+    chunks = [b"\x01" * 8]
+    asyncio.run(_append(writer, "cap-1", chunks))
+
+    def exploding_manifest(event: Path, manifest: dict) -> None:
+        raise RuntimeError("simulated crash before manifest write")
+
+    monkeypatch.setattr(capture, "_write_manifest", exploding_manifest)
+    with pytest.raises(RuntimeError, match="simulated crash"):
+        _finalise(writer, "cap-1", dict(_WAVEFORM, sample_count=1))
+    event = tmp_path / "captures" / "cap-1"
+    assert (event / "cap-1.f64").read_bytes() == b"".join(chunks)  # complete
+    assert not (event / "manifest.json").exists()  # not published
+    assert (event / "staging").is_dir()  # the retry path survives the crash
+
+
+def test_append_then_finalise_after_a_failed_finalise_recovers(tmp_path):
+    """The refuter's recovery B: append-then-finalise after the failure —
+    must succeed (or refuse with a contract ValueError), never raise a
+    bare FileNotFoundError from the concat loop."""
+    writer = _writer(tmp_path)
+    asyncio.run(_append(writer, "cap-1", [b"\x01" * 8]))
+
+    def failing_manifest(event: Path, manifest: dict) -> None:
+        raise OSError(28, "No space left on device")
+
+    original = capture._write_manifest
+    capture._write_manifest = failing_manifest  # type: ignore[assignment]
+    try:
+        with pytest.raises(OSError, match="No space"):
+            _finalise(writer, "cap-1", dict(_WAVEFORM, sample_count=1))
+    finally:
+        capture._write_manifest = original  # type: ignore[assignment]
+    asyncio.run(_append(writer, "cap-1", [b"\x02" * 8]))
+    manifest = _finalise(writer, "cap-1", dict(_WAVEFORM, sample_count=2))
+    assert manifest["byte_length"] == 16

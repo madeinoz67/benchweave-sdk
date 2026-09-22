@@ -337,6 +337,17 @@ class StandaloneCaptureWriter:
         if event is None:  # pragma: no cover — an open capture always has one
             raise RuntimeError("writer invariant violated: open capture without event")
         staging = event / "staging"
+        if not staging.is_dir():
+            # S-F1's typed guard: staging absent at concat entry means the
+            # event directory was mangled outside the writer (the writer
+            # itself keeps staging until the manifest marker lands). A
+            # contract-class refusal naming the state — never a bare
+            # FileNotFoundError out of the concat loop.
+            raise ValueError(
+                f"capture {capture_id!r} has no staging directory to "
+                f"finalise ({staging} is absent) — the event was modified "
+                "outside the writer; abort it and start a new capture"
+            )
         extension = _FORMAT_EXTENSIONS.get(fmt, _DEFAULT_EXTENSION)
         primary = event / f"{capture_id}{extension}"
         temp = event / f"{capture_id}{extension}.tmp"
@@ -355,7 +366,6 @@ class StandaloneCaptureWriter:
                 "aborted, not published as complete"
             )
         os.replace(temp, primary)
-        shutil.rmtree(staging, ignore_errors=True)
         digest = hasher.hexdigest()
         manifest: dict[str, Any] = {
             "capture_id": capture_id,
@@ -372,6 +382,11 @@ class StandaloneCaptureWriter:
         if renderings is not None:
             manifest["x-standalone-renderings"] = renderings
         _write_manifest(event, manifest)
+        # S-F1: staging teardown AFTER the manifest (the publication
+        # marker) — a manifest-write failure leaves the capture fully
+        # retryable (staging intact, primary complete, writer open) instead
+        # of wedged behind a FileNotFoundError on every natural retry.
+        shutil.rmtree(staging, ignore_errors=True)
         self._terminal = "finalised"
         return manifest
 
