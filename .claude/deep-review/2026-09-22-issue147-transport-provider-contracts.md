@@ -1,0 +1,414 @@
+# Issue #147 — Transport providers: the reviewed host-provider contract mechanism
+
+- Date: 2026-09-22
+- Status: design (pre-implementation; this record precedes any corpus or SDK change on
+  `feat/147-transport-providers`)
+- References: gateway issue [#147](https://github.com/madeinoz67/benchweave/issues/147)
+  (carrier for deferral row 6 of the #43 design of record, re-keyed to transport by
+  Amendment 3), gateway issues #43 and #95; SDK base `4ba28b9`
+- Scope: the **mechanism** only — how a descriptor declares it needs a non-scoped
+  transport, what the review/approval surface is, what the host grants. Provider
+  implementations themselves are out of scope by the issue's own text.
+
+## 0. Grounding — verified against code and corpus, not the issue prose
+
+Every claim below was checked this session against the vendored 0.2.0 tree and the
+canonical corpus/gateway source.
+
+1. **The corpus already promises this lane and already contains its seam.**
+   `otdp-specification.md` §8.1 (0.2.0, main-side
+   `standards/otdp/0.2.0/otdp-specification.md`): "The initial generic HostServices has
+   no `custom` transaction kind. **An integration declaring transport custom must
+   reference a separately documented and admitted host-service extension.** An agent
+   cannot mark it complete using these generic services alone. The core never falls
+   back to unrestricted I/O." And §6.4: "`serial`, `i2c`, `spi` and `custom` require
+   adapter mode… The adapter cannot turn a descriptor connection key into arbitrary
+   host access." The increment does not open a new door; it builds the mechanism
+   behind a sentence that currently has none.
+
+2. **The descriptor seam exists: `$defs/customTransport`** (vendored
+   `src/benchweave_sdk/standards/otdp/0.2.0/otdp-device-descriptor.schema.json`):
+   `{type: "custom", connection_key: ^[a-z][a-z0-9_]*$, settings: {protocol_reference
+   (required, free string), x-…}}`, description "connection_key resolves to a
+   commissioned, scoped host transport. Addresses/paths/credentials are not granted by
+   this descriptor." The transport `oneOf` has nine variants; the eight scoped ones
+   plus `custom`.
+
+3. **The pinning precedent exists: the root `contracts` array** —
+   `{id, path, sha256}` items, package-relative path, sha256-pinned. The class examples
+   pin the profile catalog and measurement schema this way (`examples/class-daq.json`:
+   `urn:otdp:profile-catalog:0.2.0` + `dc776ec3…`). Contract references resolve
+   relative to the host-admitted plugin bundle root, stay within it after symlink
+   resolution, never identify a URL or executable module; external `$ref` retrieval is
+   disabled (extension-contract §1).
+
+4. **The feature-id precedent exists: `required_features`** — pattern
+   `^[a-z][a-z0-9_.-]*/semver$`, must contain `otdp.core/0.1.0`; "every identifier must
+   be understood by the host before admission… A well-formed unknown identifier is not
+   automatically supported. Version matching is exact" (extension-contract §1). Known
+   features today are the five lane ids plus the twelve catalog profile ids.
+
+5. **The approval-document precedent exists: commissioning** —
+   `standards/execution/0.1.0/commissioning.schema.json`: `{id, version, sha256}`
+   document references throughout, `owners`, `approved_by/approved_at/expires_at`, and
+   an `evidence[]` array of `{category, report{id,version,sha256}, tested_at, scope,
+   result, limitations}` — with the description "Structure only. Apply … semantic and
+   qualification rules; JSON validity grants no authority."
+
+6. **The grant surface exists: `transfer`** — HostServices (spec §8) carries
+   `transfer(transaction, context)` / `close_transport`, and §8.1 defines the closed
+   transaction grammar (`stream_send/receive/exchange`, `can_receive/send`,
+   `i2c_transfer`, `spi_transfer`) with "All transaction objects reject unspecified
+   fields… transaction objects contain no host/path/credential fields." `transfer`
+   already verifies context and records transmission evidence. The SDK's `MockHost`
+   (`src/benchweave_sdk/testing.py`) scripts transfers as exact-dict matches — it is
+   grammar-agnostic by construction.
+
+7. **The permission already exists: `scoped_transport`** — closed enum
+   (`scoped_transport`, `artifact_writer`, `event_sink`, `artifact_reader`) in
+   `$defs/adapter.permissions`. S15 already ties capabilities to permissions.
+
+8. **Plugin code cannot bring a vendor SDK, structurally.** The gateway's verified
+   bundle loader (`src/benchweave/registry/otdp_loading.py`) admits imports of stdlib
+   only — `admitted_import` raises `ImportError` for any non-stdlib top level, and
+   native extensions are not supported. A "vendor SDK" therefore cannot be plugin
+   payload; it can only be host-side behind a reviewed contract. This is why §6 frames
+   the lane as *host-provider*.
+
+9. **The gateway enforces none of the descriptor-admission surface at runtime today.**
+   Verified by `git grep` over gateway `src/`: zero occurrences of `required_features`
+   and zero of `connection_key`. The bridge (`host/otdp_bridge.py`) receives the
+   descriptor dict from the caller; `host/services.py`'s HostServices protocol has no
+   transport members. The #43 external review found the same for permissions ("Nothing
+   in the gateway reads `integration.adapter.permissions`"). The corpus is explicitly
+   "a design contract, not a claim that an STG SDK or plugin loader already exists"
+   (spec §1) — the loader catches up in increments. A design that assumes live
+   enforcement today is wrong; a design that refuses to move corpus-first is equally
+   wrong, because the corpus is what both catch-up increments encode from.
+
+10. **`x-` keys cannot carry this.** §3: "Optional namespaced `x-vendor-name` fields
+    may be ignored at schema extension points; **required semantics MUST NOT depend on
+    them**" (S18 bars safety-critical ignored extensions). A transport-provider
+    dependency is admission-deciding semantics — the declaration must be a normative
+    field, i.e. a corpus revision. (Contrast: Amendment 3's `x-capture-formats` site is
+    legitimate precisely because standalone-capture formats are authoring-time
+    metadata, not admission inputs.)
+
+11. **Governance state.** OTDP is at 0.2.0, released 2026-09-19, supersedes 0.1.2;
+    the 48-hour bump window (GOVERNANCE, #97) is clear. Change classes: additive
+    machine errata (backwards-compatible) → PATCH, precedent "the interface
+    `approver_token` pattern: new optional field, nothing removed or retyped"; breaking
+    machine change → MINOR at least. Bump mechanics are copy-never-move + repin +
+    export + report regen via the family writer. The SDK vendors machine artifacts
+    only; prose companions are not digest-pinned.
+
+12. **Trigger.** Three real integrations already meet deferral row 6's trigger (a real
+    logic analyser, a real USB power meter, the webcam integration tracked at gateway
+    issue #95). The #43 design of record's row-6 reopen condition — "a device class in
+    scope whose transport is not one of the scoped primitives" — fired, and Amendment 3
+    re-keyed the row to transport and gave it this carrier.
+
+## 1. Mechanism
+
+Three parts, each extending a proven in-tree mechanism rather than inventing one.
+
+### 1.1 Declaration — `transport.custom` gains a pinned `provider` object
+
+The descriptor keeps `transport.type: "custom"` — that variant was built for exactly
+this case — and gains one optional, self-contained object:
+
+```json
+"transport": {
+  "type": "custom",
+  "connection_key": "power_meter",
+  "settings": {"protocol_reference": "vendor communications manual rev C"},
+  "provider": {
+    "feature_id": "otdp.transport.usb_hid/1.0.0",
+    "id": "urn:otdp:transport-provider:usb-hid:1.0.0",
+    "path": "transport-provider-usb-hid.json",
+    "sha256": "<64 hex>"
+  }
+}
+```
+
+- `feature_id` follows the existing `required_features` pattern and **must** also
+  appear in `required_features` (a semantic check in the S04 home; see 1.4).
+- `{id, path, sha256}` is the root `contracts` item shape verbatim — package-relative
+  path, digest-pinned, resolved inside the admitted bundle. The provider contract
+  document ships in the plugin package and is pinned by the descriptor, exactly as the
+  profile catalog is: the pin makes "the bytes that were reviewed" deterministic.
+- When `provider` is absent, `custom` behaves exactly as today: the integration is
+  honestly incomplete ("The relevant class may be fully specified while a particular
+  device's transport integration remains unsupported" — extension-contract §6).
+
+Why not a new `provider` transport variant in the `oneOf`: it would fork two shapes
+that mean the same thing, and `custom` + `protocol_reference` is already the declared
+home of "separately documented" transports. Why not ride the root `contracts` array
+alone: the array is an unordered pin set; admission needs to know *which* pinned
+contract is the transport provider without guessing URN conventions. One field, one
+meaning.
+
+### 1.2 Review/approval surface — a corpus-owned structure schema, host-admitted instances
+
+A **transport-provider contract** is a JSON document validated by a new corpus machine
+artifact, `otdp-transport-provider.schema.json` (Draft 2020-12, added to the otdp
+normative set at 0.2.1). Structure only — the commissioning posture, "JSON validity
+grants no authority":
+
+- `contract_version` (const `0.1.0`), `id` (urn), `feature_id` (the id the host
+  registers on admission), `version` (semver), `description`
+- `transport_kind` (open string — `usb_hid`, `vendor_sdk`, …; each provider is its own
+  contract, the corpus does not enumerate providers)
+- `transaction_grammar[]`: `{kind (unique snake_case), request_schema, result_schema,
+  limits}` — Draft 2020-12 subschemas, meta-validated, extending the §8.1 transfer
+  grammar **for this provider only**. The host validates provider transactions against
+  the admitted contract's grammar, never against the generic table.
+- `security_scope`: closed enum of what the provider surface may touch —
+  `commissioned_connection` only, in this revision. Filesystem paths, process
+  spawning, and unrestricted network endpoints are unrepresentable in the schema, which
+  makes §6's "no direct unrestricted SDK/filesystem/network access" machine-checkable
+  rather than aspirational.
+- `host_requirements`: reviewed statement of what the host-side implementation needs
+  (native library names + exact versions, privilege claims). This is where a vendor SDK
+  lives: **host-side, named and reviewed — the plugin never imports it** (grounding 8).
+- `approval`: `{approved_by, approved_at, expires_at}` + `evidence[]` in the
+  commissioning evidence shape.
+
+**Two review tiers, both named.** The *mechanism* (schema + rules) is corpus content
+and rides the GOVERNANCE review path — standards-governor review, drift gates, family
+suites, report regen. Each *provider contract instance* is admitted by the host
+operator as a commissioning-class act: the document's own approval block plus the
+host-side admission record. A descriptor pinning a provider contract that the host has
+not admitted is an admission failure ("unknown required features fail admission" —
+S04); device-supplied metadata still "cannot… add a new transport provider on its own"
+(extension-contract §2). The pin gives determinism; the operator's admission gives
+authority.
+
+### 1.3 The grant — provider-scoped `transfer` kinds on the commissioned connection
+
+The host hands the adapter **nothing structurally new**. `connection_key` continues to
+resolve through commissioned gateway configuration to one scoped connection; for a
+provider integration that connection is backed by the admitted provider's host-side
+implementation. The adapter calls the existing `HostServices.transfer` with the
+provider's transaction kinds (e.g. `{kind: "hid_transfer", report_id: …, data: …}`),
+validated against the admitted contract's grammar.
+
+Why transfer-grammar kinds and not new HostServices methods:
+
+- `transfer` already enforces dispatch markers, deadlines, cancellation, byte bounds
+  and transmission evidence — every provider gets that enforcement for free.
+- The adapter ABI stays at 1.1 (`corpus-manifest.json` `identity.adapter_api`
+  unchanged; no agreement-test churn).
+- The SDK's `MockHost` scripts arbitrary transaction dicts by exact match — provider
+  adapters are offline-testable with **zero** SDK testing-lane changes.
+- The grammar table is already the corpus's per-transport shape catalog; a provider
+  contract is one more, locally-admitted row-set. This is the literal reading of §8.1's
+  "separately documented and admitted host-service extension."
+
+`scoped_transport` remains the governing permission (S15) — a provider transfer *is* a
+scoped transport. No new permission name.
+
+### 1.4 The rules (corpus text) — where each check lives
+
+| Rule | Home | Offline prefix (SDK lane) |
+|---|---|---|
+| `provider.feature_id` ∈ `required_features` | S04 (extended) | `provider_feature_missing:` |
+| an `otdp.transport.*` id in `required_features` with no matching `transport.provider` | S04 (extended, orphan sweep) | `provider_transport_undeclared:` |
+| pinned provider document exists at the package-relative path and hashes to `sha256` | S14-family (package-relative paths) | `provider_contract_missing:` / `provider_contract_hash_mismatch:` |
+| provider document passes `otdp-transport-provider.schema.json` and its `feature_id`/version agree with the declaration | admission (new) | `provider_contract_invalid:` |
+| `connection_key` resolves to a connection backed by the **same** admitted contract (exact id+version+sha256) | S12 (extended) | gateway-side (needs commissioned state — honestly not offline-checkable; disclosed) |
+| provider transactions match the admitted grammar; `security_scope` respected | runtime | gateway-side |
+
+The last two rows are the honest boundary of offline checking: the SDK proves the
+declaration is *well-formed and self-consistent*; only the gateway can prove the
+*grant* — because commissioned state and the provider runtime live there.
+
+## 2. Versioning — recommendation: OTDP 0.2.1 (PATCH)
+
+The machine delta is additive by GOVERNANCE's own shape test: one optional object on
+`$defs/customTransport`, one new schema file in the normative set, new examples;
+nothing removed, nothing retyped, no existing document changes meaning. Old descriptors
+validate identically under 0.2.1; provider descriptors are new documents that old
+hosts refuse — which is the designed exact-matching posture, not a break. That is the
+`approver_token` class → PATCH. It also matches the minimal-bumps directive (#69, and
+the owner's stated baby-steps preference). The 48-hour window is clear (0.2.0 released
+2026-09-19).
+
+The counter-argument is semantic: a new admission lane is more than "errata". If the
+standards-governor reads the PATCH row narrowly (corrections only), 0.3.0 is the
+honest label — content identical, version re-keyed, one extra repin cycle. **Owner
+fork F1**; recommendation 0.2.1. Either way the provider-contract instances themselves
+are *not* governed standards — they are admitted local documents, "deliberately
+versioned elsewhere" (GOVERNANCE) like profile ids and plugin releases. Their schema
+living in the corpus is what keeps the corpus the single authority on descriptor
+semantics.
+
+## 3. Minimal first increment — repo split, sequencing, branches
+
+Branch `feat/147-transport-providers` on both sides (per the issue). Four PRs, three
+increments:
+
+**Increment 1 — corpus (main-side PR A, first).** OTDP 0.2.1 by copy-never-move from
+0.2.0: flip `otdp_version` const + `$id` + example version pins in the copy; add the
+`provider` object to `$defs/customTransport`; add `otdp-transport-provider.schema.json`
+to the normative set; add two synthetic examples (`examples/reference-provider.json` —
+an invented USB-HID-class provider contract in the reference-* tradition — and a
+reference descriptor declaring it); prose: extension-contract §6 expands the deferral
+into the mechanism, spec §6.4/§8.1 gain the provider paragraphs, new companion
+`transport-providers.md` (authoring + review obligations). Repin via the family
+tooling, regenerate the devices validation report, export the bundle, move
+manifests/identity/docs rows in-arc. Acceptance = the GOVERNANCE gates (drift,
+coverage, family suites, `make check-sdk-standards`, `matrix --check`) green on the
+merged result.
+
+**Increment 2 — SDK sync + offline conformance (this repo; unblocked by 1 alone).**
+`sync-standards` to 0.2.1 (lock + vendored tree move version-first; STD-2 guards it);
+`validate_descriptor` gains the S04 provider-consistency checks; the `check` lane
+resolves and verifies the pinned provider document relative to the descriptor file;
+new `validate_transport_provider` against the vendored schema; the five refusal
+prefixes of 1.4 added to the STD-4 API list; fixture-lattice tests (§4); a short
+user-guide subsection (obligation 1 — `check` gains CLI-visible refusals; the README
+five-steps do not change). **No scaffold change** — the scaffolded descriptor uses the
+serial transport and no provider; the CI scaffold-and-check run keeps proving the
+golden shape. Lands here first, pushed; then **main-side PR B**: submodule pointer +
+`tests/sdk/test_descriptor_equivalence.py` extended to run the SDK checker over the
+0.2.1 example set and the shared provider lattice (the agreement property lives
+main-side because only the parent sees both sides).
+
+**Increment 3 — gateway admission/grant (main-side PR C).** The admission seam: the
+known-features set grows by admitting provider contracts; descriptor admission
+enforces the 1.4 table's gateway-side rows; permission-gate construction begins (the
+#43 review already flagged it as unbuilt); the provider registry resolves
+`connection_key` to provider-backed connections. Runtime provider implementations stay
+out (the issue's own scope line).
+
+The issue's stated order is corpus → gateway → SDK; this plan runs SDK second because
+it is the cheapest falsification of the corpus shape — the offline lattice exercises
+the 0.2.1 schema before the gateway bakes it in. **Owner fork F3** (sequencing);
+recommendation as stated, increment 3 unchanged either way.
+
+## 4. Measurable proof — pre-committed acceptance rule
+
+Written before any fixture was built or any number looked at.
+
+**Metric 1 — lattice agreement (the drift proof).** A fixture lattice of **12**
+provider descriptors: 4 valid variants (minimal provider declaration; provider + class
+profile features together; provider with x- settings extensions; the corpus reference
+descriptor itself) and 8 single-fault permutations (feature_id absent from
+required_features; orphan `otdp.transport.*` feature; provider on a non-custom
+transport; provider without adapter mode; pinned path escaping the package; sha256
+malformed; provider object with additional properties; settings additionalProperties
+violation). Requirement: the SDK lane (validate + check, run from the descriptor's
+package root) and the corpus-0.2.1 rules applied through the main-side equivalence
+module **agree accept/refuse on 12/12**, and each invalid fixture refuses with its
+named prefix from 1.4.
+- **Ship:** 12/12 with correct prefixes.
+- **Kill:** any disagreement, or any missing/wrong prefix — the increment does not
+  ship as-is; either the check or the corpus text is wrong, fix before merge. This is
+  a population, not a sample: the 8 are the enumerated single-fault permutations of the
+  declared fields; multi-fault compositions are excluded by design (residual, tracked
+  as deferral 6).
+
+**Metric 2 — RED control (the mechanism proof).** On the SDK branch, revert **only**
+the provider-check commits: the 8 invalid fixtures must stop refusing with the named
+prefixes (pass, or fail differently), the 4 valid ones still pass; restore, green
+again. Paste both runs (raw pytest output, collected counts — `no tests ran` is a
+FAILED check).
+- **Ship:** refusals vanish on revert and return on restore.
+- **Kill:** refusals surviving the revert mean the measurement tests the wrong layer —
+  the run is **underpowered/mis-instrumented, not conclusive**; re-instrument before
+  any conclusion. No ship on a failed RED.
+
+**Metric 3 — goldens.** Post-sync: `sync-standards --check` green in all three lanes
+(committed state, bundle mode, hatch build — STD-3 symmetry); scaffold output
+byte-identical to the pre-change golden (SRF-1); lock records every 0.2.1 file, stamps
+intact.
+- **Ship:** all three green. **Kill:** any lane asymmetry or scaffold drift.
+
+**Underpowered signal, pre-committed:** if Metrics 1–3 pass first-try with zero fixes
+anywhere in the arc, treat the lattice as too weak (a mechanism this shape should
+catch at least the hash and orphan cases distinctly) — add the multi-fault composition
+fixtures before shipping. **F1 relabel:** a governor ruling of 0.3.0 re-keys the
+version, it does not kill the increment.
+
+## 5. Invariant impacts
+
+- **STD-1/2/3** — content moves version-first (0.2.1) through the bundle; lock ↔ tree
+  ↔ stamps symmetric across the three check lanes; no hand edits anywhere.
+- **STD-4** — five new refusal prefixes join the machine-matchable API:
+  `provider_feature_missing`, `provider_transport_undeclared`,
+  `provider_contract_missing`, `provider_contract_hash_mismatch`,
+  `provider_contract_invalid` (invariants.md's list gains them; ordinary schema-shape
+  failures keep flowing through the existing descriptor-validation error surface).
+- **STD-5/TWO-1** — no normative byte moves SDK-side first; corpus lands main-side,
+  is exported, arrives via sync; this repo's commit is pushed before the pointer.
+- **PKG-1/2** — offline checks read the vendored tree and the plugin's own package
+  files only; the provider document is hashed from disk, never fetched; wheel/sdist
+  contents unchanged in shape (one more vendored JSON through the existing hook).
+- **SRF-1** — no scaffold output change (verified: `scaffold.py`'s descriptor example
+  is serial, provider-less; golden run is Metric 3).
+- **SRF-2** — no plugin-ui surface touched; preview unaffected (transport is not a UI
+  surface) — stated explicitly so no reviewer hunts for one.
+- **SRF-3** — the new checks were written against the vendored 0.2.0 text this session
+  and must be re-compared against the 0.2.1 bytes after sync, not memory.
+- **CI cost** — no new job. Main-side: standards family suites + report regen +
+  equivalence-extension runs (the corpus bump's standard cost). SDK-side: one more test
+  module in the existing suite.
+
+## 6. Deferrals — each with home and reopen trigger
+
+| # | Deferred | Home | Reopen trigger |
+|---|---|---|---|
+| 1 | Gateway runtime grant wiring (provider registry, connection resolution, permission-gate construction) | New gateway issue at PR A merge (implementation lane of #147) | Corpus 0.2.1 merged; increment 3 starts |
+| 2 | Provider implementations (USB-HID host provider, vendor-SDK bindings, the webcam integration) | Per-device gateway issues | First real device commissioned through the lane |
+| 3 | Execution-side commissioning shape for provider-backed connections (the operator document admitting a provider instance bench-side) | Execution-standard queue | First provider implementation — it needs the operator admission surface |
+| 4 | Registry exposure (published plugins declaring provider dependencies) | Registry-standard queue | First shared/published provider-dependent plugin |
+| 5 | Typed SDK helpers for provider transaction kinds beyond generic `transfer` scripting | Gateway tracker (single stream) | A second provider contract lands and MockHost scripting proves repetitive |
+| 6 | Multi-fault fixture compositions + provider-grammar fuzzing | Follow-on to increment 2 | The §4 underpowered signal fires (all green, zero fixes) |
+
+## 7. Top risks — each with its falsifier
+
+1. **The corpus runs ahead of a runtime that enforces none of it** (grounding 9). The
+   SDK would check offline what nothing enforces online — the exact drift the promise
+   guards against, deferred rather than solved. *Falsifier:* increment 3 landing
+   without needing to reshape the provider object would validate the corpus; any
+   reshape means 0.2.1's shape was wrong and a 0.2.2+ correction train is owed. The
+   disclosure is the mitigation: the spec itself says the corpus is a design contract,
+   and the issue chose corpus-first.
+2. **Grant shape strains under a real provider.** If the first real integration (the
+   webcam's capture-shaped traffic is the likely stress case) needs semantics
+   `transfer` cannot express — device enumeration events, buffer streaming — the
+   grammar-extension choice shows cracks. *Falsifier:* the first provider
+   implementation needing a non-transfer call shape; then a services-surface row
+   (new HostServices methods, adapter_api bump) opens as a design row, not a patch.
+3. **Provider instances blur into corpus governance.** The design keeps provider
+   contracts host-admitted, deliberately versioned elsewhere. If a second device
+   family wants to *share* one contract, pressure pushes it toward the corpus tree and
+   the two-tier split fails. *Falsifier:* reuse pressure at the second provider; then
+   a `transport-provider` standard admission (GOVERNANCE's new-standard path) is the
+   honest move, not smuggling instances into otdp.
+
+## 8. DON'T-BUILD check
+
+Built, and narrowly. The trigger is met by three real devices; the corpus contains a
+normative sentence promising this exact lane with no mechanism behind it; the minimal
+first increment is corpus text + one optional schema field + one structure schema +
+two synthetic examples — no runtime, no SDK shape change, no ABI motion. The value of
+increment 1 alone is deliberately small: it unblocks increments 2–3 and nothing else.
+That is the issue's chosen sequencing, and the alternatives are worse — an `x-` key
+declaration is barred by the corpus's own text (grounding 10), and waiting for the
+gateway increment first would have it encoding an unreviewed shape.
+
+## 9. Owner forks (surfaced, not decided)
+
+- **F1 — version class:** 0.2.1 (recommended; additive by GOVERNANCE's shape test) vs
+  0.3.0 (if "errata" reads as corrections-only). §2.
+- **F2 — feature-id granularity:** per-provider ids `otdp.transport.<name>/<v>`
+  (recommended — the profile precedent; a host refusal names the exact missing
+  provider) vs one lane id with identity riding the pinned contract (fewer ids, blunter
+  refusals). §1.1.
+- **F3 — increment order:** SDK second (recommended; cheapest falsification of the
+  corpus shape) vs the issue's stated gateway-second. §3.
+- **F4 — grant shape:** provider-scoped `transfer` kinds (recommended; no ABI bump,
+  evidence/deadline enforcement inherited) vs new HostServices methods (only if
+  providers demand non-transfer semantics). §1.3, risk 2.
