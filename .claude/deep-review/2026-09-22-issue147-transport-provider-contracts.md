@@ -196,9 +196,13 @@ grants no authority":
   the admitted contract's grammar, never against the generic table.
 - `security_scope`: closed enum of what the provider surface may touch —
   `commissioned_connection` only, in this revision. Filesystem paths, process
-  spawning, and unrestricted network endpoints are unrepresentable in the schema, which
-  makes §6's "no direct unrestricted SDK/filesystem/network access" machine-checkable
-  rather than aspirational.
+  spawning, and unrestricted network endpoints are unrepresentable **in
+  `security_scope`** (adversary M1 — the wider "unrepresentable in the schema"
+  claim was falsified live: hostile native_libraries/privileges and a
+  credential-requiring grammar validate clean against the schema; the guard claims
+  the class it catches and nothing wider). The other fields can still *describe*
+  such things — review-read, never granted — so §6's no-direct-access property is
+  machine-checkable exactly at the security_scope boundary and nowhere else.
 - `host_requirements`: reviewed statement of what the host-side implementation needs
   (native library names + exact versions, privilege claims). This is where a vendor SDK
   lives: **host-side, named and reviewed — the plugin never imports it** (grounding 8).
@@ -246,6 +250,7 @@ scoped transport. No new permission name.
 | `provider.feature_id` ∈ `required_features` | S04 (extended) | `provider_feature_missing:` |
 | an `otdp.transport.*` id in `required_features` with no matching `transport.provider` | S04 (extended, orphan sweep) | `provider_transport_undeclared:` |
 | any `otdp.*` id in `required_features` that is neither corpus-known (lanes, catalog profiles) nor declared via a `transport.provider` — the namespace is corpus-owned and closed offline (critic F2; typo'd `otdp.transports.*` must not sail through SDK-green) | S04 (extended, namespace closure) | `unknown_otdp_feature:` |
+| a provider **contract's** own `feature_id` must live under `otdp.transport.*` — pattern-enforced on the provider schema + suite; the loading loop's known-features union must never mint other `otdp.*` ids, including fake core-feature versions (adversary M2 — executed: `otdp.core/9.9.9` was suite-green; contract-side twin of F2) | provider schema + admission | `provider_contract_invalid:` |
 | pinned provider document exists at the descriptor-relative path and hashes to `sha256` (F5: the provider triple resolves **descriptor-relative** — §1's bundle-root rule governs the root `contracts` array; owner decision 2026-09-22, matching the built suite, Inc-2 text, and corpus example) | S14-family (package-relative paths) | `provider_contract_missing:` / `provider_contract_hash_mismatch:` |
 | provider document passes `otdp-transport-provider.schema.json`; its grammar subschemas (`request_schema`/`result_schema`) meta-validate as Draft 2020-12 (F1 — the schema's `{"type":"object"}` holders admit invalid schemas otherwise; verified live); grammar `kind`s are unique as strings, not entries (F4 — `uniqueItems` catches exact dups only; verified live); and the three identity equalities hold — urn-embedded version == `version`, feature_id-embedded version == `version`, feature_id name segment == urn name segment (F3) | admission (new) + SDK `validate_transport_provider` | `provider_contract_invalid:` |
 | `connection_key` resolves to a connection backed by the **same** admitted contract (exact id+version+sha256) | S12 (extended) | gateway-side (needs commissioned state — honestly not offline-checkable; disclosed) |
