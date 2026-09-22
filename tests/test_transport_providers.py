@@ -596,6 +596,27 @@ def test_direct_caller_with_unvalidated_provider_gets_typed_refusals(tmp_path: P
         verify_provider_pin(no_identity, package / "descriptor.json")
 
 
+def test_malformed_declaration_shapes_are_typed_refusals_not_silent_passes(
+    tmp_path: Path,
+) -> None:
+    # RedTeam EN-7 #2: a provider that is present but NOT an object read as
+    # no-declaration (silent None) for direct callers, and a non-dict
+    # descriptor crashed with AttributeError. Both are typed refusals now —
+    # a malformed declaration is not the honest no-declaration posture.
+    descriptor, _ = _minimal_pair()
+    package = tmp_path / "malformed"
+    package.mkdir()
+    descriptor_path = package / "descriptor.json"
+
+    string_provider = deepcopy(descriptor)
+    string_provider["transport"]["provider"] = "not-a-declaration"
+    with pytest.raises(ValueError, match="provider_contract_invalid:"):
+        verify_provider_pin(string_provider, descriptor_path)
+
+    with pytest.raises(ValueError, match="provider_contract_invalid:"):
+        verify_provider_pin("not-a-descriptor", descriptor_path)  # type: ignore[arg-type]
+
+
 def test_pinned_contract_must_agree_with_the_declaration(tmp_path: Path) -> None:
     # transport-providers §7 lists "the feature-id agreement" as offline-
     # provable: the pinned document must declare the required feature and

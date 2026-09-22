@@ -486,10 +486,26 @@ def verify_provider_pin(
         None when the descriptor declares no provider: the unbacked custom
         transport stays the honestly-incomplete posture, not a refusal.
     """
+    if not isinstance(descriptor, dict):
+        # A direct caller may hand this function anything; the docstring
+        # promises typed refusals, and a non-object descriptor cannot carry a
+        # verifiable pin.
+        raise ValueError(
+            "provider_contract_invalid: the descriptor is not a JSON object; the "
+            "provider pin cannot be verified against it"
+        )
     transport = descriptor.get("transport")
     provider = transport.get("provider") if isinstance(transport, dict) else None
-    if not isinstance(provider, dict):
+    if provider is None:
         return None
+    if not isinstance(provider, dict):
+        # Present but malformed is NOT the honest no-declaration posture the
+        # None return stands for — a malformed declaration is a refusal
+        # (RedTeam EN-7 #2).
+        raise ValueError(
+            f"provider_contract_invalid: the transport provider declaration is a "
+            f"{type(provider).__name__}, not an object"
+        )
     relative = provider.get("path")
     if (
         not isinstance(relative, str)
