@@ -408,9 +408,10 @@ def verify_provider_pin(
         ``provider_contract_missing:`` (the pin does not resolve inside the
         package), ``provider_contract_hash_mismatch:`` (bytes disagree with
         the pin), or ``provider_contract_invalid:`` (the document is not a
-        valid, agreeing contract). Returns None when the descriptor declares
-        no provider: the unbacked custom transport stays the
-        honestly-incomplete posture, not a refusal.
+        valid, agreeing contract — or exceeds the SDK's shared bounded-read
+        cap, an SDK resource bound rather than a semantic judgement). Returns
+        None when the descriptor declares no provider: the unbacked custom
+        transport stays the honestly-incomplete posture, not a refusal.
     """
     transport = descriptor.get("transport")
     provider = transport.get("provider") if isinstance(transport, dict) else None
@@ -442,8 +443,19 @@ def verify_provider_pin(
             f"provider_contract_missing: {relative!r} does not name a contained regular "
             "file in the descriptor's package"
         )
-    from .presentation import read_file  # local: presentation imports this module
+    from .presentation import INPUT_BYTE_LIMIT, read_file  # local: presentation imports this module
 
+    # The pin read inherits the SDK-wide bounded-read cap. A corpus-valid
+    # contract can exceed it (description carries no maxLength), and the
+    # refusal must still name its prefix: the cap is an SDK resource bound,
+    # not a semantic disagreement the gateway shares. Sized before the read
+    # so the refusal is this one, not the reader's bare cap prose.
+    if target.stat().st_size > INPUT_BYTE_LIMIT:
+        raise ValueError(
+            f"provider_contract_invalid: {relative!r} is {target.stat().st_size} bytes, "
+            f"above the SDK's {INPUT_BYTE_LIMIT}-byte bounded-read cap; the cap is an "
+            "SDK resource bound, not a semantic disagreement with the contract"
+        )
     raw = read_file(target)
     digest = hashlib.sha256(raw).hexdigest()
     if digest != provider["sha256"]:

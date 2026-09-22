@@ -43,7 +43,11 @@ the invariants below anchor there.
   `provider_contract_missing`, `provider_contract_hash_mismatch`,
   `provider_contract_invalid` — the last six are the 0.2.1 transport-provider lane;
   ordinary descriptor schema-shape failures keep the existing
-  descriptor-validation error surface). A new refusal path that raises
+  descriptor-validation error surface. Known wound, disclosed: the provider
+  pin's read inherits the SDK-wide bounded-file cap
+  (`presentation.INPUT_BYTE_LIMIT`), so a corpus-valid contract above the cap
+  refuses with `provider_contract_invalid:` — the cap is an SDK resource
+  bound, not a semantic disagreement with the contract). A new refusal path that raises
   bare prose breaks the machine-matchable surface CI and scripts branch on —
   `standards_sync.py`, `cli.py` (the sync lane's checkout-detection refusal),
   `validation.py` (the descriptor lane's unknown-schema refusal and the

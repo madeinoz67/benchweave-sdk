@@ -23,8 +23,8 @@ import pytest
 from click.testing import CliRunner
 
 from benchweave_sdk.validation import (
-    _corpus_known_otdp_features,
     _RESERVED_TRANSFER_KINDS,
+    _corpus_known_otdp_features,
     contract_documents,
     validate_descriptor,
     validate_transport_provider,
@@ -437,6 +437,20 @@ def test_absolute_pin_path_is_contract_missing(tmp_path: Path) -> None:
     result = _check(descriptor_path)
     assert result.exit_code == 1
     assert "provider_contract_missing:" in result.output
+
+
+def test_oversize_pin_refuses_with_the_prefix_not_bare_cap_prose(tmp_path: Path) -> None:
+    # The pin read inherits the SDK-wide bounded-read cap; a corpus-VALID
+    # contract above the cap (description has no maxLength) must refuse
+    # with the STD-4 prefix — the cap is an SDK resource bound, not a
+    # semantic disagreement the gateway shares — not read_file's bare
+    # cap prose (refute MEDIUM-2).
+    descriptor, contract = _minimal_pair()
+    contract["description"] = "x" * 300_000
+    descriptor_path = _write_package(tmp_path, "oversize", descriptor, contract)
+    result = _check(descriptor_path)
+    assert result.exit_code == 1, result.output
+    assert "provider_contract_invalid:" in result.output
 
 
 def test_symlinked_pin_is_contract_missing(tmp_path: Path) -> None:

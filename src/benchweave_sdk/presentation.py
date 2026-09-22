@@ -89,7 +89,13 @@ def _open_no_follow(part: str, flags: int, directory: int) -> int:
         raise
 
 
-def read_file(path: Path, limit: int = 262144) -> bytes:
+#: The bounded-read cap every SDK file read shares (256 KiB). The provider-pin
+#: path names this bound in its own refusal — a pinned document above it is
+#: an SDK resource bound, not a semantic disagreement with the contract.
+INPUT_BYTE_LIMIT = 262144
+
+
+def read_file(path: Path, limit: int = INPUT_BYTE_LIMIT) -> bytes:
     """Open bounded regular files without following symlinks in any component.
 
     The same three outcomes on every platform: a symlinked component is
