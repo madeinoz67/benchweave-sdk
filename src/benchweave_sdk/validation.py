@@ -148,8 +148,17 @@ def validate(document: Any, schema_file: str, definition: str | None = None) -> 
         # Only document/schema failures are laundered into the domain error;
         # a programming error (say, a KeyError) keeps its own face. A deep
         # enough document overflows the validator's recursion before anything
-        # else runs, so RecursionError is a document failure here too.
-        raise ValueError(f"Contract validation failed: {exc}") from exc
+        # else runs, so RecursionError is a document failure here too. The
+        # message itself renders lazily — jsonschema formats a ValidationError
+        # through pprint on demand, and a document deep enough to validate but
+        # too deep to pprint blows the stack HERE, inside the handler, where
+        # the tuple above cannot catch it (RedTeam PT-7); the construction is
+        # guarded and length-bounded instead.
+        try:
+            detail = str(exc)
+        except RecursionError:
+            detail = f"{type(exc).__name__}: message unformattable at this document depth"
+        raise ValueError(f"Contract validation failed: {detail[:500]}") from exc
 
 
 def validate_request(request: dict[str, Any]) -> None:
@@ -345,6 +354,28 @@ def _check_provider_features(descriptor: dict[str, Any]) -> None:
             )
 
 
+#: The grammar subschema nesting cap the SDK enforces on its own: well under
+#: the measured RecursionError depths of the metaschema walk (98 under a deep
+#: stack, 900 at top level — RedTeam EN-7), and the same bound the S19
+#: derivation grammar uses, so one number governs both grammar depths.
+_GRAMMAR_SUBSCHEMA_MAX_DEPTH = 32
+
+
+def _exceeds_depth(node: object, limit: int) -> bool:
+    """Whether ``node`` nests containers deeper than ``limit`` (iterative: a
+    recursive walker would itself crash on the depth it is measuring)."""
+    stack: list[tuple[object, int]] = [(node, 1)]
+    while stack:
+        current, depth = stack.pop()
+        if depth > limit:
+            return True
+        if isinstance(current, dict):
+            stack.extend((value, depth + 1) for value in current.values())
+        elif isinstance(current, list):
+            stack.extend((item, depth + 1) for item in current)
+    return False
+
+
 def validate_transport_provider(document: Any) -> None:
     """Validate a transport-provider contract document offline (0.2.1).
 
@@ -385,9 +416,15 @@ def validate_transport_provider(document: Any) -> None:
                 "shadows it"
             )
         for field in ("request_schema", "result_schema"):
+            if _exceeds_depth(entry[field], _GRAMMAR_SUBSCHEMA_MAX_DEPTH):
+                raise ValueError(
+                    f"provider_contract_invalid: {kind}.{field} nests deeper than "
+                    f"{_GRAMMAR_SUBSCHEMA_MAX_DEPTH} levels; the SDK refuses grammar "
+                    "subschemas beyond its own nesting cap"
+                )
             try:
                 Draft202012Validator.check_schema(entry[field])
-            except SchemaError as exc:
+            except (SchemaError, RecursionError) as exc:
                 raise ValueError(
                     f"provider_contract_invalid: {kind}.{field} is not a valid "
                     "Draft 2020-12 schema"

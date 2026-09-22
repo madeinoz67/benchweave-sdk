@@ -439,6 +439,22 @@ def test_grammar_and_identity_faults_refuse_provider_contract_invalid(mutation: 
         validate_transport_provider(_grammar_fault(mutation))
 
 
+def test_overdeep_grammar_subschema_is_refused_not_a_recursion_crash() -> None:
+    # RedTeam EN-7: Draft202012Validator.check_schema raises RecursionError on
+    # a deeply nested subschema and the loop's except listed SchemaError only,
+    # so the crash escaped on the SUCCESS path (the document validates clean
+    # first). The SDK now refuses beyond its own explicit nesting cap — well
+    # under the measured blow depths (98 under a deep stack, 900 at top level)
+    # — instead of swallowing the crash.
+    deep: dict[str, Any] = {"type": "string"}
+    for _ in range(900):
+        deep = {"properties": {"a": deep}}
+    contract = json.loads(_vendored_bytes(_otdp_key("/examples/reference-provider.json")))
+    contract["transaction_grammar"][0]["request_schema"] = deep
+    with pytest.raises(ValueError, match="provider_contract_invalid:"):
+        validate_transport_provider(contract)
+
+
 def test_pin_may_live_in_a_subdirectory_of_the_package(tmp_path: Path) -> None:
     descriptor, contract = _minimal_pair()
     descriptor["transport"]["provider"]["path"] = "contracts/reference-provider.json"

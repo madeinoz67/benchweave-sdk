@@ -72,6 +72,20 @@ def test_deep_document_is_a_domain_error_not_a_recursion_crash() -> None:
         validate(document, _otdp_key("/otdp-runtime.schema.json"))
 
 
+def test_deep_document_message_render_is_bounded_not_a_recursion_crash() -> None:
+    # RedTeam PT-7: a document DEEP ENOUGH TO VALIDATE but failing a shallow
+    # check produces a ValidationError whose lazily-pprinted message blows the
+    # stack INSIDE the except clause while building the f-string — the except
+    # tuple naming RecursionError never sees it. The message construction is
+    # guarded now; the refusal stays a domain error.
+    deep: Any = "leaf"
+    for _ in range(900):
+        deep = [deep]
+    document = {"unexpected_key": deep}
+    with pytest.raises(ValueError, match="Contract validation failed"):
+        validate(document, _otdp_key("/otdp-runtime.schema.json"))
+
+
 def test_definition_against_idless_schema_is_a_domain_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
