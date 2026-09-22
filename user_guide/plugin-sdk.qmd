@@ -138,7 +138,7 @@ The capture root is an explicit constructor argument, then the `BENCHWEAVE_CAPTU
 
 ### A standalone runtime around the writer (worked example)
 
-The writer is three of the eight members. A bench script that drives an adapter without a gateway needs the other five as well: clocks, evidence, and the transport. The example below is one complete `CaptureServices` object for a device on a serial port, adapted from the serial host a contributor fork of the ADC board wrote for the same purpose. It implements the three scoped stream transactions of OTDP §8.1 exactly: `stream_send`, `stream_receive` and `stream_exchange`, with `exact_bytes` taking precedence over `termination`, `lf`/`crlf` only (serial has no `eom`), unspecified fields refused, and an incomplete frame never returned as complete. Bytes already read when a deadline expires stay buffered for the next receive, so a slow reply is not lost. The capture methods delegate to `StandaloneCaptureWriter`. This is author-side tooling, not an SDK module: copy it into your project and adapt it.
+The writer is three of the eight members. A bench script that drives an adapter without a gateway needs the other five as well: clocks, evidence, and the transport. The example below is one complete `CaptureServices` object for a device on a serial port, adapted from the serial host a contributor fork of the ADC board wrote for the same purpose. It implements the three scoped stream transactions of OTDP §8.1 exactly: `stream_send`, `stream_receive` and `stream_exchange`, with `exact_bytes` taking precedence over `termination`, `lf`/`crlf` only (serial has no `eom`), unspecified fields refused, and an incomplete frame never returned as complete. A receive that sees no bytes at all for a short quiet window answers `{"data": b""}`: nothing was offered, which adapters read as a quiet line (the DPS-150 plugin's telemetry drain ends on exactly that) rather than as an error. Once a frame has started it is only ever returned whole, and bytes already read when a deadline expires stay buffered for the next receive, so a slow reply is not lost. The capture methods delegate to `StandaloneCaptureWriter`. This is author-side tooling, not an SDK module: copy it into your project and adapt it.
 
 ```python
 import asyncio
@@ -183,15 +183,17 @@ class SerialStandaloneHost:
 
     ``port`` is anything with pyserial's ``write(bytes)``, ``read(size) -> bytes``
     (returning early on the port's own short timeout, which bounds how quickly a
-    deadline or cancellation is noticed) and ``close()``.
+    deadline or cancellation is noticed) and ``close()``. ``quiet_s`` is how long
+    a receive waits for its first byte before answering that nothing was offered.
     """
 
     def __init__(self, port: Any, *, writer: Any = None, evidence_path: Path | None = None,
-                 max_frame_bytes: int = 4096) -> None:
+                 max_frame_bytes: int = 4096, quiet_s: float = 0.1) -> None:
         self._port = port
         self._writer = writer if writer is not None else StandaloneCaptureWriter()
         self._evidence_path = evidence_path
         self._max_frame = max_frame_bytes
+        self._quiet_s = quiet_s
         self._pending = bytearray()  # read from the port, not yet returned
         self._closed = False
         self.evidence: list[dict[str, Any]] = []
@@ -242,6 +244,7 @@ class SerialStandaloneHost:
         return max_bytes, _TERMINATORS[termination], exact or 0
 
     async def _receive(self, max_bytes: int, terminator: bytes, exact: int, context: Any) -> bytes:
+        quiet_until = self.monotonic() + self._quiet_s
         while True:
             if exact:  # a positive exact_bytes takes precedence over termination
                 if len(self._pending) >= exact:
@@ -253,6 +256,8 @@ class SerialStandaloneHost:
                 if len(self._pending) >= max_bytes:
                     self._take(max_bytes)  # discard, so the next call can resynchronise
                     raise ValueError(f"no terminator within {max_bytes} bytes")
+            if not self._pending and self.monotonic() >= quiet_until:
+                return b""  # nothing offered: a quiet line, not an error
             self._live(context)  # a partial frame stays pending across the timeout
             want = (exact or max_bytes) - len(self._pending)
             try:

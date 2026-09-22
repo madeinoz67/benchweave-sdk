@@ -134,6 +134,21 @@ def test_exact_bytes_takes_precedence_and_frames_a_binary_protocol() -> None:
     assert asyncio.run(run()) == (b"\xf0\xa1\x03\x02", b"AB", b"\n")
 
 
+@pytest.mark.parametrize("exact", [None, 4])
+def test_a_quiet_line_answers_empty_before_the_deadline(exact: int | None) -> None:
+    """No bytes at all within the quiet window: nothing offered, answered as b''.
+
+    The DPS-150 plugin's exact receives read b'' as 'the transport offers no
+    bytes' and end a telemetry drain on it; a host that waited out the deadline
+    and raised instead would fail that drain.
+    """
+    host = Host(FakePort(), quiet_s=0.02)
+    started = time.monotonic()
+    reply = asyncio.run(host.transfer(_receive(exact_bytes=exact), BenchContext("q", 5.0)))
+    assert reply == {"data": b""}
+    assert time.monotonic() - started < 2.0, "a quiet line must not wait out the deadline"
+
+
 def test_an_incomplete_frame_is_never_returned_and_is_kept_for_the_next_receive() -> None:
     port = FakePort(b"3.3")
     host = Host(port)
