@@ -532,8 +532,12 @@ def test_user_guide_compatibility_sentence_covers_capture() -> None:
         assert "capture and streaming remain unsupported" not in text, surface
         assert "capture and streaming are not implemented" not in text, surface
         assert "single-channel capture" in text, surface
-        assert "streaming" in text and "unsupported" in text or "pending" in text, surface
+        # Streaming stays named as not implemented (each surface's own
+        # wording: the guide says "remain unsupported", the README says
+        # "not implemented").
+        assert "streaming" in text, surface
     assert "streaming remain unsupported" in guide
+    assert "streaming are not implemented" in readme
 
 
 
