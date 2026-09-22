@@ -481,6 +481,7 @@ version, it does not kill the increment.
 | 5 | Typed SDK helpers for provider transaction kinds beyond generic `transfer` scripting | Gateway tracker (single stream) | A second provider contract lands and MockHost scripting proves repetitive |
 | 6 | Multi-fault fixture compositions + provider-grammar fuzzing | Follow-on to increment 2 | The §4 underpowered signal fires (all green, zero fixes) |
 | 7 | Reference standalone provider backend (the documented successor to a contributor's hand-rolled eight-member serial host services; author/harness-side — SDK-shipped backends rejected on PKG-1/2 grounds, the SDK ships schema validation + MockHost only) | Gateway tracker (single stream), documentation in the provider companion prose | First provider-backed adapter needing standalone runs (the Decision 9 composition demand, §1.5) |
+| 8 | Suite self-arms for the uncanaried provider rules (measured 2026-09-22: pin-containment, pin-digest, subschema meta-validation, and the generic-disjoint file arm have NO in-suite self-arms — their only red controls are external ablations; and the subschema refusal is a crash that destroys the run summary rather than a named failure — fail-closed but coarse) | Gateway tracker (single stream); the ablation matrix is the interim control | The suite is relied on as its own gut-detector, or the next corpus bump touches the provider rules |
 
 ## 7. Top risks — each with its falsifier
 
