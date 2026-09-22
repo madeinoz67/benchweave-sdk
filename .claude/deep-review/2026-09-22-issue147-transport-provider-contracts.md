@@ -317,6 +317,19 @@ manifests/identity/docs rows in-arc. Acceptance = the GOVERNANCE gates (drift,
 coverage, family suites, `make check-sdk-standards`, `matrix --check`) green on the
 merged result.
 
+**Build-time amendment (2026-09-22, from the Increment-1 build):** the gates make
+"green on the merged result" unreachable for a corpus-only PR A. `make
+check-sdk-standards` exits 2 with exactly 56 failures (sdk_version_mismatch +
+missing_asset + stale_generated + compatibility_incomplete) and 366 main-side tests
+fail, all root-caused to the SDK lock/tree and the in-tree plugin descriptors still
+sitting at 0.2.0 — none healable inside a standards-only scope guard. The 0.2.0 bump's
+own commit disclosed the identical window (then 54 failures), so this is the bump
+mechanic, not a defect. Landing order therefore follows the #80/#27 precedent:
+Increment 2's SDK PR merges FIRST, then PR A opens carrying the corpus + the submodule
+pointer (+ the equivalence extension, folding PR B — the module compares SDK and
+corpus at the same version, so it belongs in the same merge). Four PRs becomes three:
+SDK PR → main PR A (corpus + pointer + equivalence) → main PR C (admission seam).
+
 **Increment 2 — SDK sync + offline conformance (this repo; unblocked by 1 alone).**
 `sync-standards` to 0.2.1 (lock + vendored tree move version-first; STD-2 guards it);
 `validate_descriptor` gains the S04 provider-consistency checks; the `check` lane
