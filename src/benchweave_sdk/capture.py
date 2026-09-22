@@ -29,6 +29,7 @@ from __future__ import annotations
 import os
 import unicodedata
 from pathlib import Path
+from typing import Any
 
 _ENV_CAPTURE_DIR = "BENCHWEAVE_CAPTURE_DIR"
 
@@ -110,3 +111,140 @@ def _segment_is_free(root: Path, identifier: str) -> bool:
         if unicodedata.normalize("NFC", existing).casefold() == wanted:
             return False
     return True
+
+
+#: Known-format extension map (Decision 9): ``manifest.json``'s ``format``
+#: field stays the source of truth; the extension is a convenience.
+_FORMAT_EXTENSIONS = {
+    "waveform_f64le": ".f64",
+    "raw_binary": ".bin",
+    "csv": ".csv",
+    "text": ".txt",
+    "vcd": ".vcd",
+}
+_DEFAULT_EXTENSION = ".data"
+
+#: Slice 1's declared-format set is the constructor argument ONLY: the two
+#: core corpus formats by default; an empty set refuses everything. The
+#: descriptor ``x-capture-formats`` wiring and runner configuration land with
+#: the standalone runner, not here.
+_DEFAULT_FORMATS = frozenset({"waveform_f64le", "raw_binary"})
+
+#: Development-tooling reservation default (not a commissioned envelope).
+_DEFAULT_MAX_BYTES = 16 * 1024 * 1024
+
+
+def _context_is_cancelled(context: Any) -> bool:
+    """Cancellation is honoured at append (spec §8); a None context never is."""
+    return context is not None and bool(context.is_cancelled())
+
+
+class StandaloneCaptureWriter:
+    """The three capture methods over one event directory per capture.
+
+    One capture is in flight per instance (§8). States: open (from the first
+    successful append) → finalise/abort → terminal; appends after terminal
+    are refused. The host exception contract is mirrored (spec §8):
+    ``TimeoutError`` for cancellation at append, ``ValueError`` for rejected
+    transaction shape, ``RuntimeError`` for host resource conditions such as
+    a second concurrent capture.
+    """
+
+    def __init__(
+        self,
+        root: Path | None = None,
+        *,
+        formats: Any = _DEFAULT_FORMATS,
+        max_bytes: int = _DEFAULT_MAX_BYTES,
+    ) -> None:
+        self._root = capture_root(root)
+        self._formats = frozenset(formats)
+        self._max_bytes = max_bytes
+        self._current: str | None = None
+        self._event: Path | None = None
+        self._staged_bytes = 0
+        self._chunks = 0
+        self._terminal: str | None = None
+
+    @property
+    def root(self) -> Path:
+        """The resolved capture root this writer publishes under."""
+        return self._root
+
+    def _open_event(self, capture_id: str) -> Path:
+        """Open (or return the already-open) event directory for a capture.
+
+        ``mkdir`` is the two-process arbiter: the case-folded collision check
+        runs first, and a concurrent process winning the directory race
+        surfaces as a clean prefixed refusal, never an interleave and never
+        a bare ``OSError``.
+        """
+        if self._event is not None:
+            return self._event
+        if not _segment_is_free(self._root, capture_id):
+            capture_root_str = str(self._root)
+            raise ValueError(
+                f"capture_id collision: an event named like {capture_id!r} "
+                f"already exists under {capture_root_str}"
+            )
+        event = self._root / capture_id
+        try:
+            event.mkdir(parents=True)
+        except FileExistsError as error:
+            raise ValueError(
+                f"capture event directory already exists: {event} "
+                "(created concurrently; one event per directory)"
+            ) from error
+        return event
+
+    async def artifact_append(self, capture_id: str, data: bytes, context: Any) -> None:
+        """Append one chunk to the capture's staging directory.
+
+        The segment rules run first, then cancellation: a cancelled append
+        writes nothing at all. An empty append is refused (gateway-writer
+        parity), and so is an append that would exceed the declared
+        ``max_bytes`` reservation.
+        """
+        if not _valid_capture_segment(capture_id):
+            raise ValueError(f"unsafe capture_id segment: {capture_id!r}")
+        if self._terminal is not None:
+            raise ValueError(
+                f"capture {self._current!r} is closed ({self._terminal}); "
+                "appends after terminal are refused"
+            )
+        if self._current is not None and capture_id != self._current:
+            raise RuntimeError(
+                f"one capture in flight per writer: {self._current!r} is open; "
+                f"close it before appending to {capture_id!r}"
+            )
+        if _context_is_cancelled(context):
+            raise TimeoutError("operation cancelled before append; nothing written")
+        if not isinstance(data, (bytes, bytearray, memoryview)):
+            raise ValueError("append data must be bytes")
+        payload = bytes(data)
+        if not payload:
+            raise ValueError("empty append refused (gateway-writer parity)")
+        if self._staged_bytes + len(payload) > self._max_bytes:
+            raise ValueError(
+                f"append of {len(payload)} bytes exceeds the declared "
+                f"max_bytes reservation ({self._max_bytes} bytes, "
+                f"{self._staged_bytes} already staged)"
+            )
+        event = self._open_event(capture_id)
+        staging = event / "staging"
+        staging.mkdir(exist_ok=True)
+        (staging / f"{self._chunks}.part").write_bytes(payload)
+        self._chunks += 1
+        self._staged_bytes += len(payload)
+        self._current = capture_id
+        self._event = event
+
+    async def artifact_finalise(
+        self, capture_id: str, metadata: dict[str, Any], context: Any
+    ) -> dict[str, Any]:
+        """Publish the capture (atomic primary, then the manifest)."""
+        raise NotImplementedError("finalise lands with the S3 commit")
+
+    async def artifact_abort(self, capture_id: str) -> None:
+        """Discard the capture; idempotent, publishes nothing."""
+        raise NotImplementedError("abort lands with the S3 commit")

@@ -21,6 +21,7 @@ Derivations (from primary sources, not the plan's restatement):
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +38,15 @@ class Context:
 
     def is_cancelled(self) -> bool:
         return self._cancelled
+
+
+async def _append(writer: Any, capture_id: str, chunks: list[bytes]) -> None:
+    for chunk in chunks:
+        await writer.artifact_append(capture_id, chunk, Context())
+
+
+def _tree(root: Path) -> list[str]:
+    return sorted(str(path.relative_to(root)) for path in root.rglob("*"))
 
 
 def _writer(tmp_path: Path, **kwargs: Any) -> Any:
@@ -126,3 +136,96 @@ def test_segment_collision_is_case_folded(tmp_path: Path) -> None:
     assert not capture._segment_is_free(root, "capture-one")
     assert not capture._segment_is_free(root, "CAPTURE-ONE")  # case-folded
     assert capture._segment_is_free(root, "capture-two")
+
+
+# --- S2: the open/append lifecycle --------------------------------------------
+
+
+def test_append_stages_ordered_chunks_under_the_event_directory(tmp_path: Path) -> None:
+    writer = _writer(tmp_path)
+    asyncio.run(_append(writer, "cap-1", [b"alpha", b"beta", b"gamma"]))
+    staging = tmp_path / "captures" / "cap-1" / "staging"
+    parts = sorted(path.name for path in staging.iterdir())
+    assert parts == ["0.part", "1.part", "2.part"]
+    assert (staging / "0.part").read_bytes() == b"alpha"
+    assert (staging / "2.part").read_bytes() == b"gamma"
+
+
+def test_the_capture_methods_are_coroutine_shaped() -> None:
+    """The SDK protocol is coroutine-shaped (§8): a sync writer TypeErrors at
+    the first await inside an adapter coroutine."""
+    assert asyncio.iscoroutinefunction(capture.StandaloneCaptureWriter.artifact_append)
+    assert asyncio.iscoroutinefunction(capture.StandaloneCaptureWriter.artifact_finalise)
+    assert asyncio.iscoroutinefunction(capture.StandaloneCaptureWriter.artifact_abort)
+
+
+def test_cancelled_append_writes_nothing(tmp_path: Path) -> None:
+    writer = _writer(tmp_path)
+    asyncio.run(_append(writer, "cap-1", [b"first"]))
+    before = _tree(tmp_path / "captures")
+    with pytest.raises(TimeoutError):
+        asyncio.run(writer.artifact_append("cap-1", b"second", Context(cancelled=True)))
+    assert _tree(tmp_path / "captures") == before  # the cancelled append wrote nothing
+
+
+def test_second_capture_in_flight_is_refused(tmp_path: Path) -> None:
+    writer = _writer(tmp_path)
+    asyncio.run(_append(writer, "cap-1", [b"data"]))
+    with pytest.raises(RuntimeError, match="one capture in flight"):
+        asyncio.run(_append(writer, "cap-2", [b"data"]))
+    # The refused open created nothing for the second id.
+    assert not (tmp_path / "captures" / "cap-2").exists()
+
+
+def test_unsafe_id_is_refused_at_append_before_any_filesystem_call(
+    tmp_path: Path,
+) -> None:
+    writer = _writer(tmp_path)
+    with pytest.raises(ValueError, match="unsafe capture_id segment"):
+        asyncio.run(writer.artifact_append("nul.json", b"data", Context()))
+    with pytest.raises(ValueError, match="unsafe capture_id segment"):
+        asyncio.run(writer.artifact_append("../escape", b"data", Context()))
+    assert not (tmp_path / "captures").exists()  # no root, no event, no staging
+
+
+def test_empty_append_is_refused(tmp_path: Path) -> None:
+    writer = _writer(tmp_path)
+    with pytest.raises(ValueError, match="empty append"):
+        asyncio.run(writer.artifact_append("cap-1", b"", Context()))
+    assert not (tmp_path / "captures" / "cap-1").exists()
+
+
+def test_append_over_the_declared_reservation_is_refused(tmp_path: Path) -> None:
+    writer = _writer(tmp_path, max_bytes=10)
+    asyncio.run(_append(writer, "cap-1", [b"0123456789"]))
+    with pytest.raises(ValueError, match="max_bytes reservation"):
+        asyncio.run(writer.artifact_append("cap-1", b"x", Context()))
+    staging = tmp_path / "captures" / "cap-1" / "staging"
+    assert len(list(staging.iterdir())) == 1  # the refused append staged nothing
+
+
+def test_concurrent_event_directory_creation_is_a_prefixed_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The B13 two-process arbiter, made deterministic: the collision check
+    sees no events (another process wins the mkdir between check and create),
+    so the writer's own mkdir raises EEXIST — which must surface as a clean
+    prefixed refusal, never a bare OSError and never an interleave."""
+    root = tmp_path / "captures"
+    event = root / "cap-raced"
+    event.mkdir(parents=True)
+    monkeypatch.setattr(capture, "_existing_event_names", lambda _root: [])
+    writer = capture.StandaloneCaptureWriter(root)
+    with pytest.raises(ValueError, match="capture event directory already exists"):
+        asyncio.run(writer.artifact_append("cap-raced", b"data", Context()))
+    # Nothing was written into the other process's directory.
+    assert list(event.iterdir()) == []
+
+
+def test_case_folded_collision_is_refused_at_append(tmp_path: Path) -> None:
+    root = tmp_path / "captures"
+    (root / "capture-one").mkdir(parents=True)
+    writer = capture.StandaloneCaptureWriter(root)
+    with pytest.raises(ValueError, match="capture_id collision"):
+        asyncio.run(writer.artifact_append("CAPTURE-ONE", b"data", Context()))
+
