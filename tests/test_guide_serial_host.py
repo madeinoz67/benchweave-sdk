@@ -89,7 +89,9 @@ def _receive(**fields: Any) -> dict[str, Any]:
 def test_the_host_carries_all_eight_members_and_the_context_all_of_its_own() -> None:
     assert _members(CaptureServices) <= set(dir(Host))
     assert len(_members(CaptureServices)) == 8
-    assert _members(OperationContext) <= set(dir(BenchContext("op", 1.0)))
+    instance = BenchContext("op", 1.0)
+    assert _members(OperationContext) <= set(dir(instance))
+    assert hasattr(instance, "operation_id") and hasattr(instance, "dataset_id")
 
 
 def test_a_scaffolded_plugin_runs_end_to_end_through_the_host(tmp_path: Path) -> None:
