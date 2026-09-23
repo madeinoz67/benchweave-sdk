@@ -1,13 +1,13 @@
 {
-  "otdp_version": "0.2.1",
+  "otdp_version": "0.2.2",
   "descriptor_version": "1.0.0",
-  "id": "dev.local.class-dmm",
-  "display_name": "Structural reference: Digital multimeter",
+  "id": "dev.local.class-function-generator",
+  "display_name": "Structural reference: Function and arbitrary waveform generator",
   "description": "Class-contract fixture, not a verified real device or implemented adapter.",
   "identity": {
     "strategy": "adapter",
     "manufacturer": "OTDP Reference",
-    "model": "dmm",
+    "model": "function_generator",
     "firmware_policy": "listed",
     "supported_firmware": [
       "1.0"
@@ -16,13 +16,13 @@
   "integration": {
     "mode": "adapter",
     "adapter": {
-      "entry_point": "reference_dmm:create_plugin",
+      "entry_point": "reference_function_generator:create_plugin",
       "api_version": "1.1",
       "version": "1.0.0",
       "dependencies": [],
       "permissions": [
         "scoped_transport",
-        "artifact_writer"
+        "artifact_reader"
       ]
     }
   },
@@ -64,7 +64,7 @@
     "otdp.adapter/0.1.0",
     "otdp.profile_actions/0.1.0",
     "otdp.measurement/0.1.0",
-    "otdp.dmm/1.0.0"
+    "otdp.function_generator/1.0.0"
   ],
   "provenance": {
     "sources": [
@@ -76,7 +76,7 @@
     ],
     "test_vectors": [
       {
-        "id": "dmm-actions",
+        "id": "function_generator-actions",
         "path": "class-action-vectors.json",
         "purpose": "Input/output contract examples; not a device simulator"
       }
@@ -86,7 +86,7 @@
     {
       "id": "ch1",
       "label": "Reference channel 1",
-      "role": "measure",
+      "role": "source",
       "quantities": [
         "voltage"
       ],
@@ -95,7 +95,7 @@
     {
       "id": "ch2",
       "label": "Reference channel 2",
-      "role": "measure",
+      "role": "source",
       "quantities": [
         "voltage"
       ],
@@ -103,25 +103,25 @@
     }
   ],
   "profiles": [
-    "otdp.dmm/1.0.0"
+    "otdp.function_generator/1.0.0"
   ],
   "contracts": [
     {
-      "id": "urn:otdp:profile-catalog:0.2.1",
+      "id": "urn:otdp:profile-catalog:0.2.2",
       "path": "device-profile-catalog.json",
-      "sha256": "a81d5ed9176e1c32dabbf1f8b144cd06fd33611cfd9a9fb2b60524165df1b464"
+      "sha256": "2e8c7841a397f794724ab2f484e7531cef47889c5f514ed68ff2c1273f0b493c"
     },
     {
-      "id": "urn:otdp:measurement:0.2.1",
+      "id": "urn:otdp:measurement:0.2.2",
       "path": "otdp-measurement.schema.json",
-      "sha256": "100f4a9120ab671d18bc40c129e5040e838d1f25619920b602896ddfc305da07"
+      "sha256": "7905795bed6139b9705edfa17b7a17226b99cddda6656030d73bb63dc998a4b3"
     }
   ],
   "actions": {
-    "otdp.dmm.configure/1.0.0": {
+    "otdp.function_generator.configure/1.0.0": {
       "binding": {
         "kind": "adapter",
-        "key": "otdp.dmm.configure/1.0.0"
+        "key": "otdp.function_generator.configure/1.0.0"
       },
       "input_constraints": {},
       "timeout_ms": 30000,
@@ -129,14 +129,25 @@
       "cancellable": true,
       "retry": "never"
     },
-    "otdp.dmm.measure/1.0.0": {
+    "otdp.function_generator.output/1.0.0": {
       "binding": {
         "kind": "adapter",
-        "key": "otdp.dmm.measure/1.0.0"
+        "key": "otdp.function_generator.output/1.0.0"
       },
       "input_constraints": {},
       "timeout_ms": 30000,
-      "side_effect": "none",
+      "side_effect": "state_change",
+      "cancellable": true,
+      "retry": "never"
+    },
+    "otdp.function_generator.upload/1.0.0": {
+      "binding": {
+        "kind": "adapter",
+        "key": "otdp.function_generator.upload/1.0.0"
+      },
+      "input_constraints": {},
+      "timeout_ms": 30000,
+      "side_effect": "state_change",
       "cancellable": true,
       "retry": "never"
     }

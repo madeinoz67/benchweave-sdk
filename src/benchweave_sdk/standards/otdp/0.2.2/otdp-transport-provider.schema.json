@@ -10,8 +10,8 @@
     },
     "feature_id": {
       "type": "string",
-      "pattern": "^otdp\\.transport\\.[a-z][a-z0-9-]*/[0-9]+\\.[0-9]+(?:\\.[0-9]+)?$",
-      "description": "The feature this contract registers on admission. Provider features live under otdp.transport. only — the otdp.* namespace is corpus-owned (extension-contract section 1) and a contract claiming any other reserved id is refused here, before any host could mint it."
+      "pattern": "^otdp\\.transport\\.[a-z][a-z0-9-]*/[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "description": "The feature this contract registers on admission. Provider features live under otdp.transport. only — the otdp.* namespace is corpus-owned (extension-contract section 1) and a contract claiming any other reserved id is refused here, before any host could mint it. The version is three components, the same strict shape the version field carries, so the embedded-version identity equality can hold."
     },
     "version": {
       "type": "string",
@@ -218,7 +218,7 @@
   ],
   "additionalProperties": false,
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:otdp:transport-provider-contract:0.2.1",
-  "title": "OTDP 0.2.1 transport-provider contract — STG architecture contract",
-  "description": "Structure only. A transport-provider contract is a host-admitted document in the commissioning evidence shape; JSON validity grants no authority. The host validates provider transactions against the admitted contract's grammar, never against the generic table. Filesystem paths, process spawning and unrestricted network endpoints are unrepresentable here by design: security_scope is the closed surface a provider may touch."
+  "$id": "urn:otdp:transport-provider-contract:0.2.2",
+  "title": "OTDP 0.2.2 transport-provider contract — STG architecture contract",
+  "description": "Structure only. A transport-provider contract is a host-admitted document in the commissioning evidence shape; JSON validity grants no authority. The host validates provider transactions against the admitted contract's grammar, never against the generic table. The schema's closed boundary is security_scope alone — a closed enum admitting only commissioned_connection, in which a filesystem path, process spawning or an unrestricted network endpoint is unrepresentable. The document's remaining fields describe and do not grant: grammar subschemas, host_requirements and privilege strings remain review surface, and review reads them where the schema does not police them."
 }

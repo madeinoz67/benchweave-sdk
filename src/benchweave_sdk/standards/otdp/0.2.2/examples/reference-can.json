@@ -1,5 +1,5 @@
 {
-  "otdp_version": "0.2.1",
+  "otdp_version": "0.2.2",
   "descriptor_version": "1.0.0",
   "id": "dev.local.reference-can",
   "display_name": "Illustrative reference-can",
