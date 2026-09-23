@@ -462,3 +462,89 @@ def test_standard_ids_that_differ_only_in_case_are_duplicates(tmp_path: Path) ->
     with pytest.raises(ValueError, match="^bundle_manifest_invalid: duplicate standard id"):
         sync(bundle, sdk)
 
+
+# --- compatibility.notes: operator-authored state the sync carries, never writes. ---
+
+
+PRESERVED_NOTE = "hand-authored pairing note; sync must carry it verbatim"
+
+
+def _hand_edit_notes(sdk: Path, notes: str | None) -> None:
+    """Hand-edit the lock's ``compatibility.notes`` — the field's only writer (STD-6).
+
+    Canonical JSON, the same dump shape the sync writer and ``_rewrite_manifest``
+    use, so a hand-edited lock stays byte-comparable with a synced one.
+    """
+    lock = json.loads((sdk / "standards-lock.json").read_bytes())
+    lock["compatibility"]["notes"] = notes
+    (sdk / "standards-lock.json").write_bytes(
+        (json.dumps(lock, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    )
+
+
+@pytest.mark.parametrize("bump", [False, True], ids=["no-op-reimport", "version-bump"])
+def test_resync_preserves_a_filled_compatibility_notes(tmp_path: Path, bump: bool) -> None:
+    """STD-6: an operator-authored note survives every import sync verbatim.
+
+    The no-op arm is the #170 shape exactly: re-importing the identical bundle
+    still regenerates the lock, and the regenerated lock must carry the note.
+    The bump arm is the substantive sync — a version increment must not cost
+    the operator their pairing text either.
+    """
+    bundle = _export(tmp_path)
+    sdk = _synced_sdk(tmp_path, bundle)
+    _hand_edit_notes(sdk, PRESERVED_NOTE)
+    if bump:
+        document = _manifest(bundle)
+        target = next(s for s in document["standards"] if s["id"] == "otdp")
+        target["version"] = "0.3.1"
+        _rewrite_manifest(bundle, document)
+    report = sync(bundle, sdk)
+    lock = json.loads((sdk / "standards-lock.json").read_bytes())
+    assert lock["compatibility"]["notes"] == PRESERVED_NOTE
+    assert sync(None, sdk, check_only=True) == SyncReport((), (), (), ())
+    if bump:
+        assert report.changed == ("otdp",)
+    else:
+        assert report == SyncReport((), (), (), ())
+
+
+@pytest.mark.parametrize("ever_set", [False, True], ids=["never-set", "hand-cleared"])
+def test_resync_leaves_an_absent_note_null(tmp_path: Path, ever_set: bool) -> None:
+    """Control cells: preservation must not invent a value or drop the null case.
+
+    Green before the fix and after it — their job is to catch overcorrection
+    (a fix that crashes on the no-note lock or stops writing the null).
+    """
+    bundle = _export(tmp_path)
+    sdk = _synced_sdk(tmp_path, bundle)
+    if ever_set:
+        _hand_edit_notes(sdk, None)
+    sync(bundle, sdk)
+    lock = json.loads((sdk / "standards-lock.json").read_bytes())
+    assert lock["compatibility"]["notes"] is None
+    sync(None, sdk, check_only=True)
+
+
+@pytest.mark.parametrize("malformed", ["notes-is-42", "block-is-a-list"])
+def test_a_malformed_compatibility_block_is_a_lock_invalid_refusal(
+    tmp_path: Path, malformed: str
+) -> None:
+    """The writer carries this field verbatim, so a malformed value must be a
+    named refusal in every lane via the one shared reader — not something a
+    re-sync launders into the placeholder null."""
+    bundle = _export(tmp_path)
+    sdk = _synced_sdk(tmp_path, bundle)
+    lock = json.loads((sdk / "standards-lock.json").read_bytes())
+    if malformed == "notes-is-42":
+        lock["compatibility"]["notes"] = 42
+    else:
+        lock["compatibility"] = ["not", "an", "object"]
+    (sdk / "standards-lock.json").write_bytes(
+        (json.dumps(lock, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    )
+    before = (sdk / "standards-lock.json").read_bytes()
+    with pytest.raises(ValueError, match="^lock_invalid: "):
+        sync(bundle, sdk)
+    assert (sdk / "standards-lock.json").read_bytes() == before, "refusal before any write"
+
