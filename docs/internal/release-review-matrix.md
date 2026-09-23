@@ -67,3 +67,16 @@ plugin-ui badge was two contract versions behind the lock, and the docs
 selector lacked the prior-release option. Principal directives 2026-09-20:
 the bump triggers a release review (docs sweep + contributor acknowledgment),
 the checklist is a matrix in `docs/internal`, and a skill walks it.
+
+## Result record — v0.2.0 (2026-09-24)
+
+| # | Surface | Result |
+|---|---------|--------|
+| 1 | README stamp | updated → SDK 0.2.0 (OTDP 0.2.2 / adapter API 1.1 correct-as-is) |
+| 2 | Website hero status | updated — two stale stamps: SDK 0.1.0 → 0.2.0, OTDP 0.2.1 → 0.2.2 (against `__init__.py`) |
+| 3 | Docs selector | updated — v0.2.0 (latest); v0.1.0 added as prior option |
+| 4 | Compatibility tagline | updated — SDK 0.2.0 against main project `>=0.1.0` (lock floor unchanged) |
+| 5 | Standards badges | updated — otdp badge 0.2.1 → 0.2.2 (behind `standards-lock.json`); registry / execution / interface / plugin-ui / plugin-ui-preview correct-as-is |
+| 6 | `great-docs.yml` versions | updated — v0.2.0 registered `latest: true` PRE-TAG; v0.1.0 retained as prior |
+| 7 | Contributor window | NEW human contributor since v0.1.0: **Platima** — acknowledged in the CHANGELOG Contributors section and the release notes/tag record. Excluded: `benchweave-changelog[bot]` (bot), the owner (madeinoz67 / Stephen Eaton). |
+| 8 | Gateway `uv.lock` SDK pin | recorded note, not a blocker: the gateway's pin and its `sdk_compatibility` mirror move together at its next pointer advance (the AR-6 pairing constraint). `standards-lock.json` `compatibility.sdk` stays 0.1.0 = sync provenance, untouched by a package-version bump. |
