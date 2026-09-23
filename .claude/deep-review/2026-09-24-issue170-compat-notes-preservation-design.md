@@ -176,10 +176,13 @@ never reached its lock write), so a recovery sync preserves the note the same wa
 
 ## 4. Semantics after the change
 
-- **Preservation is symmetric and verbatim.** A string survives byte-identical
-  (`_canonical_json` sorts keys; it does not touch string contents). Absent, null, or
-  no-lock-at-all → `None`. Nothing else is a representable input: `_read_lock_file`
-  refuses it first.
+- **Preservation is symmetric and value-verbatim.** A string survives with its parsed
+  value exactly (refute finding 3's precision: `_canonical_json` sorts keys AND
+  re-escapes non-ASCII, so a raw-UTF-8 hand edit canonicalizes to `\uXXXX` escapes on
+  resync — byte-level formatting is not preserved, the value is; CON-12's
+  `_compare_mirror` compares parsed values, so canonicalization is invisible
+  everywhere). Absent, null, or no-lock-at-all → `None`. Nothing else is a
+  representable input: `_read_lock_file` refuses it first.
 - **Hand-edit remains the ONLY writer of the field's content.** Sync never authors,
   updates, or clears `notes`; it carries it. Setting, rewording, and clearing are
   hand-edits to the lock, reviewed in the diff like any prose. This sentence is the
@@ -263,7 +266,7 @@ small-file read per import sync at runtime.
 | STD-5 / TWO-1 (normative content main-first; landing order) | Untouched — no vendored byte moves. Landing is the standard two-repo order: SDK commit pushed, SDK PR (body notes gateway #170, no SDK-side issue by design), then the main pointer commit. |
 | Proposed new row | Add **[STD-6]** to `docs/internal/invariants.md`: the lock's `compatibility.notes` is operator-authored state — sync carries it verbatim and never authors, updates, or clears it; hand-edit is the only writer; a malformed value is a `lock_invalid` refusal in every lane — anchored on `standards_sync.py::_read_lock_file`'s shape clause and `_preserved_notes`, pinned by the §5 tests. One row, one sentence of why (the #170 erasure is the evidence). |
 | Main repo — code | Nothing moves. CON-12 (`check.py::_compare_mirror`), CON-4's gate, `matrix.py`, `manifest.py` are content-agnostic. |
-| Main repo — docs | TWO prose surfaces flip, both carried by the pointer-commit rider (governor F1): (1) `docs/development.md` §"Standards synchronisation" — the paragraph teaching "sync writes the lock's `compatibility.notes` as `null` — fill it in before committing" becomes wrong (sync now preserves; null appears only when no prior note existed); (2) `docs/internal/drift-and-obligations.md` obligation 15's parenthetical "(the fill must ride the same commit as every sync — the sync writer regenerates the lock with notes null)" — the workflow it teaches is exactly what this branch retires. Each is a one-paragraph correction, prose deferring to the machine source. `standards/GOVERNANCE.md`'s mirror paragraph stays accurate as written. |
+| Main repo — docs | TWO prose surfaces flip, both carried by the pointer-commit rider (governor F1): (1) `docs/development.md` §"Standards synchronisation" — BOTH sentences of its notes paragraph need rewording (refute finding 2): "sync writes the lock's `compatibility.notes` as `null` — fill it in before committing" becomes wrong (sync now preserves; null appears only when no prior note existed), AND "that halt is the operator prompt" narrows — with unconditional preservation, a substantive sync over an existing note can never fire `compatibility_incomplete`; the halt now fires only on never-set or hand-cleared notes; (2) `docs/internal/drift-and-obligations.md` obligation 15's parenthetical "(the fill must ride the same commit as every sync — the sync writer regenerates the lock with notes null)" — the workflow it teaches is exactly what this branch retires. Each is a one-paragraph correction, prose deferring to the machine source. `standards/GOVERNANCE.md`'s mirror paragraph stays accurate as written. |
 | SDK docs | `docs/internal/invariants.md` gains the STD-6 row (above). `docs/internal/drift-and-obligations.md` item 3 is walked: the compatibility-notes surface is exactly what changed, and its paired main-side surface is named. No README or user-guide surface documents the notes behavior (checked); `docs/internal/release-review-matrix.md` reads `main_project`/`sdk`, not `notes` — unaffected. |
 | On-disk format / schema | **No change** — same keys, same shapes, `notes` stays string-or-null, `lock_version` stays 1. Not a Tier-3 review subject; this is a behavioral fix with RED proof. |
 
