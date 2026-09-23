@@ -352,6 +352,26 @@ pointer (+ the equivalence extension, folding PR B — the module compares SDK a
 corpus at the same version, so it belongs in the same merge). Four PRs becomes three:
 SDK PR → main PR A (corpus + pointer + equivalence) → main PR C (admission seam).
 
+**Heal-path amendment (2026-09-23, owner fork A ratified):** the adversary fold's
+schema-byte change initially landed in-place on the unmerged 0.2.1 tree and was
+expected to "heal on the next SDK sync train" (the drift disclosure's framing in the
+train's commit messages and the interim obligations row). That heal path does not
+exist: `sync-standards` REFUSES same-version content drift outright
+(`standards_version_required` — no override), because PR #44 had already released
+0.2.1 SDK-side while the corpus branch was still unmerged. The actual heal, ratified
+as fork A: 0.2.1 is frozen at the SDK-released bytes (schema 1aa46b50, pre-fold prose)
+and the fold re-rolls as the OTDP 0.2.2 PATCH — a version increment the sync accepts
+by design — landing after the bump-window floor (24h, owner-revisited 2026-09-23,
+PR #164; the original 48h floor would have held the re-roll to 2026-09-24). Second
+mechanical finding folded with this sync: `_write_vendored` regenerates the lock with
+`compatibility.notes` hardcoded to null, so the AR-6 notes fill must ride the same
+commit as every sync or be erased. **Errata batched into 0.2.2 (same day, owner
+intent check):** the §8 "two-component feature versions" candidate is folded into
+this same bump — the provider schema's `feature_id` pattern now requires three
+components, matching the string equality it feeds; class stays errata-aligning PATCH
+(no admissible document is refused — both two-component shapes were already refused,
+by the equality and by the `version` pattern; measured, see the train's RED arms).
+
 **Increment 2 — SDK sync + offline conformance (this repo; unblocked by 1 alone).**
 `sync-standards` to 0.2.1 (lock + vendored tree move version-first; STD-2 guards it);
 `validate_descriptor` gains the S04 provider-consistency checks (1.4's rows,

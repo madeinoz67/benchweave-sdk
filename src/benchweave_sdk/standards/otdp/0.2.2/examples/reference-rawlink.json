@@ -1,5 +1,5 @@
 {
-  "otdp_version": "0.2.1",
+  "otdp_version": "0.2.2",
   "descriptor_version": "1.0.0",
   "id": "dev.local.reference-rawlink",
   "display_name": "Illustrative reference-rawlink",
@@ -54,7 +54,7 @@
       {
         "title": "OTDP core specification",
         "reference": "../otdp-specification.md",
-        "revision": "0.2.1"
+        "revision": "0.2.2"
       }
     ],
     "test_vectors": [

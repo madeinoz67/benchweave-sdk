@@ -39,11 +39,11 @@ def contract_documents() -> dict[str, Any]:
 
     Documents load once from the vendored ``standards/`` tree (falling
     back to the repository checkout during editable development) under
-    keys such as ``otdp/0.2.1/otdp-runtime.schema.json``.
+    keys such as ``otdp/0.2.2/otdp-runtime.schema.json``.
     """
     vendored = files("benchweave_sdk").joinpath("standards")
     sets = (
-        ("otdp", "0.2.1"),
+        ("otdp", "0.2.2"),
         ("registry", "0.1.1"),
         ("plugin-ui", "0.2.0"),
     )
@@ -110,7 +110,7 @@ def validate(document: Any, schema_file: str, definition: str | None = None) -> 
         Parsed JSON document to validate.
     schema_file
         Contract key from ``contract_documents()``, for example
-        ``"otdp/0.2.1/otdp-runtime.schema.json"``.
+        ``"otdp/0.2.2/otdp-runtime.schema.json"``.
     definition
         Optional ``$defs`` entry to validate against, for example
         ``"operationRequest"``.
@@ -163,7 +163,7 @@ def validate(document: Any, schema_file: str, definition: str | None = None) -> 
 
 def validate_request(request: dict[str, Any]) -> None:
     """Validate an OTDP operation request envelope against its contract."""
-    validate(request, "otdp/0.2.1/otdp-runtime.schema.json", "operationRequest")
+    validate(request, "otdp/0.2.2/otdp-runtime.schema.json", "operationRequest")
 
 
 def validate_result(result: dict[str, Any], request: dict[str, Any]) -> None:
@@ -185,13 +185,13 @@ def validate_result(result: dict[str, Any], request: dict[str, Any]) -> None:
         correlate.
     """
     validate_request(request)
-    validate(result, "otdp/0.2.1/otdp-runtime.schema.json", "operationResult")
+    validate(result, "otdp/0.2.2/otdp-runtime.schema.json", "operationResult")
     if (result["operation_id"], result["verb"]) != (request["operation_id"], request["verb"]):
         raise ValueError("Result correlation does not match the request")
 
 
 # ---------------------------------------------------------------------------
-# Transport providers (0.2.1): declaration census, contract validation, pins
+# Transport providers (0.2.2): declaration census, contract validation, pins
 # ---------------------------------------------------------------------------
 
 #: The sanctioned provider sub-namespace (transport-providers §2).
@@ -201,8 +201,12 @@ _PROVIDER_FEATURE_NAMESPACE = "otdp.transport."
 #: contract schema's own ``feature_id`` pattern, verbatim: the contract side
 #: refuses anything else in ``otdp.*``, so a descriptor declaration outside
 #: this shape can never link to an admissible contract and declares nothing.
+#: Three components since the 0.2.2 errata tighten — the same strict shape
+#: the contract's ``version`` carries, so the embedded-version identity
+#: equality (string comparison) can hold; a two-component id was never
+#: admissible (the equality refused it) and the schema now refuses it too.
 _SANCTIONED_PROVIDER_FEATURE = re.compile(
-    r"^otdp\.transport\.[a-z][a-z0-9-]*/[0-9]+\.[0-9]+(?:\.[0-9]+)?$"
+    r"^otdp\.transport\.[a-z][a-z0-9-]*/[0-9]+\.[0-9]+\.[0-9]+$"
 )
 
 #: The bounded reader's cap-prose messages (presentation.py's literals): a
@@ -252,8 +256,8 @@ def _corpus_known_otdp_features() -> frozenset[str]:
 
     The lanes are the feature-shaped ``const`` values the vendored descriptor
     schema itself carries — its ``required_features`` contains-conditions
-    spell exactly the core lanes (five at 0.2.1) — and the profiles are the
-    vendored catalog's ``profiles[].id`` (twelve at 0.2.1). The closure rule
+    spell exactly the core lanes (five at 0.2.2) — and the profiles are the
+    vendored catalog's ``profiles[].id`` (twelve at 0.2.2). The closure rule
     is transport-providers §2: an ``otdp.*`` identifier that is neither
     corpus-known (the core lanes and catalog profile ids) nor declared
     through a transport-provider object is a refusal at every admission
@@ -407,7 +411,7 @@ def _exceeds_depth(node: object, limit: int) -> bool:
 
 
 def validate_transport_provider(document: Any) -> None:
-    """Validate a transport-provider contract document offline (0.2.1).
+    """Validate a transport-provider contract document offline (0.2.2).
 
     The vendored ``otdp-transport-provider.schema.json`` — which also holds
     the ``otdp.transport.*`` namespace rule for the contract's own
@@ -432,7 +436,7 @@ def validate_transport_provider(document: Any) -> None:
         no authority, and admission stays a host-side act.
     """
     try:
-        validate(document, "otdp/0.2.1/otdp-transport-provider.schema.json")
+        validate(document, "otdp/0.2.2/otdp-transport-provider.schema.json")
     except ValueError as exc:
         raise ValueError(f"provider_contract_invalid: {exc}") from exc
     grammar = document["transaction_grammar"]
@@ -902,7 +906,7 @@ def validate_descriptor(descriptor: dict[str, Any]) -> None:
     ...     json.loads(Path("src/demo_plugin/descriptor.json").read_text()))
     """
     try:
-        validate(descriptor, "otdp/0.2.1/otdp-device-descriptor.schema.json")
+        validate(descriptor, "otdp/0.2.2/otdp-device-descriptor.schema.json")
     except ValueError:
         # When derived_variables is present, S19 runs even on a
         # schema-invalid document: the derivation_*: reason is the
