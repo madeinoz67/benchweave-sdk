@@ -18,6 +18,7 @@ All notable changes to this project will be documented in this file.
 - Type-validate the declared-format constructor argument
 - Started_at is validated against the corpus date-time annotation
 - Fill the lock's compat notes — the #147 increment-2/3 pairing constraint (AR-6)
+- Pre-tag selector constraint found by the matrix walk
 
 ### Documentation
 
@@ -39,6 +40,7 @@ All notable changes to this project will be documented in this file.
 - A worked standalone runtime around the capture writer (serial host to OTDP 8.1) (#46)
 - #147 heal-path amendment + the errata batch disposition
 - Release-review v0.2.0 — surface walk + matrix record
+- Selector claims v0.2.0 (latest) — the tag commit
 
 ### Features
 
@@ -67,7 +69,7 @@ All notable changes to this project will be documented in this file.
 ### Contributors
 
 - Platima (1 commit)
-- Stephen Eaton (42 commits)
+- Stephen Eaton (44 commits)
 - Madeinoz67 (1 commit)
 ## [0.1.0] - 2026-09-21
 
