@@ -74,7 +74,7 @@ the checklist is a matrix in `docs/internal`, and a skill walks it.
 |---|---------|--------|
 | 1 | README stamp | updated → SDK 0.2.0 (OTDP 0.2.2 / adapter API 1.1 correct-as-is) |
 | 2 | Website hero status | updated — two stale stamps: SDK 0.1.0 → 0.2.0, OTDP 0.2.1 → 0.2.2 (against `__init__.py`) |
-| 3 | Docs selector | updated — v0.2.0 (latest); v0.1.0 added as prior option |
+| 3 | Docs selector | WALKED TWO-PHASE — the assembled-site verifier (`verify_tree`) requires every advertised option to have an assembled bucket AND the `(latest)` label to equal the latest release tag; both are structurally unmeetable before the tag exists (constraint found by this walk). Phase 1 (this PR): selector stays at v0.1.0 (latest), consistent with the current tag set. Phase 2 (the tag commit, pushed with the tag in one action): v0.2.0 (latest) + v0.1.0 prior option. |
 | 4 | Compatibility tagline | updated — SDK 0.2.0 against main project `>=0.1.0` (lock floor unchanged) |
 | 5 | Standards badges | updated — otdp badge 0.2.1 → 0.2.2 (behind `standards-lock.json`); registry / execution / interface / plugin-ui / plugin-ui-preview correct-as-is |
 | 6 | `great-docs.yml` versions | updated — v0.2.0 registered `latest: true` PRE-TAG; v0.1.0 retained as prior |
