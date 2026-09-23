@@ -57,6 +57,14 @@ the invariants below anchor there.
   wrong no matter how good the edit is; the change belongs in the main repository's
   canonical corpus, re-exported and re-synced. Normative standards changes start main-side
   — `src/benchweave_sdk/standards/`. *Two owners for one file means the lock always loses.*
+- **[STD-6]** The lock's `compatibility.notes` is operator-authored state: the sync writer
+  carries it verbatim from the committed lock and never authors, updates, or clears it —
+  hand-editing the lock is the only writer, and a malformed value (a non-string `notes`, a
+  non-object block) is a `lock_invalid` refusal from the one shared lock reader —
+  `standards_sync.py::_preserved_notes`, pinned by the compat-notes cells in
+  `tests/test_standards_sync.py`. *Every import sync regenerates the lock, and one member
+  of `compatibility` is prose a machine cannot derive — the #170 erasure of a filled note
+  is the evidence; regenerating it could only ever produce the placeholder null.*
 - **[PKG-1]** **Self-containment**: this repository's CI checks out with no submodules and
   never reads the gateway checkout; nothing at test or runtime may reach for the parent
   repository's paths — `.github/workflows/ci.yml`. *The submodule mount makes parent paths
