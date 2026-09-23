@@ -2,6 +2,73 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.0] - 2026-09-23
+
+### Bug Fixes
+
+- Prefixed refusal for oversize provider pins + the known-wounds disclosure (#147 refute MEDIUM-2)
+- The symlink refusal names the rule it enforces (#147 R2)
+- Typed refusals for direct pin callers, drive-colon precheck, prefixed reader escapes (#147 Copilot C1a/C1b/C2)
+- Typed pin-read failures — OSError family, no host-path leak, cap-growth class (#147 RedTeam fold 1+2)
+- Bounded message render + grammar-subschema nesting cap — two RecursionError escapes (#147 RedTeam fold 3)
+- Descriptor read faults match the preset side's typing (#147 RedTeam fold 4)
+- Typed refusals for malformed declaration shapes (#147 RedTeam fold 5)
+- A failed manifest write keeps the finalise retry path alive
+- The published manifest is strict JSON — non-finite floats refused
+- Type-validate the declared-format constructor argument
+- Started_at is validated against the corpus date-time annotation
+- Fill the lock's compat notes — the #147 increment-2/3 pairing constraint (AR-6)
+
+### Documentation
+
+- #147 transport-provider contract mechanism — design of record
+- #147 fold-in — Decision 9 standalone composition, #155 sequencing, row-6 lineage
+- #147 build-time amendment — landing order follows the SDK-sync dependency
+- #147 refute fold — mechanism-critic F1-F11 into the record
+- #147 adversary fold — M1 boundary correction + M2 namespace-minting row
+- #147 measurement recorded — PASS, deferral row 8 (suite self-arms)
+- #147 deferral row 9 — residual in-arc hard-cites (governor LOW-1, owner-ruled doc row)
+- #147 acceptance-rule amendment — record what was actually measured (review finding 2)
+- Complete the 0.2.1 version train — generated AI-GUIDE, website hero, check-surface census (#147 review finding 3 + LOW)
+- #147 disclosed divergence — SDK strict no-follow pin resolution stands (R2 ruling)
+- Website otdp badge, guide wheel cite, and the badge-census instrument (#147 RedTeam fold 8)
+- AI-GUIDE step 2 points non-scoped-transport devices at the provider lane (#147 RedTeam fold 9)
+- #147 RedTeam wave dispositions — every finding homed
+- CaptureServices docstring names the writer; user-guide compatibility sentence narrowed
+- Narrow the README compatibility sentence; the guard sweeps both surfaces
+- A worked standalone runtime around the capture writer (serial host to OTDP 8.1) (#46)
+- #147 heal-path amendment + the errata batch disposition
+- Release-review v0.2.0 — surface walk + matrix record
+
+### Features
+
+- Contributors section with @mentions in every render
+- Vendor OTDP 0.2.1 — the transport-provider corpus (#147 increment 2, part 1)
+- Offline transport-provider checks — S04 census, contract validation, descriptor-relative pins (#147 increment 2, part 2)
+- Declaration-site namespace row — sanctioned provider feature ids (#147 R1)
+- The §6.4 placement row — provider declarations require the adapter mode (#147 RedTeam fold 10)
+- Capture-root resolution + capture_id segment rules (refuse before any fs call)
+- Standalone writer open/append lifecycle (staging, states, cancellation, one-in-flight)
+- Atomic finalise with real-digest manifest + declared-format refusal + abort scoping
+- Vendor OTDP 0.2.2 — the fold re-rolled as a PATCH, errata batched (gateway #147, fork A)
+
+### Miscellaneous
+
+- Capture module stub — RED collection scaffold for the standalone writer
+
+### Testing
+
+- Self-arm the reserved-kind disjointness set (#147 refute MEDIUM-1)
+- Derive the mirror-regex pins from vendored bytes; retire the split tautology (#147 RedTeam folds 6+7)
+- The README arm's streaming wording accepts each surface's own phrasing
+- Raw-string the empty-set match pattern
+
+
+### Contributors
+
+- Platima (1 commit)
+- Stephen Eaton (42 commits)
+- Madeinoz67 (1 commit)
 ## [0.1.0] - 2026-09-21
 
 ### Bug Fixes
