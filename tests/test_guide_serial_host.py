@@ -50,7 +50,7 @@ class FakePort:
         self.closed = 0
         self.reads = 0
 
-    def write(self, data: bytes) -> int:
+    def write(self, data: bytes) -> int | None:
         self.written.append(data)
         self.inbound += self.replies.get(data, b"")
         return len(data)
@@ -208,6 +208,44 @@ def test_a_cancelled_operation_transmits_nothing_and_a_closed_port_is_a_connecti
         )
 
 
+class ShortWritePort(FakePort):
+    """A port whose write reports ``sent`` bytes, whatever it was given."""
+
+    def __init__(self, sent: int | None) -> None:
+        super().__init__(b"reply\n")
+        self.sent = sent
+
+    def write(self, data: bytes) -> int | None:
+        self.written.append(data)
+        return self.sent
+
+
+@pytest.mark.parametrize("sent", [0, 3])
+@pytest.mark.parametrize("kind", ["stream_send", "stream_exchange"])
+def test_a_short_write_is_a_connection_error_and_nothing_is_read(kind: str, sent: int) -> None:
+    """pyserial returns a short count without raising when a pending write is
+    cancelled (on Windows, closing the port from another thread does this) or
+    under write_timeout=0; part of a frame on the wire must not pass as sent.
+    """
+    port = ShortWritePort(sent)
+    transaction: dict[str, Any] = {"kind": kind, "data": b"PING"}
+    if kind == "stream_exchange":
+        transaction = {**_receive(), **transaction}
+    with pytest.raises(ConnectionError, match=f"reported {sent} of 4 bytes"):
+        asyncio.run(Host(port).transfer(transaction, BenchContext("short", 1.0)))
+    assert port.reads == 0
+
+
+def test_a_port_that_reports_no_count_is_trusted() -> None:
+    """pyserial's own rs485.RS485 and cp2110:// ports return None from write."""
+    port = ShortWritePort(None)
+    reply = asyncio.run(
+        Host(port).transfer({"kind": "stream_send", "data": b"PING"}, BenchContext("n", 1.0))
+    )
+    assert reply == {}
+    assert port.written == [b"PING"]
+
+
 def test_capture_goes_through_the_standalone_writer(tmp_path: Path) -> None:
     host = Host(FakePort(), writer=StandaloneCaptureWriter(tmp_path, formats=("raw_binary",)))
 
@@ -235,3 +273,11 @@ def test_evidence_is_kept_and_appended_as_json_lines(tmp_path: Path) -> None:
     )
     assert host.evidence[0]["operation_id"] == "ev" and host.evidence[0]["at"].endswith("Z")
     assert path.read_text(encoding="utf-8").count("\n") == 1
+
+
+def test_an_evidence_entry_cannot_shadow_the_host_fields() -> None:
+    host = Host(FakePort())
+    entry = {"kind": "probe", "at": "caller", "operation_id": "spoof"}
+    asyncio.run(host.record_evidence(entry, BenchContext("ev", 1.0)))
+    assert host.evidence[0]["operation_id"] == "ev"
+    assert host.evidence[0]["at"].endswith("Z")
