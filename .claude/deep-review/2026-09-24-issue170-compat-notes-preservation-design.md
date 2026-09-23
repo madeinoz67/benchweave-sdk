@@ -6,7 +6,9 @@
   [#170](https://github.com/madeinoz67/benchweave/issues/170) (single issue stream — no
   SDK-side issue exists by design); the AR-6 pairing note it protects originates in the
   #147 design record (`.claude/deep-review/2026-09-22-issue147-transport-provider-contracts.md`)
-- SDK base: `main` @ `6121c96`
+- SDK base: `main` @ `6121c96` (branch subsequently rebased onto `main` @ `2f017d6`
+  after the v0.2.0 release landed mid-build; `git diff 6121c96..2f017d6` is empty for
+  the writer, the tests, and the lock, so grounding and RED evidence transfer intact)
 - Scope: the sync writer's treatment of one lock field. No corpus bytes move, no lock
   schema changes, no check lane changes.
 
@@ -259,9 +261,9 @@ small-file read per import sync at runtime.
 | STD-3 (three lanes symmetric) | Untouched — no lane reads `compatibility`; nothing to keep symmetric. Confirmed by reading `_verify_tree`, the no-bundle lane, `verify_installed`, and `hatch_build.py`. |
 | STD-4 (refusal prefixes) | The new refusal reuses `lock_invalid`; the prefix list does not change. |
 | STD-5 / TWO-1 (normative content main-first; landing order) | Untouched — no vendored byte moves. Landing is the standard two-repo order: SDK commit pushed, SDK PR (body notes gateway #170, no SDK-side issue by design), then the main pointer commit. |
-| Proposed new row | Add **[STD-6]** to `docs/internal/invariants.md`: the lock's `compatibility.notes` is operator-authored state — sync carries it verbatim and never authors, updates, or clears it; hand-edit is the only writer; a malformed value is a `lock_invalid` refusal in every lane — anchored on `standards_sync.py::_preserved_notes`, pinned by the §5 tests. One row, one sentence of why (the #170 erasure is the evidence). |
+| Proposed new row | Add **[STD-6]** to `docs/internal/invariants.md`: the lock's `compatibility.notes` is operator-authored state — sync carries it verbatim and never authors, updates, or clears it; hand-edit is the only writer; a malformed value is a `lock_invalid` refusal in every lane — anchored on `standards_sync.py::_read_lock_file`'s shape clause and `_preserved_notes`, pinned by the §5 tests. One row, one sentence of why (the #170 erasure is the evidence). |
 | Main repo — code | Nothing moves. CON-12 (`check.py::_compare_mirror`), CON-4's gate, `matrix.py`, `manifest.py` are content-agnostic. |
-| Main repo — docs | `docs/development.md` §"Standards synchronisation": the paragraph teaching "sync writes the lock's `compatibility.notes` as `null` — fill it in before committing" becomes wrong (sync now preserves; null appears only when no prior note existed). **Rider on the main pointer commit** — a one-paragraph correction, prose deferring to the machine source. `standards/GOVERNANCE.md`'s mirror paragraph stays accurate as written. |
+| Main repo — docs | TWO prose surfaces flip, both carried by the pointer-commit rider (governor F1): (1) `docs/development.md` §"Standards synchronisation" — the paragraph teaching "sync writes the lock's `compatibility.notes` as `null` — fill it in before committing" becomes wrong (sync now preserves; null appears only when no prior note existed); (2) `docs/internal/drift-and-obligations.md` obligation 15's parenthetical "(the fill must ride the same commit as every sync — the sync writer regenerates the lock with notes null)" — the workflow it teaches is exactly what this branch retires. Each is a one-paragraph correction, prose deferring to the machine source. `standards/GOVERNANCE.md`'s mirror paragraph stays accurate as written. |
 | SDK docs | `docs/internal/invariants.md` gains the STD-6 row (above). `docs/internal/drift-and-obligations.md` item 3 is walked: the compatibility-notes surface is exactly what changed, and its paired main-side surface is named. No README or user-guide surface documents the notes behavior (checked); `docs/internal/release-review-matrix.md` reads `main_project`/`sdk`, not `notes` — unaffected. |
 | On-disk format / schema | **No change** — same keys, same shapes, `notes` stays string-or-null, `lock_version` stays 1. Not a Tier-3 review subject; this is a behavioral fix with RED proof. |
 
@@ -270,8 +272,8 @@ small-file read per import sync at runtime.
 | # | Deferred | Home |
 |---|---|---|
 | 1 | `main_project` preservation (same defect class: a hand-edited floor would be erased by the hardcoded `">=0.1.0"`). Not named by the issue, no hand-edit history, and the release-review matrix treats the field as a floor the lock carries — changing its ownership is a release-semantics decision, not a rider. | This design-record row. Reopen only if an operator ever authors a non-default floor. |
-| 2 | SDK-side validation of `main_project`/`sdk` string-ness in `_read_lock_file`. The writer regenerates both, so there is nothing to preserve and nothing to launder; main's `_compare_mirror` already refuses drift on them. | This design-record row. |
-| 3 | An SDK `--check`-lane assertion that a committed lock's notes is well-formed (SDK-side policing of its own field). SDK lanes verify bytes, not prose; CON-12's main-side refusal is the existing backstop. | This design-record row. |
+| 2 | SDK-side validation of `main_project`/`sdk` string-ness in `_read_lock_file`. The writer regenerates both, so there is nothing to preserve and nothing to launder; main's `_compare_mirror` already refuses drift on them. | This design-record row. Reopen trigger: the first lock whose `main_project`/`sdk` value a consumer parses as typed data rather than display text. |
+| 3 | SDK-side null/presence policing of a committed lock's notes (an `--check`-lane `compatibility_incomplete` equivalent). Malformed-value policing already ships in every lane via `_read_lock_file`'s shape clause (governor F2 correction); the residual is whether the SDK should also refuse a *missing* note — which stays main-side (`_compare_compatibility`'s halt) by design, as every SDK lane ignores the block. | This design-record row. Reopen trigger: an SDK-only consumer that needs the note present to function. |
 
 Zero follow-on issues filed (deferral-discipline rule 3, 2026-09-20: deferrals live in
 design-record tables, not tracker rows; at most one follow-on issue per merged PR —
@@ -303,8 +305,10 @@ this proposes none).
    that same lock (PKG-2), so no real population is affected. Falsified if any CI lane
    or installed-distribution check reds on a committed lock after the change.
 3. **Main-side doc drift if the rider is forgotten.** The mirror gate cannot catch the
-   stale `docs/development.md` paragraph. Mitigated by naming it as the pointer-PR
-   rider here and in the PR body; it converts to a gateway-tracker follow-up only if
+   two stale main-side paragraphs (`docs/development.md` §"Standards synchronisation"
+   and `docs/internal/drift-and-obligations.md` obligation 15's parenthetical —
+   governor F1). Mitigated by naming both as the pointer-PR rider here and in the PR
+   body; it converts to a gateway-tracker follow-up only if
    the pointer PR lands without it.
 4. **Mid-sync hand-edit torn window** (the lock is now read twice: once in `sync()`
    before the mutex, once in the writer under it). The under-mutex read is the fresher

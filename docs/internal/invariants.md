@@ -61,7 +61,8 @@ the invariants below anchor there.
   carries it verbatim from the committed lock and never authors, updates, or clears it —
   hand-editing the lock is the only writer, and a malformed value (a non-string `notes`, a
   non-object block) is a `lock_invalid` refusal from the one shared lock reader —
-  `standards_sync.py::_preserved_notes`, pinned by the compat-notes cells in
+  raised in `standards_sync.py::_read_lock_file`, which `_preserved_notes` reaches via
+  `_read_lock` — pinned by the compat-notes cells in
   `tests/test_standards_sync.py`. *Every import sync regenerates the lock, and one member
   of `compatibility` is prose a machine cannot derive — the #170 erasure of a filled note
   is the evidence; regenerating it could only ever produce the placeholder null.*
