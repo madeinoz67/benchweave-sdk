@@ -8,6 +8,7 @@
 // (exit 0) whenever the gortex CLI, the daemon, or git is unavailable, so
 // contributors without gortex are never blocked.
 import { execFileSync } from "node:child_process";
+import { relative } from "node:path";
 import { readFileSync } from "node:fs";
 
 const GORTEX = "/opt/homebrew/bin/gortex";
@@ -47,6 +48,14 @@ if (filePath.includes("/.claude/worktrees/") || filePath.includes("/.git/")) {
 const dir = filePath.replace(/\/[^/]*$/, "");
 const toplevel = sh("git", ["-C", dir, "rev-parse", "--show-toplevel"])?.trim();
 if (!toplevel) process.exit(ALLOW);
+
+// Branch-new / untracked files are exempt (the routing card's native-Write
+// row, and this gate's own message): the gate governs edits to gortex-indexed
+// TRACKED source only. Proven by tests/write-gate.test.mjs (R5, 2026-09-24,
+// ported from the gateway fix).
+const rel = relative(toplevel, filePath);
+const tracked = sh("git", ["-C", toplevel, "ls-files", "--error-unmatch", "--", rel]);
+if (!tracked) process.exit(ALLOW);
 
 // A linked worktree's git dir lives under the primary's .git/modules tree.
 // Both rev-parses run from the toplevel so their renderings are comparable.
