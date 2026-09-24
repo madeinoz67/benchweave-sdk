@@ -2,7 +2,7 @@
   "type": "object",
   "properties": {
     "contract_version": {
-      "const": "0.1.0"
+      "const": "0.2.0"
     },
     "id": {
       "type": "string",
@@ -271,7 +271,7 @@
   ],
   "additionalProperties": false,
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:stg:execution:commissioning:1.0.0",
+  "$id": "urn:stg:execution:commissioning:0.2.0",
   "title": "STG commissioning contract",
   "description": "Structure only. Apply execution-contract.md semantic and qualification rules; JSON validity grants no authority."
 }

@@ -1,5 +1,5 @@
 {
-  "contract_version": "0.1.0",
+  "contract_version": "0.2.0",
   "id": "synthetic-policy",
   "version": "0.1.0",
   "description": "Synthetic contract fixture. Not hardware-qualified; numeric values are not recommended bench limits.",
@@ -10,7 +10,7 @@
       "max_abs_current_a": 0.1,
       "max_power_w": 0.6,
       "max_stored_energy_j": 0.01,
-      "max_energised_ms": 10000
+      "max_energised_ms": 16000
     }
   ],
   "allow_rules": [
@@ -48,6 +48,22 @@
         "properties": {
           "channel": {
             "const": "ch1"
+          }
+        }
+      }
+    },
+    {
+      "device_id": "psu",
+      "kind": "capture",
+      "format": "waveform_f64le",
+      "capture_constraints": {
+        "type": "object",
+        "properties": {
+          "sample_count": {
+            "maximum": 1000
+          },
+          "max_bytes": {
+            "maximum": 65536
           }
         }
       }

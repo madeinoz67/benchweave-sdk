@@ -1,5 +1,5 @@
 {
-  "contract_version": "0.1.0",
+  "contract_version": "0.2.0",
   "id": "synthetic-voltage-check",
   "version": "0.1.0",
   "description": "Synthetic contract fixture. Not hardware-qualified; numeric values are not recommended bench limits.",
@@ -19,7 +19,7 @@
       ]
     }
   ],
-  "max_body_ms": 4000,
+  "max_body_ms": 14000,
   "max_protection_ms": 2000,
   "steps": [
     {
@@ -64,6 +64,15 @@
       "id": "settle",
       "kind": "delay",
       "duration_ms": 100
+    },
+    {
+      "id": "capture-trace",
+      "kind": "capture",
+      "role": "supply",
+      "format": "waveform_f64le",
+      "sample_count": 1000,
+      "max_bytes": 65536,
+      "timeout_ms": 400
     },
     {
       "id": "measure",

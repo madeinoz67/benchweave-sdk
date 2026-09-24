@@ -2,7 +2,7 @@
   "type": "object",
   "properties": {
     "contract_version": {
-      "const": "0.1.0"
+      "const": "0.2.0"
     },
     "id": {
       "type": "string",
@@ -79,11 +79,13 @@
     },
     "max_body_ms": {
       "type": "integer",
-      "minimum": 1
+      "minimum": 1,
+      "maximum": 86400000
     },
     "max_protection_ms": {
       "type": "integer",
-      "minimum": 1
+      "minimum": 1,
+      "maximum": 86400000
     },
     "steps": {
       "type": "array",
@@ -220,7 +222,8 @@
             },
             "timeout_ms": {
               "type": "integer",
-              "minimum": 1
+              "minimum": 1,
+              "maximum": 86400000
             }
           },
           "required": [
@@ -253,7 +256,8 @@
             },
             "timeout_ms": {
               "type": "integer",
-              "minimum": 1
+              "minimum": 1,
+              "maximum": 86400000
             }
           },
           "required": [
@@ -288,7 +292,8 @@
             },
             "timeout_ms": {
               "type": "integer",
-              "minimum": 1
+              "minimum": 1,
+              "maximum": 86400000
             }
           },
           "required": [
@@ -297,6 +302,51 @@
             "role",
             "parameter",
             "value",
+            "timeout_ms"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_.-]*$"
+            },
+            "kind": {
+              "const": "capture"
+            },
+            "role": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_.-]*$"
+            },
+            "format": {
+              "enum": [
+                "waveform_f64le",
+                "raw_binary"
+              ]
+            },
+            "sample_count": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "max_bytes": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "timeout_ms": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 86400000
+            }
+          },
+          "required": [
+            "id",
+            "kind",
+            "role",
+            "format",
+            "sample_count",
+            "max_bytes",
             "timeout_ms"
           ],
           "additionalProperties": false
@@ -492,7 +542,7 @@
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:stg:execution:procedure:1.0.0",
+  "$id": "urn:stg:execution:procedure:0.2.0",
   "title": "STG procedure contract",
   "description": "Structure only. Apply execution-contract.md semantic and qualification rules; JSON validity grants no authority."
 }

@@ -2,7 +2,7 @@
   "type": "object",
   "properties": {
     "contract_version": {
-      "const": "0.1.0"
+      "const": "0.2.0"
     },
     "id": {
       "type": "string",
@@ -111,6 +111,34 @@
               "kind",
               "parameter",
               "value_constraints"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "device_id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_.-]*$"
+              },
+              "kind": {
+                "const": "capture"
+              },
+              "format": {
+                "enum": [
+                  "waveform_f64le",
+                  "raw_binary"
+                ]
+              },
+              "capture_constraints": {
+                "type": "object"
+              }
+            },
+            "required": [
+              "device_id",
+              "kind",
+              "format",
+              "capture_constraints"
             ],
             "additionalProperties": false
           }
@@ -505,7 +533,7 @@
   ],
   "additionalProperties": false,
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:stg:execution:safety-policy:1.0.0",
+  "$id": "urn:stg:execution:safety-policy:0.2.0",
   "title": "STG safety-policy contract",
   "description": "Structure only. Apply execution-contract.md semantic and qualification rules; JSON validity grants no authority."
 }

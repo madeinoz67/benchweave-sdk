@@ -2,7 +2,7 @@
   "type": "object",
   "properties": {
     "contract_version": {
-      "const": "0.1.0"
+      "const": "0.2.0"
     },
     "request_id": {
       "type": "string",
@@ -170,7 +170,7 @@
   ],
   "additionalProperties": false,
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:stg:execution:run-binding:1.0.0",
+  "$id": "urn:stg:execution:run-binding:0.2.0",
   "title": "STG run-binding contract",
   "description": "Structure only. Apply execution-contract.md semantic and qualification rules; JSON validity grants no authority."
 }

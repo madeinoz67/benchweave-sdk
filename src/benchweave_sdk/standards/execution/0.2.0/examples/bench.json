@@ -1,5 +1,5 @@
 {
-  "contract_version": "0.1.0",
+  "contract_version": "0.2.0",
   "id": "synthetic-bench",
   "version": "0.1.0",
   "description": "Synthetic contract fixture. Not hardware-qualified; numeric values are not recommended bench limits.",
@@ -13,7 +13,7 @@
   "policy": {
     "id": "synthetic-policy",
     "version": "0.1.0",
-    "sha256": "73454794f991f14b80e0caa396a9e8a5b388b17e806145402e6531c7dcc7655a"
+    "sha256": "b4f3f42abc65e4b7fe8323d53a398bf09866393bb2f1f7f1456a57fa0ec68d0d"
   },
   "package_lock": {
     "id": "synthetic-package-lock",
