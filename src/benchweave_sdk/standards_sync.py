@@ -276,6 +276,13 @@ def _read_lock_file(path: Path) -> dict[str, Any]:
             _ = standard["id"], standard["version"]
             for file in standard["files"]:
                 _ = file["path"], file["sha256"]
+        compatibility = lock.get("compatibility")
+        if compatibility is not None:
+            if not isinstance(compatibility, dict):
+                raise TypeError("compatibility is not a JSON object")
+            notes = compatibility.get("notes")
+            if not (notes is None or isinstance(notes, str)):
+                raise TypeError("compatibility.notes is not a string or null")
     except json.JSONDecodeError as exc:
         raise ValueError(f"lock_invalid: {exc}") from exc
     except (KeyError, TypeError) as exc:
@@ -538,6 +545,23 @@ def _sync_mutex(sdk_root: Path) -> Iterator[None]:
             lock_path.parent.rmdir()
 
 
+def _preserved_notes(sdk_root: Path) -> str | None:
+    """The committed lock's operator-authored ``compatibility.notes``, carried verbatim.
+
+    Never regenerated: a machine cannot know whether the operator's pairing or
+    migration note still holds, so it must not decide — the main repository's repin
+    takes the same posture toward hand-authored ``source`` provenance. Hand-editing
+    the lock remains the only way to set, update or clear the field. A first sync
+    (no lock) or a lock without the block writes ``None``.
+    """
+    compatibility = _read_lock(sdk_root).get("compatibility")
+    # Validation makes this unreachable; keeps the helper total.
+    if not isinstance(compatibility, dict):
+        return None
+    notes = compatibility.get("notes")
+    return notes if isinstance(notes, str) else None
+
+
 def _write_vendored(
     sdk_root: Path,
     document: dict[str, Any],
@@ -582,7 +606,7 @@ def _write_vendored(
         "compatibility": {
             "main_project": ">=0.1.0",
             "sdk": _sdk_version(sdk_root),
-            "notes": None,
+            "notes": _preserved_notes(sdk_root),
         },
     }
     try:
