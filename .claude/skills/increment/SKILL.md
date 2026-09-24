@@ -71,7 +71,10 @@ run the loop.
    prefixes, scaffold output shape, conformance weakenings, parent-checkout reach,
    dependencies) → the refute pass is mandatory.** For anything moving a digest rule,
    version bound, compatibility note, schema normalization, or scaffold template, also
-   run the `mechanism-critic`. Reconcile: both clean → stands; a real evidenced defect →
+   run the `mechanism-critic`. **On Tier-3 / trust-boundary increments the
+   refute deliberately runs two independent adversary lanes (#181 R3) — the
+   second lane's independent yield is the point (2026-09-23 inc3: lane 2 found
+   the two MEDIUMs lane 1 missed).** Reconcile: both clean → stands; a real evidenced defect →
    fix it; a genuine correctness split → DEFER to the owner. Fix every real finding,
    with RED-proven guards.
 6. **Measure — the acceptance gate.** The `bench-measurer` agent proves real value on

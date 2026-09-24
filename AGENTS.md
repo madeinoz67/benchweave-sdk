@@ -43,6 +43,28 @@ repository's `make sync-sdk-standards` refuses to run against a submodule HEAD t
 differs from the committed pointer; that refusal is this discipline enforcing itself.
 Before finishing an arc: both repositories' gates green, SDK pushed, pointer committed.
 
+## How we work
+
+The working disciplines from the 2026-09-24 period retro (gateway issue #181 —
+the single issue stream carries this repo's rows too):
+
+1. **Merge on the full rollup, never a filtered view (#181 R1).** `gh pr checks
+   --watch | tail` hides failing lanes and masks the exit code (2026-09-23: two
+   merges landed with three red lanes). Read the COMPLETE `gh pr checks <n>`
+   output and assert zero `fail` and zero `pending` before merging; a background
+   CI-watcher's exit is not the verdict. `scripts/merge-verified.sh
+   [owner/repo] <pr>` is this gate as a tool — it watches, prints the full
+   rollup, refuses on any red, pending, or empty rollup, and only then merges.
+2. **Pre-flight before design on a tracked issue (#181 R2).** Before starting
+   design or build work: `git fetch origin`, list the remote branches touching
+   the planned paths, and check the main repository's open/recent PRs — only
+   then design. A brief can postdate pushed or merged rival work (2026-09-23:
+   the #147 rival-design collision).
+3. **Parallel scratch paths carry a nonce (#181 R4).** Scratch worktree names
+   carry the agent name plus a nonce; run `git worktree list` before any
+   `worktree remove` while parallel agents are active (2026-09-23: one agent's
+   cleanup deleted another's live worktree).
+
 ## Gortex first
 
 A Gortex daemon serves this repository machine-wide. On every task here, prefer graph
