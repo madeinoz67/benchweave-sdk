@@ -23,6 +23,8 @@ Derivations (from primary sources, not the plan's restatement):
 from __future__ import annotations
 
 import asyncio
+import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -69,6 +71,68 @@ def test_capture_root_precedence_explicit_env_default(
     assert capture.capture_root() == from_env.resolve()  # env beats the default
     monkeypatch.delenv("BENCHWEAVE_CAPTURE_DIR")
     assert capture.capture_root() == (tmp_path / "captures").resolve()
+
+
+@pytest.mark.parametrize("value", ["", "   ", "\t"])
+def test_an_empty_or_whitespace_capture_dir_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    """A set-but-blank BENCHWEAVE_CAPTURE_DIR is a configuration mistake:
+    an empty value fell back silently to captures/ under the cwd, and a
+    whitespace value named the cwd itself on Windows (trailing spaces are
+    stripped) or a whitespace-named directory on POSIX. Refused, naming the
+    variable."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("BENCHWEAVE_CAPTURE_DIR", value)
+    with pytest.raises(ValueError, match="BENCHWEAVE_CAPTURE_DIR is set but empty"):
+        capture.capture_root()
+    with pytest.raises(ValueError, match="BENCHWEAVE_CAPTURE_DIR is set but empty"):
+        capture.StandaloneCaptureWriter()
+    # An explicit root still wins over the blank variable.
+    assert capture.capture_root(tmp_path / "explicit") == (tmp_path / "explicit").resolve()
+
+
+def test_a_relative_capture_dir_resolves_against_the_working_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("BENCHWEAVE_CAPTURE_DIR", "bench/runs")
+    assert capture.capture_root() == (tmp_path / "bench" / "runs").resolve()
+
+
+def test_a_capture_root_that_is_not_a_directory_is_refused(tmp_path: Path) -> None:
+    """A root (or an ancestor of it) that exists as a plain file raised a raw
+    NotADirectoryError at the first append on POSIX, and on Windows the
+    misleading "created concurrently" refusal. Refused at construction."""
+    plain = tmp_path / "plain-file"
+    plain.write_bytes(b"not a directory")
+    for root in (plain, plain / "captures"):
+        with pytest.raises(ValueError, match="capture root is not a directory"):
+            capture.capture_root(root)
+        with pytest.raises(ValueError, match="capture root is not a directory"):
+            capture.StandaloneCaptureWriter(root)
+    assert plain.read_bytes() == b"not a directory"  # left untouched
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32" or os.geteuid() == 0,
+    reason="needs POSIX permission bits and a non-root user",
+)
+def test_a_root_under_an_unsearchable_directory_still_constructs(tmp_path: Path) -> None:
+    """The non-directory check walks the root's ancestors. On Python 3.13
+    Path.exists() raises PermissionError for a path under a directory that
+    cannot be searched, so that walk raised a raw OSError at construction
+    where the writer used to construct. An unprobeable component is skipped,
+    as it was before the check existed."""
+    locked = tmp_path / "locked"
+    (locked / "inner").mkdir(parents=True)
+    root = locked / "inner" / "captures"
+    locked.chmod(0)
+    try:
+        assert capture.capture_root(root) == root.resolve()
+        capture.StandaloneCaptureWriter(root)
+    finally:
+        locked.chmod(0o700)
 
 
 def test_capture_root_refuses_the_installed_package_tree(tmp_path: Path) -> None:

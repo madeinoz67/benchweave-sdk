@@ -10,7 +10,8 @@ filesystem.
   over ``BENCHWEAVE_CAPTURE_DIR`` over ``captures/`` under the working
   directory) and refuses a root inside the installed package tree, where a
   reinstall or upgrade would wipe it and the SDK's own inventory verification
-  refuses unlisted files.
+  refuses unlisted files. A blank ``BENCHWEAVE_CAPTURE_DIR`` and a root that
+  is not a directory are refused too.
 - ``_valid_capture_segment`` enforces the capture_id path-segment rules
   before any filesystem call: one segment of a portable ASCII allowlist,
   bounded length, no traversal components, no trailing dot, no Windows
@@ -68,13 +69,35 @@ def capture_root(explicit: Path | None = None) -> Path:
     package directory — is refused loudly: a reinstall or upgrade wipes it,
     and the SDK's own inventory verification refuses unlisted files, so run
     data does not belong there.
+
+    A relative root (argument or environment value) resolves against the
+    current working directory at the time of the call, that is, when the
+    writer is constructed. A ``BENCHWEAVE_CAPTURE_DIR`` that is set but
+    empty or whitespace-only is refused rather than falling back, and so is
+    a root that exists, or has an ancestor that exists, as something other
+    than a directory. A component that cannot be probed (under a directory
+    the process cannot search) is skipped, not raised.
     """
     if explicit is not None:
         root = Path(explicit)
     else:
         from_environment = os.environ.get(_ENV_CAPTURE_DIR)
+        if from_environment is not None and not from_environment.strip():
+            raise ValueError(
+                f"{_ENV_CAPTURE_DIR} is set but empty or whitespace-only "
+                f"({from_environment!r}); unset it to use captures/ under the "
+                "working directory, or set it to a directory"
+            )
         root = Path(from_environment) if from_environment else Path.cwd() / "captures"
     resolved = root.resolve()
+    # os.path.exists, not Path.exists: on Python 3.13 the latter raises
+    # PermissionError under an unsearchable directory; this returns False.
+    existing = next((path for path in (resolved, *resolved.parents) if os.path.exists(path)), None)
+    if existing is not None and not existing.is_dir():
+        raise ValueError(
+            f"capture root is not a directory: {resolved} ({existing} exists "
+            "and is not a directory)"
+        )
     package_parent = Path(__file__).resolve().parent.parent
     if resolved.is_relative_to(package_parent):
         raise ValueError(
