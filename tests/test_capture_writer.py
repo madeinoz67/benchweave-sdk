@@ -318,7 +318,7 @@ def test_case_folded_collision_is_refused_at_append(tmp_path: Path) -> None:
 _WAVEFORM = {
     "format": "waveform_f64le",
     "started_at": "2026-09-22T00:00:00Z",
-    "sample_count": 3,
+    "sample_count": 1,  # one f64 sample: the 8 bytes most tests append
     "sample_interval_s": 0.001,
     "unit": "V",
 }
@@ -350,7 +350,7 @@ def test_finalise_digest_is_recomputed_over_the_published_file(tmp_path: Path) -
     writer = _writer(tmp_path)
     chunks = [b"\x00" * 8, b"\x01" * 8, b"\x02" * 8]
     asyncio.run(_append(writer, "cap-1", chunks))
-    manifest = _finalise(writer, "cap-1", dict(_WAVEFORM))
+    manifest = _finalise(writer, "cap-1", dict(_WAVEFORM, sample_count=3))
     primary = tmp_path / "captures" / "cap-1" / "cap-1.f64"
     published = primary.read_bytes()
     digest = hashlib.sha256(published).hexdigest()  # over the FILE, not the buffers
@@ -366,7 +366,7 @@ def test_finalise_manifest_json_matches_the_returned_manifest(tmp_path: Path) ->
     import json as json_module
 
     writer = _writer(tmp_path)
-    asyncio.run(_append(writer, "cap-1", [b"data-bytes"]))
+    asyncio.run(_append(writer, "cap-1", [b"\x00" * 8]))
     manifest = _finalise(writer, "cap-1", dict(_WAVEFORM, sample_count=1))
     written = json_module.loads(
         (tmp_path / "captures" / "cap-1" / "manifest.json").read_text()
@@ -380,9 +380,9 @@ def test_core_manifest_contains_the_corpus_required_keys_and_validates(
     """R9 (B10 form): CONTAINS, not equality — ``x-standalone-*`` extension
     keys are schema-legal beside the corpus-required set, and a core-format
     manifest must validate against ``$defs/captureManifest`` itself. The
-    writer enforces presence/shape only; the count×8 rule is spec §7 prose
-    enforced by the GATEWAY's G1/G4 — the standalone writer names, digests
-    and lengths bytes, it never interprets them (Decision 9)."""
+    capture is one sample of 8 bytes: the writer enforces the spec §7
+    count×8 rule as the gateway's writer does, so a manifest that
+    validates here also has a byte_length the gateway would accept."""
     import jsonschema
 
     schema = _capture_manifest_def()
@@ -462,6 +462,46 @@ def test_a_declared_extension_format_publishes_with_its_extension(
         unknown, "cap-x", {"format": "custom-format", "started_at": "2026-09-22T00:00:00Z"}
     )
     assert (tmp_path / "custom" / "captures" / "cap-x" / "cap-x.data").exists()
+
+
+@pytest.mark.parametrize(
+    ("chunks", "sample_count"),
+    [([b"\x00" * 8], 3), ([b"\x00" * 8, b"\x01" * 8], 1), ([b"\x00" * 12], 1)],
+    ids=["short", "long", "partial-sample"],
+)
+def test_a_waveform_whose_byte_length_is_not_sample_count_times_eight_is_refused(
+    tmp_path: Path, chunks: list[bytes], sample_count: int
+) -> None:
+    """Spec §7: a waveform_f64le byte length equals sample_count×8. The
+    gateway's writer refuses a mismatch at finalise and its bridge re-checks
+    the published length (G4); the rule is mode-independent, so standalone
+    refuses it too. Nothing is published and the capture stays open. As in
+    the gateway, where sample_count is fixed at open, a short capture is
+    rescued by appending the missing bytes and finalising with the same
+    sample_count, never by relabelling it; an over-long one can only be
+    aborted."""
+    writer = _writer(tmp_path)
+    asyncio.run(_append(writer, "cap-1", chunks))
+    staged = sum(len(chunk) for chunk in chunks)
+    with pytest.raises(
+        ValueError,
+        match=rf"{staged} bytes staged but sample_count {sample_count} declares "
+        rf"{sample_count * 8}",
+    ):
+        _finalise(writer, "cap-1", dict(_WAVEFORM, sample_count=sample_count))
+    event = tmp_path / "captures" / "cap-1"
+    assert not (event / "manifest.json").exists()  # not published
+    assert not any(event.glob("cap-1.f64*"))  # no primary, no .tmp remnant
+    assert (event / "staging").is_dir()  # still retryable
+    missing = sample_count * 8 - staged
+    if missing > 0:
+        asyncio.run(_append(writer, "cap-1", [b"\x02" * missing]))
+        manifest = _finalise(writer, "cap-1", dict(_WAVEFORM, sample_count=sample_count))
+        assert manifest["byte_length"] == sample_count * 8
+    else:
+        asyncio.run(writer.artifact_abort("cap-1"))
+        assert not (event / "staging").exists()
+        assert not (event / "manifest.json").exists()
 
 
 def test_finalise_requires_the_mandatory_waveform_metadata(tmp_path: Path) -> None:
@@ -579,7 +619,7 @@ def test_a_crash_across_finalise_never_leaves_a_half_written_primary(
 
     monkeypatch.setattr(capture, "_write_manifest", exploding_manifest)
     with pytest.raises(RuntimeError, match="simulated crash"):
-        _finalise(writer, "cap-1", dict(_WAVEFORM))
+        _finalise(writer, "cap-1", dict(_WAVEFORM, sample_count=2))
     event = tmp_path / "captures" / "cap-1"
     assert (event / "cap-1.f64").read_bytes() == b"".join(chunks)  # complete
     assert not (event / "manifest.json").exists()  # not published

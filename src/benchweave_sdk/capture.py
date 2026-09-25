@@ -214,9 +214,8 @@ def _write_manifest(event: Path, manifest: dict[str, Any]) -> None:
 def _waveform_fields(metadata: dict[str, Any]) -> dict[str, Any]:
     """Validate the mandatory waveform metadata (corpus ``$defs/captureManifest``
     allOf: ``sample_count``, ``sample_interval_s``, ``unit`` are required when
-    the format is ``waveform_f64le``); presence and shape only — the
-    count×8 rule is spec §7 prose the GATEWAY's G1/G4 enforce, not the
-    standalone writer, which never interprets the bytes it digests."""
+    the format is ``waveform_f64le``); presence and shape only. The count×8
+    rule (spec §7) is checked against the real byte length at finalise."""
     fields: dict[str, Any] = {}
     sample_count = metadata.get("sample_count")
     if type(sample_count) is not int or sample_count < 1:
@@ -356,7 +355,16 @@ class StandaloneCaptureWriter:
         the REAL bytes as they are concatenated into the primary — a temp
         file in the same directory renamed into place, so a crash across
         finalise leaves a ``.tmp`` remnant, never a half-written primary.
-        Nothing is interpreted: the count×8 rule is the gateway's G1/G4.
+        The bytes are never interpreted, but their count is checked: a
+        ``waveform_f64le`` capture whose byte length is not sample_count×8
+        (spec §7) is refused before the primary is published, as the
+        gateway's writer refuses it at finalise and its bridge re-checks the
+        published length (G4). The gateway fixes sample_count when the
+        capture opens; standalone receives it only here, so this checks the
+        staged bytes against the finalise metadata. The capture stays open:
+        append the missing bytes and finalise again, or abort. Standalone does not
+        apply the gateway's G2 (the descriptor's ``capture_limits``) or G3
+        (the host's storage quota): both need the host.
         """
         if self._terminal is not None:
             raise ValueError(
@@ -408,6 +416,7 @@ class StandaloneCaptureWriter:
             raise ValueError(
                 "renderings must be a list of {file, byte_length, sha256} objects"
             )
+        waveform = _waveform_fields(metadata) if fmt == "waveform_f64le" else {}
         event = self._event
         if event is None:  # pragma: no cover — an open capture always has one
             raise RuntimeError("writer invariant violated: open capture without event")
@@ -440,6 +449,14 @@ class StandaloneCaptureWriter:
                 "zero-byte finalise refused: failed/incomplete captures are "
                 "aborted, not published as complete"
             )
+        if waveform and total != waveform["sample_count"] * 8:
+            temp.unlink(missing_ok=True)
+            declared = waveform["sample_count"]
+            raise ValueError(
+                f"waveform_f64le capture {capture_id!r}: {total} bytes staged but "
+                f"sample_count {declared} declares {declared * 8} (spec §7: byte "
+                "length equals sample_count×8)"
+            )
         os.replace(temp, primary)
         digest = hasher.hexdigest()
         manifest: dict[str, Any] = {
@@ -450,8 +467,7 @@ class StandaloneCaptureWriter:
             "sha256": digest,
             "started_at": started_at,
         }
-        if fmt == "waveform_f64le":
-            manifest.update(_waveform_fields(metadata))
+        manifest.update(waveform)
         manifest["x-standalone-state"] = "finalised"
         manifest["x-standalone-manifest-version"] = 1
         if renderings is not None:
