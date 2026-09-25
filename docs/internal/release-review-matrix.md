@@ -11,7 +11,7 @@
 |---|---------|---------------|---------------|
 | 1 | README version stamp (baseline line) | `pyproject.toml` `version` | previous release number |
 | 2 | Website hero status line (`website/index.html`, hero badges) | `pyproject.toml` + `OTDP_VERSION` / `ADAPTER_API_VERSION` in `src/benchweave_sdk/__init__.py` | previous SDK number, OTDP number behind the constant |
-| 3 | Website docs-version selector (options + `(latest)` label) | `great-docs.yml` `versions` list + git tags | previous `(latest)` label, missing prior-release option |
+| 3 | Website docs-version selector (options + `(latest)` label) — TWO surfaces: the `website/index.html` static selector AND the `great-docs.yml` `versions` list (retro 2026-09-25 R3: a phase-2 that edits only the yml fails CI Docs — the verifier reads the static selector's label) | `great-docs.yml` `versions` list + `website/index.html` selector options + git tags | previous `(latest)` label on either surface, missing prior-release option |
 | 4 | Website compatibility tagline | `standards-lock.json` `compatibility.main_project` floor + the release's tested pair | previous SDK number against the gateway floor |
 | 5 | Website standards badges (interface / plugin-ui / plugin-ui-preview) | `standards-lock.json` `standards[].version` per id | badge behind the vendored contract version |
 | 6 | `great-docs.yml` `versions` list | git tags | new tag absent, previous release still `latest: true` |
