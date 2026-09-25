@@ -225,10 +225,16 @@ class SerialStandaloneHost:
             raise ValueError("data must be bytes")
         self._live(context)
         if kind != "stream_receive":
+            data = transaction["data"]
             try:
-                await asyncio.to_thread(self._port.write, transaction["data"])
+                sent = await asyncio.to_thread(self._port.write, data)
             except OSError as error:
                 raise ConnectionError(f"serial write failed: {error}") from error
+            # pyserial reports a short count without raising when a pending write
+            # is cancelled, or under write_timeout=0. None means the port reports
+            # no count (pyserial's own rs485.RS485 and cp2110:// ports).
+            if sent is not None and sent != len(data):
+                raise ConnectionError(f"serial write reported {sent} of {len(data)} bytes")
             if kind == "stream_send":
                 return {}
         return {"data": await self._receive(*receive, context)}
