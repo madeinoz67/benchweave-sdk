@@ -174,6 +174,7 @@ Every preview is labelled `SIMULATED PRESENTATION DATA`. Control interactions cr
 - `conformance`: reusable operation and quiet lifecycle checks, with configurable wall-clock timeouts for cooperative async calls. Authors must add device-specific failure, profile and measurement tests. Use process isolation for blocking code or code that suppresses cancellation.
 - `presentation`: bounded offline validation of presentation resources and complete configuration presets, using the same validator bytes as the gateway.
 - `packaging`: inventory and integrity checks for a prepared bundle, including duplicate/path/symlink rejection. No installation, signing, publication or dependency execution.
+- `capture`: `StandaloneCaptureWriter`, a local `CaptureServices` implementation that publishes capture events under `capture_root()` when no gateway is present. It does not apply the gateway's `capture_limits` or storage quota checks, and nothing imports its captures into a gateway.
 
 ## Compatibility and limits
 

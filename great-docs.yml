@@ -381,9 +381,10 @@ user_guide:
 #     contents:
 #       - helper_func
 #       - another_func
-# The rendered reference covers all six public surfaces the README
+# The rendered reference covers all seven public surfaces the README
 # advertises (interfaces, testing, conformance, validation, presentation,
-# packaging) — previously only the three re-exported protocols appeared.
+# packaging, capture) — previously only the three re-exported protocols
+# appeared.
 # tests/test_docs_reference.py regenerates this list from the modules: every
 # entry must resolve, and every public name must be listed here or excluded
 # there with a reason.
@@ -431,6 +432,11 @@ reference:
     contents:
       - packaging.inventory
       - packaging.verify_inventory
+  - title: Standalone capture
+    desc: The three capture methods on a local filesystem, for work without a gateway
+    contents:
+      - capture.capture_root
+      - capture.StandaloneCaptureWriter
 
 # Inline Methods
 # --------------
