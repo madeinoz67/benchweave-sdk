@@ -8,7 +8,15 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 
-SURFACES = ("interfaces", "testing", "conformance", "validation", "presentation", "packaging")
+SURFACES = (
+    "interfaces",
+    "testing",
+    "conformance",
+    "validation",
+    "presentation",
+    "packaging",
+    "capture",
+)
 
 # Public names deliberately left out of the rendered reference, each with its reason.
 EXCLUDED = {

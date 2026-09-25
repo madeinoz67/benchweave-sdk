@@ -10,10 +10,12 @@ filesystem.
   over ``BENCHWEAVE_CAPTURE_DIR`` over ``captures/`` under the working
   directory) and refuses a root inside the installed package tree, where a
   reinstall or upgrade would wipe it and the SDK's own inventory verification
-  refuses unlisted files.
+  refuses unlisted files. A blank ``BENCHWEAVE_CAPTURE_DIR`` and a root that
+  is not a directory are refused too.
 - ``_valid_capture_segment`` enforces the capture_id path-segment rules
   before any filesystem call: one segment of a portable ASCII allowlist,
-  bounded length, no traversal components, no Windows device-name prefixes.
+  bounded length, no traversal components, no trailing dot, no Windows
+  device-name prefixes.
 - ``StandaloneCaptureWriter`` (landing with the lifecycle commits) stages
   chunk appends under ``staging/``, finalises by concatenating them into the
   primary artifact atomically (a temp file in the same directory, then
@@ -67,13 +69,35 @@ def capture_root(explicit: Path | None = None) -> Path:
     package directory — is refused loudly: a reinstall or upgrade wipes it,
     and the SDK's own inventory verification refuses unlisted files, so run
     data does not belong there.
+
+    A relative root (argument or environment value) resolves against the
+    current working directory at the time of the call, that is, when the
+    writer is constructed. A ``BENCHWEAVE_CAPTURE_DIR`` that is set but
+    empty or whitespace-only is refused rather than falling back, and so is
+    a root that exists, or has an ancestor that exists, as something other
+    than a directory. A component that cannot be probed (under a directory
+    the process cannot search) is skipped, not raised.
     """
     if explicit is not None:
         root = Path(explicit)
     else:
         from_environment = os.environ.get(_ENV_CAPTURE_DIR)
+        if from_environment is not None and not from_environment.strip():
+            raise ValueError(
+                f"{_ENV_CAPTURE_DIR} is set but empty or whitespace-only "
+                f"({from_environment!r}); unset it to use captures/ under the "
+                "working directory, or set it to a directory"
+            )
         root = Path(from_environment) if from_environment else Path.cwd() / "captures"
     resolved = root.resolve()
+    # os.path.exists, not Path.exists: on Python 3.13 the latter raises
+    # PermissionError under an unsearchable directory; this returns False.
+    existing = next((path for path in (resolved, *resolved.parents) if os.path.exists(path)), None)
+    if existing is not None and not existing.is_dir():
+        raise ValueError(
+            f"capture root is not a directory: {resolved} ({existing} exists "
+            "and is not a directory)"
+        )
     package_parent = Path(__file__).resolve().parent.parent
     if resolved.is_relative_to(package_parent):
         raise ValueError(
@@ -88,16 +112,20 @@ def capture_root(explicit: Path | None = None) -> Path:
 def _valid_capture_segment(identifier: str) -> bool:
     """The capture_id path-segment rules, checked before any filesystem call.
 
-    One segment of the ASCII allowlist, 1..64 characters, not ``.`` or ``..``,
-    and not a Windows device name by case-insensitive prefix of the first
-    dot-separated component. A hostile or clumsy id can no longer name a
-    directory outside the capture root.
+    One segment of the ASCII allowlist, 1..64 characters, not ending in a
+    dot (which also refuses ``.`` and ``..``), and not a Windows device name
+    by case-insensitive prefix of the first dot-separated component. A
+    hostile or clumsy id can no longer name a directory outside the capture
+    root. Windows strips trailing dots and spaces from a path segment, so
+    ``abc.`` would publish into ``abc`` and ``...`` would name no directory
+    at all; a space is outside the allowlist, and a trailing dot is refused
+    here.
     """
     if not isinstance(identifier, str) or not 0 < len(identifier) <= _MAX_SEGMENT_LENGTH:
         return False
     if any(character not in _SEGMENT_ALPHABET for character in identifier):
         return False
-    if identifier in (".", ".."):
+    if identifier.endswith("."):
         return False
     return identifier.split(".", 1)[0].upper() not in _DEVICE_NAMES
 
@@ -186,9 +214,8 @@ def _write_manifest(event: Path, manifest: dict[str, Any]) -> None:
 def _waveform_fields(metadata: dict[str, Any]) -> dict[str, Any]:
     """Validate the mandatory waveform metadata (corpus ``$defs/captureManifest``
     allOf: ``sample_count``, ``sample_interval_s``, ``unit`` are required when
-    the format is ``waveform_f64le``); presence and shape only — the
-    count×8 rule is spec §7 prose the GATEWAY's G1/G4 enforce, not the
-    standalone writer, which never interprets the bytes it digests."""
+    the format is ``waveform_f64le``); presence and shape only. The count×8
+    rule (spec §7) is checked against the real byte length at finalise."""
     fields: dict[str, Any] = {}
     sample_count = metadata.get("sample_count")
     if type(sample_count) is not int or sample_count < 1:
@@ -328,7 +355,16 @@ class StandaloneCaptureWriter:
         the REAL bytes as they are concatenated into the primary — a temp
         file in the same directory renamed into place, so a crash across
         finalise leaves a ``.tmp`` remnant, never a half-written primary.
-        Nothing is interpreted: the count×8 rule is the gateway's G1/G4.
+        The bytes are never interpreted, but their count is checked: a
+        ``waveform_f64le`` capture whose byte length is not sample_count×8
+        (spec §7) is refused before the primary is published, as the
+        gateway's writer refuses it at finalise and its bridge re-checks the
+        published length (G4). The gateway fixes sample_count when the
+        capture opens; standalone receives it only here, so this checks the
+        staged bytes against the finalise metadata. The capture stays open:
+        append the missing bytes and finalise again, or abort. Standalone does not
+        apply the gateway's G2 (the descriptor's ``capture_limits``) or G3
+        (the host's storage quota): both need the host.
         """
         if self._terminal is not None:
             raise ValueError(
@@ -380,6 +416,7 @@ class StandaloneCaptureWriter:
             raise ValueError(
                 "renderings must be a list of {file, byte_length, sha256} objects"
             )
+        waveform = _waveform_fields(metadata) if fmt == "waveform_f64le" else {}
         event = self._event
         if event is None:  # pragma: no cover — an open capture always has one
             raise RuntimeError("writer invariant violated: open capture without event")
@@ -412,6 +449,14 @@ class StandaloneCaptureWriter:
                 "zero-byte finalise refused: failed/incomplete captures are "
                 "aborted, not published as complete"
             )
+        if waveform and total != waveform["sample_count"] * 8:
+            temp.unlink(missing_ok=True)
+            declared = waveform["sample_count"]
+            raise ValueError(
+                f"waveform_f64le capture {capture_id!r}: {total} bytes staged but "
+                f"sample_count {declared} declares {declared * 8} (spec §7: byte "
+                "length equals sample_count×8)"
+            )
         os.replace(temp, primary)
         digest = hasher.hexdigest()
         manifest: dict[str, Any] = {
@@ -422,8 +467,7 @@ class StandaloneCaptureWriter:
             "sha256": digest,
             "started_at": started_at,
         }
-        if fmt == "waveform_f64le":
-            manifest.update(_waveform_fields(metadata))
+        manifest.update(waveform)
         manifest["x-standalone-state"] = "finalised"
         manifest["x-standalone-manifest-version"] = 1
         if renderings is not None:

@@ -8,9 +8,10 @@ Derivations (from primary sources, not the plan's restatement):
   installed package tree, where the SDK's own inventory verification refuses
   unlisted files".
 - Segment alphabet: the ``safe_resource_path`` allowlist minus the separator
-  (single segment): ``[A-Za-z0-9_.-]``, bounded length, no ``.``/````,
-  Windows device names refused as a case-insensitive prefix of the first
-  dot-separated component (dotted ``nul.json``/``con.txt`` name devices).
+  (single segment): ``[A-Za-z0-9_.-]``, bounded length, no trailing dot
+  (so no ``.``/``..``, and nothing Windows would strip), Windows device
+  names refused as a case-insensitive prefix of the first dot-separated
+  component (dotted ``nul.json``/``con.txt`` name devices).
 - Collision check: NFC-normalize-then-casefold against existing event
   directories (so ``CAPTURE-1`` collides with ``capture-1``), and ``mkdir``
   EEXIST from a concurrent process converts to a prefixed refusal.
@@ -22,6 +23,8 @@ Derivations (from primary sources, not the plan's restatement):
 from __future__ import annotations
 
 import asyncio
+import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -70,6 +73,68 @@ def test_capture_root_precedence_explicit_env_default(
     assert capture.capture_root() == (tmp_path / "captures").resolve()
 
 
+@pytest.mark.parametrize("value", ["", "   ", "\t"])
+def test_an_empty_or_whitespace_capture_dir_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    """A set-but-blank BENCHWEAVE_CAPTURE_DIR is a configuration mistake:
+    an empty value fell back silently to captures/ under the cwd, and a
+    whitespace value named the cwd itself on Windows (trailing spaces are
+    stripped) or a whitespace-named directory on POSIX. Refused, naming the
+    variable."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("BENCHWEAVE_CAPTURE_DIR", value)
+    with pytest.raises(ValueError, match="BENCHWEAVE_CAPTURE_DIR is set but empty"):
+        capture.capture_root()
+    with pytest.raises(ValueError, match="BENCHWEAVE_CAPTURE_DIR is set but empty"):
+        capture.StandaloneCaptureWriter()
+    # An explicit root still wins over the blank variable.
+    assert capture.capture_root(tmp_path / "explicit") == (tmp_path / "explicit").resolve()
+
+
+def test_a_relative_capture_dir_resolves_against_the_working_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("BENCHWEAVE_CAPTURE_DIR", "bench/runs")
+    assert capture.capture_root() == (tmp_path / "bench" / "runs").resolve()
+
+
+def test_a_capture_root_that_is_not_a_directory_is_refused(tmp_path: Path) -> None:
+    """A root (or an ancestor of it) that exists as a plain file raised a raw
+    NotADirectoryError at the first append on POSIX, and on Windows the
+    misleading "created concurrently" refusal. Refused at construction."""
+    plain = tmp_path / "plain-file"
+    plain.write_bytes(b"not a directory")
+    for root in (plain, plain / "captures"):
+        with pytest.raises(ValueError, match="capture root is not a directory"):
+            capture.capture_root(root)
+        with pytest.raises(ValueError, match="capture root is not a directory"):
+            capture.StandaloneCaptureWriter(root)
+    assert plain.read_bytes() == b"not a directory"  # left untouched
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32" or os.geteuid() == 0,
+    reason="needs POSIX permission bits and a non-root user",
+)
+def test_a_root_under_an_unsearchable_directory_still_constructs(tmp_path: Path) -> None:
+    """The non-directory check walks the root's ancestors. On Python 3.13
+    Path.exists() raises PermissionError for a path under a directory that
+    cannot be searched, so that walk raised a raw OSError at construction
+    where the writer used to construct. An unprobeable component is skipped,
+    as it was before the check existed."""
+    locked = tmp_path / "locked"
+    (locked / "inner").mkdir(parents=True)
+    root = locked / "inner" / "captures"
+    locked.chmod(0)
+    try:
+        assert capture.capture_root(root) == root.resolve()
+        capture.StandaloneCaptureWriter(root)
+    finally:
+        locked.chmod(0o700)
+
+
 def test_capture_root_refuses_the_installed_package_tree(tmp_path: Path) -> None:
     """The hazard (Decision 9 + B14): a reinstall/upgrade wipes site-packages,
     and the SDK's inventory verification refuses unlisted files — run data
@@ -104,6 +169,10 @@ UNSAFE_IDS = (
     "lpt9.data",
     "aux",
     "a" * 65,  # bounded length: 65 of a 64-char ceiling
+    "abc.",  # trailing dot: Windows strips it, so 'abc.' would publish into 'abc'
+    "...",  # all dots: Windows strips them to nothing (raw FileNotFoundError)
+    "a...",
+    "abc ",  # trailing space: Windows strips it too (refused by the alphabet)
 )
 
 
@@ -188,6 +257,20 @@ def test_unsafe_id_is_refused_at_append_before_any_filesystem_call(
     assert not (tmp_path / "captures").exists()  # no root, no event, no staging
 
 
+@pytest.mark.parametrize("identifier", ["abc.", "...", "a..."])
+def test_a_trailing_dot_id_is_refused_at_append_before_any_filesystem_call(
+    tmp_path: Path, identifier: str
+) -> None:
+    """Windows strips trailing dots from a path segment: 'abc.' published
+    into the directory 'abc' under a manifest naming 'abc.', and '...' or
+    'a...' raised a raw FileNotFoundError after creating an orphan
+    directory. The segment gate refuses the shape as a string, on every OS."""
+    writer = _writer(tmp_path)
+    with pytest.raises(ValueError, match="unsafe capture_id segment"):
+        asyncio.run(writer.artifact_append(identifier, b"\x00" * 8, Context()))
+    assert not (tmp_path / "captures").exists()  # no root, no event, no staging
+
+
 def test_empty_append_is_refused(tmp_path: Path) -> None:
     writer = _writer(tmp_path)
     with pytest.raises(ValueError, match="empty append"):
@@ -235,7 +318,7 @@ def test_case_folded_collision_is_refused_at_append(tmp_path: Path) -> None:
 _WAVEFORM = {
     "format": "waveform_f64le",
     "started_at": "2026-09-22T00:00:00Z",
-    "sample_count": 3,
+    "sample_count": 1,  # one f64 sample: the 8 bytes most tests append
     "sample_interval_s": 0.001,
     "unit": "V",
 }
@@ -267,7 +350,7 @@ def test_finalise_digest_is_recomputed_over_the_published_file(tmp_path: Path) -
     writer = _writer(tmp_path)
     chunks = [b"\x00" * 8, b"\x01" * 8, b"\x02" * 8]
     asyncio.run(_append(writer, "cap-1", chunks))
-    manifest = _finalise(writer, "cap-1", dict(_WAVEFORM))
+    manifest = _finalise(writer, "cap-1", dict(_WAVEFORM, sample_count=3))
     primary = tmp_path / "captures" / "cap-1" / "cap-1.f64"
     published = primary.read_bytes()
     digest = hashlib.sha256(published).hexdigest()  # over the FILE, not the buffers
@@ -283,7 +366,7 @@ def test_finalise_manifest_json_matches_the_returned_manifest(tmp_path: Path) ->
     import json as json_module
 
     writer = _writer(tmp_path)
-    asyncio.run(_append(writer, "cap-1", [b"data-bytes"]))
+    asyncio.run(_append(writer, "cap-1", [b"\x00" * 8]))
     manifest = _finalise(writer, "cap-1", dict(_WAVEFORM, sample_count=1))
     written = json_module.loads(
         (tmp_path / "captures" / "cap-1" / "manifest.json").read_text()
@@ -297,9 +380,9 @@ def test_core_manifest_contains_the_corpus_required_keys_and_validates(
     """R9 (B10 form): CONTAINS, not equality — ``x-standalone-*`` extension
     keys are schema-legal beside the corpus-required set, and a core-format
     manifest must validate against ``$defs/captureManifest`` itself. The
-    writer enforces presence/shape only; the count×8 rule is spec §7 prose
-    enforced by the GATEWAY's G1/G4 — the standalone writer names, digests
-    and lengths bytes, it never interprets them (Decision 9)."""
+    capture is one sample of 8 bytes: the writer enforces the spec §7
+    count×8 rule as the gateway's writer does, so a manifest that
+    validates here also has a byte_length the gateway would accept."""
     import jsonschema
 
     schema = _capture_manifest_def()
@@ -379,6 +462,46 @@ def test_a_declared_extension_format_publishes_with_its_extension(
         unknown, "cap-x", {"format": "custom-format", "started_at": "2026-09-22T00:00:00Z"}
     )
     assert (tmp_path / "custom" / "captures" / "cap-x" / "cap-x.data").exists()
+
+
+@pytest.mark.parametrize(
+    ("chunks", "sample_count"),
+    [([b"\x00" * 8], 3), ([b"\x00" * 8, b"\x01" * 8], 1), ([b"\x00" * 12], 1)],
+    ids=["short", "long", "partial-sample"],
+)
+def test_a_waveform_whose_byte_length_is_not_sample_count_times_eight_is_refused(
+    tmp_path: Path, chunks: list[bytes], sample_count: int
+) -> None:
+    """Spec §7: a waveform_f64le byte length equals sample_count×8. The
+    gateway's writer refuses a mismatch at finalise and its bridge re-checks
+    the published length (G4); the rule is mode-independent, so standalone
+    refuses it too. Nothing is published and the capture stays open. As in
+    the gateway, where sample_count is fixed at open, a short capture is
+    rescued by appending the missing bytes and finalising with the same
+    sample_count, never by relabelling it; an over-long one can only be
+    aborted."""
+    writer = _writer(tmp_path)
+    asyncio.run(_append(writer, "cap-1", chunks))
+    staged = sum(len(chunk) for chunk in chunks)
+    with pytest.raises(
+        ValueError,
+        match=rf"{staged} bytes staged but sample_count {sample_count} declares "
+        rf"{sample_count * 8}",
+    ):
+        _finalise(writer, "cap-1", dict(_WAVEFORM, sample_count=sample_count))
+    event = tmp_path / "captures" / "cap-1"
+    assert not (event / "manifest.json").exists()  # not published
+    assert not any(event.glob("cap-1.f64*"))  # no primary, no .tmp remnant
+    assert (event / "staging").is_dir()  # still retryable
+    missing = sample_count * 8 - staged
+    if missing > 0:
+        asyncio.run(_append(writer, "cap-1", [b"\x02" * missing]))
+        manifest = _finalise(writer, "cap-1", dict(_WAVEFORM, sample_count=sample_count))
+        assert manifest["byte_length"] == sample_count * 8
+    else:
+        asyncio.run(writer.artifact_abort("cap-1"))
+        assert not (event / "staging").exists()
+        assert not (event / "manifest.json").exists()
 
 
 def test_finalise_requires_the_mandatory_waveform_metadata(tmp_path: Path) -> None:
@@ -496,7 +619,7 @@ def test_a_crash_across_finalise_never_leaves_a_half_written_primary(
 
     monkeypatch.setattr(capture, "_write_manifest", exploding_manifest)
     with pytest.raises(RuntimeError, match="simulated crash"):
-        _finalise(writer, "cap-1", dict(_WAVEFORM))
+        _finalise(writer, "cap-1", dict(_WAVEFORM, sample_count=2))
     event = tmp_path / "captures" / "cap-1"
     assert (event / "cap-1.f64").read_bytes() == b"".join(chunks)  # complete
     assert not (event / "manifest.json").exists()  # not published
