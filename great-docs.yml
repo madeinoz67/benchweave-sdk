@@ -396,6 +396,7 @@ reference:
       - HostServices
       - OperationContext
       - interfaces.CaptureServices
+      - interfaces.DatasetServices
   - title: Testing doubles
     desc: Deterministic, hardware-free host and context doubles
     contents:

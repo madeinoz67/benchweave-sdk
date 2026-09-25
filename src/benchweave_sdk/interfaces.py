@@ -1,7 +1,8 @@
 """Structural contracts, not an implementation or permission grant.
 
-Optional capture methods are separated from the base transport and evidence services.
-Profile/dataset extensions must follow the pinned extension contract.
+Optional capture and dataset methods are separated from the base transport
+and evidence services. Profile/dataset extensions must follow the pinned
+extension contract.
 """
 
 from __future__ import annotations
@@ -23,8 +24,11 @@ class OperationContext(Protocol):
         Identity of the running operation; request and result envelopes
         carry the same value.
     dataset_id
-        Optional dataset correlation id, or ``None`` when the operation
-        is not part of a dataset.
+        Host-reserved dataset correlation id, or ``None``. For
+        data-producing invoke dispatches the host mints one id per
+        operation and provides it here; a manifest published through
+        ``DatasetServices.dataset_publish`` must use it, and a null
+        value forbids publishing a new dataset.
     deadline_monotonic
         Deadline on the host's monotonic clock in seconds. Once
         ``HostServices.monotonic()`` reaches it, the operation must fail
@@ -146,6 +150,182 @@ class CaptureServices(HostServices, Protocol):
 
     async def artifact_abort(self, capture_id: str) -> None:
         """Discard an in-progress capture; implementations should accept unknown ids."""
+
+
+class DatasetServices(HostServices, Protocol):
+    """Host services extended with the dataset and payload surface.
+
+    The pinned extension contract keeps the dataset services apart from
+    the base transport: publishing or looking up a dataset grants no
+    device I/O, and every member reuses the operation context's
+    deadlines, cancellation, exception classes and scoped ownership. No
+    implementation of this twelve-member protocol ships in this SDK yet;
+    the gateway's dataset path is the intended first implementation, and
+    a standalone hostless writer (the capture-writer parity) remains
+    future work — the protocol exists so both implement one structural
+    shape. A host without dataset support should hand adapters plain
+    :class:`HostServices`.
+
+    See Also
+    --------
+    HostServices : the base transport, clock, and evidence surface.
+    CaptureServices : the capture extension over the same base.
+    """
+
+    async def dataset_publish(
+        self, manifest: dict[str, Any], context: OperationContext
+    ) -> dict[str, Any]:
+        """Validate and admit one measurement manifest for this operation.
+
+        The host validates the manifest against the pinned measurement
+        schema, its referenced payloads, the corpus's dataset checks,
+        ownership and quotas, and returns the immutable admitted
+        manifest. The submitted ``dataset_id`` is a host-reserved id
+        derived from the current operation/acquisition — the adapter
+        never chooses it: the manifest must carry ``context.dataset_id``,
+        and a null value forbids publishing a new dataset. An idempotent
+        repeated fetch may return the already published manifest for the
+        acquisition. Inline datasets also go through this method; small
+        data is not exempt from semantic validation.
+
+        Parameters
+        ----------
+        manifest
+            The measurement manifest to validate and admit.
+        context
+            Identity, deadline, and cancellation state; carries the
+            host-minted ``dataset_id``.
+
+        Returns
+        -------
+        dict
+            The immutable admitted manifest.
+        """
+
+    async def dataset_lookup(self, dataset_id: str, context: OperationContext) -> dict[str, Any]:
+        """Return the validated admitted manifest for ``dataset_id``.
+
+        Only a manifest the current principal is authorised to use is
+        returned; a caller-supplied manifest or URL is never trusted.
+        Upload actions use this to inspect a dataset's variables,
+        shapes, units and quota requirements before reading any payload.
+
+        Parameters
+        ----------
+        dataset_id
+            The host-reserved dataset id to look up.
+        context
+            Identity, deadline, and cancellation state for the lookup.
+
+        Returns
+        -------
+        dict
+            The validated admitted manifest.
+        """
+
+    async def artifact_read(
+        self, artifact_id: str, offset: int, length: int, context: OperationContext
+    ) -> bytes:
+        """Read a bounded window of an authorised input artifact.
+
+        ``length`` must be positive and ``offset`` nonnegative; the read
+        cannot go beyond the artifact's recorded length, cannot access
+        paths or arbitrary artifact ids, and requires the
+        ``artifact_reader`` permission — only explicitly approved
+        data-consuming integrations receive that permission.
+
+        Parameters
+        ----------
+        artifact_id
+            The artifact to read.
+        offset
+            Nonnegative byte offset of the window.
+        length
+            Positive bounded length to read.
+        context
+            Identity, deadline, and cancellation state.
+
+        Returns
+        -------
+        bytes
+            The requested window of the artifact.
+        """
+
+    async def payload_create(
+        self, encoding: str, byte_limit: int, context: OperationContext
+    ) -> str:
+        """Reserve a bounded payload artifact and return its staging id.
+
+        Requires the ``artifact_writer`` permission. The reservation
+        belongs to the current operation/acquisition, ``encoding`` must
+        be one the host recognises, and ``byte_limit`` bounds the
+        artifact's size.
+
+        Parameters
+        ----------
+        encoding
+            A recognised payload encoding.
+        byte_limit
+            Upper bound on the payload's size in bytes.
+        context
+            Identity, deadline, and cancellation state.
+
+        Returns
+        -------
+        str
+            The host-minted staging id of the reserved payload.
+        """
+
+    async def payload_append(
+        self, artifact_id: str, data: bytes, context: OperationContext
+    ) -> None:
+        """Append ``data`` to a payload this operation reserved.
+
+        Requires the ``artifact_writer`` permission; the reservation
+        made by ``payload_create`` is enforced on every append.
+
+        Parameters
+        ----------
+        artifact_id
+            The staging id returned by ``payload_create``.
+        data
+            The bytes to append.
+        context
+            Identity, deadline, and cancellation state.
+        """
+
+    async def payload_finalise(
+        self, artifact_id: str, context: OperationContext
+    ) -> dict[str, Any]:
+        """Seal a payload and return the host-computed artifact object.
+
+        Requires the ``artifact_writer`` permission. The host computes
+        and returns the artifact's ID, encoding, byte length and SHA-256
+        over the real bytes; ``dataset_publish`` then validates
+        element/shape meaning.
+
+        Parameters
+        ----------
+        artifact_id
+            The staging id returned by ``payload_create``.
+        context
+            Identity, deadline, and cancellation state.
+
+        Returns
+        -------
+        dict
+            The artifact object: ID, encoding, byte length and SHA-256.
+        """
+
+    async def payload_abort(self, artifact_id: str) -> None:
+        """Discard an in-progress payload; idempotent local cleanup.
+
+        Abort remains permitted after the deadline, and no partial
+        unpublished artifact becomes a successful dataset automatically.
+        Unlike the other members this carries no operation context:
+        cleanup outlives the operation.
+        """
+
 
 
 class Adapter(Protocol):
