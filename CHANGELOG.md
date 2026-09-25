@@ -2,6 +2,39 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.0] - 2026-09-25
+
+### Bug Fixes
+
+- Preserve operator-authored compatibility.notes through sync
+- Regenerate compatibility.sdk = 0.2.0 — the certified version (gateway #187)
+
+### Documentation
+
+- #170 compat-notes preservation design record
+- Fold governor findings — both rider surfaces, deferral reopen triggers, post-rebase base note, STD-6 anchor
+- Fold refute findings — halt-narrowing sentence in the rider, value-verbatim precision
+- Correct row 8 to the #187 fork (a) ruling — compatibility.sdk is the certified version (gateway #187) (#51)
+- Correct row 8 to the #187 fork (a) ruling — compatibility.sdk is the certified version (gateway #187)
+- A short serial write is a connection error; pin the evidence fold (#198)
+
+### Miscellaneous
+
+- Encode the 2026-09-24 discipline rows R1-R5 (gateway #181)
+
+### Testing
+
+- Pin compat-notes survival across resync (RED)
+
+### Standards
+
+- Vendor execution 0.2.0 — the #176 promotion sync
+
+
+### Contributors
+
+- Platima (1 commit)
+- Stephen Eaton (10 commits)
 ## [0.2.0] - 2026-09-23
 
 ### Bug Fixes
