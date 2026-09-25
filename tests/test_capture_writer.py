@@ -8,9 +8,10 @@ Derivations (from primary sources, not the plan's restatement):
   installed package tree, where the SDK's own inventory verification refuses
   unlisted files".
 - Segment alphabet: the ``safe_resource_path`` allowlist minus the separator
-  (single segment): ``[A-Za-z0-9_.-]``, bounded length, no ``.``/````,
-  Windows device names refused as a case-insensitive prefix of the first
-  dot-separated component (dotted ``nul.json``/``con.txt`` name devices).
+  (single segment): ``[A-Za-z0-9_.-]``, bounded length, no trailing dot
+  (so no ``.``/``..``, and nothing Windows would strip), Windows device
+  names refused as a case-insensitive prefix of the first dot-separated
+  component (dotted ``nul.json``/``con.txt`` name devices).
 - Collision check: NFC-normalize-then-casefold against existing event
   directories (so ``CAPTURE-1`` collides with ``capture-1``), and ``mkdir``
   EEXIST from a concurrent process converts to a prefixed refusal.
@@ -104,6 +105,10 @@ UNSAFE_IDS = (
     "lpt9.data",
     "aux",
     "a" * 65,  # bounded length: 65 of a 64-char ceiling
+    "abc.",  # trailing dot: Windows strips it, so 'abc.' would publish into 'abc'
+    "...",  # all dots: Windows strips them to nothing (raw FileNotFoundError)
+    "a...",
+    "abc ",  # trailing space: Windows strips it too (refused by the alphabet)
 )
 
 
@@ -185,6 +190,20 @@ def test_unsafe_id_is_refused_at_append_before_any_filesystem_call(
         asyncio.run(writer.artifact_append("nul.json", b"data", Context()))
     with pytest.raises(ValueError, match="unsafe capture_id segment"):
         asyncio.run(writer.artifact_append("../escape", b"data", Context()))
+    assert not (tmp_path / "captures").exists()  # no root, no event, no staging
+
+
+@pytest.mark.parametrize("identifier", ["abc.", "...", "a..."])
+def test_a_trailing_dot_id_is_refused_at_append_before_any_filesystem_call(
+    tmp_path: Path, identifier: str
+) -> None:
+    """Windows strips trailing dots from a path segment: 'abc.' published
+    into the directory 'abc' under a manifest naming 'abc.', and '...' or
+    'a...' raised a raw FileNotFoundError after creating an orphan
+    directory. The segment gate refuses the shape as a string, on every OS."""
+    writer = _writer(tmp_path)
+    with pytest.raises(ValueError, match="unsafe capture_id segment"):
+        asyncio.run(writer.artifact_append(identifier, b"\x00" * 8, Context()))
     assert not (tmp_path / "captures").exists()  # no root, no event, no staging
 
 

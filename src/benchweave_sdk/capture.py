@@ -13,7 +13,8 @@ filesystem.
   refuses unlisted files.
 - ``_valid_capture_segment`` enforces the capture_id path-segment rules
   before any filesystem call: one segment of a portable ASCII allowlist,
-  bounded length, no traversal components, no Windows device-name prefixes.
+  bounded length, no traversal components, no trailing dot, no Windows
+  device-name prefixes.
 - ``StandaloneCaptureWriter`` (landing with the lifecycle commits) stages
   chunk appends under ``staging/``, finalises by concatenating them into the
   primary artifact atomically (a temp file in the same directory, then
@@ -88,16 +89,20 @@ def capture_root(explicit: Path | None = None) -> Path:
 def _valid_capture_segment(identifier: str) -> bool:
     """The capture_id path-segment rules, checked before any filesystem call.
 
-    One segment of the ASCII allowlist, 1..64 characters, not ``.`` or ``..``,
-    and not a Windows device name by case-insensitive prefix of the first
-    dot-separated component. A hostile or clumsy id can no longer name a
-    directory outside the capture root.
+    One segment of the ASCII allowlist, 1..64 characters, not ending in a
+    dot (which also refuses ``.`` and ``..``), and not a Windows device name
+    by case-insensitive prefix of the first dot-separated component. A
+    hostile or clumsy id can no longer name a directory outside the capture
+    root. Windows strips trailing dots and spaces from a path segment, so
+    ``abc.`` would publish into ``abc`` and ``...`` would name no directory
+    at all; a space is outside the allowlist, and a trailing dot is refused
+    here.
     """
     if not isinstance(identifier, str) or not 0 < len(identifier) <= _MAX_SEGMENT_LENGTH:
         return False
     if any(character not in _SEGMENT_ALPHABET for character in identifier):
         return False
-    if identifier in (".", ".."):
+    if identifier.endswith("."):
         return False
     return identifier.split(".", 1)[0].upper() not in _DEVICE_NAMES
 
