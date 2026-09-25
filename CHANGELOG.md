@@ -17,10 +17,14 @@ All notable changes to this project will be documented in this file.
 - Correct row 8 to the #187 fork (a) ruling — compatibility.sdk is the certified version (gateway #187) (#51)
 - Correct row 8 to the #187 fork (a) ruling — compatibility.sdk is the certified version (gateway #187)
 - A short serial write is a connection error; pin the evidence fold (#198)
+- Release-review v0.3.0 — surface walk + matrix record
+- V0.3.0 latest + v0.2.0 prior in the selector (verifier fix)
 
 ### Miscellaneous
 
 - Encode the 2026-09-24 discipline rows R1-R5 (gateway #181)
+- Sync gateway corpus — compatibility.sdk certified for 0.3.0 (version-only delta)
+- Register v0.3.0 — the tag's own bucket (two-phase, phase 2)
 
 ### Testing
 
@@ -34,7 +38,7 @@ All notable changes to this project will be documented in this file.
 ### Contributors
 
 - Platima (1 commit)
-- Stephen Eaton (10 commits)
+- Stephen Eaton (14 commits)
 ## [0.2.0] - 2026-09-23
 
 ### Bug Fixes
