@@ -157,8 +157,9 @@ class DatasetServices(HostServices, Protocol):
 
     The pinned extension contract keeps the dataset services apart from
     the base transport: publishing or looking up a dataset grants no
-    device I/O, and every member reuses the operation context's
-    deadlines, cancellation, exception classes and scoped ownership. No
+    device I/O, and every context-bound member reuses the operation
+    context's deadlines, cancellation, exception classes and scoped
+    ownership. No
     implementation of this twelve-member protocol ships in this SDK yet;
     the gateway's dataset path is the intended first implementation, and
     a standalone hostless writer (the capture-writer parity) remains

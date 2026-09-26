@@ -78,6 +78,11 @@ def test_the_docstring_is_honest_that_nothing_implements_the_protocol_yet() -> N
     assert "No implementation" in doc
     # The protocol must not borrow the capture writer's claim.
     assert "StandaloneCaptureWriter implements" not in doc
+    # The NIT-1 honesty fix, pinned: payload_abort carries no context and
+    # survives the deadline, so only the context-bound members reuse the
+    # context machinery — the docstring must not overstate the reuse.
+    assert "every context-bound member" in doc
+    assert "every member reuses" not in doc
 
 
 def test_dataset_publish_docstring_carries_the_corpus_obligations() -> None:
