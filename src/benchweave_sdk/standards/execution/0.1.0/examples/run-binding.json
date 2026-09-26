@@ -1,0 +1,38 @@
+{
+  "contract_version": "0.1.0",
+  "request_id": "synthetic-request",
+  "procedure": {
+    "id": "synthetic-voltage-check",
+    "version": "0.1.0",
+    "sha256": "64ac82e02f0e13412337fc1bd3503cea1c952ee9a31e5e50214bc4677da3381a"
+  },
+  "bench": {
+    "id": "synthetic-bench",
+    "version": "0.1.0",
+    "sha256": "d67d9b254c30ed006f90f4d5fa7c5f7ac1f638bbf21481e2487f878b8030d952"
+  },
+  "policy": {
+    "id": "synthetic-policy",
+    "version": "0.1.0",
+    "sha256": "73454794f991f14b80e0caa396a9e8a5b388b17e806145402e6531c7dcc7655a"
+  },
+  "package_lock": {
+    "id": "synthetic-package-lock",
+    "version": "0.1.0",
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "commissioning": {
+    "id": "synthetic-commissioning",
+    "version": "0.1.0",
+    "sha256": "f13a2195929e4b5f34347bbe45a7677f9c6ac7883d16242bd75e2bfc0e4176df"
+  },
+  "bindings": [
+    {
+      "role": "supply",
+      "device_id": "psu",
+      "channels": {
+        "output": "ch1"
+      }
+    }
+  ]
+}
