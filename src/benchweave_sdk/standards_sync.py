@@ -84,6 +84,13 @@ def sync(bundle: Path | None, sdk_root: Path, *, check_only: bool = False) -> Sy
         pair: {path: hashlib.sha256(raw).hexdigest() for path, raw in files.items()}
         for pair, files in payloads.items()
     }
+    # F5 (#215): the succession branch may consume only the id's PRIOR
+    # ACTIVE row — never an arbitrary remaining same-id row. Under
+    # multi-version serving a range-narrowing train leaves the old active
+    # row carried (exact-matched above) while a DIFFERENT same-id row drops
+    # out of the carried set; consuming that row silently laundered the
+    # drop out of the report.
+    prior_active = _prior_active_versions(lock)
     added: list[str] = []
     changed: list[str] = []
     deprecated: list[str] = []
@@ -93,12 +100,16 @@ def sync(bundle: Path | None, sdk_root: Path, *, check_only: bool = False) -> Sy
         prior = previous.pop(pair, None)
         if prior is None and standard.get("active") is not False:
             # Active succession (issue #203 slice 1): the id's active row
-            # moved versions — a CHANGED row (the one same-id prior row it
-            # supersedes is consumed here), not a removed-plus-added pair. A
-            # non-active new version (a second served version) is an ADD.
-            successors = [other for other in list(previous) if other[0] == pair[0]]
-            if len(successors) == 1:
-                previous.pop(successors[0])
+            # moved versions — a CHANGED row (the prior ACTIVE row it
+            # supersedes is consumed here), not a removed-plus-added pair.
+            # A non-active new version (a second served version) is an ADD;
+            # a same-id row that merely left the carried set is a REMOVED,
+            # reported below even when the active row also moved.
+            successor = (
+                (pair[0], prior_active[pair[0]]) if pair[0] in prior_active else None
+            )
+            if successor is not None and successor in previous:
+                previous.pop(successor)
                 changed.append(label)
                 if standard["status"] == "deprecated":
                     deprecated.append(label)
@@ -587,6 +598,44 @@ def _preserved_notes(sdk_root: Path) -> str | None:
         return None
     notes = compatibility.get("notes")
     return notes if isinstance(notes, str) else None
+
+
+def _version_sort_key(version: str) -> tuple[int, ...]:
+    """Numeric ordering for row versions; an unparsable one sorts lowest.
+
+    A hand-built manifest may carry a version that does not parse (the
+    writer does not validate version shape); classification must not
+    crash on it (#215 fix F5's helper).
+    """
+    try:
+        return tuple(int(part) for part in version.split("."))
+    except ValueError:
+        return (-1,)
+
+
+def _prior_active_versions(lock: dict[str, Any]) -> dict[str, str]:
+    """Per id, the version of the prior lock's ACTIVE row.
+
+    The marked row when the lock marks one (every lock this writer
+    produces); otherwise the highest same-id version — the
+    pre-multi-version single-row shape never marked, and a hand-built
+    synthetic bundle may carry several unmarked rows. Multiple marked rows
+    are a malformed lock; the newest is taken rather than crashing
+    classification (the check lane owns refusing the lock itself).
+    """
+    marked: dict[str, list[str]] = {}
+    every: dict[str, list[str]] = {}
+    for row in lock.get("standards", []):
+        identifier = str(row.get("id"))
+        version = str(row.get("version"))
+        every.setdefault(identifier, []).append(version)
+        if row.get("active") is True:
+            marked.setdefault(identifier, []).append(version)
+    newest: dict[str, str] = {}
+    for identifier, versions in every.items():
+        pool = marked.get(identifier) or versions
+        newest[identifier] = max(pool, key=_version_sort_key)
+    return newest
 
 
 def _bump_class(prior: str, current: str) -> str:

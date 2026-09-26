@@ -566,3 +566,156 @@ def test_a_malformed_compatibility_block_is_a_lock_invalid_refusal(
         sync(bundle, sdk)
     assert (sdk / "standards-lock.json").read_bytes() == before, "refusal before any write"
 
+
+# --- #215 fix wave: the bump-class gate is pinned; narrowing reports its drops. ---
+
+
+def _committed_policy() -> dict[str, Any]:
+    lock = json.loads((REPO / "standards-lock.json").read_bytes())
+    policy = lock.get("dependency_policy")
+    assert isinstance(policy, dict), "the committed lock mirrors the policy block"
+    return policy
+
+
+def _with_policy(bundle: Path) -> None:
+    """Give the synthetic bundle the committed lock's policy mirror.
+
+    The real export carries ``dependency_policy`` verbatim; the synthetic
+    rebuild does not. The bump-class gate judges only policy-bearing bundles
+    (a legacy bundle has nothing to judge), so the F4 tests need it present.
+    """
+    document = _manifest(bundle)
+    document["dependency_policy"] = _committed_policy()
+    _rewrite_manifest(bundle, document)
+
+
+def _versioned_sdk(tmp_path: Path, version: str) -> Path:
+    """A sync target whose pyproject names an SDK version (the gate's anchor)."""
+    sdk = tmp_path / "sdk"
+    (sdk / "src/benchweave_sdk").mkdir(parents=True)
+    (sdk / "src/benchweave_sdk/__init__.py").write_text("")
+    (sdk / "pyproject.toml").write_text(
+        f'[project]\nname = "benchweave-sdk"\nversion = "{version}"\n', encoding="utf-8"
+    )
+    return sdk
+
+
+def test_carried_set_change_without_an_sdk_bump_is_refused(tmp_path: Path) -> None:
+    """F4: the two-sided gate has teeth. A carried-set change inside an
+    UNCHANGED declared range with an UNMOVED SDK version refuses
+    ``sdk_bump_class_invalid:`` — one SDK version never covers two served
+    sets (owner Q8). The change is the design's own PATCH-class case: the
+    served set GROWS inside the declared range (a second non-active otdp
+    version, 0.2.2's bytes re-versioned). Before this test the gate was
+    mutation-unpinned: replacing ``_verify_bump_class`` with ``pass`` left
+    the suite green."""
+    import shutil
+
+    bundle = _export(tmp_path)
+    _with_policy(bundle)
+    sdk = _versioned_sdk(tmp_path, "0.3.1")
+    sync(bundle, sdk)  # anchors compatibility.sdk = 0.3.1 in the prior lock
+    document = _manifest(bundle)
+    template = next(
+        s for s in document["standards"] if s["id"] == "otdp" and s["version"] == "0.2.2"
+    )
+    new_row = {**template, "version": "0.2.9", "active": False}
+    new_row["files"] = [
+        {
+            "path": file["path"].replace("otdp/0.2.2/", "otdp/0.2.9/", 1),
+            "sha256": file["sha256"],
+        }
+        for file in template["files"]
+    ]
+    for file in template["files"]:
+        source = bundle / "files" / file["path"]
+        target = bundle / "files" / file["path"].replace("otdp/0.2.2/", "otdp/0.2.9/", 1)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+    document["standards"].append(new_row)
+    _rewrite_manifest(bundle, document)
+    with pytest.raises(ValueError, match="^sdk_bump_class_invalid: ") as refusal:
+        sync(bundle, sdk)
+    assert "carried set changed" in str(refusal.value)
+
+
+def test_range_change_with_a_patch_bump_is_refused(tmp_path: Path) -> None:
+    """F4's second arm: a declared-range change is a MINOR-class SDK bump at
+    least; a PATCH motion refuses."""
+    bundle = _export(tmp_path)
+    _with_policy(bundle)
+    sdk = _versioned_sdk(tmp_path, "0.3.1")
+    sync(bundle, sdk)
+    document = _manifest(bundle)
+    document["dependency_policy"]["standards"]["otdp"]["range"] = ">=0.2.1,<0.3.0"
+    _rewrite_manifest(bundle, document)
+    (sdk / "pyproject.toml").write_text(
+        '[project]\nname = "benchweave-sdk"\nversion = "0.3.2"\n', encoding="utf-8"
+    )
+    with pytest.raises(ValueError, match="^sdk_bump_class_invalid: ") as refusal:
+        sync(bundle, sdk)
+    assert "ranges changed" in str(refusal.value)
+
+
+def test_range_narrowing_that_drops_a_carried_version_reports_it_removed(
+    tmp_path: Path,
+) -> None:
+    """F5: a range-narrowing train (the policy range narrows to exclude a
+    carried version while the active row moves forward) must REPORT the
+    dropped row under ``removed()``. The active-succession branch used to
+    consume the one remaining same-id prior row silently, laundering the
+    drop out of the report as a bare ``changed``."""
+    bundle = _export(tmp_path)
+    document = _manifest(bundle)
+    # Mark the carried shape the real export carries: 0.2.1 yanked, 0.2.2 active.
+    for row in document["standards"]:
+        if row["id"] == "otdp":
+            if row["version"] == "0.2.1":
+                row["yanked"] = True
+            if row["version"] == "0.2.2":
+                row["active"] = True
+    document["dependency_policy"] = _committed_policy()
+    _rewrite_manifest(bundle, document)
+    sdk = _fresh_sdk(tmp_path)
+    sync(bundle, sdk)
+    prior_lock = json.loads((sdk / "standards-lock.json").read_bytes())
+    prior_otdp = [
+        str(row["version"]) for row in prior_lock["standards"] if row["id"] == "otdp"
+    ]
+    assert prior_otdp == ["0.2.0", "0.2.1", "0.2.2"]
+
+    # The narrowing train: range >=0.2.1,<0.3.0; otdp@0.2.2 stays carried but
+    # no longer active; otdp@0.2.3 is the new active row (0.2.2's bytes,
+    # re-versioned paths); otdp@0.2.0 leaves the carried set.
+    import shutil
+
+    narrowed = _manifest(bundle)
+    narrowed["dependency_policy"]["standards"]["otdp"]["range"] = ">=0.2.1,<0.3.0"
+    rows = [r for r in narrowed["standards"] if r["id"] != "otdp"]
+    active_row = next(r for r in narrowed["standards"] if r["id"] == "otdp" and r.get("active"))
+    del active_row["active"]
+    new_row = {**active_row, "version": "0.2.3", "active": True}
+    new_row["files"] = [
+        {
+            "path": file["path"].replace("otdp/0.2.2/", "otdp/0.2.3/", 1),
+            "sha256": file["sha256"],
+        }
+        for file in active_row["files"]
+    ]
+    for file in active_row["files"]:
+        source = bundle / "files" / file["path"]
+        target = bundle / "files" / file["path"].replace("otdp/0.2.2/", "otdp/0.2.3/", 1)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+    otdp_rows = [
+        r for r in narrowed["standards"] if r["id"] == "otdp" and r["version"] != "0.2.0"
+    ]
+    narrowed["standards"] = rows + otdp_rows + [new_row]
+    _rewrite_manifest(bundle, narrowed)
+    report = sync(bundle, sdk)
+    assert report.removed == ("otdp@0.2.0",)
+    assert report.changed == ()
+    assert report.added == ("otdp@0.2.3",)
+    # The narrowed tree is internally consistent (the drop really happened).
+    assert sync(None, sdk, check_only=True) == SyncReport((), (), (), ())
+

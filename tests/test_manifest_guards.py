@@ -489,10 +489,12 @@ def test_a_stale_lock_from_a_dead_owner_is_reclaimed(tmp_path: Path) -> None:
     lock.parent.mkdir(parents=True)
     lock.write_text(f"{dead_pid} 0\n", encoding="utf-8")
     report = sync(_valid_bundle(tmp_path), root)
-    # Multi-version serving (#203 slice 1): the one-row otdp@1.0.0 bundle
-    # against the 11-row lock is an ADD (three same-id priors cannot name a
-    # unique successor); the point here is that the sync RAN past the stale
-    # staging lock.
-    assert report.added == ("otdp@1.0.0",)  # the sync ran; the lock was not in its way
+    # Multi-version serving (#215 fix F5): the one-row otdp@1.0.0 bundle
+    # succeeds the id's prior ACTIVE row (otdp@0.2.2, consumed as the
+    # predecessor); every other prior row — the non-active otdp priors
+    # included — is reported removed, nothing drops silently. The point
+    # here is still that the sync RAN past the stale staging lock.
+    assert report.changed == ("otdp@1.0.0",)  # the sync ran; the lock was not in its way
+    assert {"otdp@0.2.0", "otdp@0.2.1"} <= set(report.removed)
     assert not lock.exists()  # the owner cleans up its own lock
 
