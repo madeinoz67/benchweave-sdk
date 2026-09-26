@@ -1,0 +1,100 @@
+{
+  "otdp_version": "0.2.1",
+  "descriptor_version": "1.0.0",
+  "id": "dev.local.reference-hid-meter",
+  "display_name": "Illustrative reference-hid-meter",
+  "description": "Reference provider declaration only; not a qualified commercial instrument or admitted host provider.",
+  "identity": {
+    "strategy": "adapter",
+    "manufacturer": "OTDP Reference",
+    "model": "reference-hid-meter",
+    "firmware_policy": "listed",
+    "supported_firmware": [
+      "1.0"
+    ]
+  },
+  "integration": {
+    "mode": "adapter",
+    "adapter": {
+      "entry_point": "reference_hid_meter:create_plugin",
+      "api_version": "1.1",
+      "version": "1.0.0",
+      "dependencies": [],
+      "permissions": [
+        "scoped_transport"
+      ]
+    }
+  },
+  "transport": {
+    "type": "custom",
+    "connection_key": "power_meter",
+    "settings": {
+      "protocol_reference": "Synthetic HID report protocol; the grammar is the pinned provider contract"
+    },
+    "provider": {
+      "feature_id": "otdp.transport.reference-hid/1.0.0",
+      "id": "urn:otdp:transport-provider:reference-hid:1.0.0",
+      "path": "reference-provider.json",
+      "sha256": "cf50392a5d9f996ebe40796800b3ee84ce72b420594acc902fed893efbf3cc47"
+    }
+  },
+  "capabilities": [
+    "identify",
+    "read"
+  ],
+  "operations": {
+    "identify": {
+      "timeout_ms": 2000,
+      "side_effect": "none",
+      "retry": "never",
+      "cancellable": false,
+      "completion": "acknowledged"
+    },
+    "read": {
+      "timeout_ms": 2000,
+      "side_effect": "none",
+      "retry": "never",
+      "cancellable": false,
+      "completion": "acknowledged"
+    }
+  },
+  "parameters": [
+    {
+      "name": "bus_power",
+      "description": "Bus power reported by the metered load",
+      "type": "float",
+      "access": "ro",
+      "semantic": "measurement",
+      "binding": {
+        "kind": "adapter",
+        "key": "bus_power_w"
+      },
+      "unit": "W",
+      "read_policy": {
+        "max_age_ms": 0,
+        "destructive": false
+      }
+    }
+  ],
+  "required_features": [
+    "otdp.core/0.1.0",
+    "otdp.adapter/0.1.0",
+    "otdp.transport.reference-hid/1.0.0"
+  ],
+  "provenance": {
+    "sources": [
+      {
+        "title": "OTDP reference transport-provider contract",
+        "reference": "reference-provider.json",
+        "revision": "1.0.0"
+      }
+    ],
+    "test_vectors": [
+      {
+        "id": "reference-hid-meter-structure",
+        "path": "reference-provider.json",
+        "purpose": "Pinned provider contract; this descriptor declares no wire vectors of its own"
+      }
+    ]
+  }
+}

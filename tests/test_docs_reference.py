@@ -24,6 +24,9 @@ EXCLUDED = {
     "authoring entry point",
     "presentation.create_ui_resources": "the scaffold step behind `new --with-ui`; reached "
     "through the CLI, whose reference documents it",
+    "validation.YankedPinWarning": "a warnings category raised by validate_descriptor on a "
+    "yanked pin (issue #203 slice 1); authors catch it from the check lane, whose output "
+    "renders the message — not an entry point to call",
 }
 
 

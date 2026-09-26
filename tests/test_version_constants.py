@@ -19,7 +19,15 @@ LOCK = json.loads((ROOT / "standards-lock.json").read_text(encoding="utf-8"))
 
 
 def _otdp_standard() -> dict[str, Any]:
-    return next(s for s in LOCK["standards"] if s["id"] == "otdp")
+    # Multi-version serving (#203 slice 1): the lock carries several otdp
+    # rows; the constant tracks the ACTIVE one (the row's marker, with the
+    # derived active version as the cross-check).
+    from benchweave_sdk.served import active_version
+
+    active = active_version("otdp")
+    return next(
+        s for s in LOCK["standards"] if s["id"] == "otdp" and s["version"] == active
+    )
 
 
 def _descriptor_schema() -> dict[str, Any]:

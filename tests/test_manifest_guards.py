@@ -447,7 +447,7 @@ def test_duplicate_ids_that_differ_only_by_normalization_are_refused(
     assert nfc != nfd
     assert unicodedata.normalize("NFC", nfc) == unicodedata.normalize("NFC", nfd)
     bundle = _bundle(tmp_path, [_standard(nfc, []), _standard(nfd, [])])
-    with pytest.raises(ValueError, match="^bundle_manifest_invalid: duplicate standard id"):
+    with pytest.raises(ValueError, match="^bundle_manifest_invalid: duplicate standard row"):
         _load_bundle(bundle)
 
 
@@ -489,6 +489,10 @@ def test_a_stale_lock_from_a_dead_owner_is_reclaimed(tmp_path: Path) -> None:
     lock.parent.mkdir(parents=True)
     lock.write_text(f"{dead_pid} 0\n", encoding="utf-8")
     report = sync(_valid_bundle(tmp_path), root)
-    assert report.changed == ("otdp",)  # the sync ran; the lock was not in its way
+    # Multi-version serving (#203 slice 1): the one-row otdp@1.0.0 bundle
+    # against the 11-row lock is an ADD (three same-id priors cannot name a
+    # unique successor); the point here is that the sync RAN past the stale
+    # staging lock.
+    assert report.added == ("otdp@1.0.0",)  # the sync ran; the lock was not in its way
     assert not lock.exists()  # the owner cleans up its own lock
 

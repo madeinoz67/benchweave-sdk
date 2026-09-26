@@ -84,14 +84,21 @@ def new_command(directory: Path, package_name: str, with_ui: bool) -> None:
 def check_command(descriptor: Path) -> None:
     """Run offline descriptor schema and basic semantic checks."""
     import json
+    import warnings
 
     from .presentation import read_file
+    from .validation import YankedPinWarning
 
     document = json.loads(read_file(descriptor))
-    validate_descriptor(document)
+    with warnings.catch_warnings(record=True) as captured:
+        warnings.simplefilter("always")
+        validate_descriptor(document)
     # The provider pin is the one check that needs the package on disk: it
     # resolves descriptor-relative and hashes the pinned bytes.
     verify_provider_pin(document, descriptor)
+    for warning in captured:
+        if issubclass(warning.category, YankedPinWarning):
+            ConsoleOutput().message(f"warning: {warning.message}", style="yellow")
     ConsoleOutput().message(
         "Descriptor schema and basic S01/S02/S04 checks passed; "
         "full conformance and hardware evidence remain separate.",

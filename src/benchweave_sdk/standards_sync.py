@@ -64,42 +64,61 @@ def sync(bundle: Path | None, sdk_root: Path, *, check_only: bool = False) -> Sy
         return SyncReport((), (), (), ())
     document = _load_bundle(bundle)
     lock = _read_lock(sdk_root)
-    previous = {row["id"]: row for row in lock.get("standards", [])}
+    previous = {
+        (row["id"], str(row["version"])): row for row in lock.get("standards", [])
+    }
     # One pass reads every bundle file once and keeps its bytes: the digests
     # serve classification and the integrity check, and an import writes those
     # same bytes out. Before this, a standard whose version and bytes were
     # unchanged was hashed twice (once in each of those two places) and an
     # import read every file again to write it. Added and version-incremented
     # standards were already hashed only once, so a first sync saves the
-    # second read, not a hash.
+    # second read, not a hash. Multi-version serving (issue #203 slice 1)
+    # keys every stage by (id, version): otdp@0.2.0 beside otdp@0.2.2 is the
+    # ordinary shape.
     payloads = {
-        standard["id"]: _bundle_payloads(bundle, standard) for standard in document["standards"]
+        (standard["id"], str(standard["version"])): _bundle_payloads(bundle, standard)
+        for standard in document["standards"]
     }
     recomputed = {
-        identifier: {path: hashlib.sha256(raw).hexdigest() for path, raw in files.items()}
-        for identifier, files in payloads.items()
+        pair: {path: hashlib.sha256(raw).hexdigest() for path, raw in files.items()}
+        for pair, files in payloads.items()
     }
     added: list[str] = []
     changed: list[str] = []
     deprecated: list[str] = []
     for standard in document["standards"]:
-        identifier = standard["id"]
-        prior = previous.pop(identifier, None)
+        pair = (standard["id"], str(standard["version"]))
+        label = f"{pair[0]}@{pair[1]}"
+        prior = previous.pop(pair, None)
+        if prior is None and standard.get("active") is not False:
+            # Active succession (issue #203 slice 1): the id's active row
+            # moved versions — a CHANGED row (the one same-id prior row it
+            # supersedes is consumed here), not a removed-plus-added pair. A
+            # non-active new version (a second served version) is an ADD.
+            successors = [other for other in list(previous) if other[0] == pair[0]]
+            if len(successors) == 1:
+                previous.pop(successors[0])
+                changed.append(label)
+                if standard["status"] == "deprecated":
+                    deprecated.append(label)
+                continue
         if prior is None:
-            added.append(identifier)
-        elif prior["version"] != standard["version"]:
-            changed.append(identifier)
+            added.append(label)
+        elif str(prior["version"]) != str(standard["version"]):
+            changed.append(label)
             if standard["status"] == "deprecated":
-                deprecated.append(identifier)
-        elif recomputed[identifier] != _lock_hashes(prior):
+                deprecated.append(label)
+        elif recomputed[pair] != _lock_hashes(prior):
             raise ValueError(
-                f"standards_version_required: {identifier} content changed without a "
+                f"standards_version_required: {label} content changed without a "
                 "standards version increment"
             )
         elif prior.get("status") != "deprecated" and standard["status"] == "deprecated":
             # Status-only transition: same version and bytes, new deprecation.
-            deprecated.append(identifier)
-    removed = sorted(previous)
+            deprecated.append(label)
+    removed = sorted(f"{identifier}@{version}" for identifier, version in previous)
+    _verify_bump_class(document, lock, sdk_root)
     _verify_bundle_integrity(document, recomputed)
     if check_only:
         _verify_vendored_tree(sdk_root, lock)
@@ -136,23 +155,30 @@ def _load_bundle(bundle: Path) -> dict[str, Any]:
             raise ValueError(
                 "bundle_manifest_invalid: the standards list is missing or empty"
             )
-        seen_ids: set[str] = set()
+        seen_rows: set[tuple[str, str]] = set()
         for standard in standards:
             identifier = standard["id"]
-            _ = standard["version"], standard["status"]
+            version = standard["version"]
+            _ = standard["status"]
             if (problem := _identifier_problem(identifier)) is not None:
                 # The per-standard stamp is written at <tree>/<id>/, and a
                 # standard with no files never reaches _guard_path.
                 raise ValueError(f"bundle_manifest_invalid: standard id {identifier!r} {problem}")
-            if unicodedata.normalize("NFC", identifier).casefold() in seen_ids:
-                # Every later stage keys per-standard state by id (last
-                # wins); a duplicate would otherwise surface as a bare
-                # KeyError from the integrity check instead of a refusal.
-                # Compared case-folded and NFC-normalized: OTDP and otdp are
-                # one directory on Windows and macOS, and so are the NFC and
-                # NFD spellings of the same name.
-                raise ValueError(f"bundle_manifest_invalid: duplicate standard id {identifier!r}")
-            seen_ids.add(unicodedata.normalize("NFC", identifier).casefold())
+            row_key = (
+                unicodedata.normalize("NFC", identifier).casefold(),
+                str(version),
+            )
+            if row_key in seen_rows:
+                # Multi-version serving (issue #203 slice 1): rows are keyed
+                # (id, version) — otdp@0.2.0 beside otdp@0.2.2 is the shape,
+                # not a duplicate. An exact (id, version) repeat would make
+                # every per-row stage last-wins; compared case-folded and
+                # NFC-normalized for the same filesystem-alias reasons as ids.
+                raise ValueError(
+                    f"bundle_manifest_invalid: duplicate standard row "
+                    f"{identifier!r}@{version!r}"
+                )
+            seen_rows.add(row_key)
             seen_paths: set[str] = set()
             for file in standard["files"]:
                 _guard_path(identifier, file["path"])
@@ -314,16 +340,17 @@ def _lock_hashes(prior: dict[str, Any]) -> dict[str, str]:
 
 
 def _verify_bundle_integrity(
-    document: dict[str, Any], recomputed: dict[str, dict[str, str]]
+    document: dict[str, Any], recomputed: dict[tuple[str, str], dict[str, str]]
 ) -> None:
     """The manifest must describe the bytes actually present in the bundle.
 
     sha256 is the anchor: the lock records no sizes, only digests.
     ``recomputed`` carries the digests already computed from the bundle's
-    files, so the bundle is read exactly once per sync.
+    files (keyed (id, version) since multi-version serving), so the bundle
+    is read exactly once per sync.
     """
     for standard in document["standards"]:
-        actual = recomputed[standard["id"]]
+        actual = recomputed[(standard["id"], str(standard["version"]))]
         for file in standard["files"]:
             if actual[file["path"]] != file["sha256"]:
                 raise ValueError(f"hash_mismatch: {file['path']}")
@@ -562,11 +589,87 @@ def _preserved_notes(sdk_root: Path) -> str | None:
     return notes if isinstance(notes, str) else None
 
 
+def _bump_class(prior: str, current: str) -> str:
+    """MAJOR / MINOR / PATCH by component comparison; EQUAL when identical."""
+    prior_parts = tuple(int(part) for part in prior.split("."))
+    current_parts = tuple(int(part) for part in current.split("."))
+    if prior_parts == current_parts:
+        return "EQUAL"
+    if current_parts[0] != prior_parts[0]:
+        return "MAJOR"
+    if current_parts[1] != prior_parts[1]:
+        return "MINOR"
+    return "PATCH"
+
+
+def _verify_bump_class(document: dict[str, Any], lock: dict[str, Any], sdk_root: Path) -> None:
+    """The served-set change bumps the SDK per the 0.3.0 precedent (owner Q8).
+
+    A carried-set change inside an UNCHANGED declared range is a PATCH-class
+    SDK bump; a change to any declared range (or yank/retired statuses) is
+    MINOR at least — one SDK version never covers two served sets (#166).
+    Judged against the PRE-sync lock (the state being replaced) and the
+    bundle's policy block; a first sync or an unanchored prior version
+    (``unknown``, null) has nothing to judge and passes.
+    """
+    policy = document.get("dependency_policy")
+    if not isinstance(policy, dict):
+        return  # a legacy bundle carries no policy; nothing to judge
+    compatibility = lock.get("compatibility")
+    prior_version = (
+        compatibility.get("sdk") if isinstance(compatibility, dict) else None
+    )
+    if not isinstance(prior_version, str) or prior_version == "unknown":
+        return
+    current = _sdk_version(sdk_root)
+    if current == "unknown":
+        return
+    prior_policy = lock.get("dependency_policy")
+    prior_policy = prior_policy if isinstance(prior_policy, dict) else {}
+    # A range change is a change to a standard BOTH sides declare: adoption
+    # (the founding policy block on a lock that carried none, or a standard
+    # newly declared) is a carried-set change, not a range change — the
+    # served set the new lock+wheel carries is fully determined by them.
+    prior_rows_policy = prior_policy.get("standards")
+    prior_rows_policy = prior_rows_policy if isinstance(prior_rows_policy, dict) else {}
+    new_rows_policy = policy.get("standards")
+    new_rows_policy = new_rows_policy if isinstance(new_rows_policy, dict) else {}
+    range_changed = any(
+        new_rows_policy[identifier] != prior_rows_policy[identifier]
+        for identifier in sorted(set(new_rows_policy) & set(prior_rows_policy))
+    )
+    prior_rows = {
+        (str(row.get("id")), str(row.get("version"))) for row in lock.get("standards", [])
+    }
+    bundle_rows = {
+        (str(standard.get("id")), str(standard.get("version")))
+        for standard in document.get("standards", [])
+    }
+    carried_changed = prior_rows != bundle_rows
+    if not carried_changed and not range_changed:
+        return
+    change = _bump_class(prior_version, current)
+    if range_changed and change not in ("MINOR", "MAJOR"):
+        raise ValueError(
+            f"sdk_bump_class_invalid: the declared ranges changed but the SDK "
+            f"version moved {prior_version} -> {current} ({change}); a range "
+            "change is a MINOR-class SDK bump at least — one SDK version never "
+            "covers two served sets"
+        )
+    if not range_changed and carried_changed and change not in ("PATCH", "MINOR", "MAJOR"):
+        raise ValueError(
+            f"sdk_bump_class_invalid: the carried set changed inside an "
+            f"unchanged range but the SDK version moved {prior_version} -> "
+            f"{current} ({change}); a served-set change is a PATCH-class SDK "
+            "bump — one SDK version never covers two served sets"
+        )
+
+
 def _write_vendored(
     sdk_root: Path,
     document: dict[str, Any],
-    payloads: dict[str, dict[str, bytes]],
-    recomputed: dict[str, dict[str, str]],
+    payloads: dict[tuple[str, str], dict[str, bytes]],
+    recomputed: dict[tuple[str, str], dict[str, str]],
 ) -> None:
     """Rewrite the vendored tree and lock; vendored bytes match the bundle exactly.
 
@@ -610,32 +713,44 @@ def _write_vendored(
         },
     }
     try:
+        # One stamp per standard id accumulates every carried version's files
+        # (issue #203 slice 1); each line already carries its own version.
+        stamp_lines: dict[str, list[str]] = {}
         for standard in document["standards"]:
-            digests = recomputed[standard["id"]]
-            stamps: list[str] = []
+            pair = (standard["id"], str(standard["version"]))
+            digests = recomputed[pair]
             rows: list[dict[str, str]] = []
             for file in standard["files"]:
-                raw = payloads[standard["id"]][file["path"]]
+                raw = payloads[pair][file["path"]]
                 target = staging / file["path"]
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(raw)
-                stamps.append(
+                stamp_lines.setdefault(standard["id"], []).append(
                     STAMP_LINE.format(
                         path=file["path"], identifier=standard["id"], version=standard["version"]
                     )
                 )
                 rows.append({"path": file["path"], "sha256": digests[file["path"]]})
-            stamp_file = staging / standard["id"] / STAMP_NAME
-            stamp_file.parent.mkdir(parents=True, exist_ok=True)
-            stamp_file.write_text("\n".join(stamps) + "\n", encoding="utf-8")
             lock["standards"].append(
                 {
                     "id": standard["id"],
                     "version": standard["version"],
                     "status": standard["status"],
+                    "active": bool(standard.get("active", False)),
+                    "yanked": bool(standard.get("yanked", False)),
                     "files": rows,
                 }
             )
+        for identifier, lines in stamp_lines.items():
+            stamp_file = staging / identifier / STAMP_NAME
+            stamp_file.parent.mkdir(parents=True, exist_ok=True)
+            stamp_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        policy = document.get("dependency_policy")
+        if isinstance(policy, dict):
+            # Mirrored verbatim (design §3.1: one committed authority — the
+            # gateway manifest; this copy exists so pin classification works
+            # offline, PKG-1). check.py refuses drift between the two.
+            lock["dependency_policy"] = policy
         if tree.exists():
             tree.rename(retired)
             try:

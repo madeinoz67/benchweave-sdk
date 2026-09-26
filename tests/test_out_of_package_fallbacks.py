@@ -50,9 +50,15 @@ def test_contract_documents_refuses_a_foreign_root(
 
 
 def _fixture_schema_relative() -> Path:
+    from benchweave_sdk.served import active_version
+
     vendored = REPO / "src/benchweave_sdk/standards/plugin-ui-preview"
-    packaged = next(vendored.glob("*/fixture.schema.json"))
-    return Path("standards/plugin-ui-preview") / packaged.parent.name / packaged.name
+    # Multi-version serving (#203 slice 1): two versions are vendored; the
+    # fixture schema the loader wants is the ACTIVE one's (its path stays a
+    # module literal until slice 7's derivation sweep).
+    active = active_version("plugin-ui-preview")
+    packaged = vendored / active / "fixture.schema.json"
+    return Path("standards/plugin-ui-preview") / active / packaged.name
 
 
 @pytest.mark.parametrize(

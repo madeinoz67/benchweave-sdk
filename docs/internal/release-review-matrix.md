@@ -17,6 +17,7 @@
 | 6 | `great-docs.yml` `versions` list | git tags | new tag absent, previous release still `latest: true` |
 | 7 | Contributor window | `git log <prev-tag>..HEAD --format='%an'` minus bots and the owner | unacknowledged new human contributors; empty window = recorded result |
 | 8 | Gateway `uv.lock` SDK pin (cross-repo) | the released SDK version | pin behind the release; moves on the gateway's next gateway-side lock run — a note, not a blocker |
+| 9 | Served-set bump class (issue #203 slice 1, owner Q8) | `standards-lock.json` rows + `dependency_policy` mirror vs the PREVIOUS lock | one SDK version covering two served sets: a carried-set change on an unchanged range that is not a PATCH-class bump, or a declared-range change that is not MINOR at least — the sync itself refuses `sdk_bump_class_invalid:`, and the gateway's `benchweave.standards check` refuses the lock↔manifest disagreement (`served_set_drift:` / `policy_mirror_drift:`) |
 
 ## The ordering constraint (row 6 is a pre-tag step)
 

@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 import tomllib
+import warnings
 from functools import cache
 from importlib.resources import files
 from pathlib import Path, PurePosixPath
@@ -16,6 +17,49 @@ from jsonschema.exceptions import SchemaError, ValidationError
 from referencing import Registry, Resource
 from referencing.exceptions import Unresolvable
 from referencing.jsonschema import DRAFT202012
+
+from .served import (
+    PinClassification,
+    active_version,
+    carried_versions,
+    classify_pin,
+    refusal_for,
+)
+
+
+class YankedPinWarning(UserWarning):
+    """A pinned standard version is yanked: conforming, but deprecated.
+
+    The message names the pin and the derived move-to (the highest served
+    version >= the pin — the Q10 ruling's "naming 0.2.2 as the move-to").
+    """
+
+
+def _resolve_otdp_pin(descriptor: Any) -> tuple[str, PinClassification | None]:
+    """Resolve the descriptor's own ``otdp_version`` pin (design §3.3).
+
+    A pin in the carried set validates against the pin's own bytes (a yanked
+    pin warns first); a retired or unserved pin refuses with the five VR-37
+    fields under its stable prefix — ``retired_identifier:`` distinct from
+    ``version_not_served:`` — never a raw const dump. A descriptor with no
+    pin string resolves the ACTIVE version, so the schema's own
+    required/const error names the missing field honestly.
+    """
+    pin = descriptor.get("otdp_version") if isinstance(descriptor, dict) else None
+    if not isinstance(pin, str):
+        return active_version("otdp"), None
+    classification = classify_pin(pin, "otdp")
+    if classification.state in ("retired", "unserved"):
+        raise refusal_for(classification)
+    if classification.state == "yanked":
+        warnings.warn(
+            f"otdp {pin} is yanked from serving and auto-selection; the pin stays "
+            f"conforming and validates against {pin}'s own bytes — the move-to is "
+            f"{classification.move_to} ({classification.migration_note})",
+            YankedPinWarning,
+            stacklevel=2,
+        )
+    return pin, classification
 
 
 def _project_name(root: Path) -> str | None:
@@ -42,10 +86,12 @@ def contract_documents() -> dict[str, Any]:
     keys such as ``otdp/0.2.2/otdp-runtime.schema.json``.
     """
     vendored = files("benchweave_sdk").joinpath("standards")
-    sets = (
-        ("otdp", "0.2.2"),
-        ("registry", "0.1.1"),
-        ("plugin-ui", "0.2.0"),
+    from .served import carried_versions
+
+    sets = tuple(
+        (identifier, version)
+        for identifier in ("otdp", "registry", "plugin-ui")
+        for version in carried_versions(identifier)
     )
     if vendored.is_dir():
         # The vendored tree is standards/<id>/<version>/...; document keys stay
@@ -161,12 +207,19 @@ def validate(document: Any, schema_file: str, definition: str | None = None) -> 
         raise ValueError(f"Contract validation failed: {detail[:500]}") from exc
 
 
-def validate_request(request: dict[str, Any]) -> None:
-    """Validate an OTDP operation request envelope against its contract."""
-    validate(request, "otdp/0.2.2/otdp-runtime.schema.json", "operationRequest")
+def validate_request(request: dict[str, Any], otdp_version: str | None = None) -> None:
+    """Validate an OTDP operation request envelope against its contract.
+
+    ``otdp_version`` selects the pinned served version's runtime schema; the
+    default is the lock's active row (derived, never a module literal).
+    """
+    version = otdp_version or active_version("otdp")
+    validate(request, f"otdp/{version}/otdp-runtime.schema.json", "operationRequest")
 
 
-def validate_result(result: dict[str, Any], request: dict[str, Any]) -> None:
+def validate_result(
+    result: dict[str, Any], request: dict[str, Any], otdp_version: str | None = None
+) -> None:
     """Validate a result envelope and its correlation with its request.
 
     Parameters
@@ -177,6 +230,9 @@ def validate_result(result: dict[str, Any], request: dict[str, Any]) -> None:
         The request the result answers. Both documents are validated,
         and the result's ``operation_id`` and ``verb`` must match the
         request's.
+    otdp_version
+        Optional pinned served OTDP version for both envelopes (the
+        default is the derived active version).
 
     Raises
     ------
@@ -184,8 +240,9 @@ def validate_result(result: dict[str, Any], request: dict[str, Any]) -> None:
         If either envelope fails its contract or the pair does not
         correlate.
     """
-    validate_request(request)
-    validate(result, "otdp/0.2.2/otdp-runtime.schema.json", "operationResult")
+    validate_request(request, otdp_version)
+    version = otdp_version or active_version("otdp")
+    validate(result, f"otdp/{version}/otdp-runtime.schema.json", "operationResult")
     if (result["operation_id"], result["verb"]) != (request["operation_id"], request["verb"]):
         raise ValueError("Result correlation does not match the request")
 
@@ -236,32 +293,34 @@ _RESERVED_TRANSFER_KINDS = frozenset(
 _FEATURE_ID = re.compile(r"^[a-z][a-z0-9_.-]*/[0-9]+\.[0-9]+(?:\.[0-9]+)?$")
 
 
-def _otdp_document(suffix: str) -> str:
-    """The one vendored OTDP document ending in ``suffix``, any version."""
-    matches = [
-        key
-        for key in contract_documents()
-        if key.startswith("otdp/") and key.endswith(f"/{suffix}")
-    ]
-    if len(matches) != 1:
+def _otdp_document(suffix: str, version: str | None = None) -> str:
+    """The vendored OTDP document ``otdp/<version>/<suffix>`` (exactly one).
+
+    ``version`` defaults to the derived active row; per-pin callers thread
+    the descriptor's own pin (design §3.2 — the lookup is version-shaped,
+    so the multi-version tree resolves by pin, not by "the one version").
+    """
+    resolved = version or active_version("otdp")
+    key = f"otdp/{resolved}/{suffix}"
+    if key not in contract_documents():
         raise ValueError(
-            f"unknown_contract_schema: expected one vendored otdp {suffix!r}, found {matches}"
+            f"unknown_contract_schema: {key} (vendored versions: "
+            f"{', '.join(carried_versions('otdp'))})"
         )
-    return matches[0]
+    return key
 
 
 @cache
-def _corpus_known_otdp_features() -> frozenset[str]:
-    """The corpus-known ``otdp.*`` feature ids, derived from the vendored tree.
+def _corpus_known_otdp_features(version: str) -> frozenset[str]:
+    """The corpus-known ``otdp.*`` feature ids at ONE pinned version.
 
-    The lanes are the feature-shaped ``const`` values the vendored descriptor
-    schema itself carries — its ``required_features`` contains-conditions
-    spell exactly the core lanes (five at 0.2.2) — and the profiles are the
-    vendored catalog's ``profiles[].id`` (twelve at 0.2.2). The closure rule
-    is transport-providers §2: an ``otdp.*`` identifier that is neither
-    corpus-known (the core lanes and catalog profile ids) nor declared
-    through a transport-provider object is a refusal at every admission
-    point — the namespace is corpus-owned, and a typo must not sail through.
+    The census is per-pin (issue #203 slice 1): the lanes are the
+    feature-shaped ``const`` values that version's vendored descriptor
+    schema carries, and the profiles are that version's catalog
+    ``profiles[].id``. The closure rule is transport-providers §2: an
+    ``otdp.*`` identifier that is neither corpus-known nor declared through
+    a transport-provider object is a refusal at every admission point — the
+    namespace is corpus-owned, and a typo must not sail through.
     """
     documents = contract_documents()
     lanes: set[str] = set()
@@ -277,8 +336,8 @@ def _corpus_known_otdp_features() -> frozenset[str]:
             for item in node:
                 sweep(item)
 
-    sweep(documents[_otdp_document("otdp-device-descriptor.schema.json")])
-    catalog = documents[_otdp_document("device-profile-catalog.json")]
+    sweep(documents[_otdp_document("otdp-device-descriptor.schema.json", version)])
+    catalog = documents[_otdp_document("device-profile-catalog.json", version)]
     profiles = {profile["id"] for profile in catalog["profiles"]}
     return frozenset(lanes | profiles)
 
@@ -310,7 +369,7 @@ def _check_provider_placement(descriptor: dict[str, Any]) -> None:
         )
 
 
-def _check_provider_features(descriptor: dict[str, Any]) -> None:
+def _check_provider_features(descriptor: dict[str, Any], otdp_version: str) -> None:
     """S04 (extended): provider declarations and the closed ``otdp.*`` namespace.
 
     Five refusals, in this order so each single fault lands on its named
@@ -376,7 +435,7 @@ def _check_provider_features(descriptor: dict[str, Any]) -> None:
         raise ValueError(
             f"provider_transport_undeclared: {feature!r} is required but {detail}"
         )
-    known = _corpus_known_otdp_features()
+    known = _corpus_known_otdp_features(otdp_version)
     for feature in required:
         if not feature.startswith("otdp.") or feature.startswith(_PROVIDER_FEATURE_NAMESPACE):
             continue
@@ -410,13 +469,17 @@ def _exceeds_depth(node: object, limit: int) -> bool:
     return False
 
 
-def validate_transport_provider(document: Any) -> None:
-    """Validate a transport-provider contract document offline (0.2.2).
+def validate_transport_provider(document: Any, otdp_version: str | None = None) -> None:
+    """Validate a transport-provider contract document offline.
 
-    The vendored ``otdp-transport-provider.schema.json`` — which also holds
+    The vendored ``otdp-transport-provider.schema.json`` of the pinned OTDP
+    version (default: the derived active row) — which also holds
     the ``otdp.transport.*`` namespace rule for the contract's own
     ``feature_id`` — plus the checks JSON Schema cannot express
-    (transport-providers §1/§3):
+    (transport-providers §1/§3). A pinned version whose tree does not carry
+    the provider contract schema (0.2.0) refuses by name: provider
+    declarations are a 0.2.1+ surface, and validating them against a foreign
+    version's schema would be serving-by-active, not serving-by-pin:
 
     - each grammar entry's ``request_schema``/``result_schema`` meta-validates
       as Draft 2020-12: the schema's ``{"type": "object"}`` holders admit
@@ -435,8 +498,17 @@ def validate_transport_provider(document: Any) -> None:
         ``provider_contract_invalid:`` — structure only; JSON validity grants
         no authority, and admission stays a host-side act.
     """
+    version = otdp_version or active_version("otdp")
+    provider_schema = f"otdp/{version}/otdp-transport-provider.schema.json"
+    if provider_schema not in contract_documents():
+        raise ValueError(
+            f"provider_contract_invalid: OTDP {version} does not carry a "
+            "transport-provider contract schema (the provider surface begins at "
+            "OTDP 0.2.1); a provider declaration cannot be validated against a "
+            "foreign version's schema"
+        )
     try:
-        validate(document, "otdp/0.2.2/otdp-transport-provider.schema.json")
+        validate(document, provider_schema)
     except ValueError as exc:
         raise ValueError(f"provider_contract_invalid: {exc}") from exc
     grammar = document["transaction_grammar"]
@@ -640,7 +712,10 @@ def verify_provider_pin(
             f"provider_contract_invalid: {relative!r} is not a JSON object"
         )
     document: dict[str, Any] = parsed
-    validate_transport_provider(document)
+    descriptor_pin = descriptor.get("otdp_version")
+    validate_transport_provider(
+        document, descriptor_pin if isinstance(descriptor_pin, str) else None
+    )
     if (
         document.get("feature_id") != provider.get("feature_id")
         or document.get("id") != provider.get("id")
@@ -905,8 +980,9 @@ def validate_descriptor(descriptor: dict[str, Any]) -> None:
     >>> validate_descriptor(
     ...     json.loads(Path("src/demo_plugin/descriptor.json").read_text()))
     """
+    pinned_version, _classification = _resolve_otdp_pin(descriptor)
     try:
-        validate(descriptor, "otdp/0.2.2/otdp-device-descriptor.schema.json")
+        validate(descriptor, f"otdp/{pinned_version}/otdp-device-descriptor.schema.json")
     except ValueError:
         # When derived_variables is present, S19 runs even on a
         # schema-invalid document: the derivation_*: reason is the
@@ -934,6 +1010,6 @@ def validate_descriptor(descriptor: dict[str, Any]) -> None:
         bounds = parameter.get("range")
         if isinstance(bounds, list | tuple) and len(bounds) == 2 and bounds[0] > bounds[1]:
             raise ValueError("S02: parameter bounds are reversed")
-    _check_provider_features(descriptor)
+    _check_provider_features(descriptor, pinned_version)
     if "derived_variables" in descriptor:
         _check_derived_variables(descriptor["derived_variables"])

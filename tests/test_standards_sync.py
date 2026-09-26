@@ -115,7 +115,15 @@ def test_versioned_change_reports_changed(tmp_path: Path) -> None:
     bundle = _export(tmp_path)
     sdk = _synced_sdk(tmp_path, bundle)
     document = json.loads((bundle / "bundle-manifest.json").read_bytes())
-    target = next(s for s in document["standards"] if s["id"] == "otdp")
+    # Multi-version serving: the version-increment arm is the ACTIVE row's
+    # succession (its prior row is consumed as the predecessor); mutating a
+    # non-active served version would be an add-plus-remove instead.
+    from benchweave_sdk.served import active_version
+
+    active = active_version("otdp")
+    target = next(
+        s for s in document["standards"] if s["id"] == "otdp" and s["version"] == active
+    )
     asset = bundle / "files" / target["files"][0]["path"]
     asset.write_bytes(asset.read_bytes() + b"\n")
     target["files"][0]["sha256"] = hashlib.sha256(asset.read_bytes()).hexdigest()
@@ -124,7 +132,7 @@ def test_versioned_change_reports_changed(tmp_path: Path) -> None:
         (json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n").encode()
     )
     report = sync(bundle, sdk)
-    assert report.changed == ("otdp",)
+    assert report.changed == ("otdp@0.3.1",)
 
 
 def test_status_only_deprecation_is_reported(tmp_path: Path) -> None:
@@ -138,7 +146,7 @@ def test_status_only_deprecation_is_reported(tmp_path: Path) -> None:
         (json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n").encode()
     )
     report = sync(bundle, sdk)
-    assert report.deprecated == ("otdp",)
+    assert report.deprecated == ("otdp@0.2.0",)
     assert report.changed == ()
 
 
@@ -355,13 +363,18 @@ def test_a_standard_dropped_from_the_bundle_is_reported_and_removed(tmp_path: Pa
     bundle = _export(tmp_path)
     sdk = _synced_sdk(tmp_path, bundle)
     document = _manifest(bundle)
-    dropped = document["standards"].pop()["id"]
+    dropped_row = document["standards"].pop()
+    dropped = f'{dropped_row["id"]}@{dropped_row["version"]}'
     _rewrite_manifest(bundle, document)
     report = sync(bundle, sdk)
     assert report == SyncReport((), (), (), (dropped,))
-    assert not (sdk / "src/benchweave_sdk/standards" / dropped).exists()
+    assert not (
+        sdk / "src/benchweave_sdk/standards" / dropped_row["id"] / dropped_row["version"]
+    ).exists()
     lock = json.loads((sdk / "standards-lock.json").read_bytes())
-    assert dropped not in {standard["id"] for standard in lock["standards"]}
+    assert dropped not in {
+        f'{standard["id"]}@{standard["version"]}' for standard in lock["standards"]
+    }
     sync(None, sdk, check_only=True)
 
 
@@ -436,7 +449,7 @@ def test_duplicate_standard_ids_are_refused_as_manifest_invalid(
     target["files"] = first
     document["standards"].append({**target, "files": rest})  # same id, disjoint file lists
     _rewrite_manifest(bundle, document)
-    with pytest.raises(ValueError, match="^bundle_manifest_invalid: duplicate standard id"):
+    with pytest.raises(ValueError, match="^bundle_manifest_invalid: duplicate standard row"):
         sync(bundle, sdk)
 
 
@@ -459,7 +472,7 @@ def test_standard_ids_that_differ_only_in_case_are_duplicates(tmp_path: Path) ->
     target = next(s for s in document["standards"] if s["id"] == "otdp")
     document["standards"].append({**target, "id": "OTDP", "files": []})
     _rewrite_manifest(bundle, document)
-    with pytest.raises(ValueError, match="^bundle_manifest_invalid: duplicate standard id"):
+    with pytest.raises(ValueError, match="^bundle_manifest_invalid: duplicate standard row"):
         sync(bundle, sdk)
 
 
@@ -496,7 +509,12 @@ def test_resync_preserves_a_filled_compatibility_notes(tmp_path: Path, bump: boo
     _hand_edit_notes(sdk, PRESERVED_NOTE)
     if bump:
         document = _manifest(bundle)
-        target = next(s for s in document["standards"] if s["id"] == "otdp")
+        from benchweave_sdk.served import active_version
+
+        active = active_version("otdp")
+        target = next(
+            s for s in document["standards"] if s["id"] == "otdp" and s["version"] == active
+        )
         target["version"] = "0.3.1"
         _rewrite_manifest(bundle, document)
     report = sync(bundle, sdk)
@@ -504,7 +522,7 @@ def test_resync_preserves_a_filled_compatibility_notes(tmp_path: Path, bump: boo
     assert lock["compatibility"]["notes"] == PRESERVED_NOTE
     assert sync(None, sdk, check_only=True) == SyncReport((), (), (), ())
     if bump:
-        assert report.changed == ("otdp",)
+        assert report.changed == ("otdp@0.3.1",)
     else:
         assert report == SyncReport((), (), (), ())
 

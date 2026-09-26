@@ -9,13 +9,21 @@ from typing import Any
 import pytest
 
 from benchweave_sdk.conformance import check_lifecycle
+from benchweave_sdk.served import active_version
 from benchweave_sdk.testing import ConformanceError
 from benchweave_sdk.validation import contract_documents
 
 
 def _descriptor() -> dict[str, Any]:
     documents = contract_documents()
-    matches = [key for key in documents if key.endswith("/examples/reference-psu.json")]
+    matches = [
+        key for key in documents if key.endswith("/examples/reference-psu.json")
+    ]
+    # Multi-version serving (#203 slice 1): fixtures are authored at the
+    # ACTIVE version — the exactly-one assumption held one version per
+    # standard; the tree now carries every retained in-range version.
+    active = active_version("otdp")
+    matches = [key for key in matches if key.startswith(f"otdp/{active}/")]
     assert len(matches) == 1, matches
     return deepcopy(documents[matches[0]])
 
