@@ -144,22 +144,21 @@ def _retired(standard: str) -> tuple[str, ...]:
 def _move_to(pin: str, standard: str = STANDARD) -> str | None:
     """Derived move-to: the highest served (¬yanked) version >= the pin.
 
+    Ordered by SEMVER, never lexically ("0.10.0" outranks "0.2.0" — fold
+    row 1: a lexical pick steered below-both pins to the older version).
     An unparsable pin (a dev-suffixed or otherwise malformed string) cannot
     be ordered against the served set; the highest served version is the
     best available answer for it — no path here raises a bare parse error
     (#215 fix F2: classification turns a malformed pin into a typed
     refusal, never a traceback).
     """
-    pin_order = _tuple_or_none(pin)
-    candidates = [
-        version
-        for version in served_versions(standard)
-        if pin_order is not None and _tuple(version) >= pin_order
-    ]
-    if candidates:
-        return candidates[-1]
     served = served_versions(standard)
-    return served[-1] if served else None
+    pin_order = _tuple_or_none(pin)
+    if pin_order is not None:
+        candidates = [version for version in served if _tuple(version) >= pin_order]
+        if candidates:
+            return max(candidates, key=_tuple)
+    return max(served, key=_tuple) if served else None
 
 
 def _tuple(version: str) -> tuple[int, ...]:

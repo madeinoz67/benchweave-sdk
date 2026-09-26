@@ -28,6 +28,13 @@ rubric's G5 gate is the obligation; this file is the detail behind it.
 5. **Vendored bytes** 🪝 → `standards-lock.json` sha256 records, stamps, and the main-side
    sync staying green (`make check-sdk-standards`). A hand-edit is wrong regardless of
    quality; the change belongs in the main repository's canonical corpus.
+   Derivation contract (#215 fold row 3): `OTDP_VERSION` / `ADAPTER_API_VERSION`
+   derive LAZILY (PEP 562 `__getattr__` in `__init__.py`) — `import benchweave_sdk`
+   does no lock/tree I/O, so the check/repair CLI always imports; first attribute
+   access reads the lock's active row and the pinned schema const and raises the
+   typed refusal (`served_set_drift:` / `vendored_digest_mismatch:`) on tree/lock
+   skew. Keep that posture fail-closed on any change to the load path — never
+   trade the typed refusal for a fallback or a bare exception.
 
 6. **SDK behavioral changes** → the behavioral test suite lives here (`tests/`:
    `test_standards_sync`, `test_cli_frameworks`, `test_presentation_cli`,

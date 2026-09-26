@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from benchweave_sdk.validation import validate, validate_descriptor
+from benchweave_sdk.validation import validate, validate_descriptor, validate_request
 
 ROOT = Path(__file__).resolve().parents[1]
 ACTIVE = json.loads((ROOT / "standards-lock.json").read_bytes())
@@ -294,3 +294,72 @@ def test_parseable_but_unserved_pins_keep_the_range_detail() -> None:
     assert classification.state == "unserved"
     assert "not a parseable" not in classification.detail
     assert "out of the declared range" in classification.detail
+
+
+# --- #215 fold rows 1 and 25: semver move-to; the yank warning everywhere. ---
+
+
+def test_move_to_orders_by_semver_not_lexical_sort(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fold row 1: the derived move-to is the highest served version by
+    SEMVER. Lexical ordering lost 0.10.0 to 0.2.0 ("0.10.0" < "0.2.0" as a
+    string), steering a below-both pin to the older version."""
+    import benchweave_sdk.served as served
+
+    lock = json.loads((ROOT / "standards-lock.json").read_bytes())
+    for row in lock["standards"]:
+        if row["id"] == "otdp":
+            row["version"] = "0.10.0" if row["version"] == "0.2.2" else row["version"]
+            # 0.2.2's row becomes a 0.10.0 row (same bytes, re-versioned key);
+            # 0.2.1 stays the yanked row so the served set is {0.2.0, 0.10.0}.
+    monkeypatch.setattr(served, "_lock_document", lambda: lock)
+    served.lock_rows.cache_clear()
+    try:
+        classification = served.classify_pin("0.1.2", "otdp")
+        assert classification.move_to == "0.10.0"
+    finally:
+        served.lock_rows.cache_clear()
+
+
+def test_yank_warning_fires_on_the_envelope_paths() -> None:
+    """Fold row 25: the yank deprecation warning is a property of validating
+    against a yanked version's bytes — it fires on the envelope entry points
+    (``validate_request``/``validate_result``), not only on
+    ``validate_descriptor``."""
+    request = {"operation_id": "op-1", "verb": "identify", "arguments": {}}
+    with pytest.warns(Warning, match="0.2.1") as recorded:
+        validate_request(request, otdp_version="0.2.1")
+    assert any("0.2.2" in str(w.message) for w in recorded), "the move-to is named"
+
+
+def test_yank_warning_fires_on_the_explicit_key_path() -> None:
+    """Fold row 25, explicit-key arm: ``validate`` against a yanked version's
+    schema file warns too — the warning travels with the bytes, whichever
+    entry point resolved them."""
+    event = {
+        "subscription_id": "sub-1",
+        "sequence": 1,
+        "kind": "telemetry",
+        "reading": {
+            "parameter": "voltage",
+            "value": 3.3,
+            "unit": "V",
+            "observed_at": "2026-09-26T00:00:00Z",
+            "age_ms": 0,
+            "quality": "valid",
+            "source": "device",
+        },
+    }
+    with pytest.warns(Warning, match="0.2.1"):
+        validate(event, "otdp/0.2.1/otdp-runtime.schema.json", "event")
+
+
+def test_served_version_paths_never_warn() -> None:
+    """Fold row 25 control: the warning is the yank's, not validation noise —
+    a served (¬yanked) pin validates silently on every path."""
+    request = {"operation_id": "op-1", "verb": "identify", "arguments": {}}
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        validate_request(request, otdp_version="0.2.0")
+        validate_request(request)  # the derived active version

@@ -40,12 +40,14 @@ class YankedPinWarning(UserWarning):
 def _resolve_otdp_pin(descriptor: Any) -> tuple[str, PinClassification | None]:
     """Resolve the descriptor's own ``otdp_version`` pin (design §3.3).
 
-    A pin in the carried set validates against the pin's own bytes (a yanked
-    pin warns first); a retired or unserved pin refuses with the five VR-37
-    fields under its stable prefix — ``retired_identifier:`` distinct from
-    ``version_not_served:`` — never a raw const dump. A descriptor with no
-    pin string resolves the ACTIVE version, so the schema's own
-    required/const error names the missing field honestly.
+    A pin in the carried set validates against the pin's own bytes (the
+    yank warning travels with the bytes — ``validate`` emits it, so every
+    entry point gets it, fold row 25); a retired or unserved pin refuses
+    with the five VR-37 fields under its stable prefix —
+    ``retired_identifier:`` distinct from ``version_not_served:`` — never a
+    raw const dump. A descriptor with no pin string resolves the ACTIVE
+    version, so the schema's own required/const error names the missing
+    field honestly.
     """
     pin = descriptor.get("otdp_version") if isinstance(descriptor, dict) else None
     if not isinstance(pin, str):
@@ -53,15 +55,29 @@ def _resolve_otdp_pin(descriptor: Any) -> tuple[str, PinClassification | None]:
     classification = classify_pin(pin, "otdp")
     if classification.state in ("retired", "unserved"):
         raise refusal_for(classification)
-    if classification.state == "yanked":
-        warnings.warn(
-            f"otdp {pin} is yanked from serving and auto-selection; the pin stays "
-            f"conforming and validates against {pin}'s own bytes — the move-to is "
-            f"{classification.move_to} ({classification.migration_note})",
-            YankedPinWarning,
-            stacklevel=2,
-        )
     return pin, classification
+
+
+def _warn_if_yanked_otdp(schema_file: str) -> None:
+    """The yank deprecation warning, once, on the one path every entry point
+    shares (fold row 25): validating against a yanked version's schema bytes
+    warns — whichever way the version was resolved (a descriptor's own pin,
+    an envelope's ``otdp_version``, or an explicit ``otdp/<v>/<file>`` key).
+    The message names the pin and the derived move-to (the Q10 ruling).
+    """
+    parts = schema_file.split("/")
+    if len(parts) < 3 or parts[0] != "otdp":
+        return
+    classification = classify_pin(parts[1], "otdp")
+    if classification.state != "yanked":
+        return
+    warnings.warn(
+        f"otdp {parts[1]} is yanked from serving and auto-selection; the pin stays "
+        f"conforming and validates against {parts[1]}'s own bytes — the move-to is "
+        f"{classification.move_to} ({classification.migration_note})",
+        YankedPinWarning,
+        stacklevel=3,
+    )
 
 
 def _project_name(root: Path) -> str | None:
@@ -212,6 +228,10 @@ def validate(document: Any, schema_file: str, definition: str | None = None) -> 
     """
     if schema_file not in contract_documents():
         raise ValueError(f"unknown_contract_schema: {schema_file}")
+    # Fold row 25 (#215): the yank warning travels with the bytes — every
+    # entry point (descriptor pin, envelope pin, explicit key) validates
+    # through here, so the warning fires exactly once per validation.
+    _warn_if_yanked_otdp(schema_file)
     try:
         json.dumps(document, allow_nan=False)
         schema = contract_documents()[schema_file]

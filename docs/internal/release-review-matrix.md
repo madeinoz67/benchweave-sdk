@@ -10,10 +10,10 @@
 | # | Surface | Machine truth | Stale pattern |
 |---|---------|---------------|---------------|
 | 1 | README version stamp (baseline line) | `pyproject.toml` `version` | previous release number |
-| 2 | Website hero status line (`website/index.html`, hero badges) | `pyproject.toml` + `OTDP_VERSION` / `ADAPTER_API_VERSION` in `src/benchweave_sdk/__init__.py` | previous SDK number, OTDP number behind the constant |
+| 2 | Website hero status line (`website/index.html`, hero badges) | `pyproject.toml` + the standards lock's ACTIVE otdp row (`OTDP_VERSION` / `ADAPTER_API_VERSION` derive lazily from it — `__init__.py`'s `__getattr__`, #215; multi-row lock: the active row governs, never "the one row") | previous SDK number, OTDP number behind the active row |
 | 3 | Website docs-version selector (options + `(latest)` label) — TWO surfaces: the `website/index.html` static selector AND the `great-docs.yml` `versions` list (retro 2026-09-25 R3: a phase-2 that edits only the yml fails CI Docs — the verifier reads the static selector's label) | `great-docs.yml` `versions` list + `website/index.html` selector options + git tags | previous `(latest)` label on either surface, missing prior-release option |
 | 4 | Website compatibility tagline | `standards-lock.json` `compatibility.main_project` floor + the release's tested pair | previous SDK number against the gateway floor |
-| 5 | Website standards badges (interface / plugin-ui / plugin-ui-preview) | `standards-lock.json` `standards[].version` per id | badge behind the vendored contract version |
+| 5 | Website standards badges (interface / plugin-ui / plugin-ui-preview) | `standards-lock.json` `standards[]` — the ACTIVE row per id (`"active": true`; the multi-row lock carries yanked and non-active versions beside it, #215 — the active row governs the badges, never "the one row per id") | badge behind the active vendored contract version |
 | 6 | `great-docs.yml` `versions` list | git tags | new tag absent, previous release still `latest: true` |
 | 7 | Contributor window | `git log <prev-tag>..HEAD --format='%an'` minus bots and the owner | unacknowledged new human contributors; empty window = recorded result |
 | 8 | Gateway `uv.lock` SDK pin (cross-repo) | the released SDK version | pin behind the release; moves on the gateway's next gateway-side lock run — a note, not a blocker |
