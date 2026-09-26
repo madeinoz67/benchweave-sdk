@@ -88,8 +88,7 @@ run the loop.
    issue, created at PR-open time if absent, whose body names its carrier increment
    and its reopen trigger, or (b) a row in the design record's deferral table — both
    terms and the row's required columns are defined in the main gateway repo's
-   `.claude/deep-review/README.md` (authoritative main-side, as GOVERNANCE.md is).
-   Issues
+   `.claude/deep-review/README.md` (authoritative main-side, as GOVERNANCE.md is). Issues
    are reserved for deferrals whose carrier is scheduled or externally arriving — at
    most ONE follow-on issue per merged PR; all others defer as documentation. Every
    merge runs a GO/CLOSE pass over its own deferral list; "keep open just in case"
