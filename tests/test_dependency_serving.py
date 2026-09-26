@@ -205,3 +205,92 @@ def test_served_documents_are_digest_checked_against_the_lock() -> None:
             verify_vendored_digests()
     finally:
         victim.write_bytes(original)
+
+
+# --- #215 fix wave: the load path itself is digest-checked; pins never crash. ---
+
+
+def _clear_document_caches() -> None:
+    """Drop every cached view of the vendored tree so a planted byte is read.
+
+    ``contract_documents`` is load-once; without this, whichever test ran
+    first would pin the clean bytes for the whole session and the plant
+    below could never be observed on the load path.
+    """
+    import benchweave_sdk.validation as validation_module
+
+    validation_module.contract_documents.cache_clear()
+    validation_module._registry.cache_clear()
+    validation_module._corpus_known_otdp_features.cache_clear()
+
+
+def test_planted_vendored_byte_refuses_per_pin_validation() -> None:
+    """F1 (design §3.2; §7 risk-1's falsifier): per-pin validation loads the
+    vendored served set DIGEST-CHECKED against the SDK lock row. A planted
+    byte in a served schema refuses by name (``vendored_digest_mismatch:``)
+    instead of silently becoming the schema a descriptor validates against.
+
+    The planted byte is a trailing newline: invisible to the JSON parse, so
+    only the digest can see it — exactly the tamper the design's risk
+    falsifier names (wrong bytes refuse with a digest prefix, never warn).
+    """
+    victim = (
+        ROOT / "src/benchweave_sdk/standards/otdp/0.2.0/otdp-device-descriptor.schema.json"
+    )
+    original = victim.read_bytes()
+    descriptor = _descriptor("class-dc_psu.json")
+    descriptor["otdp_version"] = "0.2.0"
+    try:
+        _clear_document_caches()
+        victim.write_bytes(original + b"\n")
+        with pytest.raises(ValueError, match="^vendored_digest_mismatch: ") as refusal:
+            validate_descriptor(descriptor)
+        assert "otdp/0.2.0/otdp-device-descriptor.schema.json" in str(refusal.value)
+    finally:
+        victim.write_bytes(original)
+        _clear_document_caches()
+
+
+@pytest.mark.parametrize("pin", ["0.3.0-dev", "abc", "1.x"])
+def test_malformed_pins_classify_to_a_typed_refusal(pin: str) -> None:
+    """F2: no classification path raises a bare parse error. An unparsable
+    pin is an unserved pin — ``version_not_served:`` with the five VR-37
+    fields, move-to the highest served version (the best available ordering
+    for a string that cannot be ordered) and a detail that names the parse
+    failure instead of laundering it."""
+    from benchweave_sdk.served import classify_pin, refusal_for
+
+    classification = classify_pin(pin, "otdp")
+    assert classification.state == "unserved"
+    assert classification.standard == "otdp"
+    assert classification.pin == pin
+    assert classification.supported_range == ">=0.2.0,<0.3.0"
+    assert classification.move_to == "0.2.2"
+    assert "not a parseable" in classification.detail
+    message = str(refusal_for(classification))
+    assert message.startswith("version_not_served:")
+    for field in ("otdp", pin, ">=0.2.0,<0.3.0", "0.2.2"):
+        assert field in message, field
+
+
+def test_dev_shaped_descriptor_pin_refuses_typed_not_a_traceback() -> None:
+    """F2 end to end: ``_resolve_otdp_pin`` runs before schema validation, so
+    a dev-shaped ``otdp_version`` must surface the typed refusal, never a raw
+    ``ValueError: invalid literal for int()`` out of version ordering."""
+    descriptor = _descriptor("class-dc_psu.json")
+    descriptor["otdp_version"] = "0.3.0-dev"
+    with pytest.raises(ValueError, match="^version_not_served: ") as refusal:
+        validate_descriptor(descriptor)
+    assert "0.3.0-dev" in str(refusal.value)
+
+
+def test_parseable_but_unserved_pins_keep_the_range_detail() -> None:
+    """F2 guard: the parse-naming detail belongs to unparsable pins only — a
+    pin that parses but is not carried keeps the range detail, so the
+    schema's own const errors stay reachable for pins that resolve."""
+    from benchweave_sdk.served import classify_pin
+
+    classification = classify_pin("0.1.2", "otdp")
+    assert classification.state == "unserved"
+    assert "not a parseable" not in classification.detail
+    assert "out of the declared range" in classification.detail

@@ -142,11 +142,19 @@ def _retired(standard: str) -> tuple[str, ...]:
 
 
 def _move_to(pin: str, standard: str = STANDARD) -> str | None:
-    """Derived move-to: the highest served (¬yanked) version >= the pin."""
+    """Derived move-to: the highest served (¬yanked) version >= the pin.
+
+    An unparsable pin (a dev-suffixed or otherwise malformed string) cannot
+    be ordered against the served set; the highest served version is the
+    best available answer for it — no path here raises a bare parse error
+    (#215 fix F2: classification turns a malformed pin into a typed
+    refusal, never a traceback).
+    """
+    pin_order = _tuple_or_none(pin)
     candidates = [
         version
         for version in served_versions(standard)
-        if _tuple(version) >= _tuple(pin)
+        if pin_order is not None and _tuple(version) >= pin_order
     ]
     if candidates:
         return candidates[-1]
@@ -156,6 +164,14 @@ def _move_to(pin: str, standard: str = STANDARD) -> str | None:
 
 def _tuple(version: str) -> tuple[int, ...]:
     return tuple(int(part) for part in version.split("."))
+
+
+def _tuple_or_none(version: str) -> tuple[int, ...] | None:
+    """The numeric parts of an X.Y.Z version, or None when it does not parse."""
+    try:
+        return tuple(int(part) for part in version.split("."))
+    except ValueError:
+        return None
 
 
 MIGRATION_NOTE_PENDING = (
@@ -208,6 +224,23 @@ def classify_pin(pin: str, standard: str = STANDARD) -> PinClassification:
             migration_note=MIGRATION_NOTE_PENDING,
             detail=f"{standard} {pin} is served",
         )
+    if _tuple_or_none(pin) is None:
+        # F2 (#215): an unparsable pin would otherwise crash version
+        # ordering inside _move_to — the refusal says why it cannot be
+        # classified instead of laundering a parse error.
+        return PinClassification(
+            state="unserved",
+            standard=standard,
+            pin=pin,
+            supported_range=supported,
+            move_to=_move_to(pin, standard),
+            migration_note=MIGRATION_NOTE_PENDING,
+            detail=(
+                f"{standard} {pin} is not a parseable MAJOR.MINOR.PATCH version "
+                f"and is not carried by this SDK (supported range {supported}); "
+                "dev-head pins are a later slice of issue #203"
+            ),
+        )
     return PinClassification(
         state="unserved",
         standard=standard,
@@ -257,12 +290,35 @@ def vendored_root() -> Path:
     )
 
 
+def lock_file_digests() -> dict[str, str]:
+    """Lock-recorded file digests keyed by row path (``<id>/<version>/<file>``).
+
+    The load path (``validation.contract_documents``) checks every document
+    it serves against this map (#215 fix F1 — design §3.2's "digest-checked
+    against the SDK lock row" is wired here, not only claimed by
+    :func:`verify_vendored_digests` below).
+    """
+    digests: dict[str, str] = {}
+    for row in _lock_document().get("standards", []):
+        identifier = row.get("id")
+        for file in row.get("files", []):
+            relative = file.get("path")
+            pinned = file.get("sha256")
+            if not isinstance(relative, str) or not isinstance(pinned, str):
+                raise ServedStateError(f"lock_invalid: malformed file row in {identifier!r}")
+            digests[relative] = pinned
+    return digests
+
+
 def verify_vendored_digests() -> None:
     """Every lock row's file must exist and hash to its pinned digest.
 
-    The per-pin validation lane loads the vendored served set; this check is
-    what makes that load digest-verified against the lock (design §3.2). A
-    tampered or missing vendored file refuses by name.
+    The whole-tree sweep behind the load path's per-file check (design
+    §3.2): the per-pin validation lane serves only digest-verified bytes
+    (``validation.contract_documents``), and this check extends the same
+    refusal to every lock row's file — including the non-JSON payloads the
+    loader never parses. A tampered or missing vendored file refuses by
+    name under the same ``vendored_digest_mismatch:`` prefix.
     """
     root = vendored_root()
     for row in _lock_document().get("standards", []):

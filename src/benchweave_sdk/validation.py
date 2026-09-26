@@ -20,9 +20,11 @@ from referencing.jsonschema import DRAFT202012
 
 from .served import (
     PinClassification,
+    ServedStateError,
     active_version,
     carried_versions,
     classify_pin,
+    lock_file_digests,
     refusal_for,
 )
 
@@ -83,11 +85,13 @@ def contract_documents() -> dict[str, Any]:
 
     Documents load once from the vendored ``standards/`` tree (falling
     back to the repository checkout during editable development) under
-    keys such as ``otdp/0.2.2/otdp-runtime.schema.json``.
+    keys such as ``otdp/0.2.2/otdp-runtime.schema.json``. Every document
+    is digest-checked against the lock row that records it before it is
+    parsed (#215 fix F1, design §3.2): a planted or unrecorded byte
+    refuses with ``vendored_digest_mismatch:`` at load, never silently
+    becomes the schema a descriptor validates against.
     """
     vendored = files("benchweave_sdk").joinpath("standards")
-    from .served import carried_versions
-
     sets = tuple(
         (identifier, version)
         for identifier in ("otdp", "registry", "plugin-ui")
@@ -116,6 +120,7 @@ def contract_documents() -> dict[str, Any]:
             for identifier, version in sets
         ]
     documents: dict[str, Any] = {}
+    pinned_digests = lock_file_digests()
 
     def visit(directory: Any, prefix: str) -> None:
         for child in sorted(directory.iterdir(), key=lambda item: item.name):
@@ -123,11 +128,49 @@ def contract_documents() -> dict[str, Any]:
             if child.is_dir():
                 visit(child, key)
             elif child.name.endswith(".json"):
-                documents[key] = json.loads(child.read_text(encoding="utf-8"))
+                documents[key] = _load_verified_document(child, key, pinned_digests)
 
     for directory, prefix in directories:
+        # F3 (#215): a lock row whose directory the tree does not carry is
+        # served-set drift — named here, never a bare FileNotFoundError out
+        # of iterdir below. Importing the SDK no longer touches this path
+        # (the version constants derive lazily), so the check/repair CLI
+        # survives to report the drift.
+        if not directory.is_dir():
+            identifier, version = prefix.split("/", 1)
+            raise ServedStateError(
+                f"served_set_drift: {identifier}@{version} is carried by the "
+                "standards lock but the vendored tree has no such directory; "
+                "re-run sync-standards or reinstall the SDK"
+            )
         visit(directory, prefix)
     return documents
+
+
+def _load_verified_document(source: Any, key: str, pinned_digests: dict[str, str]) -> Any:
+    """One vendored document: digest-verified against its lock row, then parsed.
+
+    The load half of design §3.2's "loaded from the vendored served set,
+    digest-checked against the SDK lock row": an unrecorded file and a
+    tampered file both refuse with ``vendored_digest_mismatch:`` naming the
+    path — wrong bytes refuse with the digest prefix and never warn (the
+    §7 risk-1 falsifier).
+    """
+    raw = source.read_bytes()
+    pinned = pinned_digests.get(key)
+    if pinned is None:
+        raise ServedStateError(
+            f"vendored_digest_mismatch: {key} is present in the vendored tree "
+            "but not recorded by the standards lock; run sync-standards or "
+            "reinstall the SDK"
+        )
+    digest = hashlib.sha256(raw).hexdigest()
+    if digest != pinned:
+        raise ServedStateError(
+            f"vendored_digest_mismatch: {key} hashes to {digest} but the "
+            f"lock pins {pinned}"
+        )
+    return json.loads(raw)
 
 
 @cache
