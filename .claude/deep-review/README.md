@@ -32,6 +32,13 @@ killed idea is a real result and worth publishing.
 **Default new work to `private/` and promote it deliberately.** Promotion is a review;
 demotion after the fact is a leak, and git remembers.
 
+## The deferral-row contract
+
+Deferral rows and reopen triggers in design records follow the main gateway repo's
+`.claude/deep-review/README.md` contract — authoritative main-side; there is no local
+mirror (a mirror would reintroduce the two-copies drift issue madeinoz67/benchweave#99
+exists to remove).
+
 ## Measuring on real projects
 
 Several records may report measurements taken against real scaffolded plugin projects,
