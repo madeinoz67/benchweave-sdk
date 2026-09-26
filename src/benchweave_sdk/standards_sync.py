@@ -36,12 +36,21 @@ _STAMP_SHORT_NAME = re.compile(r"(?i)_gener~[0-9]+\.txt")
 
 @dataclass(frozen=True)
 class SyncReport:
-    """Classified outcome of comparing a bundle against the locked state."""
+    """Classified outcome of comparing a bundle against the locked state.
+
+    ``active_changes`` (late Forge fold 2, #215) names active re-points —
+    ids whose ACTIVE row moved versions while the carried row set stayed
+    intact (``otdp@0.2.2->0.2.0``). No row is added or removed by one, but
+    every active-derived constant (``OTDP_VERSION``,
+    ``ADAPTER_API_VERSION``) moves with it, so the report names it instead
+    of presenting the sync as a no-op.
+    """
 
     added: tuple[str, ...]
     changed: tuple[str, ...]
     deprecated: tuple[str, ...]
     removed: tuple[str, ...]
+    active_changes: tuple[str, ...] = ()
 
 
 def sync(bundle: Path | None, sdk_root: Path, *, check_only: bool = False) -> SyncReport:
@@ -129,7 +138,21 @@ def sync(bundle: Path | None, sdk_root: Path, *, check_only: bool = False) -> Sy
             # Status-only transition: same version and bytes, new deprecation.
             deprecated.append(label)
     removed = sorted(f"{identifier}@{version}" for identifier, version in previous)
-    _verify_bump_class(document, lock, sdk_root)
+    # Late Forge fold 2 (#215): an active re-point with an intact carried set
+    # is invisible to the row-level classification above — but the
+    # active-derived constants move with it, so the report names it and the
+    # bump-class gate judges it.
+    bundle_active: dict[str, str] = {}
+    for standard in document["standards"]:
+        if standard.get("active") is True:
+            bundle_active.setdefault(str(standard["id"]), str(standard["version"]))
+    active_changes = tuple(
+        f"{identifier}@{prior_active[identifier]}->{bundle_active[identifier]}"
+        for identifier in sorted(prior_active)
+        if identifier in bundle_active
+        and bundle_active[identifier] != prior_active[identifier]
+    )
+    _verify_bump_class(document, lock, sdk_root, active_changes)
     _verify_bundle_integrity(document, recomputed)
     if check_only:
         _verify_vendored_tree(sdk_root, lock)
@@ -141,6 +164,7 @@ def sync(bundle: Path | None, sdk_root: Path, *, check_only: bool = False) -> Sy
         tuple(sorted(changed)),
         tuple(sorted(deprecated)),
         tuple(removed),
+        active_changes,
     )
 
 
@@ -651,15 +675,24 @@ def _bump_class(prior: str, current: str) -> str:
     return "PATCH"
 
 
-def _verify_bump_class(document: dict[str, Any], lock: dict[str, Any], sdk_root: Path) -> None:
+def _verify_bump_class(
+    document: dict[str, Any],
+    lock: dict[str, Any],
+    sdk_root: Path,
+    active_changes: tuple[str, ...] = (),
+) -> None:
     """The served-set change bumps the SDK per the 0.3.0 precedent (owner Q8).
 
     A carried-set change inside an UNCHANGED declared range is a PATCH-class
     SDK bump; a change to any declared range (or yank/retired statuses) is
     MINOR at least — one SDK version never covers two served sets (#166).
-    Judged against the PRE-sync lock (the state being replaced) and the
-    bundle's policy block; a first sync or an unanchored prior version
-    (``unknown``, null) has nothing to judge and passes.
+    An ACTIVE re-point with an intact carried set is judged the same way
+    (late Forge fold 2, #215): ``OTDP_VERSION``/``ADAPTER_API_VERSION``
+    derive from the active row, so an unmoved SDK version covering both the
+    old and the new derived-constant states is the same one-version-two-
+    states defect. Judged against the PRE-sync lock (the state being
+    replaced) and the bundle's policy block; a first sync or an unanchored
+    prior version (``unknown``, null) has nothing to judge and passes.
     """
     policy = document.get("dependency_policy")
     if not isinstance(policy, dict):
@@ -695,7 +728,7 @@ def _verify_bump_class(document: dict[str, Any], lock: dict[str, Any], sdk_root:
         for standard in document.get("standards", [])
     }
     carried_changed = prior_rows != bundle_rows
-    if not carried_changed and not range_changed:
+    if not carried_changed and not range_changed and not active_changes:
         return
     change = _bump_class(prior_version, current)
     if range_changed and change not in ("MINOR", "MAJOR"):
@@ -704,6 +737,14 @@ def _verify_bump_class(document: dict[str, Any], lock: dict[str, Any], sdk_root:
             f"version moved {prior_version} -> {current} ({change}); a range "
             "change is a MINOR-class SDK bump at least — one SDK version never "
             "covers two served sets"
+        )
+    if active_changes and change not in ("PATCH", "MINOR", "MAJOR"):
+        raise ValueError(
+            f"sdk_bump_class_invalid: the active row re-pointed "
+            f"({', '.join(active_changes)}) but the SDK version did not move "
+            f"({prior_version} -> {current}, {change}); OTDP_VERSION and "
+            "ADAPTER_API_VERSION derive from the active row — one SDK version "
+            "never covers two derived-constant states"
         )
     if not range_changed and carried_changed and change not in ("PATCH", "MINOR", "MAJOR"):
         raise ValueError(

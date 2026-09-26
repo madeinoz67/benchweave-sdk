@@ -255,7 +255,13 @@ def classify_pin(pin: str, standard: str = STANDARD) -> PinClassification:
 
 
 def refusal_for(classification: PinClassification) -> ValueError:
-    """The typed refusal for a non-validatable pin, five fields attached."""
+    """The typed refusal for a non-validatable pin, five fields attached.
+
+    The move-to is labelled for what the derivation actually is — the
+    HIGHEST SERVED version, the recommended re-target (late Forge fold 3,
+    #215: "nearest" overpromised an adjacency the pinned derivation does
+    not compute).
+    """
     prefix = (
         "retired_identifier:"
         if classification.state == "retired"
@@ -263,8 +269,9 @@ def refusal_for(classification: PinClassification) -> ValueError:
     )
     return ValueError(
         f"{prefix} {classification.standard} pin {classification.pin} "
-        f"(supported range {classification.supported_range}; nearest move-to "
-        f"{classification.move_to}; {classification.migration_note}) — "
+        f"(supported range {classification.supported_range}; move-to "
+        f"{classification.move_to} — the highest served version, the "
+        f"recommended re-target; {classification.migration_note}) — "
         f"{classification.detail}"
     )
 

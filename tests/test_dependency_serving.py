@@ -363,3 +363,46 @@ def test_served_version_paths_never_warn() -> None:
         warnings.simplefilter("error")
         validate_request(request, otdp_version="0.2.0")
         validate_request(request)  # the derived active version
+
+
+# --- #215 late Forge fold 1: the digest gate covers EVERY served document. ---
+
+
+def test_the_verified_loader_covers_every_carried_standard() -> None:
+    """Late fold 1 (#215): the digest-verified loader's coverage equals the
+    lock's — every lock-recorded JSON document in every carried standard
+    (execution, interface, plugin-ui-preview included) is loaded through the
+    digest-checked path, not only the three standards contract_documents
+    historically enumerated."""
+    import benchweave_sdk.validation as validation_module
+    from benchweave_sdk.served import lock_file_digests
+
+    documents = validation_module.contract_documents()
+    recorded = {path for path in lock_file_digests() if path.endswith(".json")}
+    missing = sorted(recorded - set(documents))
+    assert not missing, f"lock-recorded documents outside the verified loader: {missing}"
+
+
+def test_tampered_fixture_schema_refuses_on_the_fixture_path(tmp_path: Path) -> None:
+    """Late fold 1 (#215), the executed falsifier: a parse-valid tamper of a
+    plugin-ui-preview schema byte used to load clean on the fixture path
+    (``fixtures`` read the vendored tree directly, outside the digest gate).
+    The load must refuse ``vendored_digest_mismatch:`` naming the file."""
+    import benchweave_sdk.fixtures as fixtures_module
+
+    victim = (
+        ROOT / "src/benchweave_sdk/standards/plugin-ui-preview/0.1.1/fixture.schema.json"
+    )
+    original = victim.read_bytes()
+    tampered = original.replace(b'"required"', b'"xrequired"')
+    assert tampered != original, "the falsifier needs a byte the parse survives"
+    (tmp_path / "fixtures").mkdir()
+    try:
+        _clear_document_caches()
+        victim.write_bytes(tampered)
+        with pytest.raises(ValueError, match="^vendored_digest_mismatch: ") as refusal:
+            fixtures_module.load_author_fixtures(tmp_path / "fixtures", None)
+        assert "plugin-ui-preview/0.1.1/fixture.schema.json" in str(refusal.value)
+    finally:
+        victim.write_bytes(original)
+        _clear_document_caches()

@@ -49,36 +49,20 @@ def test_contract_documents_refuses_a_foreign_root(
         validation.contract_documents()
 
 
-def _fixture_schema_relative() -> Path:
-    from benchweave_sdk.served import active_version
-
-    vendored = REPO / "src/benchweave_sdk/standards/plugin-ui-preview"
-    # Multi-version serving (#203 slice 1): two versions are vendored; the
-    # fixture schema the loader wants is the ACTIVE one's (its path stays a
-    # module literal until slice 7's derivation sweep).
-    active = active_version("plugin-ui-preview")
-    packaged = vendored / active / "fixture.schema.json"
-    return Path("standards/plugin-ui-preview") / active / packaged.name
-
-
-@pytest.mark.parametrize(
-    ("project_name", "trusted"),
-    [("benchweave", True), ("somebody-elses-project", False)],
-)
-def test_fixture_schema_fallback_only_trusts_the_gateway_checkout(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, project_name: str, trusted: bool
+def test_fixture_schema_load_rides_the_verified_loader(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The schema is present at the fallback path in both cases; only the root's name differs."""
-    root, package = _mount(tmp_path, project_name)
-    schema = root / _fixture_schema_relative()
-    schema.parent.mkdir(parents=True)
-    schema.write_text("{}", encoding="utf-8")
-    monkeypatch.setattr(fixtures, "__file__", str(package / "fixtures.py"))
-    if trusted:
-        assert fixtures._schema_path() == schema
-    else:
-        with pytest.raises(RuntimeError, match="^SDK preview fixture schema missing"):
-            fixtures._schema_path()
+    """#215 late fold 1: the fixture schema load no longer resolves its own
+    path — it rides ``contract_documents`` (digest-verified, every carried
+    standard enumerated), so the fallback trust posture is the loader's own
+    (pinned by ``test_contract_documents_refuses_a_foreign_root``) and an
+    absent schema keeps the fixture-named refusal. The digest gate itself is
+    pinned by the tamper and coverage tests in test_dependency_serving."""
+    import benchweave_sdk.validation as validation_module
+
+    monkeypatch.setattr(validation_module, "contract_documents", lambda: {})
+    with pytest.raises(RuntimeError, match="^SDK preview fixture schema missing"):
+        fixtures._fixture_schema()
 
 
 @pytest.mark.usefixtures("fresh_caches")

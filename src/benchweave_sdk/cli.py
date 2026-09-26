@@ -262,10 +262,17 @@ def sync_standards_command(bundle: Path | None, check_only: bool) -> None:
             ("changed", report.changed),
             ("deprecated", report.deprecated),
             ("removed", report.removed),
+            ("active-changes", report.active_changes),
         )
     )
     if check_only and any(
-        (report.added, report.changed, report.deprecated, report.removed)
+        (
+            report.added,
+            report.changed,
+            report.deprecated,
+            report.removed,
+            report.active_changes,
+        )
     ):
         # A non-empty report in check mode is drift awaiting sync, not success.
         raise click.ClickException(

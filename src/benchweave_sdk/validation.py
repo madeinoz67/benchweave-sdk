@@ -25,6 +25,7 @@ from .served import (
     carried_versions,
     classify_pin,
     lock_file_digests,
+    lock_rows,
     refusal_for,
 )
 
@@ -74,7 +75,8 @@ def _warn_if_yanked_otdp(schema_file: str) -> None:
     warnings.warn(
         f"otdp {parts[1]} is yanked from serving and auto-selection; the pin stays "
         f"conforming and validates against {parts[1]}'s own bytes — the move-to is "
-        f"{classification.move_to} ({classification.migration_note})",
+        f"{classification.move_to} (the highest served version, the recommended "
+        f"re-target; {classification.migration_note})",
         YankedPinWarning,
         stacklevel=3,
     )
@@ -108,9 +110,15 @@ def contract_documents() -> dict[str, Any]:
     becomes the schema a descriptor validates against.
     """
     vendored = files("benchweave_sdk").joinpath("standards")
+    # Late Forge fold 1 (#215): the enumeration is EVERY carried standard the
+    # lock names (execution, interface, plugin-ui-preview included), not the
+    # three this loader historically served — the lock's JSON-document
+    # coverage and the digest-verified runtime coverage must be the same set,
+    # or a tampered byte in an unenumerated standard rides the wheel outside
+    # the gate (the plugin-ui-preview fixture-schema falsifier).
     sets = tuple(
         (identifier, version)
-        for identifier in ("otdp", "registry", "plugin-ui")
+        for identifier in sorted({row[0] for row in lock_rows()})
         for version in carried_versions(identifier)
     )
     if vendored.is_dir():
