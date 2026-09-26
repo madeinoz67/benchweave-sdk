@@ -768,3 +768,140 @@ def test_range_narrowing_that_drops_a_carried_version_reports_it_removed(
     # The narrowed tree is internally consistent (the drop really happened).
     assert sync(None, sdk, check_only=True) == SyncReport((), (), (), ())
 
+
+# --- #215 maintainer-review fold wave (NEEDS-WORK): the bump-class gate
+# judges governed fields, not annotations; unparsable anchors refuse typed;
+# succession labels stay honest when the superseded row stays carried. ---
+
+
+def test_note_only_policy_edit_is_not_a_range_change(tmp_path: Path) -> None:
+    """Fold-wave F-D 5 (#215): the bump-class gate compares the declared
+    range/yanked/retired FIELDS, not whole policy rows. A note-only edit
+    (plugin-ui's annotation reworded; range, yank and retired untouched,
+    carried set intact, SDK version unmoved) used to refuse with a false
+    statement — ``the declared ranges changed but the SDK version moved
+    EQUAL`` — demanding a version bump no governed surface moved. An
+    annotation is not a range change; the sync is clean."""
+    bundle = _export(tmp_path)
+    _with_policy(bundle)
+    sdk = _versioned_sdk(tmp_path, "0.3.1")
+    sync(bundle, sdk)  # anchors compatibility.sdk = 0.3.1 and the policy mirror
+    document = _manifest(bundle)
+    document["dependency_policy"]["standards"]["plugin-ui"]["note"] = (
+        "reworded annotation; the range, yank and retirement state are unchanged"
+    )
+    _rewrite_manifest(bundle, document)
+    report = sync(bundle, sdk)
+    assert report.added == () and report.removed == () and report.changed == ()
+    # The reworded note rides the mirror into the new lock verbatim.
+    lock = json.loads((sdk / "standards-lock.json").read_bytes())
+    assert (
+        lock["dependency_policy"]["standards"]["plugin-ui"]["note"]
+        == document["dependency_policy"]["standards"]["plugin-ui"]["note"]
+    )
+
+
+@pytest.mark.parametrize("version", ["0.3.x2", "0.3.2.dev0"])
+def test_unparsable_prior_sdk_version_refuses_typed_not_a_traceback(
+    tmp_path: Path, version: str
+) -> None:
+    """Fold-wave F-D 6 (#215): a non-semver ``compatibility.sdk`` reached
+    ``_bump_class``'s bare ``int()`` and surfaced as ``invalid literal for
+    int()`` — the defect class fix F2 hardened away on the pin path. The
+    judgment now refuses typed, naming the value and the side it came from
+    (the same guard covers an unparsable CURRENT pyproject version)."""
+    bundle = _export(tmp_path)
+    _with_policy(bundle)
+    sdk = _versioned_sdk(tmp_path, "0.3.1")
+    sync(bundle, sdk)
+    lock = json.loads((sdk / "standards-lock.json").read_bytes())
+    lock["compatibility"]["sdk"] = version  # the unparsable PRIOR anchor
+    (sdk / "standards-lock.json").write_bytes(
+        (json.dumps(lock, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    )
+    # A range change gives the gate something to judge, so the anchor is
+    # parsed before any class is named.
+    document = _manifest(bundle)
+    document["dependency_policy"]["standards"]["otdp"]["range"] = ">=0.2.1,<0.3.0"
+    _rewrite_manifest(bundle, document)
+    (sdk / "pyproject.toml").write_text(
+        '[project]\nname = "benchweave-sdk"\nversion = "0.3.2"\n', encoding="utf-8"
+    )
+    with pytest.raises(ValueError, match="^sdk_version_unparsable: ") as refusal:
+        sync(bundle, sdk)
+    message = str(refusal.value)
+    assert version in message and "prior" in message, "the refusal names the value and side"
+
+
+def test_unparsable_current_sdk_version_refuses_typed_not_a_traceback(
+    tmp_path: Path,
+) -> None:
+    """Fold-wave F-D 6, current-side arm: the unparsable anchor can sit in
+    the SDK's own pyproject — the typed refusal names that side too."""
+    bundle = _export(tmp_path)
+    _with_policy(bundle)
+    sdk = _versioned_sdk(tmp_path, "0.3.1")
+    sync(bundle, sdk)
+    (sdk / "pyproject.toml").write_text(
+        '[project]\nname = "benchweave-sdk"\nversion = "0.3.x2"\n', encoding="utf-8"
+    )
+    document = _manifest(bundle)
+    document["dependency_policy"]["standards"]["otdp"]["range"] = ">=0.2.1,<0.3.0"
+    _rewrite_manifest(bundle, document)
+    with pytest.raises(ValueError, match="^sdk_version_unparsable: ") as refusal:
+        sync(bundle, sdk)
+    assert "0.3.x2" in str(refusal.value) and "current" in str(refusal.value)
+
+
+def test_a_still_carried_prior_active_row_is_not_reported_added(
+    tmp_path: Path,
+) -> None:
+    """Fold-wave F-E 11 (#215): with a legacy UNMARKED prior lock, an active
+    re-point DOWN (0.2.2 -> 0.2.0, 0.2.2 staying carried) made the
+    active-succession branch consume otdp@0.2.2's lock row for otdp@0.2.0's
+    ``changed`` label — and otdp@0.2.2's own bundle row then classified as
+    ADDED, a row that never left the carried set. The branch must not
+    consume a prior row the bundle itself still carries: the re-pointed-to
+    row is the ADD, the still-carried row gets no label, the re-point is
+    named by ``active_changes`` (label-only defect; the gates were correct
+    before and after)."""
+    bundle = _export(tmp_path)
+    _with_policy(bundle)
+    document = _manifest(bundle)
+    for row in document["standards"]:
+        if row["id"] == "otdp":
+            row["active"] = row["version"] == "0.2.0"  # the re-point down
+    _rewrite_manifest(bundle, document)
+    sdk = _versioned_sdk(tmp_path, "0.3.2")
+    # The legacy prior lock: otdp carried as ONE unmarked row (the
+    # pre-multi-version shape; _prior_active_versions takes the highest
+    # same-id version as the implicit active).
+    prior_row = next(
+        s for s in document["standards"] if s["id"] == "otdp" and s["version"] == "0.2.2"
+    )
+    (sdk / "standards-lock.json").write_bytes(
+        (
+            json.dumps(
+                {
+                    "lock_version": 1,
+                    "standards": [
+                        {
+                            "id": "otdp",
+                            "version": "0.2.2",
+                            "files": prior_row["files"],
+                        }
+                    ],
+                    "compatibility": {"sdk": "0.3.1"},
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n"
+        ).encode()
+    )
+    report = sync(bundle, sdk)
+    assert "otdp@0.2.2" not in report.added, "a still-carried row is not an add"
+    assert "otdp@0.2.2" not in report.removed and report.changed == ()
+    assert "otdp@0.2.0" in report.added, "the re-pointed-to row is the add"
+    assert report.active_changes == ("otdp@0.2.2->0.2.0",)
+

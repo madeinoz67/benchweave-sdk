@@ -185,6 +185,10 @@ def classify_pin(pin: str, standard: str = STANDARD) -> PinClassification:
     supported = supported_range(standard)
     carried = carried_versions(standard)
     if pin in _retired(standard):
+        # The fallback fires only when no version of the standard is served
+        # (a degenerate lock): it names the declared range's lower bound as
+        # GUIDANCE, and refusal_for labels it as exactly that — a fallback,
+        # never a servable target (#215 fold-wave F-E 10).
         move_to = _move_to(pin, standard) or supported.split(",")[0].lstrip(">=")
         return PinClassification(
             state="retired",
@@ -260,18 +264,37 @@ def refusal_for(classification: PinClassification) -> ValueError:
     The move-to is labelled for what the derivation actually is — the
     HIGHEST SERVED version, the recommended re-target (late Forge fold 3,
     #215: "nearest" overpromised an adjacency the pinned derivation does
-    not compute).
+    not compute) — except on the retired fallback, where nothing is served
+    and the guidance names the declared range's LOWER BOUND as a fallback,
+    never a servable target (#215 fold-wave F-E 10: a future range edit
+    must not be able to steer a reader at a version no path validates
+    against).
     """
     prefix = (
         "retired_identifier:"
         if classification.state == "retired"
         else "version_not_served:"
     )
+    if classification.move_to is None:
+        move_to_note = (
+            f"no move-to: no version of {classification.standard} is served "
+            "on this lock"
+        )
+    elif classification.move_to in served_versions(classification.standard):
+        move_to_note = (
+            f"move-to {classification.move_to} — the highest served version, "
+            "the recommended re-target"
+        )
+    else:
+        move_to_note = (
+            f"move-to {classification.move_to} — the declared range's lower "
+            f"bound, named as a fallback: no version of {classification.standard} "
+            "is served on this lock, so it names no servable target"
+        )
     return ValueError(
         f"{prefix} {classification.standard} pin {classification.pin} "
-        f"(supported range {classification.supported_range}; move-to "
-        f"{classification.move_to} — the highest served version, the "
-        f"recommended re-target; {classification.migration_note}) — "
+        f"(supported range {classification.supported_range}; "
+        f"{move_to_note}; {classification.migration_note}) — "
         f"{classification.detail}"
     )
 

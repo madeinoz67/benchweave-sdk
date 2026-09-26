@@ -322,6 +322,37 @@ def test_move_to_orders_by_semver_not_lexical_sort(
         served.lock_rows.cache_clear()
 
 
+def test_retired_fallback_move_to_is_named_as_the_range_lower_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fold-wave F-E 10 (#215): the retired-pin branch's fallback move-to
+    (taken when NO version of the standard is served — `_move_to` has
+    nothing to derive from) names the declared range's lower bound. The
+    refusal must SAY that: calling it ``the highest served version`` would
+    silently present an unservable value as a re-target, and a future range
+    edit could then steer readers at a version nothing validates against."""
+    import benchweave_sdk.served as served
+
+    lock = json.loads((ROOT / "standards-lock.json").read_bytes())
+    # Every carried otdp version yank-marked → the served set (carried ∧
+    # ¬yanked) is EMPTY and `_move_to` has nothing to derive from; the
+    # retired 0.3.0 pin falls back to the range lower bound 0.2.0.
+    for row in lock["standards"]:
+        if row["id"] == "otdp":
+            row["yanked"] = True
+    monkeypatch.setattr(served, "_lock_document", lambda: lock)
+    served.lock_rows.cache_clear()
+    try:
+        classification = served.classify_pin("0.3.0", "otdp")
+        assert classification.move_to == "0.2.0", "the fallback is the lower bound"
+        message = str(served.refusal_for(classification))
+        assert "0.2.0" in message
+        assert "lower bound" in message, "the fallback is named for what it is"
+        assert "highest served version" not in message, "nothing is served on this lock"
+    finally:
+        served.lock_rows.cache_clear()
+
+
 def test_yank_warning_fires_on_the_envelope_paths() -> None:
     """Fold row 25: the yank deprecation warning is a property of validating
     against a yanked version's bytes — it fires on the envelope entry points

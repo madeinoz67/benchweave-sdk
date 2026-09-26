@@ -100,6 +100,9 @@ def sync(bundle: Path | None, sdk_root: Path, *, check_only: bool = False) -> Sy
     # out of the carried set; consuming that row silently laundered the
     # drop out of the report.
     prior_active = _prior_active_versions(lock)
+    bundle_pairs = {
+        (standard["id"], str(standard["version"])) for standard in document["standards"]
+    }
     added: list[str] = []
     changed: list[str] = []
     deprecated: list[str] = []
@@ -114,10 +117,20 @@ def sync(bundle: Path | None, sdk_root: Path, *, check_only: bool = False) -> Sy
             # A non-active new version (a second served version) is an ADD;
             # a same-id row that merely left the carried set is a REMOVED,
             # reported below even when the active row also moved.
+            # The consumption is licensed ONLY when the superseded row left
+            # the bundle: a prior row the bundle still carries exact-matches
+            # its own bundle row below, so consuming it here would re-report
+            # that still-carried row as an ADD (#215 fold-wave F-E 11 — a
+            # legacy unmarked lock plus an active re-point down produced
+            # exactly that mislabel; order can no longer decide it either).
             successor = (
                 (pair[0], prior_active[pair[0]]) if pair[0] in prior_active else None
             )
-            if successor is not None and successor in previous:
+            if (
+                successor is not None
+                and successor in previous
+                and successor not in bundle_pairs
+            ):
                 previous.pop(successor)
                 changed.append(label)
                 if standard["status"] == "deprecated":
@@ -663,9 +676,17 @@ def _prior_active_versions(lock: dict[str, Any]) -> dict[str, str]:
 
 
 def _bump_class(prior: str, current: str) -> str:
-    """MAJOR / MINOR / PATCH by component comparison; EQUAL when identical."""
-    prior_parts = tuple(int(part) for part in prior.split("."))
-    current_parts = tuple(int(part) for part in current.split("."))
+    """MAJOR / MINOR / PATCH by component comparison; EQUAL when identical.
+
+    Both anchors must parse as exactly MAJOR.MINOR.PATCH; anything else
+    (``0.3.x2``, ``0.3.2.dev0``, a two-component hand-edit) refuses typed
+    under ``sdk_version_unparsable:`` naming the value and the side it came
+    from (#215 fold-wave F-D 6) — the bare ``int()`` crash was the defect
+    class fix F2 hardened away on the pin path, and a silently mis-ordered
+    anchor would launder the judgment instead of refusing it.
+    """
+    prior_parts = _semver_anchor(prior, "prior")
+    current_parts = _semver_anchor(current, "current")
     if prior_parts == current_parts:
         return "EQUAL"
     if current_parts[0] != prior_parts[0]:
@@ -673,6 +694,20 @@ def _bump_class(prior: str, current: str) -> str:
     if current_parts[1] != prior_parts[1]:
         return "MINOR"
     return "PATCH"
+
+
+def _semver_anchor(version: str, side: str) -> tuple[int, int, int]:
+    """Exactly three integer components, or a typed refusal naming the side."""
+    parts = version.split(".")
+    try:
+        if len(parts) != 3:
+            raise ValueError("not three components")
+        return int(parts[0]), int(parts[1]), int(parts[2])
+    except ValueError:
+        raise ValueError(
+            f"sdk_version_unparsable: {version!r} (the {side} anchor) is not "
+            "MAJOR.MINOR.PATCH; the bump class cannot be judged"
+        ) from None
 
 
 def _verify_bump_class(
@@ -716,8 +751,23 @@ def _verify_bump_class(
     prior_rows_policy = prior_rows_policy if isinstance(prior_rows_policy, dict) else {}
     new_rows_policy = policy.get("standards")
     new_rows_policy = new_rows_policy if isinstance(new_rows_policy, dict) else {}
+
+    def _governed(row: object) -> tuple[object, object, object]:
+        """The fields the bump class judges: range, yanked, retired.
+
+        An annotation key (``note``) is governance prose, not governed
+        state — a note-only edit moves no served set and demands no version
+        bump (#215 fold-wave F-D 5; the whole-row comparison refused a
+        note-only edit as "the declared ranges changed"). Yank-record
+        annotations (``reason``/``since``) ride the ``yanked`` field: a
+        record edit IS a policy change, judged here.
+        """
+        if not isinstance(row, dict):
+            return (None, None, None)
+        return (row.get("range"), row.get("yanked"), row.get("retired"))
+
     range_changed = any(
-        new_rows_policy[identifier] != prior_rows_policy[identifier]
+        _governed(new_rows_policy[identifier]) != _governed(prior_rows_policy[identifier])
         for identifier in sorted(set(new_rows_policy) & set(prior_rows_policy))
     )
     prior_rows = {
