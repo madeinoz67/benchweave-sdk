@@ -1,2 +1,4 @@
+plugin-ui-preview/0.1.0/fixture.schema.json — Generated from plugin-ui-preview@0.1.0 — do not edit
+plugin-ui-preview/0.1.0/preview-document.schema.json — Generated from plugin-ui-preview@0.1.0 — do not edit
 plugin-ui-preview/0.1.1/fixture.schema.json — Generated from plugin-ui-preview@0.1.1 — do not edit
 plugin-ui-preview/0.1.1/preview-document.schema.json — Generated from plugin-ui-preview@0.1.1 — do not edit

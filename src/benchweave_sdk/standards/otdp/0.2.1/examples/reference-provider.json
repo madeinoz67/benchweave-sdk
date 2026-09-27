@@ -1,0 +1,121 @@
+{
+  "contract_version": "0.1.0",
+  "id": "urn:otdp:transport-provider:reference-hid:1.0.0",
+  "feature_id": "otdp.transport.reference-hid/1.0.0",
+  "version": "1.0.0",
+  "description": "Synthetic USB-HID-class provider contract. Reference grammar only; not a vendor driver, not hardware-qualified, not an admitted host implementation.",
+  "transport_kind": "usb_hid",
+  "transaction_grammar": [
+    {
+      "kind": "hid_output_report",
+      "request_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "report_id": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 255
+          },
+          "data": {
+            "type": "string",
+            "contentEncoding": "base64",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "report_id",
+          "data"
+        ],
+        "additionalProperties": false,
+        "description": "One output report to the commissioned device. data is bytes at the adapter ABI (specification section 8.1) and base64 text in contract documents and offline checks."
+      },
+      "result_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "maxProperties": 0,
+        "description": "Transport acceptance only, like stream_send: an empty result carries no device meaning."
+      },
+      "limits": {
+        "max_report_bytes": 64
+      }
+    },
+    {
+      "kind": "hid_input_report",
+      "request_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "report_id": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 255
+          },
+          "max_bytes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 64
+          }
+        },
+        "required": [
+          "report_id",
+          "max_bytes"
+        ],
+        "additionalProperties": false,
+        "description": "Read one input report from the commissioned device. max_bytes bounds the report the host may return, like stream_receive."
+      },
+      "result_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "report_id": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 255
+          },
+          "data": {
+            "type": "string",
+            "contentEncoding": "base64",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "report_id",
+          "data"
+        ],
+        "additionalProperties": false,
+        "description": "The report actually received. data is bytes at the adapter ABI and base64 text in contract documents and offline checks."
+      },
+      "limits": {
+        "max_report_bytes": 64
+      }
+    }
+  ],
+  "security_scope": "commissioned_connection",
+  "host_requirements": {
+    "summary": "Host-side USB-HID class access to the commissioned device's HID interface only. No vendor SDK, no filesystem paths, no process spawning, no network endpoints.",
+    "native_libraries": [],
+    "privileges": []
+  },
+  "approval": {
+    "approved_by": "OTDP Reference",
+    "approved_at": "2026-09-22T00:00:00Z",
+    "expires_at": "2027-09-22T00:00:00Z",
+    "evidence": [
+      {
+        "category": "protocol",
+        "report": {
+          "id": "reference-hid-grammar",
+          "version": "1.0.0",
+          "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+        },
+        "tested_at": "2026-09-22T00:00:00Z",
+        "scope": "Grammar fixture only; exercised against exact-dict transfer scripting, not hardware",
+        "result": "passed",
+        "limitations": [
+          "No real hardware evidence; cannot qualify a provider implementation"
+        ]
+      }
+    ]
+  }
+}

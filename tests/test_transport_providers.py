@@ -52,9 +52,18 @@ _PROVIDER_FEATURE = "otdp.transport.reference-hid/1.0.0"
 
 
 def _otdp_key(suffix: str) -> str:
-    """The vendored OTDP document ending in ``suffix``, whatever version main vendors."""
+    """The ACTIVE version's vendored OTDP document ending in ``suffix``.
+
+    Multi-version serving (#203 slice 1): the tree carries every retained
+    in-range version, so "the one vendored otdp" is resolved at the derived
+    active version, not by uniqueness."""
+    from benchweave_sdk.served import active_version
+
+    active = active_version("otdp")
     matches = [
-        key for key in contract_documents() if key.startswith("otdp/") and key.endswith(suffix)
+        key
+        for key in contract_documents()
+        if key.startswith(f"otdp/{active}/") and key.endswith(suffix)
     ]
     assert len(matches) == 1, matches
     return matches[0]
@@ -305,7 +314,9 @@ def test_fault_lattice_document_lane_behaves_as_declared(tmp_path: Path, name: s
 def test_known_feature_census_is_derived_from_the_vendored_tree() -> None:
     catalog = contract_documents()[_otdp_key("/device-profile-catalog.json")]
     expected = _LANES | {profile["id"] for profile in catalog["profiles"]}
-    derived = _corpus_known_otdp_features()
+    from benchweave_sdk.served import active_version
+
+    derived = _corpus_known_otdp_features(active_version("otdp"))
     assert derived == expected
     assert len(expected) == 17  # five lanes + twelve catalog profiles at 0.2.1
 

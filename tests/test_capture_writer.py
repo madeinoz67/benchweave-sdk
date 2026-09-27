@@ -326,12 +326,14 @@ _WAVEFORM = {
 
 def _capture_manifest_def() -> dict[str, Any]:
     """``$defs/captureManifest`` from the vendored corpus, at test time."""
+    from benchweave_sdk.served import active_version
     from benchweave_sdk.validation import contract_documents
 
+    active = active_version("otdp")
     matches = [
         key
         for key in contract_documents()
-        if key.startswith("otdp/") and key.endswith("/otdp-runtime.schema.json")
+        if key.startswith(f"otdp/{active}/") and key.endswith("/otdp-runtime.schema.json")
     ]
     assert len(matches) == 1, matches
     runtime = contract_documents()[matches[0]]

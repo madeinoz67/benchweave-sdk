@@ -11,9 +11,18 @@ from benchweave_sdk.validation import contract_documents, validate, validate_des
 
 
 def _otdp_key(suffix: str) -> str:
-    """The vendored OTDP document ending in ``suffix``, whatever version main vendors."""
+    """The ACTIVE version's vendored OTDP document ending in ``suffix``.
+
+    Multi-version serving (#203 slice 1): the tree carries every retained
+    in-range version, so "the one vendored otdp" is resolved at the derived
+    active version, not by uniqueness."""
+    from benchweave_sdk.served import active_version
+
+    active = active_version("otdp")
     matches = [
-        key for key in contract_documents() if key.startswith("otdp/") and key.endswith(suffix)
+        key
+        for key in contract_documents()
+        if key.startswith(f"otdp/{active}/") and key.endswith(suffix)
     ]
     assert len(matches) == 1, matches
     return matches[0]

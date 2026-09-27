@@ -20,7 +20,6 @@ from .preview_models import (
     Severity,
     SimulatedReceipt,
 )
-from .validation import _project_name
 
 BASELINE_IDS = frozenset(
     {
@@ -37,26 +36,29 @@ BASELINE_IDS = frozenset(
 )
 
 
-def _schema_path() -> Path:
-    packaged = (
-        Path(__file__).with_name("standards")
-        / "plugin-ui-preview"
-        / "0.1.1"
-        / "fixture.schema.json"
-    )
-    if packaged.is_file():
-        return packaged
-    # Editable development in the main-project submodule mount only; anywhere
-    # else a missing vendored schema is an incomplete installation, not a cue
-    # to read files from outside the package.
-    root = Path(__file__).resolve().parents[4]
-    if _project_name(root) == "benchweave":
-        checkout = root / "standards/plugin-ui-preview/0.1.1/fixture.schema.json"
-        if checkout.is_file():
-            return checkout
-    raise RuntimeError(
-        "SDK preview fixture schema missing; run sync-standards or reinstall the SDK"
-    )
+def _fixture_schema() -> Any:
+    """The ACTIVE plugin-ui-preview fixture schema, digest-verified at load.
+
+    Late Forge fold 1 (#215): this load used to read the vendored tree
+    directly, outside the digest gate — a parse-valid tamper of the schema
+    byte loaded clean while every schema the validation lane served was
+    digest-checked. It now rides the one verified loader
+    (``validation.contract_documents``, whose enumeration covers every
+    carried standard, this one included), so tampered bytes refuse
+    ``vendored_digest_mismatch:`` before any author fixture is judged
+    against them. The fallback trust posture (the gateway checkout only)
+    is the loader's own, pinned by its tests.
+    """
+    from .served import active_version
+    from .validation import contract_documents
+
+    key = f"plugin-ui-preview/{active_version('plugin-ui-preview')}/fixture.schema.json"
+    document = contract_documents().get(key)
+    if document is None:
+        raise RuntimeError(
+            "SDK preview fixture schema missing; run sync-standards or reinstall the SDK"
+        )
+    return document
 
 
 def _parse(raw: bytes) -> dict[str, Any]:
@@ -215,7 +217,7 @@ def load_author_fixtures(
     paths = sorted(directory.glob("*.json"))
     if len(paths) > 128:
         raise ValueError("preview_fixture_count_exceeded: maximum is 128")
-    schema = _parse(read_file(_schema_path()))
+    schema = _fixture_schema()
     validator = Draft202012Validator(schema)
     targets = _target_index(catalogue)
     scenarios = []
