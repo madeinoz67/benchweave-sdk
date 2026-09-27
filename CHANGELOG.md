@@ -2,6 +2,39 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.1] - 2026-09-27
+
+### Bug Fixes
+
+- Close the standalone writer gaps from the #43 re-check (#56)
+- Fold the #146 slice-1 refute findings (LOW-1, NIT-1)
+- Refresh stale uv.lock to 0.3.1 (F6)
+- Digest-verified load path, typed drift, lazy constants (F1-F3)
+- Pin the bump-class gate; narrowing reports dropped rows (F4-F5)
+- Fold LOW/NIT rows 1, 3, 23, 25 (SDK side)
+- Late Forge folds 1-3 — full digest-gate coverage, active re-point gate, move-to wording
+- Maintainer-review folds SDK side — governed-field bump judging, typed anchors, honest labels
+
+### Documentation
+
+- Row-3 names both selector surfaces (R3) + worktree/stash discipline in AGENTS.md (R1) — retro 2026-09-25
+- Point the deferral rule at the main-side contract (#99) (#59)
+
+### Features
+
+- DatasetServices protocol for extension-contract section 3 (#146 slice 1)
+- Multi-version serving — carried set, per-pin validation, derived constants
+
+### Miscellaneous
+
+- V0.3.1 release-review walk phase 1 — hero/timeline stamps + matrix result record
+- V0.3.1 docs registration (phase 2)
+
+
+### Contributors
+
+- Platima (1 commit)
+- Stephen Eaton (13 commits)
 ## [0.3.0] - 2026-09-25
 
 ### Bug Fixes
