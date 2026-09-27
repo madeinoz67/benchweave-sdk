@@ -94,3 +94,17 @@ the checklist is a matrix in `docs/internal`, and a skill walks it.
 | 6 | `great-docs.yml` versions | PHASE-2 PLAN — no edit in this PR; the tag commit registers v0.3.0 `latest: true` with v0.2.0 demoted to prior, pushed with the tag in one action (the ordering constraint above). |
 | 7 | Contributor window `v0.2.0..HEAD` | Platima again (1 commit — the #52 docs-guide follow-up), already acknowledged at v0.2.0; excluded: `benchweave-changelog[bot]` (bot) and the owner (madeinoz67 / Stephen Eaton). Acknowledgment this release: the rendered CHANGELOG 0.3.0 Contributors section (cliff.toml Contributors template; the publish.yml changelog job runs git-cliff-action with GITHUB_TOKEN so it renders @mentions) + the tag message at the owner's word. |
 | 8 | Gateway `uv.lock` SDK pin | recorded note — the gateway pairing PR (`chore/sdk-030-pairing`) moves the manifest mirror `sdk_compatibility.sdk` → 0.3.0, regenerates the rendered matrix, and advances the submodule pointer to this release; the gateway's own `uv.lock` pin moves at its next gateway-side lock run. Unlike v0.2.0, `standards-lock.json` `compatibility.sdk` moves 0.2.0 → 0.3.0 in THIS release via the standards sync (the certified-version field, the #187 fork (a) ruling) — the #189 pairing shape. |
+
+## Result record — v0.3.1 (2026-09-27)
+
+| # | Surface | Result |
+|---|---------|--------|
+| 1 | README stamp | correct-as-is — SDK 0.3.1 stamped with the #215 fold and independently re-proven at the fold tip |
+| 2 | Website hero status | updated — SDK 0.3.0 → 0.3.1; OTDP 0.2.2 / adapter API 1.1 correct-as-is against the lock's active otdp row |
+| 3 | Docs selector | WALKED TWO-PHASE — phase 1 (this commit): no edit; the selector stays consistent with the current tag set (v0.3.0 latest). Phase 2 rides the tag commit, pushed with the tag in one action: v0.3.1 (latest) + v0.3.0 prior option on both surfaces. |
+| 4 | Compatibility tagline | updated — SDK 0.3.1 against main project `>=0.1.0` (lock floor unchanged; `compatibility.sdk` already 0.3.1 via the sync, the #189 pairing shape) |
+| 5 | Standards badges | correct-as-is — all six match the lock's ACTIVE rows (otdp 0.2.2, registry 0.1.1, execution 0.2.0, interface 0.1.0, plugin-ui 0.2.0, plugin-ui-preview 0.1.1) |
+| 6 | `great-docs.yml` versions | PHASE-2 PLAN — the tag commit registers v0.3.1 `latest: true` and demotes v0.3.0 (the ordering constraint: a tag missing itself fails the docs build) |
+| 7 | Contributor window `v0.3.0..HEAD` | Platima — 1 commit in the window (already acknowledged at v0.2.0/v0.3.0, named again per that precedent); excluded: `benchweave-changelog[bot]` (bot) and the owner. Acknowledgment lands in the tag message (the permanent record) and the rendered release notes. |
+| 8 | Gateway `uv.lock` SDK pin | recorded note — the gateway pairing landed with gateway #234 (`sdk_compatibility` mirror + submodule pointer at 0.3.1); the gateway's own `uv.lock` pin moves at its next gateway-side lock run. Gateway #237 (Windows separator/CRLF batch + `retention_policy` SyntaxWarning) rides this release train from the gateway side. |
+| 9 | Served-set bump class | correct-as-is — PATCH for a carried-set growth inside unchanged declared ranges (6 → 11 carried rows); `sdk_bump_class_invalid:` enforces and is mutation-pinned; the gateway check lanes are green at the pairing |
