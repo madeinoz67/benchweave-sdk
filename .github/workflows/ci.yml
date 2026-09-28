@@ -59,6 +59,15 @@ jobs:
         # repository's ui/gates jobs.
         run: uv run benchweave-sdk sync-standards --check
 
+      - name: Version-literal zero gate
+        # Issue #221 (gateway #203 slice 7): an SDK-only PR cannot add a
+        # version literal between gateway pointer bumps — this lane refuses
+        # it immediately, and the gateway's sdk scope re-checks the same
+        # tree at every bump (the A6 two-sided posture). The counter is
+        # stdlib-only; the definition's authority and the register-sync
+        # obligation live in the gateway repo.
+        run: python3 scripts/count_version_literals.py
+
       - name: CLI entry point
         run: uv run benchweave-sdk --version
 

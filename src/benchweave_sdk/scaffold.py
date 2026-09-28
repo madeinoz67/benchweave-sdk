@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__
+from .served import active_version
 from .validation import validate_descriptor
 
 # A generated project whose package shadows the SDK itself or a stdlib module
@@ -527,7 +528,16 @@ def descriptor_for(package: str) -> dict[str, Any]:
         "completion": "acknowledged",
     }
     return {
-        "otdp_version": "0.2.2",
+        # The lock's active OTDP version (issue #221, gateway slice 7): the
+        # same call validation.py::_resolve_otdp_pin makes for an unpinned
+        # descriptor — the scaffold generates what the SDK validates today,
+        # and the SDK's state choosing a version is code, not an author's
+        # declaration.
+        "otdp_version": active_version("otdp"),
+        # Authored example content (registered with the counter, gateway
+        # register row: the otdp descriptor schema PATTERNs
+        # descriptor_version rather than const-ing it, so nothing derives
+        # it).
         "descriptor_version": "0.1.0",
         "id": f"dev.example.{package.replace('_', '-')}",
         "display_name": "SDK synthetic example",
