@@ -25,12 +25,20 @@ silently — and re-syncs the gateway twin in the same work):
 - Pattern B: a string that IS a bare ``X.Y.Z`` (three-component pure semver),
   counted EVERYWHERE in executable code.
 
-WHAT THE MATCHER DOES NOT CATCH (G4, fold row 7d): this is a SYNTACTIC
-text scan. A version assembled at runtime is invisible to it — string
-concatenation, f-strings, ``bytes`` literals, ``%``/``.format``/``str.join``
-composition, and values read from data files all escape. Catching those
-needs AST-level taint tracking, deliberately NOT attempted in this fold;
-the review lanes carry that duty until then.
+WHAT THE MATCHER DOES NOT CATCH (G4, fold row 7d; issue #269 rewrite): the
+matcher folds CONSTANT-ONLY assembly — concatenation, f-strings,
+``%``-formatting, ``.format``, ``str.join`` over literal sequences,
+``chr``/``str`` over literals, ``bytes.decode``, and string repetition —
+and refuses the folded result under the same two patterns (``ASM-A`` /
+``ASM-BARE``; bounds: fold depth ≤ 24, folded length ≤ 4096; a module that
+shadows ``chr``/``str`` is never folded as the builtins; every fold
+failure is an honest miss, never a gate failure). Assembly with ANY
+non-literal input — a variable, parameter, function result, comprehension,
+or a value read from data, environment, or configuration — remains
+invisible: catching that needs taint tracking, still deliberately not
+attempted (the follow-on row; the review lanes carry it). ``os.path.join``
+and other stdlib string constructors are outside the fold allowlist (named
+residual, deferral D-3).
 
 DENOMINATOR BOUNDARY (G1's honest scope, fold row 13): this lane gates
 ``src/benchweave_sdk/`` only. ``scripts/``, ``tests/`` and ``.github/`` of
@@ -142,6 +150,229 @@ def _docstring_ids(tree: ast.Module) -> set[int]:
     return skip
 
 
+# --- constant-folding assembly detection (issue #269, design §1.1) ---------
+# Bounds: a fold attempt exceeding either is UNFOLDABLE (an honest miss,
+# never an error).
+FOLD_MAX_DEPTH = 24
+FOLD_MAX_LENGTH = 4096
+
+
+class _Unfoldable(Exception):
+    """The evaluator's universal miss: this expression is not constant-only."""
+
+
+def _shadowed_builtin_names(tree: ast.Module) -> frozenset[str]:
+    """Module-level names binding ``chr``/``str`` — a module that shadows a
+    builtin must never have its calls folded AS the builtin (a local
+    ``def chr`` returning something else would fold lies)."""
+    shadowed: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+            if node.name in ("chr", "str"):
+                shadowed.add(node.name)
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id in ("chr", "str"):
+                    shadowed.add(target.id)
+        elif isinstance(node, ast.AnnAssign):
+            if isinstance(node.target, ast.Name) and node.target.id in ("chr", "str"):
+                shadowed.add(node.target.id)
+        elif isinstance(node, ast.Import | ast.ImportFrom):
+            for alias in node.names:
+                bound = alias.asname or alias.name.split(".", 1)[0]
+                if bound in ("chr", "str"):
+                    shadowed.add(bound)
+    return frozenset(shadowed)
+
+
+def _folded_string(value: object) -> str:
+    """The one choke point a folded str passes through: type-checked and
+    length-bounded (a longer assembly is pathological — unfoldable)."""
+    if not isinstance(value, str):
+        raise _Unfoldable
+    if len(value) > FOLD_MAX_LENGTH:
+        raise _Unfoldable
+    return value
+
+
+def _stringify(value: object) -> str:
+    """The f-string/``str()`` conversion over folded values (design §1.1:
+    ``int`` → ``"2"``); every other type is unfoldable, not guessed."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, int):
+        return str(value)
+    raise _Unfoldable
+
+
+def _fold_expression(node: ast.expr, shadowed: frozenset[str], depth: int = 0) -> object:
+    """Fold a constant-only expression to its value, or raise _Unfoldable.
+
+    The allowlist, exactly (design §1.1): constants; f-strings (no
+    conversion, no format-spec); ``+`` on two folded strings, ``*``
+    string×int (Python's own repetition semantics), ``%`` with a folded
+    string left side — the operation APPLIED with Python's own ``%``, never
+    re-implemented; ``sep.join(<literal list/tuple of str>)``,
+    ``fmt.format(*folded)`` (kwargs unfoldable), ``bytes.decode()``;
+    ``chr(i)``/``str(x)`` unless the module shadows the name; list/tuple
+    displays fold to list/tuple — the TUPLE rule is load-bearing: ``%``
+    accepts only a real tuple, so folding tuples to lists would silently
+    unfold every ``%``-tuple shape (battery S5). Every failure is a raise:
+    the caller treats ANY exception as an honest miss.
+    """
+    if depth > FOLD_MAX_DEPTH:
+        raise _Unfoldable
+    if isinstance(node, ast.Constant):
+        if node.value is None or isinstance(node.value, str | int | float | bytes):
+            return node.value
+        raise _Unfoldable
+    if isinstance(node, ast.JoinedStr):
+        parts: list[str] = []
+        for value in node.values:
+            if isinstance(value, ast.Constant):
+                parts.append(_folded_string(value.value))
+            elif isinstance(value, ast.FormattedValue):
+                if value.conversion != -1 or value.format_spec is not None:
+                    raise _Unfoldable
+                parts.append(_stringify(_fold_expression(value.value, shadowed, depth + 1)))
+            else:
+                raise _Unfoldable
+        return _folded_string("".join(parts))
+    if isinstance(node, ast.BinOp):
+        left = _fold_expression(node.left, shadowed, depth + 1)
+        if isinstance(node.op, ast.Add):
+            right = _folded_string(_fold_expression(node.right, shadowed, depth + 1))
+            return _folded_string(_folded_string(left) + right)
+        if isinstance(node.op, ast.Mult):
+            right = _fold_expression(node.right, shadowed, depth + 1)
+            if isinstance(left, str) and isinstance(right, int) and not isinstance(right, bool):
+                return _folded_string(left * right)
+            if isinstance(right, str) and isinstance(left, int) and not isinstance(left, bool):
+                return _folded_string(right * left)
+            raise _Unfoldable
+        if isinstance(node.op, ast.Mod):
+            template = _folded_string(left)
+            operand = _fold_expression(node.right, shadowed, depth + 1)
+            try:
+                formatted = template % operand
+            except Exception as exc:
+                raise _Unfoldable from exc
+            return _folded_string(formatted)
+        raise _Unfoldable
+    if isinstance(node, ast.List):
+        return [_fold_expression(elt, shadowed, depth + 1) for elt in node.elts]
+    if isinstance(node, ast.Tuple):
+        return tuple(_fold_expression(elt, shadowed, depth + 1) for elt in node.elts)
+    if isinstance(node, ast.Call):
+        if isinstance(node.func, ast.Attribute):
+            receiver = node.func.value
+            if node.func.attr == "join" and len(node.args) == 1 and not node.keywords:
+                separator = _folded_string(_fold_expression(receiver, shadowed, depth + 1))
+                argument = node.args[0]
+                if not isinstance(argument, ast.List | ast.Tuple):
+                    raise _Unfoldable  # comprehensions/generators: unfoldable
+                elements = [
+                    _folded_string(_fold_expression(elt, shadowed, depth + 1))
+                    for elt in argument.elts
+                ]
+                return _folded_string(separator.join(elements))
+            if node.func.attr == "format" and not node.keywords:
+                template = _folded_string(_fold_expression(receiver, shadowed, depth + 1))
+                arguments = [_fold_expression(arg, shadowed, depth + 1) for arg in node.args]
+                try:
+                    return _folded_string(template.format(*arguments))
+                except Exception as exc:
+                    raise _Unfoldable from exc
+            if node.func.attr == "decode" and not node.args and not node.keywords:
+                payload = _fold_expression(receiver, shadowed, depth + 1)
+                if not isinstance(payload, bytes):
+                    raise _Unfoldable
+                return _folded_string(payload.decode())
+            raise _Unfoldable
+        if isinstance(node.func, ast.Name):
+            if (
+                node.func.id == "chr"
+                and "chr" not in shadowed
+                and len(node.args) == 1
+                and not node.keywords
+            ):
+                code = _fold_expression(node.args[0], shadowed, depth + 1)
+                if not isinstance(code, int) or isinstance(code, bool):
+                    raise _Unfoldable
+                try:
+                    return _folded_string(chr(code))
+                except ValueError as exc:
+                    raise _Unfoldable from exc
+            if (
+                node.func.id == "str"
+                and "str" not in shadowed
+                and len(node.args) == 1
+                and not node.keywords
+            ):
+                return _stringify(_fold_expression(node.args[0], shadowed, depth + 1))
+        raise _Unfoldable
+    raise _Unfoldable
+
+
+def _fold_sites(tree: ast.Module, relative: str) -> list[dict[str, Any]]:
+    """The assembly sites one file's folded expressions produce, outermost
+    only: a folded match nested inside another folded match (by span
+    containment) is dropped — the OUTER assembled expression is the
+    reported site. Inner plain ``Constant`` fragments that independently
+    match are NOT touched here (the textual walk owns them; a shape can
+    contribute both sites — battery S6/S9)."""
+    shadowed = _shadowed_builtin_names(tree)
+    folded: list[dict[str, Any]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.BinOp | ast.JoinedStr | ast.Call | ast.List | ast.Tuple):
+            continue
+        try:
+            value = _fold_expression(node, shadowed)
+        except Exception:  # noqa: S112 — ANY raise is an honest miss (design §1.1)
+            continue
+        if not isinstance(value, str):
+            continue  # list/tuple folds only feed nested folds
+        kind = None
+        if PATTERN_A.search(value):
+            kind = "ASM-A"
+        elif PATTERN_BARE.match(value.strip()):
+            kind = "ASM-BARE"
+        if kind is None:
+            continue
+        folded.append(
+            {
+                "file": relative,
+                "line": node.lineno,
+                "pattern": kind,
+                "text": value[:80],
+                "_box": (
+                    node.lineno,
+                    node.col_offset,
+                    node.end_lineno if node.end_lineno is not None else node.lineno,
+                    node.end_col_offset if node.end_col_offset is not None else node.col_offset,
+                ),
+            }
+        )
+    unique: dict[tuple[int, int, int, int], dict[str, Any]] = {}
+    for row in folded:
+        unique.setdefault(row["_box"], row)
+    kept = [
+        row
+        for box, row in unique.items()
+        if not any(
+            other != box
+            and other[0] <= box[0]
+            and other[1] <= box[1]
+            and other[2] >= box[2]
+            and other[3] >= box[3]
+            for other in unique
+        )
+    ]
+    for row in kept:
+        del row["_box"]
+    return kept
+
+
 def count_sites() -> tuple[list[dict[str, Any]], int]:
     """Every executable literal site, sorted for reproducibility, plus the
     FILES-PARSED census (fold row 5: every scanned file counts, not only
@@ -175,6 +406,7 @@ def count_sites() -> tuple[list[dict[str, Any]], int]:
                 sites.append(
                     {"file": relative, "line": node.lineno, "pattern": kind, "text": value[:80]}
                 )
+        sites.extend(_fold_sites(tree, relative))
     sites.sort(key=lambda row: (row["file"], row["line"], row["pattern"]))
     return sites, scanned
 

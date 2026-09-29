@@ -177,6 +177,28 @@ class TestTwinCounter:
         assert result.returncode == 1, result.stdout + result.stderr
         assert "src/benchweave_sdk/packaging.py" in result.stdout
 
+    def test_an_assembled_plant_fails_the_twin(self, tmp_path: Path) -> None:
+        """Issue #269 row 1: CONSTANT-ONLY assembly is caught — a version
+        assembled from literals (``"9." + "9.9"``) refuses with an ASM
+        pattern row. RED at the twin's fold base: the pre-fold twin passed
+        over the same tree (the assembly was invisible to the text scan)."""
+        scratch = tmp_path / "scratch-repo"
+        (scratch / "scripts").mkdir(parents=True)
+        shutil.copy(COUNTER, scratch / "scripts/count_version_literals.py")
+        shutil.copy(REPO / "standards-lock.json", scratch / "standards-lock.json")
+        shutil.copytree(REPO / "src/benchweave_sdk", scratch / "src/benchweave_sdk")
+        planted = scratch / "src/benchweave_sdk/packaging.py"
+        planted.write_text('_PLANT = "9." + "9.9"\n', encoding="utf-8")
+        result = subprocess.run(
+            [sys.executable, str(scratch / "scripts/count_version_literals.py")],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert "ASM-BARE" in result.stdout
+        assert "src/benchweave_sdk/packaging.py" in result.stdout
+
     def test_a_plant_inside_a_registered_file_fails_via_expected_sites(
         self, tmp_path: Path
     ) -> None:
