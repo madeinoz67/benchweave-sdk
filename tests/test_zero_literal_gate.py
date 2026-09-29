@@ -15,6 +15,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from benchweave_sdk.served import active_version
 from benchweave_sdk.validation import validate_descriptor
 
@@ -141,6 +143,22 @@ class TestTwinCounter:
         )
         assert result.returncode == 0, result.stdout + result.stderr
         assert "0 outside register" in result.stdout
+
+    def test_twin_census_is_pinned(self) -> None:
+        """Fold wave row 1's observability half: the sdk census is pinned
+        (18 files at the current head) — a scope change is a visible diff,
+        never a silent denominator move."""
+        result = subprocess.run(
+            [sys.executable, str(COUNTER), "--json"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert json.loads(result.stdout)["scanned"] == 18, (
+            "the sdk scanned-file census moved — update this pin in the "
+            "same commit as the tree change (the ratchet discipline)"
+        )
 
     def test_twin_is_reproducible_twice_byte_identical(self) -> None:
         first = subprocess.run(
@@ -300,6 +318,7 @@ class TestFoldHardening:
         by NAME alone; the marker is now what excludes."""
         scratch = self._scratch_sdk_repo(tmp_path)
         (scratch / "src/benchweave_sdk/venv/lib").mkdir(parents=True)
+        (scratch / "src/benchweave_sdk/venv/bin").mkdir()
         (scratch / "src/benchweave_sdk/venv/pyvenv.cfg").write_text(
             "home = /usr/bin\n", encoding="utf-8"
         )
@@ -358,3 +377,76 @@ class TestFoldHardening:
         assert result.returncode == 1, result.stdout + result.stderr
         assert "register value pin failed:" in result.stdout
         assert "'9.9.9'" in result.stdout
+
+
+class TestRegisterPinDefense:
+    """Fold wave row 7 (adv-lane2 L4): the twin's REGISTER lives in the
+    counter's NON-shared region — the gateway parity pin cannot see an
+    edit to it, and before this class nothing in the SDK suite caught
+    one. The register rows are pinned here against test literals; the
+    mutation and redirect arms prove the defenses fire."""
+
+    def _counter_register(
+        self, path: Path
+    ) -> dict[str, tuple[str, int, tuple[str, ...] | None]]:
+        import importlib
+
+        spec = importlib.util.spec_from_file_location("twin_under_test", path)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module.REGISTER
+
+    def test_twin_register_rows_are_pinned(self) -> None:
+        """The committed register's row set, expectations and value pins
+        are pinned in the SDK suite — a REGISTER edit is now a visible
+        suite diff, never a silent loosening."""
+        register = self._counter_register(COUNTER)
+        assert set(register) == {
+            "src/benchweave_sdk/standards/plugin-ui/contracts.py",
+            "src/benchweave_sdk/scaffold.py",
+        }
+        contracts = register["src/benchweave_sdk/standards/plugin-ui/contracts.py"]
+        assert contracts[1] == 3
+        assert contracts[2] is None  # digest-pinned whole, no value pin
+        scaffold = register["src/benchweave_sdk/scaffold.py"]
+        assert scaffold[1] == 4
+        assert scaffold[2] == ("0.1.0", "0.1.0", "0.1.0", "1.0.0")
+
+    def test_a_register_edit_is_detected_by_the_pin(self, tmp_path: Path) -> None:
+        """The pin's teeth: a scratch copy with the scaffold expectation
+        loosened (4 -> 5) fails the same comparison the committed pin
+        makes."""
+        scratch = tmp_path / "twin-register-edited.py"
+        text = COUNTER.read_text(encoding="utf-8")
+        edited = text.replace('4,\n        ("0.1.0"', '5,\n        ("0.1.0"')
+        assert edited != text, "the mutation arm's needle vanished from the twin"
+        scratch.write_text(edited, encoding="utf-8")
+        register = self._counter_register(scratch)
+        with pytest.raises(AssertionError):
+            assert register["src/benchweave_sdk/scaffold.py"][1] == 4
+
+    def test_a_lock_path_redirect_fails_loudly(self, tmp_path: Path) -> None:
+        """The standard-set pin reads the COMMITTED lock path: a redirected
+        counter copy (lock path edited) fails its run with the
+        count-failed prefix — a silent re-authority is not representable."""
+        scratch = tmp_path / "scratch-redirect"
+        (scratch / "scripts").mkdir(parents=True)
+        text = COUNTER.read_text(encoding="utf-8")
+        redirected = text.replace(
+            'REPO_ROOT / "standards-lock.json"',
+            'REPO_ROOT / "standards-lock-redirected.json"',
+        )
+        assert redirected != text, "the redirect arm's needle vanished"
+        (scratch / "scripts/count_version_literals.py").write_text(
+            redirected, encoding="utf-8"
+        )
+        (scratch / "standards-lock.json").write_text('{"standards": []}')
+        result = subprocess.run(
+            [sys.executable, str(scratch / "scripts/count_version_literals.py")],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert "version_literal_count_failed" in result.stderr

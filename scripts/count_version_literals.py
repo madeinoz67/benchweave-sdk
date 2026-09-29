@@ -25,20 +25,35 @@ silently — and re-syncs the gateway twin in the same work):
 - Pattern B: a string that IS a bare ``X.Y.Z`` (three-component pure semver),
   counted EVERYWHERE in executable code.
 
-WHAT THE MATCHER DOES NOT CATCH (G4, fold row 7d; issue #269 rewrite): the
-matcher folds CONSTANT-ONLY assembly — concatenation, f-strings,
-``%``-formatting, ``.format``, ``str.join`` over literal sequences,
-``chr``/``str`` over literals, ``bytes.decode``, and string repetition —
-and refuses the folded result under the same two patterns (``ASM-A`` /
-``ASM-BARE``; bounds: fold depth ≤ 24, folded length ≤ 4096; a module that
-shadows ``chr``/``str`` is never folded as the builtins; every fold
-failure is an honest miss, never a gate failure). Assembly with ANY
-non-literal input — a variable, parameter, function result, comprehension,
-or a value read from data, environment, or configuration — remains
-invisible: catching that needs taint tracking, still deliberately not
-attempted (the follow-on row; the review lanes carry it). ``os.path.join``
-and other stdlib string constructors are outside the fold allowlist (named
-residual, deferral D-3).
+WHAT THE MATCHER DOES NOT CATCH (G4; the fold-wave residual, REGENERABLE
+from the allowlist — issue #269 fold wave row 3): the fold evaluator's
+allowlist is exactly — ``Constant``; ``JoinedStr`` whose
+``FormattedValue``s carry no conversion and no format-spec; ``BinOp``
+``+`` on two folded strings, ``*`` string×int, ``%`` with a folded string
+left side; ``List``/``Tuple`` displays; attribute calls ``.join`` (one
+literal list/tuple of str), ``.format`` (positional args only — no
+kwargs, no format-spec or conversion in the template), ``.decode`` (no
+arguments); name calls ``chr(i)``/``str(x)`` (one argument, unshadowed at
+module level). EVERY OTHER input class is a documented miss, and the
+classes are named: format-specs and conversions; ``.format`` kwargs;
+``%-with-dict``; decode with argument(s) (only the no-argument form
+folds); conditional-expression arms (an ``IfExp`` anywhere in the
+expression blocks the fold around it); starred format arguments;
+``os.path.join`` and every other stdlib string constructor (outside the
+allowlist — deferral D-3); folds bounded out by the caps (fold
+depth > 24, folded length > 4096) — a bounded-out fold is
+indistinguishable from dynamic assembly, the same disclosure class; and
+dynamic (non-literal) input — a variable, parameter, function result,
+comprehension, or
+a value read from data, environment, or configuration — where catching
+needs taint tracking, still deliberately not attempted (deferral D-1).
+One scope residual on the shadow guard: the ``chr``/``str`` shadow
+prepass sees module-level bindings; a function-local shadow is not seen
+(named residual). The GATEWAY battery pins BOTH sides:
+``tests/standards/assembly_shapes.py`` carries the twelve caught shapes
+(refused), the documented-miss shapes (must pass), and the boundary table
+(24 chained BinOps fold, 25 bounded out; a 4096-char fold is caught,
+4097 bounded out).
 
 DENOMINATOR BOUNDARY (G1's honest scope, fold row 13): this lane gates
 ``src/benchweave_sdk/`` only. ``scripts/``, ``tests/`` and ``.github/`` of
@@ -96,11 +111,19 @@ _is_environment_dir_cache: dict[Path, bool] = {}
 
 
 def _is_environment_dir(directory: Path) -> bool:
-    """True iff the directory carries the environment marker (memoized:
-    one stat per directory under a scan root, cached)."""
+    """True iff the directory is an environment BY MARKER AND LAYOUT: it
+    carries ``pyvenv.cfg`` as a FILE and real environment structure
+    (``bin/`` or ``lib/python*/``). The layout conjunct is the truth
+    re-check (fold wave row 1): a planted marker — even a directory so
+    named — without the layout does NOT exempt a tree; the tree scans and
+    its literals refuse. Memoized: one stat set per directory under a
+    scan root, cached."""
     cached = _is_environment_dir_cache.get(directory)
     if cached is None:
-        cached = (directory / ENVIRONMENT_MARKER).exists()
+        marker = directory / ENVIRONMENT_MARKER
+        cached = marker.is_file() and (
+            (directory / "bin").is_dir() or any(directory.glob("lib/python*/"))
+        )
         _is_environment_dir_cache[directory] = cached
     return cached
 
@@ -132,17 +155,6 @@ def _docstring_ids(tree: ast.Module) -> set[int]:
             ):
                 skip.add(id(body[0].value))
     return skip
-
-
-# --- constant-folding assembly detection (issue #269, design §1.1) ---------
-# Bounds: a fold attempt exceeding either is UNFOLDABLE (an honest miss,
-# never an error).
-FOLD_MAX_DEPTH = 24
-FOLD_MAX_LENGTH = 4096
-
-
-class _Unfoldable(Exception):
-    """The evaluator's universal miss: this expression is not constant-only."""
 
 
 # --- constant-folding assembly detection (issue #269, design §1.1) ---------
@@ -273,6 +285,11 @@ def _fold_expression(node: ast.expr, shadowed: frozenset[str], depth: int = 0) -
                 return _folded_string(separator.join(elements))
             if node.func.attr == "format" and not node.keywords:
                 template = _folded_string(_fold_expression(receiver, shadowed, depth + 1))
+                if "{" in template and re.search(r"{[^}]*[!:]", template):
+                    # format-specs and conversions: documented miss
+                    # (fold wave row 3) — Python's own .format would APPLY
+                    # them; the allowlist stops at the positional form.
+                    raise _Unfoldable
                 arguments = [_fold_expression(arg, shadowed, depth + 1) for arg in node.args]
                 try:
                     return _folded_string(template.format(*arguments))
