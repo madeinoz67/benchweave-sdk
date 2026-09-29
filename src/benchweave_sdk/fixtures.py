@@ -404,6 +404,8 @@ def project_plot_views(candidate: ValidatedPreviewInputs) -> tuple[PlotView, ...
                     title=title,
                     x=PlotAxis(label=str(plot["x"]), unit=x_variable.get("unit")),
                     channels=tuple(channels),
+                    lane_groups=tuple(plot.get("lane_groups", ())),
+                    decoder_lanes=tuple(plot.get("decoder_lanes", ())),
                 )
             )
     return tuple(views)

@@ -11,9 +11,33 @@ from jsonschema import Draft202012Validator
 from benchweave_sdk import fixtures, presentation, preview_models, scaffold
 
 REPO = Path(__file__).resolve().parents[1]
-FIXTURE_SCHEMA = REPO / "src/benchweave_sdk/standards/plugin-ui-preview/0.1.1/fixture.schema.json"
+
+
+def _active_preview_version() -> str:
+    """The served plugin-ui-preview version, DERIVED from the vendored lock.
+
+    PR #66's red was exactly a stale hand-stamp: the helper pinned the
+    predecessor's contract_version while the vendored fixture schema had
+    moved. Deriving from the lock's active row means the next bump moves
+    these tests with it — they can never lag again."""
+    lock = json.loads((REPO / "standards-lock.json").read_bytes())
+    return str(
+        next(
+            row["version"]
+            for row in lock["standards"]
+            if row["id"] == "plugin-ui-preview" and row.get("active")
+        )
+    )
+
+
+ACTIVE_PREVIEW = _active_preview_version()
+FIXTURE_SCHEMA = (
+    REPO / f"src/benchweave_sdk/standards/plugin-ui-preview/{ACTIVE_PREVIEW}/fixture.schema.json"
+)
 DOCUMENT_SCHEMA = (
-    REPO / "src/benchweave_sdk/standards/plugin-ui-preview/0.1.1/preview-document.schema.json"
+    REPO
+    / "src/benchweave_sdk/standards/plugin-ui-preview"
+    / f"{ACTIVE_PREVIEW}/preview-document.schema.json"
 )
 
 
@@ -41,7 +65,7 @@ def catalogue() -> dict[str, object]:
 
 def author_fixture(binding_id: str = "voltage", unit: str | None = "V") -> dict[str, object]:
     return {
-        "contract_version": "0.1.1",
+        "contract_version": ACTIVE_PREVIEW,
         "id": "high-load",
         "title": "High load",
         "description": "Synthetic high-load state",
@@ -70,7 +94,7 @@ def test_fixture_schema_is_closed_and_versioned() -> None:
 
     Draft202012Validator.check_schema(schema)
     assert schema["$id"] == (
-        "https://benchweave.dev/contracts/plugin-ui-preview/0.1.1/fixture.schema.json"
+        f"https://benchweave.dev/contracts/plugin-ui-preview/{ACTIVE_PREVIEW}/fixture.schema.json"
     )
     assert schema["additionalProperties"] is False
 

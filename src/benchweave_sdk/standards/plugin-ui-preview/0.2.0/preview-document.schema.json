@@ -1,0 +1,497 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://benchweave.dev/contracts/plugin-ui-preview/0.2.0/preview-document.schema.json",
+  "title": "BenchWeave plugin UI preview wire document 0.2.0",
+  "description": "The JSON document served at GET /api/v1/preview. Single source of truth for the Python emitter (benchweave_sdk.preview_models) and the renderer decoder (ui/src/preview/api.ts); both sides are conformance-tested against this file.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "api_version",
+    "plugin_id",
+    "renderer_version",
+    "pages",
+    "scenarios",
+    "simulation"
+  ],
+  "properties": {
+    "api_version": {
+      "const": 1
+    },
+    "plugin_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "renderer_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "pages": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/page"
+      }
+    },
+    "scenarios": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/scenario"
+      }
+    },
+    "simulation": {
+      "const": true
+    },
+    "plot_views": {
+      "type": "array",
+      "maxItems": 1024,
+      "items": {
+        "$ref": "#/$defs/plot_view"
+      }
+    }
+  },
+  "$defs": {
+    "page": {
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "severity": {
+      "enum": [
+        "neutral",
+        "success",
+        "advisory",
+        "warning",
+        "critical",
+        "trip"
+      ]
+    },
+    "scenario": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "title",
+        "description",
+        "timestamp_strategy",
+        "observations",
+        "permissions",
+        "lease_state",
+        "approval_state",
+        "unavailable_panels",
+        "expected_severity",
+        "request_outcomes",
+        "baseline"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "timestamp_strategy": {
+          "enum": [
+            "fixed",
+            "relative"
+          ]
+        },
+        "observations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/observation"
+          }
+        },
+        "permissions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "lease_state": {
+          "type": "string"
+        },
+        "approval_state": {
+          "type": "string"
+        },
+        "unavailable_panels": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "expected_severity": {
+          "$ref": "#/$defs/severity"
+        },
+        "request_outcomes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/receipt"
+          }
+        },
+        "baseline": {
+          "type": "boolean"
+        }
+      }
+    },
+    "observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "binding_id",
+        "value",
+        "unit",
+        "quality",
+        "freshness_ms",
+        "provenance"
+      ],
+      "properties": {
+        "binding_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "value": {
+          "type": [
+            "boolean",
+            "number",
+            "string",
+            "null"
+          ]
+        },
+        "unit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "quality": {
+          "type": "string"
+        },
+        "freshness_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "provenance": {
+          "type": "string"
+        }
+      }
+    },
+    "receipt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "binding_id",
+        "outcome",
+        "message"
+      ],
+      "properties": {
+        "binding_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "outcome": {
+          "type": "string",
+          "minLength": 1
+        },
+        "message": {
+          "type": "string"
+        }
+      }
+    },
+    "plot_view": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "page_id",
+        "kind",
+        "binding_id",
+        "title",
+        "x",
+        "channels"
+      ],
+      "properties": {
+        "page_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "enum": [
+            "time_series",
+            "waveform",
+            "digital_lanes"
+          ]
+        },
+        "binding_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "x": {
+          "$ref": "#/$defs/axis"
+        },
+        "channels": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/channel"
+          }
+        },
+        "lane_groups": {
+          "$ref": "#/$defs/lane_group"
+        },
+        "decoder_lanes": {
+          "$ref": "#/$defs/decoder_lane"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "digital_lanes"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "channels": {
+                "maxItems": 64,
+                "items": {
+                  "$ref": "#/$defs/lanes_channel"
+                }
+              },
+              "lane_groups": {
+                "$ref": "#/$defs/lane_group"
+              },
+              "decoder_lanes": {
+                "$ref": "#/$defs/decoder_lane"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "time_series",
+                  "waveform"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "channels": {
+                "maxItems": 16
+              }
+            },
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "lane_groups"
+                  ]
+                },
+                {
+                  "required": [
+                    "decoder_lanes"
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "axis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "label",
+        "unit"
+      ],
+      "properties": {
+        "label": {
+          "type": "string",
+          "minLength": 1
+        },
+        "unit": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 64
+        }
+      }
+    },
+    "channel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "variable_id",
+        "label",
+        "unit"
+      ],
+      "properties": {
+        "variable_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1
+        },
+        "unit": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 64
+        },
+        "color_role": {
+          "enum": [
+            "accent",
+            "muted"
+          ]
+        },
+        "visible": {
+          "type": "boolean"
+        }
+      }
+    },
+    "lanes_channel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "variable_id",
+        "label",
+        "unit"
+      ],
+      "properties": {
+        "variable_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1
+        },
+        "unit": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 64
+        },
+        "visible": {
+          "type": "boolean"
+        }
+      }
+    },
+    "lane_group": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "member_ids"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1
+          },
+          "member_ids": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 64,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "radix": {
+            "enum": [
+              "hex",
+              "decimal"
+            ]
+          },
+          "default_collapsed": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "decoder_lane": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "decoder",
+          "source_channel_ids",
+          "binding_id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1
+          },
+          "decoder": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "settings": {
+            "type": "object"
+          },
+          "source_channel_ids": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 4,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "binding_id": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  }
+}
