@@ -3,9 +3,9 @@
   "renderer_version": "0.1.2",
   "assets": [
     {
-      "path": "site/assets/index-BSM0PJlr.js",
-      "sha256": "cb7236ceb2d36ec896144b6520b037b030dc4731691df6800dcc604e17d7bab2",
-      "size": 805764
+      "path": "site/assets/index-B3f7tEBV.js",
+      "sha256": "60f0d92055f92e39c78b0606a83fe86a0e16494c82459700e04a0b144b10e83c",
+      "size": 805901
     },
     {
       "path": "site/assets/index-C3GmEKEI.css",
@@ -14,7 +14,7 @@
     },
     {
       "path": "site/index.html",
-      "sha256": "4fe3ace0b937b055de4c7616e9b4f80dd3d6d8ec58dfcd94ef424d4dd8978a0e",
+      "sha256": "51a3d8d7a08110499a8188b433f75ea4853e1f01c27a9d2535d49b3ebd7a21a1",
       "size": 481
     }
   ]
