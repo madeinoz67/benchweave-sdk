@@ -17,7 +17,7 @@ from referencing.jsonschema import DRAFT202012
 
 MAX_DOCUMENT_BYTES = 262144
 MAX_DEPTH = 32
-SCHEMA_ROOT = "https://benchweave.dev/contracts/plugin-ui/0.2.0/"
+SCHEMA_ROOT = "https://benchweave.dev/contracts/plugin-ui/0.3.0/"
 
 
 class DocumentError(ValueError):
@@ -244,7 +244,7 @@ def validate_preset(
         except DocumentError as exc:
             return ValidationReport((Finding(exc.code, path, str(exc)),))
     preset, descriptor, settings_schema = decoded
-    if preset.get("contract_version") != "0.2.0":
+    if preset.get("contract_version") != "0.3.0":
         return ValidationReport(
             (
                 Finding(
@@ -355,7 +355,7 @@ def _checked_document(
     raw: bytes, name: str, documents: Mapping[str, dict[str, Any]]
 ) -> dict[str, Any]:
     document = parse_document(raw)
-    if document.get("contract_version") != "0.2.0":
+    if document.get("contract_version") != "0.3.0":
         raise _Rejected((Finding("unsupported_version", name, "Unsupported contract version"),))
     schema = documents.get(SCHEMA_ROOT + name + ".schema.json")
     if schema is None:
@@ -479,15 +479,19 @@ def _plot_findings(
         variables = {row["id"]: row for row in target.get("variables", [])}
         axes = [variables.get(name) for name in [plot["x"], *plot["y"]]]
         x_axis = variables.get(plot["x"], {})
+        lanes = plot["kind"] == "digital_lanes"
         shape = "vector" if plot["kind"] == "waveform" else "scalar"
         if (
             plot["binding_id"] not in page["bindings"]
             or target.get("kind") not in ("observation", "dataset")
-            or any(
-                row is None or row["type"] not in ("number", "integer") or row["shape"] != shape
-                for row in axes
-            )
             or plot["x"] in plot["y"]
+            or (
+                not lanes
+                and any(
+                    row is None or row["type"] not in ("number", "integer") or row["shape"] != shape
+                    for row in axes
+                )
+            )
         ):
             findings.append(Finding("invalid_plot", path, "Plot axes are incompatible"))
         elif plot["kind"] == "time_series" and (
@@ -496,6 +500,90 @@ def _plot_findings(
             findings.append(
                 Finding("invalid_plot", path, "Time series needs receipt time in seconds")
             )
+        elif lanes and (
+            # A capture view serves from a DATASET binding (a streamed scalar
+            # observation cannot); every y variable is the wire's logic
+            # alphabet (string/vector); x is the time axis (number/integer,
+            # vector, seconds).
+            target.get("kind") != "dataset"
+            or any(
+                row is None or row["type"] != "string" or row["shape"] != "vector"
+                for row in [variables.get(name) for name in plot["y"]]
+            )
+            or x_axis.get("type") not in ("number", "integer")
+            or x_axis.get("shape") != "vector"
+            or x_axis.get("unit") != "s"
+        ):
+            findings.append(Finding("invalid_plot", path, "Plot axes are incompatible"))
+        elif lanes:
+            # The _unique_rows discipline: y ∪ group ids ∪ decoder lane ids
+            # are one identifier space.
+            seen_ids: set[str] = set()
+            for identifier in [
+                *plot["y"],
+                *(group["id"] for group in plot.get("lane_groups", [])),
+                *(decoder["id"] for decoder in plot.get("decoder_lanes", [])),
+            ]:
+                if identifier in seen_ids:
+                    findings.append(
+                        Finding("invalid_document", path, "Duplicate identifiers")
+                    )
+                seen_ids.add(identifier)
+            group_claims: dict[str, str] = {}
+            for group in plot.get("lane_groups", []):
+                # The >=2 member floor is a schema shape rule
+                # (member_ids minItems 2, §1.1) — item counts are the
+                # schema's job in the corpus; it refuses before this walk.
+                for member_id in group["member_ids"]:
+                    if member_id not in plot["y"]:
+                        findings.append(
+                            Finding(
+                                "unresolved_reference",
+                                path + ".lane_groups",
+                                "Lane group member names a variable outside this plot's y channels",
+                            )
+                        )
+                    elif member_id in group_claims:
+                        findings.append(
+                            Finding(
+                                "invalid_plot",
+                                path + ".lane_groups",
+                                "A y channel may be claimed by at most one lane group",
+                            )
+                        )
+                    else:
+                        group_claims[member_id] = group["id"]
+            for decoder in plot.get("decoder_lanes", []):
+                for source_id in decoder["source_channel_ids"]:
+                    if source_id not in plot["y"]:
+                        findings.append(
+                            Finding(
+                                "unresolved_reference",
+                                path + ".decoder_lanes",
+                                "Decoder lane source names a variable outside "
+                                "this plot's y channels",
+                            )
+                        )
+                decoder_binding = bindings.get(decoder["binding_id"], {})
+                decoder_target = targets.get(decoder_binding.get("target_id", ""), {})
+                # The decode event_log target is necessarily a DIFFERENT
+                # action than the plot's capture (OTDP classes separate
+                # fetch from decode); the catalogue cannot express the
+                # event_log kind itself, so that identity is the renderer's
+                # slice-3 check — this seam refuses the same-action shape.
+                if (
+                    decoder["binding_id"] not in page["bindings"]
+                    or decoder_target.get("kind") != "dataset"
+                    or decoder_target.get("action_id") == target.get("action_id")
+                ):
+                    findings.append(
+                        Finding(
+                            "unresolved_reference",
+                            path + ".decoder_lanes",
+                            "Decoder lane binding must name a dataset binding on "
+                            "another action than the plot's capture",
+                        )
+                    )
         # channel_hints (introduced 0.1.1): membership in THIS plot's y and
         # duplicate ids are semantic checks on the Python seam; shape, enum,
         # booleans and item counts are the schema's job in the corpus. A
