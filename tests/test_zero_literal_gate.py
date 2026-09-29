@@ -227,12 +227,11 @@ class TestFoldHardening:
     files-parsed census; 6: authored-data value pins)."""
 
     def _scratch_sdk_repo(self, tmp_path: Path) -> Path:
-        shutil.copytree(REPO / "src/benchweave_sdk", scratch_root := tmp_path / "src/benchweave_sdk")
         scratch = tmp_path
+        shutil.copytree(REPO / "src/benchweave_sdk", scratch / "src/benchweave_sdk")
         (scratch / "scripts").mkdir(exist_ok=True)
         shutil.copy(COUNTER, scratch / "scripts/count_version_literals.py")
         shutil.copy(REPO / "standards-lock.json", scratch / "standards-lock.json")
-        del scratch_root
         return scratch
 
     def test_standard_id_set_is_pinned_to_the_lock(self) -> None:
