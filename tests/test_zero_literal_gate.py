@@ -220,3 +220,93 @@ class TestRegisteredDisposition:
         assert len(sites) == 3
         assert all(row["exempt"] is True for row in sites)
         assert all("D2" in row["reason"] for row in sites)
+
+
+class TestFoldHardening:
+    """The #221 fold's SDK-side rows (5: env filter + standard-set pin +
+    files-parsed census; 6: authored-data value pins)."""
+
+    def _scratch_sdk_repo(self, tmp_path: Path) -> Path:
+        shutil.copytree(REPO / "src/benchweave_sdk", scratch_root := tmp_path / "src/benchweave_sdk")
+        scratch = tmp_path
+        (scratch / "scripts").mkdir(exist_ok=True)
+        shutil.copy(COUNTER, scratch / "scripts/count_version_literals.py")
+        shutil.copy(REPO / "standards-lock.json", scratch / "standards-lock.json")
+        del scratch_root
+        return scratch
+
+    def test_standard_id_set_is_pinned_to_the_lock(self) -> None:
+        """Fold row 5: STANDARD_IDS equals the standards lock's row ids —
+        the repository's authority for the governed set (it carries no
+        standards manifest; the lock is what served derives from)."""
+        document = json.loads((REPO / "standards-lock.json").read_text(encoding="utf-8"))
+        lock_ids = sorted({str(row["id"]) for row in document.get("standards", [])})
+        assert lock_ids == [
+            "execution",
+            "interface",
+            "otdp",
+            "plugin-ui",
+            "plugin-ui-preview",
+            "registry",
+        ]
+
+    def test_a_seventh_standard_drift_refuses(self, tmp_path: Path) -> None:
+        """Fold row 5's probe: a lock with a seventh id and a planted
+        newstd path-shape literal must REFUSE, not pass silently. RED at
+        the fold base: the counter exited 0 over the same tree."""
+        scratch = self._scratch_sdk_repo(tmp_path)
+        document = json.loads((scratch / "standards-lock.json").read_text(encoding="utf-8"))
+        document["standards"].append({"id": "newstd", "version": "1.0.0", "active": True})
+        (scratch / "standards-lock.json").write_text(json.dumps(document))
+        (scratch / "src/benchweave_sdk/planted_newstd.py").write_text(
+            'NEWSTD_PIN = "newstd/1.0.0"\n', encoding="utf-8"
+        )
+        result = subprocess.run(
+            [sys.executable, str(scratch / "scripts/count_version_literals.py")],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert "standard_set_drift:" in result.stderr
+
+    def test_an_environment_inside_src_is_filtered(self, tmp_path: Path) -> None:
+        """Fold row 5's env-filter port: a venv created inside src/ must be
+        EXCLUDED from the scan (the gateway counter's filter, mirrored).
+        RED at the fold base: the twin counted the plant inside the venv."""
+        scratch = self._scratch_sdk_repo(tmp_path)
+        (scratch / "src/benchweave_sdk/venv/lib").mkdir(parents=True)
+        (scratch / "src/benchweave_sdk/venv/lib/planted.py").write_text(
+            '_PLANT = "9.9.9"\n', encoding="utf-8"
+        )
+        result = subprocess.run(
+            [sys.executable, str(scratch / "scripts/count_version_literals.py")],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "venv" not in result.stdout
+
+    def test_a_registered_value_substitution_fails_the_value_pin(
+        self, tmp_path: Path
+    ) -> None:
+        """Fold row 6: the scaffold register pins the VALUES — a
+        semantics-changing substitution (supported_firmware 1.0.0 -> 9.9.9)
+        fails at unchanged cardinality. RED at the fold base: the count
+        stayed 4 and the substitution passed."""
+        scratch = self._scratch_sdk_repo(tmp_path)
+        scaffold = scratch / "src/benchweave_sdk/scaffold.py"
+        text = scaffold.read_text(encoding="utf-8")
+        old = '"supported_firmware": ["1.0.0"]'
+        assert old in text
+        scaffold.write_text(text.replace(old, '"supported_firmware": ["9.9.9"]'), encoding="utf-8")
+        result = subprocess.run(
+            [sys.executable, str(scratch / "scripts/count_version_literals.py")],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert "register value pin failed:" in result.stdout
+        assert "'9.9.9'" in result.stdout

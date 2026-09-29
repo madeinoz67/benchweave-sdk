@@ -25,11 +25,27 @@ silently — and re-syncs the gateway twin in the same work):
 - Pattern B: a string that IS a bare ``X.Y.Z`` (three-component pure semver),
   counted EVERYWHERE in executable code.
 
+WHAT THE MATCHER DOES NOT CATCH (G4, fold row 7d): this is a SYNTACTIC
+text scan. A version assembled at runtime is invisible to it — string
+concatenation, f-strings, ``bytes`` literals, ``%``/``.format``/``str.join``
+composition, and values read from data files all escape. Catching those
+needs AST-level taint tracking, deliberately NOT attempted in this fold;
+the review lanes carry that duty until then.
+
+DENOMINATOR BOUNDARY (G1's honest scope, fold row 13): this lane gates
+``src/benchweave_sdk/`` only. ``scripts/``, ``tests/`` and ``.github/`` of
+this repository are OUTSIDE the gate; the gateway's lanes own the gateway,
+plugin and docs trees.
+
 THE REGISTER — the exemption list with teeth (the gateway register's own
 shape, #221 §1.3): each entry names a file, the reason it is authored data
 rather than a derivation site, and the EXACT number of literals it may
-carry. A new literal inside a registered file fails the gate until the
-register row is edited — a visible editorial diff.
+carry; authored-data rows additionally pin the literal VALUES
+(``expected_values``), so a semantics-changing substitution fails at
+unchanged cardinality. A new literal inside a registered file fails the
+gate until the register row is edited — a visible editorial diff. The
+contracts.py row carries no value pin because the copies are digest-pinned
+whole (``tests/sdk/test_presentation_packaging.py``).
 
 Exit status: 0 when the count outside the register is 0 AND every register
 row's expectation holds, 1 otherwise (or on any parse failure — a count
@@ -53,14 +69,24 @@ STANDARD_IDS = ("otdp", "registry", "execution", "interface", "plugin-ui", "plug
 PATTERN_A = re.compile(r"\b(?:" + "|".join(STANDARD_IDS) + r")/\d+\.\d+\.\d+")
 PATTERN_BARE = re.compile(r"^\d+\.\d+\.\d+$")
 
+# Environment components ignored in the scan (the gateway counter's filter,
+# ported fold row 5): a stray environment inside src/ must make zero-mode
+# FAIL loudly if it ever lands in scope, not silently join the census.
+ENVIRONMENT_COMPONENTS = frozenset({"venv", ".venv", "node_modules", "site-packages"})
+
 # The registered-exception register (the gateway counter's rows for this
-# tree, #221 §1.3): display-relative path -> (reason, expected_sites).
-REGISTER: dict[str, tuple[str, int]] = {
+# tree, #221 §1.3): display-relative path -> (reason, expected_sites,
+# expected_values). expected_values pins the sorted BARE-literal values for
+# authored-data rows (fold row 6); the contracts.py copy is digest-pinned
+# whole, so it carries None there.
+REGISTER: dict[str, tuple[str, int, tuple[str, ...] | None]] = {
     "src/benchweave_sdk/standards/plugin-ui/contracts.py": (
         "VR-25 branch 2 / D2: plugin-ui corpus-owned code, byte-identical to "
         "its gateway twin (tests/sdk/test_presentation_packaging.py pins the "
-        "identity); motion = the D2 reopen trigger",
+        "identity — digest-pinned whole, so no value pin here); motion = the "
+        "D2 reopen trigger",
         3,
+        None,
     ),
     "src/benchweave_sdk/scaffold.py": (
         "authored example-template fields that are not standards references "
@@ -68,11 +94,36 @@ REGISTER: dict[str, tuple[str, int]] = {
         "revision); the otdp_version example IS derived "
         "(served.active_version) and stays outside this row",
         4,
+        ("0.1.0", "0.1.0", "0.1.0", "1.0.0"),
     ),
 }
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SOURCE_ROOT = REPO_ROOT / "src" / "benchweave_sdk"
+
+
+class StandardSetDrift(Exception):
+    """A committed authority disagrees with the matcher's pinned sets."""
+
+
+def _pin_standard_ids() -> None:
+    """The committed standard-id set is the matcher's authority (fold row 5):
+    ``STANDARD_IDS`` must equal the standards lock's row ids — this
+    repository's authority for the governed set (it carries no standards
+    manifest; the lock is what ``benchweave_sdk.served`` derives from). A
+    seventh standard would otherwise silently narrow Pattern A's coverage —
+    the script refuses instead, and adding the id becomes a deliberate,
+    reviewable edit to this file.
+    """
+    lock_path = REPO_ROOT / "standards-lock.json"
+    document = json.loads(lock_path.read_text(encoding="utf-8"))
+    lock_ids = sorted({str(row.get("id")) for row in document.get("standards", [])})
+    if lock_ids != sorted(STANDARD_IDS):
+        raise StandardSetDrift(
+            f"standard_set_drift: the standards lock declares {lock_ids} but the "
+            f"matcher pins {sorted(STANDARD_IDS)} — update STANDARD_IDS in this "
+            "script in the same work as the lock change"
+        )
 
 
 def _docstring_ids(tree: ast.Module) -> set[int]:
@@ -91,10 +142,17 @@ def _docstring_ids(tree: ast.Module) -> set[int]:
     return skip
 
 
-def count_sites() -> list[dict[str, Any]]:
-    """Every executable literal site, sorted for reproducibility."""
+def count_sites() -> tuple[list[dict[str, Any]], int]:
+    """Every executable literal site, sorted for reproducibility, plus the
+    FILES-PARSED census (fold row 5: every scanned file counts, not only
+    files carrying sites — the census is the shrinkage detector)."""
     sites: list[dict[str, Any]] = []
+    scanned = 0
     for path in sorted(SOURCE_ROOT.rglob("*.py")):
+        relative_parts = path.relative_to(REPO_ROOT).parts
+        if any(component in ENVIRONMENT_COMPONENTS for component in relative_parts):
+            continue
+        scanned += 1
         relative = path.relative_to(REPO_ROOT).as_posix()
         with warnings.catch_warnings():
             # A docstring escape-sequence warning in scanned source is noise
@@ -117,7 +175,8 @@ def count_sites() -> list[dict[str, Any]]:
                 sites.append(
                     {"file": relative, "line": node.lineno, "pattern": kind, "text": value[:80]}
                 )
-    return sorted(sites, key=lambda row: (row["file"], row["line"], row["pattern"]))
+    sites.sort(key=lambda row: (row["file"], row["line"], row["pattern"]))
+    return sites, scanned
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -125,7 +184,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--json", action="store_true", help="print per-site rows")
     arguments = parser.parse_args(argv)
     try:
-        sites = count_sites()
+        _pin_standard_ids()
+        sites, scanned = count_sites()
+    except StandardSetDrift as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     except (OSError, SyntaxError) as exc:
         print(f"version_literal_count_failed: {exc}", file=sys.stderr)
         return 1
@@ -142,13 +205,23 @@ def main(argv: list[str] | None = None) -> int:
             "and expected_sites"
         )
     for file_name in sorted(REGISTER):
-        reason, expected = REGISTER[file_name]
-        found = len(by_file.get(file_name, []))
+        reason, expected, expected_values = REGISTER[file_name]
+        found_rows = by_file.get(file_name, [])
+        found = len(found_rows)
         if found != expected:
             violations.append(
                 f"register expectation failed: {file_name} expects {expected} "
                 f"literals, found {found} ({reason})"
             )
+        if expected_values is not None:
+            # Fold row 6: pin the VALUES for authored-data rows — a
+            # semantics-changing substitution fails at unchanged cardinality.
+            found_values = sorted(row["text"] for row in found_rows)
+            if found_values != sorted(expected_values):
+                violations.append(
+                    f"register value pin failed: {file_name} expects "
+                    f"{sorted(expected_values)}, found {found_values} ({reason})"
+                )
     for row in sites:
         entry = REGISTER.get(row["file"])
         row["exempt"] = entry is not None
@@ -161,7 +234,7 @@ def main(argv: list[str] | None = None) -> int:
                 {
                     "mode": "zero",
                     "ok": not violations,
-                    "scanned": len(set(row["file"] for row in sites)),
+                    "scanned": scanned,
                     "count": len(sites),
                     "outside": len(outside),
                     "violations": violations,
@@ -175,7 +248,7 @@ def main(argv: list[str] | None = None) -> int:
     verdict = "ok" if not violations else "FAILED"
     print(
         f"sdk executable version literals: {len(outside)} outside register "
-        f"({len(sites)} sites, {verdict})"
+        f"({len(sites)} sites, {scanned} files scanned, {verdict})"
     )
     for violation in violations:
         print(f"  {violation}")
