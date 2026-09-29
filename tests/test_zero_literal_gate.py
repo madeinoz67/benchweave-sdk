@@ -164,6 +164,7 @@ class TestTwinCounter:
         scratch = tmp_path / "scratch-repo"
         (scratch / "scripts").mkdir(parents=True)
         shutil.copy(COUNTER, scratch / "scripts/count_version_literals.py")
+        shutil.copy(REPO / "standards-lock.json", scratch / "standards-lock.json")
         shutil.copytree(REPO / "src/benchweave_sdk", scratch / "src/benchweave_sdk")
         planted = scratch / "src/benchweave_sdk/packaging.py"
         planted.write_text('_PLANT = "9.9.9"\n', encoding="utf-8")
@@ -185,6 +186,7 @@ class TestTwinCounter:
         scratch = tmp_path / "scratch-repo"
         (scratch / "scripts").mkdir(parents=True)
         shutil.copy(COUNTER, scratch / "scripts/count_version_literals.py")
+        shutil.copy(REPO / "standards-lock.json", scratch / "standards-lock.json")
         shutil.copytree(REPO / "src/benchweave_sdk", scratch / "src/benchweave_sdk")
         scaffold_py = scratch / "src/benchweave_sdk/scaffold.py"
         scaffold_py.write_bytes(
