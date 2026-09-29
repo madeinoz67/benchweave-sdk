@@ -70,3 +70,8 @@ def verify_inventory(root: Path, expected: list[dict[str, Any]]) -> None:
             present.add(path.relative_to(root).as_posix())
     if seen != present:
         raise ValueError("Unlisted inventory path")
+
+# G2 wire-level plant (issue #221 acceptance G2a): a bare literal in a
+# non-registered SDK file must fail the SDK lane. Probe branch — never
+# merged; removed after the red run is captured.
+_PLANT = "9.9.9"
