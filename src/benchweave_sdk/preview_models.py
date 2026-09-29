@@ -10,7 +10,7 @@ PREVIEW_API_VERSION = 1
 
 Severity = Literal["neutral", "success", "advisory", "warning", "critical", "trip"]
 TimestampStrategy = Literal["fixed", "relative"]
-PlotKind = Literal["time_series", "waveform"]
+PlotKind = Literal["time_series", "waveform", "digital_lanes"]
 ColorRole = Literal["accent", "muted"]
 
 
@@ -137,9 +137,14 @@ class PlotView:
     title: str
     x: PlotAxis
     channels: tuple[PlotChannel, ...]
+    # digital_lanes (plugin-ui-preview 0.2.0): the declared capture
+    # structure rides the served document verbatim — projection, never
+    # authoring (the wire schema owns the shape).
+    lane_groups: tuple[dict[str, Any], ...] = ()
+    decoder_lanes: tuple[dict[str, Any], ...] = ()
 
     def to_document(self) -> dict[str, Any]:
-        return {
+        document: dict[str, Any] = {
             "page_id": self.page_id,
             "kind": self.kind,
             "binding_id": self.binding_id,
@@ -147,6 +152,11 @@ class PlotView:
             "x": self.x.to_document(),
             "channels": [channel.to_document() for channel in self.channels],
         }
+        if self.lane_groups:
+            document["lane_groups"] = list(self.lane_groups)
+        if self.decoder_lanes:
+            document["decoder_lanes"] = list(self.decoder_lanes)
+        return document
 
 
 @dataclass(frozen=True, slots=True)
