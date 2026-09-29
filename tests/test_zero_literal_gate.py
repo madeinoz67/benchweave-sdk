@@ -199,3 +199,24 @@ class TestTwinCounter:
         assert result.returncode == 1, result.stdout + result.stderr
         assert "register expectation failed: src/benchweave_sdk/scaffold.py" in result.stdout
         assert "expects 4 literals, found 5" in result.stdout
+
+
+class TestRegisteredDisposition:
+    """G3a (gateway design §5): the SDK copy's register entry cites the D2
+    trigger and carries the exact expectation — the byte-identity of the
+    two contracts.py copies stays pinned by
+    tests/sdk/test_presentation_packaging.py (cited there, not re-built)."""
+
+    def test_the_twin_register_reason_cites_the_d2_trigger(self) -> None:
+        result = subprocess.run(
+            [sys.executable, str(COUNTER), "--json"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0
+        payload = json.loads(result.stdout)
+        sites = [row for row in payload["sites"] if row["file"].endswith("contracts.py")]
+        assert len(sites) == 3
+        assert all(row["exempt"] is True for row in sites)
+        assert all("D2" in row["reason"] for row in sites)
