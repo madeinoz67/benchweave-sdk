@@ -294,11 +294,15 @@ class TestFoldHardening:
         assert "standard_set_drift:" in result.stderr
 
     def test_an_environment_inside_src_is_filtered(self, tmp_path: Path) -> None:
-        """Fold row 5's env-filter port: a venv created inside src/ must be
-        EXCLUDED from the scan (the gateway counter's filter, mirrored).
-        RED at the fold base: the twin counted the plant inside the venv."""
+        """A MARKER-carrying environment inside src/ is EXCLUDED from the
+        scan (issue #269 §3.2: the marker rule — the directory carries
+        ``pyvenv.cfg``). Under the fold's name-set filter this arm passed
+        by NAME alone; the marker is now what excludes."""
         scratch = self._scratch_sdk_repo(tmp_path)
         (scratch / "src/benchweave_sdk/venv/lib").mkdir(parents=True)
+        (scratch / "src/benchweave_sdk/venv/pyvenv.cfg").write_text(
+            "home = /usr/bin\n", encoding="utf-8"
+        )
         (scratch / "src/benchweave_sdk/venv/lib/planted.py").write_text(
             '_PLANT = "9.9.9"\n', encoding="utf-8"
         )
@@ -310,6 +314,27 @@ class TestFoldHardening:
         )
         assert result.returncode == 0, result.stdout + result.stderr
         assert "venv" not in result.stdout
+
+    def test_a_venv_name_without_marker_is_scanned(self, tmp_path: Path) -> None:
+        """Issue #269 §3.2, the collision case: a directory merely NAMED
+        ``venv`` carries project code until it carries the marker — its
+        literals are SCANNED and REFUSE. RED at the twin's rule base: the
+        name-set filter excluded the same tree silently (exit 0)."""
+        scratch = self._scratch_sdk_repo(tmp_path)
+        (scratch / "src/benchweave_sdk/venv/lib").mkdir(parents=True)
+        (scratch / "src/benchweave_sdk/venv/lib/planted.py").write_text(
+            '_PLANT = "9.9.9"\n', encoding="utf-8"
+        )
+        result = subprocess.run(
+            [sys.executable, str(scratch / "scripts/count_version_literals.py")],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert "unregistered literal: src/benchweave_sdk/venv/lib/planted.py" in (
+            result.stdout
+        )
 
     def test_a_registered_value_substitution_fails_the_value_pin(
         self, tmp_path: Path

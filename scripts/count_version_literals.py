@@ -73,65 +73,49 @@ import warnings
 from pathlib import Path
 from typing import Any
 
+# >>> BEGIN SHARED COUNTER REGION (digest-pinned against the twin; issue #269 #4) >>>
 STANDARD_IDS = ("otdp", "registry", "execution", "interface", "plugin-ui", "plugin-ui-preview")
 PATTERN_A = re.compile(r"\b(?:" + "|".join(STANDARD_IDS) + r")/\d+\.\d+\.\d+")
 PATTERN_BARE = re.compile(r"^\d+\.\d+\.\d+$")
 
-# Environment components ignored in the scan (the gateway counter's filter,
-# ported fold row 5): a stray environment inside src/ must make zero-mode
-# FAIL loudly if it ever lands in scope, not silently join the census.
-ENVIRONMENT_COMPONENTS = frozenset({"venv", ".venv", "node_modules", "site-packages"})
+# Environments are detected BY MARKER, not by name (issue #269 3.2): a
+# directory is a Python environment iff it carries ``pyvenv.cfg`` — the
+# marker every ``venv``/``virtualenv``/``uv venv`` writes. Project code in
+# a directory merely NAMED ``venv`` or ``.venv`` is SCANNED — the
+# collision case closed. ``node_modules``/``site-packages`` stay
+# name-based: no marker file exists for either and the names are
+# convention-owned by npm and pip's layout — a real package so named is
+# unrepresentable in practice (NAMED RESIDUAL, not a silent one).
+# Direction of failure stays loud: an environment whose marker was
+# deleted scans as third-party bytes and its literals FAIL the gate
+# (disposition = a named path exclusion) — never a silent pass.
+ENVIRONMENT_MARKER = "pyvenv.cfg"
+ENVIRONMENT_NAMED_COMPONENTS = frozenset({"node_modules", "site-packages"})
 
-# The registered-exception register (the gateway counter's rows for this
-# tree, #221 §1.3): display-relative path -> (reason, expected_sites,
-# expected_values). expected_values pins the sorted BARE-literal values for
-# authored-data rows (fold row 6); the contracts.py copy is digest-pinned
-# whole, so it carries None there.
-REGISTER: dict[str, tuple[str, int, tuple[str, ...] | None]] = {
-    "src/benchweave_sdk/standards/plugin-ui/contracts.py": (
-        "VR-25 branch 2 / D2: plugin-ui corpus-owned code, byte-identical to "
-        "its gateway twin (tests/sdk/test_presentation_packaging.py pins the "
-        "identity — digest-pinned whole, so no value pin here); motion = the "
-        "D2 reopen trigger",
-        3,
-        None,
-    ),
-    "src/benchweave_sdk/scaffold.py": (
-        "authored example-template fields that are not standards references "
-        "(descriptor_version, firmware version, adapter version, provenance "
-        "revision); the otdp_version example IS derived "
-        "(served.active_version) and stays outside this row",
-        4,
-        ("0.1.0", "0.1.0", "0.1.0", "1.0.0"),
-    ),
-}
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
-SOURCE_ROOT = REPO_ROOT / "src" / "benchweave_sdk"
+_is_environment_dir_cache: dict[Path, bool] = {}
 
 
-class StandardSetDrift(Exception):
-    """A committed authority disagrees with the matcher's pinned sets."""
+def _is_environment_dir(directory: Path) -> bool:
+    """True iff the directory carries the environment marker (memoized:
+    one stat per directory under a scan root, cached)."""
+    cached = _is_environment_dir_cache.get(directory)
+    if cached is None:
+        cached = (directory / ENVIRONMENT_MARKER).exists()
+        _is_environment_dir_cache[directory] = cached
+    return cached
 
 
-def _pin_standard_ids() -> None:
-    """The committed standard-id set is the matcher's authority (fold row 5):
-    ``STANDARD_IDS`` must equal the standards lock's row ids — this
-    repository's authority for the governed set (it carries no standards
-    manifest; the lock is what ``benchweave_sdk.served`` derives from). A
-    seventh standard would otherwise silently narrow Pattern A's coverage —
-    the script refuses instead, and adding the id becomes a deliberate,
-    reviewable edit to this file.
-    """
-    lock_path = REPO_ROOT / "standards-lock.json"
-    document = json.loads(lock_path.read_text(encoding="utf-8"))
-    lock_ids = sorted({str(row.get("id")) for row in document.get("standards", [])})
-    if lock_ids != sorted(STANDARD_IDS):
-        raise StandardSetDrift(
-            f"standard_set_drift: the standards lock declares {lock_ids} but the "
-            f"matcher pins {sorted(STANDARD_IDS)} — update STANDARD_IDS in this "
-            "script in the same work as the lock change"
-        )
+def _outside_environment(scan_root: Path, relative_parts: tuple[str, ...]) -> bool:
+    """True when no directory on the relative path is a Python environment
+    (by the ``pyvenv.cfg`` marker) and no component is a named environment
+    component. The parts are relative to ``scan_root`` — absolute parts
+    would stat every ancestor directory of the checkout."""
+    if any(component in ENVIRONMENT_NAMED_COMPONENTS for component in relative_parts):
+        return False
+    return not any(
+        _is_environment_dir(scan_root.joinpath(*relative_parts[: index + 1]))
+        for index in range(len(relative_parts) - 1)
+    )
 
 
 def _docstring_ids(tree: ast.Module) -> set[int]:
@@ -148,6 +132,17 @@ def _docstring_ids(tree: ast.Module) -> set[int]:
             ):
                 skip.add(id(body[0].value))
     return skip
+
+
+# --- constant-folding assembly detection (issue #269, design §1.1) ---------
+# Bounds: a fold attempt exceeding either is UNFOLDABLE (an honest miss,
+# never an error).
+FOLD_MAX_DEPTH = 24
+FOLD_MAX_LENGTH = 4096
+
+
+class _Unfoldable(Exception):
+    """The evaluator's universal miss: this expression is not constant-only."""
 
 
 # --- constant-folding assembly detection (issue #269, design §1.1) ---------
@@ -372,6 +367,60 @@ def _fold_sites(tree: ast.Module, relative: str) -> list[dict[str, Any]]:
         del row["_box"]
     return kept
 
+# <<< END SHARED COUNTER REGION <<<
+
+
+# The registered-exception register (the gateway counter's rows for this
+# tree, #221 §1.3): display-relative path -> (reason, expected_sites,
+# expected_values). expected_values pins the sorted BARE-literal values for
+# authored-data rows (fold row 6); the contracts.py copy is digest-pinned
+# whole, so it carries None there.
+REGISTER: dict[str, tuple[str, int, tuple[str, ...] | None]] = {
+    "src/benchweave_sdk/standards/plugin-ui/contracts.py": (
+        "VR-25 branch 2 / D2: plugin-ui corpus-owned code, byte-identical to "
+        "its gateway twin (tests/sdk/test_presentation_packaging.py pins the "
+        "identity — digest-pinned whole, so no value pin here); motion = the "
+        "D2 reopen trigger",
+        3,
+        None,
+    ),
+    "src/benchweave_sdk/scaffold.py": (
+        "authored example-template fields that are not standards references "
+        "(descriptor_version, firmware version, adapter version, provenance "
+        "revision); the otdp_version example IS derived "
+        "(served.active_version) and stays outside this row",
+        4,
+        ("0.1.0", "0.1.0", "0.1.0", "1.0.0"),
+    ),
+}
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SOURCE_ROOT = REPO_ROOT / "src" / "benchweave_sdk"
+
+
+class StandardSetDrift(Exception):
+    """A committed authority disagrees with the matcher's pinned sets."""
+
+
+def _pin_standard_ids() -> None:
+    """The committed standard-id set is the matcher's authority (fold row 5):
+    ``STANDARD_IDS`` must equal the standards lock's row ids — this
+    repository's authority for the governed set (it carries no standards
+    manifest; the lock is what ``benchweave_sdk.served`` derives from). A
+    seventh standard would otherwise silently narrow Pattern A's coverage —
+    the script refuses instead, and adding the id becomes a deliberate,
+    reviewable edit to this file.
+    """
+    lock_path = REPO_ROOT / "standards-lock.json"
+    document = json.loads(lock_path.read_text(encoding="utf-8"))
+    lock_ids = sorted({str(row.get("id")) for row in document.get("standards", [])})
+    if lock_ids != sorted(STANDARD_IDS):
+        raise StandardSetDrift(
+            f"standard_set_drift: the standards lock declares {lock_ids} but the "
+            f"matcher pins {sorted(STANDARD_IDS)} — update STANDARD_IDS in this "
+            "script in the same work as the lock change"
+        )
+
 
 def count_sites() -> tuple[list[dict[str, Any]], int]:
     """Every executable literal site, sorted for reproducibility, plus the
@@ -381,7 +430,7 @@ def count_sites() -> tuple[list[dict[str, Any]], int]:
     scanned = 0
     for path in sorted(SOURCE_ROOT.rglob("*.py")):
         relative_parts = path.relative_to(REPO_ROOT).parts
-        if any(component in ENVIRONMENT_COMPONENTS for component in relative_parts):
+        if not _outside_environment(REPO_ROOT, relative_parts):
             continue
         scanned += 1
         relative = path.relative_to(REPO_ROOT).as_posix()
