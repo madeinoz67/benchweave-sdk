@@ -387,3 +387,71 @@ def test_generated_submission_manifest_is_canonical(tmp_path: Path) -> None:
     artifacts = build(tmp_path)
     assert json.loads(artifacts.manifest_bytes) == artifacts.manifest
     assert artifacts.manifest_bytes.endswith(b"\n")
+
+# --- M3 (CR-49 fold): the scoped_transport permission form ---------------------
+
+
+def test_scoped_transport_without_admission_is_refused(tmp_path: Path) -> None:
+    """The tier rule reaches the permission form: the dps150's own shape
+    (scoped_transport, zero triples, no recorded admission) refuses."""
+    plugin = make_plugin(tmp_path)
+    descriptor_path = plugin / "src" / "benchweave_wgt_widget" / "descriptor.json"
+    descriptor = json.loads(descriptor_path.read_bytes())
+    descriptor["integration"]["adapter"]["permissions"] = ["scoped_transport"]
+    descriptor_path.write_bytes(json.dumps(descriptor).encode())
+    with pytest.raises(PublishingError) as exc:
+        build(tmp_path, plugin=plugin)
+    assert str(exc.value).startswith("transport_triples_absent:")
+
+
+def test_scoped_transport_with_recorded_admission_passes(tmp_path: Path) -> None:
+    plugin = make_plugin(tmp_path)
+    descriptor_path = plugin / "src" / "benchweave_wgt_widget" / "descriptor.json"
+    descriptor = json.loads(descriptor_path.read_bytes())
+    descriptor["integration"]["adapter"]["permissions"] = ["scoped_transport"]
+    descriptor_path.write_bytes(json.dumps(descriptor).encode())
+    clone = make_registry_clone(tmp_path)
+    rules = json.loads((clone / "lane-rules.json").read_bytes())
+    rules["transport_tier_rule"] = {"admissions": ["madeinoz67"]}
+    (clone / "lane-rules.json").write_bytes(json.dumps(rules).encode() + b"\n")
+    artifacts = build_submission(
+        plugin,
+        registry_clone=clone,
+        source_url="https://github.com/example/widget",
+        revision=HEX40,
+        publisher="madeinoz67",
+        capability_declaration=dict(CAPABILITIES_NONE),
+    )
+    assert artifacts.manifest["permissions"] == ["scoped_transport"]
+
+
+# --- F5 (fold): the lookalike flag rides the artefact set ----------------------
+
+
+def test_lookalike_flags_ride_the_submission_draft(tmp_path: Path) -> None:
+    """CR-39's flag is computed, recorded and surfaced — never discarded."""
+    plugin = make_plugin(tmp_path)
+    clone = make_registry_clone(tmp_path)
+    publishers = json.loads((clone / "records" / "publishers.json").read_bytes())
+    publishers["publishers"].append(
+        {
+            "github": "near-twin",
+            "namespace": "madeinoz68",
+            "publisher_id": "madeinoz68",
+            "publisher_repo_protections": [
+                {"protection": "push-protection", "state": "declared-not-verified"}
+            ],
+            "vetted_at": "2026-10-01T00:00:00Z",
+        }
+    )
+    (clone / "records" / "publishers.json").write_bytes(
+        json.dumps(publishers, sort_keys=True, separators=(",", ":")).encode() + b"\n"
+    )
+    artifacts = build(tmp_path, plugin=plugin, publisher="madeinoz68")
+    assert artifacts.lookalikes, "the similarity finding must not be discarded"
+    assert any(
+        flag.startswith("namespace_lookalike:") for flag in artifacts.lookalikes
+    )
+    assert artifacts.submission["namespace_lookalikes"] == artifacts.lookalikes
+    assert "namespace_lookalikes" in json.loads(artifacts.submission_bytes)
+

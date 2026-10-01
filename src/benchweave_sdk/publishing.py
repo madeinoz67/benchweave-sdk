@@ -152,17 +152,24 @@ class LaneRules:
     similarity_max_distance: int
     confusables: dict[str, str]
     dev_prefix: str = "dev-"
+    #: Q15's tier rule: the publishers with a RECORDED provider admission,
+    #: the only ones who may publish a scoped_transport-declaring release
+    #: without publishing its admitted contract triples (the transport lane
+    #: is unbound, so this list is empty until #167 activates it).
+    transport_admissions: frozenset[str] = frozenset()
 
     @classmethod
     def load(cls, registry_clone: Path) -> LaneRules:
         rules = json.loads((registry_clone / "lane-rules.json").read_bytes())
         params = rules["similarity_rule"]["params"]
+        tier = rules.get("transport_tier_rule", {})
         return cls(
             reserved_namespaces=frozenset(rules["namespace_rules"]["reserved_namespaces"]),
             reserved_plugins=frozenset(rules["namespace_rules"]["reserved_plugins"]),
             similarity_max_distance=int(params["max_edit_distance"]),
             confusables=dict(params["confusable_map"]),
             dev_prefix=str(rules["namespace_rules"]["dev_registry_prefix"]),
+            transport_admissions=frozenset(tier.get("admissions", [])),
         )
 
 
@@ -267,12 +274,15 @@ def _find_descriptor(plugin_dir: Path) -> Path:
 
 
 def _declares_transport_provider(descriptor: dict[str, Any]) -> bool:
-    """Conservative transport-provider detection (CR-49).
+    """Conservative transport-provider detection (CR-49), both forms.
 
-    Any pinned contract id or required feature in an ``otdp.transport``
-    namespace counts; the authoritative provider-admission check is
-    gateway-side (issue #147), and this publish gate errs toward demanding
-    the triples.
+    A pinned contract id or required feature in an ``otdp.transport``
+    namespace counts, and so does the ``scoped_transport`` permission in the
+    adapter block: the tier rule (Q15) governs who may HOLD that permission,
+    so declaring it without either published triples or a recorded provider
+    admission refuses. The authoritative provider-admission check is
+    gateway-side (issue #147); this publish gate errs toward demanding the
+    evidence.
     """
     for contract in descriptor.get("contracts", []) or []:
         if str(contract.get("id", "")).startswith("otdp.transport"):
@@ -280,7 +290,10 @@ def _declares_transport_provider(descriptor: dict[str, Any]) -> bool:
     for feature in descriptor.get("required_features", []) or []:
         if str(feature).startswith("otdp.transport"):
             return True
-    return False
+    permissions = (
+        descriptor.get("integration", {}).get("adapter", {}).get("permissions", []) or []
+    )
+    return "scoped_transport" in permissions
 
 
 # --- the entry gates -------------------------------------------------------------
@@ -324,14 +337,24 @@ def _gate_capability(declaration: dict[str, bool] | None) -> None:
 
 
 def _gate_transport_triples(
-    descriptor: dict[str, Any], transport_triples: tuple[dict[str, str], ...]
+    descriptor: dict[str, Any],
+    transport_triples: tuple[dict[str, str], ...],
+    publisher: str,
+    rules: LaneRules,
 ) -> None:
-    if _declares_transport_provider(descriptor) and not transport_triples:
-        raise PublishingError(
-            "transport_triples_absent: the descriptor declares a transport "
-            "provider; publish the admitted contract triples (id, version, "
-            "sha256) it intends to drive (CR-49, Q15)"
-        )
+    if not _declares_transport_provider(descriptor):
+        return
+    if transport_triples:
+        return
+    if publisher in rules.transport_admissions:
+        return
+    raise PublishingError(
+        "transport_triples_absent: the descriptor declares a transport "
+        "provider (an otdp.transport contract, or the scoped_transport "
+        "permission); publish the admitted contract triples (id, version, "
+        "sha256) it intends to drive, or hold a recorded provider admission "
+        "in the lane rules (CR-49, Q15)"
+    )
 
 
 def _gate_firmware(members: list[tuple[str, bytes]], attestation: dict[str, str] | None) -> None:
@@ -542,6 +565,10 @@ class SubmissionArtifacts:
     payload_bytes: bytes = b""
     submission: dict[str, Any] = field(default_factory=dict)
     submission_bytes: bytes = b""
+    #: CR-39's similarity flags: lookalikes are FLAGGED for the reviewer,
+    #: never silently admitted and never silently dropped. They ride the
+    #: submission draft (``namespace_lookalikes``) so the review consults them.
+    lookalikes: list[str] = field(default_factory=list)
 
     def write(self, out: Path) -> list[Path]:
         out.mkdir(parents=True, exist_ok=True)
@@ -591,7 +618,7 @@ def build_submission(
     _gate_dev_lineage(deps, rules.dev_prefix)
     _gate_capability(capability_declaration)
     descriptor = json.loads(_find_descriptor(resolved).read_bytes())
-    _gate_transport_triples(descriptor, transport_triples)
+    _gate_transport_triples(descriptor, transport_triples, publisher, rules)
 
     publishers = json.loads((registry_clone / "records" / "publishers.json").read_bytes())
     existing_namespaces = {entry["namespace"] for entry in publishers["publishers"]}
@@ -602,6 +629,7 @@ def build_submission(
     collisions = [f for f in findings if not f.startswith("namespace_lookalike:")]
     if collisions:
         raise PublishingError("; ".join(collisions))
+    lookalikes = sorted(f for f in findings if f.startswith("namespace_lookalike:"))
 
     package_dir_name, tree_members = _read_package_dir(resolved)
     members = tree_members + _generated_members(deps, package_dir_name)
@@ -700,6 +728,7 @@ def build_submission(
         "firmware_attestation": firmware_attestation,
         "closure": closure,
         "closure_digest": closure_digest,
+        "namespace_lookalikes": lookalikes,
     }
     _gate_submission_complete(submission, {path for path, _data in members})
     return SubmissionArtifacts(
@@ -708,6 +737,7 @@ def build_submission(
         payload_bytes=payload_zip,
         submission=submission,
         submission_bytes=canonical_bytes(submission),
+        lookalikes=lookalikes,
     )
 
 
