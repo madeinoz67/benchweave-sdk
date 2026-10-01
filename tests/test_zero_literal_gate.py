@@ -155,7 +155,7 @@ class TestTwinCounter:
             check=False,
         )
         assert result.returncode == 0, result.stdout + result.stderr
-        assert json.loads(result.stdout)["scanned"] == 18, (
+        assert json.loads(result.stdout)["scanned"] == 19, (
             "the sdk scanned-file census moved — update this pin in the "
             "same commit as the tree change (the ratchet discipline)"
         )
@@ -405,6 +405,7 @@ class TestRegisterPinDefense:
         assert set(register) == {
             "src/benchweave_sdk/standards/plugin-ui/contracts.py",
             "src/benchweave_sdk/scaffold.py",
+            "src/benchweave_sdk/publishing.py",
         }
         contracts = register["src/benchweave_sdk/standards/plugin-ui/contracts.py"]
         assert contracts[1] == 3
@@ -412,6 +413,9 @@ class TestRegisterPinDefense:
         scaffold = register["src/benchweave_sdk/scaffold.py"]
         assert scaffold[1] == 4
         assert scaffold[2] == ("0.1.0", "0.1.0", "0.1.0", "1.0.0")
+        publishing = register["src/benchweave_sdk/publishing.py"]
+        assert publishing[1] == 3
+        assert publishing[2] == ("0.1.1", "0.0.0", "0.1.0")
 
     def test_a_register_edit_is_detected_by_the_pin(self, tmp_path: Path) -> None:
         """The pin's teeth: a scratch copy with the scaffold expectation

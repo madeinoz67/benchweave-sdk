@@ -1,4 +1,5 @@
-"""Software-only SDK commands. No registry publication or hardware access."""
+"""Software-only SDK commands. No hardware access; publication is prepared
+offline and never signed here (the signing half is maintainer-side)."""
 
 from __future__ import annotations
 
@@ -15,6 +16,11 @@ import click
 from . import __version__
 from .console import ConsoleOutput
 from .packaging import inventory
+from .publishing import (
+    build_submission,
+    parse_dependency,
+    validate_transport_triple,
+)
 from .scaffold import create_project
 from .validation import validate_descriptor, verify_provider_pin
 
@@ -53,7 +59,7 @@ def _presentation_options[R](function: Callable[..., R]) -> Callable[..., R]:
 @click.group()
 @click.version_option(__version__)
 def cli() -> None:
-    """Software-only SDK commands; no publication or hardware access."""
+    """Software-only SDK commands; no hardware access, no signing, no service."""
 
 
 @cli.command("new")
@@ -288,6 +294,160 @@ def sync_standards_command(bundle: Path | None, check_only: bool) -> None:
         f"Standards {'verified' if check_only else 'synced'} ({summary}).",
         style="green",
     )
+
+
+def _capability_map(flags: tuple[str, ...]) -> dict[str, bool] | None:
+    """--capability flags to the closed three-way declaration (CR-45)."""
+    allowed = {
+        "network-egress": "network_egress",
+        "subprocess-or-native-library": "subprocess_or_native_library",
+        "filesystem-writes": "filesystem_writes_beyond_evidence_retention",
+    }
+    declaration = {
+        "network_egress": False,
+        "subprocess_or_native_library": False,
+        "filesystem_writes_beyond_evidence_retention": False,
+    }
+    for flag in flags:
+        if flag not in allowed:
+            raise click.ClickException(
+                f"capability_unknown:{flag} (expected none of or any of: "
+                + ", ".join(sorted(allowed))
+                + ")"
+            )
+        declaration[allowed[flag]] = True
+    return declaration
+
+
+@cli.command("package")
+@click.argument("plugin_dir", type=click.Path(path_type=Path))
+@click.option(
+    "--registry-clone", required=True, type=click.Path(path_type=Path),
+    help="A clone of benchweave-registry (namespace rules, prior releases)",
+)
+@click.option("--source-url", required=True, help="The plugin source repository URL")
+@click.option(
+    "--revision", required=True, help="Immutable commit digest (40- or 64-hex) being released"
+)
+@click.option("--publisher", required=True, help="Your vetted publisher id")
+@click.option("--plugin", default=None, help="Plugin name (default: the directory name)")
+@click.option(
+    "--version", default=None, help="Release version (default: the plugin's pyproject version)"
+)
+@click.option(
+    "--out",
+    required=True,
+    type=click.Path(path_type=Path),
+    help="Output directory for the artefact set",
+)
+@click.option(
+    "--capability",
+    multiple=True,
+    help=(
+        "Declared capability, repeatable: network-egress | "
+        "subprocess-or-native-library | filesystem-writes; pass none for an explicit none"
+    ),
+)
+@click.option(
+    "--dependency",
+    multiple=True,
+    help="Registry dependency <registry_id>/<package_id>@<version>:<sha256>, repeatable",
+)
+@click.option(
+    "--transport-triple",
+    multiple=True,
+    help="Admitted triple <id>@<version>:<sha256> a transport-declaring descriptor publishes",
+)
+@click.option("--licence-spdx", default="MIT", show_default=True)
+@_domain_errors
+def package_command(
+    plugin_dir: Path,
+    registry_clone: Path,
+    source_url: str,
+    revision: str,
+    publisher: str,
+    plugin: str | None,
+    version: str | None,
+    out: Path,
+    capability: tuple[str, ...],
+    dependency: tuple[str, ...],
+    transport_triple: tuple[str, ...],
+    licence_spdx: str,
+) -> None:
+    """Package a finished plugin into the submission artefact set (offline, keyless)."""
+    from .publishing import PublishingError
+
+    if capability == ("none",):
+        capability = ()
+    try:
+        artifacts = build_submission(
+            plugin_dir,
+            registry_clone=registry_clone,
+            source_url=source_url,
+            revision=revision,
+            publisher=publisher,
+            plugin=plugin,
+            version=version,
+            capability_declaration=_capability_map(capability),
+            dependencies=[parse_dependency(spec) for spec in dependency],
+            transport_triples=tuple(
+                validate_transport_triple(triple) for triple in transport_triple
+            ),
+            licence_spdx=licence_spdx,
+        )
+    except PublishingError as exc:
+        raise click.ClickException(str(exc)) from exc
+    written = artifacts.write(out)
+    output = ConsoleOutput()
+    output.message(
+        f"Packaged {artifacts.manifest['package_id']}@{artifacts.manifest['version']} "
+        f"(manifest sha256 {artifacts.submission['manifest_sha256'][:12]}…); "
+        "deterministic and keyless — signing is maintainer-side.",
+        style="green",
+    )
+    for path in written:
+        output.message(f"  {path}", style="green")
+
+
+@cli.command("submit")
+@click.argument("artifacts_dir", type=click.Path(path_type=Path))
+@click.option(
+    "--registry-clone", required=True, type=click.Path(path_type=Path),
+    help="Working clone of benchweave-registry; the submission branch is created here",
+)
+@click.option("--base", default="main", show_default=True)
+@click.option("--open-pr", is_flag=True, help="Open the PR via gh when available")
+@_domain_errors
+def submit_command(artifacts_dir: Path, registry_clone: Path, base: str, open_pr: bool) -> None:
+    """Write a packaged artefact set into the registry repository and branch (CR-6)."""
+    import json
+    import subprocess
+
+    from .publishing import submission_branch
+
+    submission = json.loads((artifacts_dir / "submission.json").read_bytes())
+    branch, target, remote_url = submission_branch(
+        registry_clone, artifacts_dir, submission, base=base
+    )
+    output = ConsoleOutput()
+    output.message(
+        f"Submission branch {branch} created; artefacts staged under {target}",
+        style="green",
+    )
+    if remote_url:
+        compare = f"{remote_url.rstrip('.git')}/compare/{base}...{branch}"
+        if open_pr and subprocess.run(["gh", "--version"], capture_output=True).returncode == 0:
+            subprocess.run(  # noqa: S603, S607 — optional sugar over git
+                [
+                    "gh", "pr", "create", "--repo", remote_url, "--head", branch,
+                    "--title",
+                    f"Submission {submission['package_id']}@{submission['version']}",
+                    "--fill",
+                ],
+                check=False,
+            )
+        else:
+            output.message(f"Open the submission PR: {compare}", style="yellow")
 
 
 def _renderer_origin(renderer_url: str | None) -> str | None:
