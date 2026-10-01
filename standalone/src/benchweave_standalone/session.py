@@ -25,6 +25,7 @@ import math
 import sys
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -219,18 +220,26 @@ class HostOperationContext:
 
 
 class PluginSession:
-    """One adapter session over one services object (SW-04: the only one).
+    """One adapter session over a per-connection transport (SW-04's shape).
 
-    Connecting establishes the device's identity once (the gateway's own
-    admission shape: identity is an establishment fact, not a pollable);
-    ``device_get`` serves the established identity afterwards. Over the
-    deterministic scripted transport the cached identity is exact; a real
-    transport (I3) re-establishes on connect the same way.
+    The services object is minted FRESH by ``services_factory`` on every
+    connect: a disconnect closes that transport for good (the mock's
+    ``close_transport`` never reopens), and a reconnect must start a new
+    scripted conversation from its establishment head — reusing one
+    process-lifetime host leaves a fresh adapter talking to a dead
+    transport mid-cycle (the M1 fold). Connecting then establishes the
+    device's identity once (the gateway's own admission shape: identity is
+    an establishment fact, not a pollable); ``device_get`` serves the
+    established identity afterwards. Over the deterministic scripted
+    transport the cached identity is exact; a real transport (I3)
+    re-establishes on connect the same way.
     """
 
-    def __init__(self, plugin: LoadedPlugin, services: HostServices) -> None:
+    def __init__(
+        self, plugin: LoadedPlugin, services_factory: Callable[[], HostServices]
+    ) -> None:
         self._plugin = plugin
-        self._services = services
+        self._services_factory = services_factory
         self._adapter: Adapter | None = None
         self.identity: dict[str, Any] | None = None
         self.connected = False
@@ -274,7 +283,7 @@ class PluginSession:
         context = self._context(
             f"open-{uuid.uuid4().hex[:8]}", self._lifecycle_timeout_ms()
         )
-        await adapter.open(self._plugin.descriptor, self._services, context)
+        await adapter.open(self._plugin.descriptor, self._services_factory(), context)
         self._adapter = adapter
         self.connected = True
         try:

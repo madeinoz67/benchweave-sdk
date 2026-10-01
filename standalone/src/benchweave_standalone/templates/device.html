@@ -2,6 +2,11 @@
 {% block title %}{{ device_id }} — standalone{% endblock %}
 {% block content %}
 <h1>Device <code>{{ device_id }}</code></h1>
+{% if action_error %}
+<div class="notice notice-refused" role="alert">
+  <p><strong>Connect refused</strong> — {{ action_error.code }}: {{ action_error.message }}</p>
+</div>
+{% endif %}
 <div class="actions">
   {% if connected %}
   <span class="state state-connected">connected</span>

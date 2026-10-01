@@ -62,7 +62,7 @@ def test_exhausted_transport_shows_the_refused_state(plugin, policy) -> None:
     from benchweave_standalone.transport import LoopingMockHost
 
     host = LoopingMockHost(mock_exchanges(plugin), cycles=1)
-    seam = StandaloneSeam(PluginSession(plugin, host), transport_kind="mock")
+    seam = StandaloneSeam(PluginSession(plugin, lambda: host), transport_kind="mock")
     app = build_app(seam, policy=policy)
     from fastapi.testclient import TestClient
 
@@ -163,3 +163,31 @@ def test_mcp_mount_initializes(client, policy) -> None:
         },
     )
     assert response.status_code == 200
+
+
+def test_failed_connect_renders_a_refusal_state(plugin, policy) -> None:
+    """M1 RED arm (UI): a refused connect must RENDER the refusal — the
+    operator never gets the silent 'Connect the device...' prompt instead."""
+
+    from fastapi.testclient import TestClient
+
+    from benchweave_standalone.seam import StandaloneSeam
+    from benchweave_standalone.session import PluginSession, mock_exchanges
+    from benchweave_standalone.transport import LoopingMockHost
+
+    script = mock_exchanges(plugin)
+    # Script the establishment itself to fail: the connect-time identify
+    # loses the transport, so device_connect refuses not_ready.
+    script[0] = (script[0][0], ConnectionError("scripted loss at establish"))
+    host = LoopingMockHost(script)
+    seam = StandaloneSeam(PluginSession(plugin, lambda: host), transport_kind="mock")
+    app = build_app(seam, policy=policy)
+    with TestClient(app, base_url="http://127.0.0.1:8477") as client:
+        response = client.post(
+            f"/devices/{DEV}/connect",
+            headers={"x-csrf-token": policy.csrf_token},
+            follow_redirects=True,
+        )
+        body = response.text
+        assert "Connect refused" in body
+        assert "not_ready" in body

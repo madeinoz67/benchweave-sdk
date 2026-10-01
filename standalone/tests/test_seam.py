@@ -135,7 +135,7 @@ def test_twenty_sequential_reads(seam) -> None:
 def test_exhausted_transport_fails_honestly_with_correlation(plugin) -> None:
     """The D(i) RED control at the seam: cycles=1, second read refused."""
     host = LoopingMockHost([_IDENTIFY, (_READ_TX, {"data": b"3.3\n"})], cycles=1)
-    seam = StandaloneSeam(PluginSession(plugin, host), transport_kind="mock")
+    seam = StandaloneSeam(PluginSession(plugin, lambda: host), transport_kind="mock")
     call(seam, "device_connect", DEV)
     first = call(seam, "parameter_read", {**DEV, "parameter": "voltage"})
     assert first["value"] == 3.3
@@ -153,7 +153,7 @@ def test_adapter_protocol_error_preserves_the_envelope(plugin) -> None:
             (_READ_TX, {"data": b"nan\n"}),
         ],
     )
-    seam = StandaloneSeam(PluginSession(plugin, host), transport_kind="mock")
+    seam = StandaloneSeam(PluginSession(plugin, lambda: host), transport_kind="mock")
     call(seam, "device_connect", DEV)
     with pytest.raises(SeamError) as caught:
         call(seam, "parameter_read", {**DEV, "parameter": "voltage"})
@@ -170,7 +170,7 @@ def test_adapter_timeout_maps_to_not_ready(plugin) -> None:
             (_READ_TX, TimeoutError("scripted expiry")),
         ],
     )
-    seam = StandaloneSeam(PluginSession(plugin, host), transport_kind="mock")
+    seam = StandaloneSeam(PluginSession(plugin, lambda: host), transport_kind="mock")
     call(seam, "device_connect", DEV)
     with pytest.raises(SeamError) as caught:
         call(seam, "parameter_read", {**DEV, "parameter": "voltage"})
@@ -186,9 +186,29 @@ def test_adapter_transport_loss_maps_to_not_ready(plugin) -> None:
             (_READ_TX, ConnectionError("scripted loss")),
         ],
     )
-    seam = StandaloneSeam(PluginSession(plugin, host), transport_kind="mock")
+    seam = StandaloneSeam(PluginSession(plugin, lambda: host), transport_kind="mock")
     call(seam, "device_connect", DEV)
     with pytest.raises(SeamError) as caught:
         call(seam, "parameter_read", {**DEV, "parameter": "voltage"})
     assert caught.value.code == "not_ready"
     assert caught.value.details["adapter"]["code"] == "TRANSPORT_ERROR"
+
+
+def test_reconnect_after_disconnect_lives(plugin) -> None:
+    """M1 RED arm: a disconnect must not kill the session for the process
+    lifetime — reconnect re-establishes and reads keep working."""
+    from benchweave_standalone.session import mock_exchanges
+
+    script = mock_exchanges(plugin)
+    # The production shape: the factory mints a fresh scripted transport
+    # per connection (LoopingMockHost deep-copies the script, so the list
+    # is safely shared across connections).
+    seam = StandaloneSeam(
+        PluginSession(plugin, lambda: LoopingMockHost(script)), transport_kind="mock"
+    )
+    assert call(seam, "device_connect", DEV)["connected"] is True
+    assert call(seam, "parameter_read", {**DEV, "parameter": "voltage"})["value"] == 3.3
+    assert call(seam, "device_disconnect", DEV)["connected"] is False
+    assert call(seam, "device_connect", DEV)["connected"] is True
+    assert call(seam, "parameter_read", {**DEV, "parameter": "voltage"})["value"] == 3.3
+    assert call(seam, "parameter_read", {**DEV, "parameter": "voltage"})["value"] == 3.3

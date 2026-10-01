@@ -25,7 +25,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.templating import Jinja2Templates
 
 from . import catalogue
-from .assets import ui_assets_root
+from .assets import ui_assets_root, verify_ui_assets
 from .errors import ERROR_HTTP_STATUS, SeamError
 from .mcp import build_mcp
 from .seam import StandaloneSeam
@@ -52,7 +52,13 @@ def _failure(exc: SeamError) -> JSONResponse:
 
 
 def build_app(seam: StandaloneSeam, *, policy: GuardPolicy, authoring: bool = False) -> FastAPI:
-    """Compose the one app; the seam is the only thing routes talk to."""
+    """Compose the one app; the seam is the only thing routes talk to.
+
+    Construction verifies the vendored asset inventory first (SW-05's
+    posture, NFR-P3): tampered or missing bytes refuse STARTUP — never a
+    half-serving app whose shell answers 200 while its assets 500.
+    """
+    verify_ui_assets(ui_assets_root())
     mcp_server = build_mcp(seam, authoring=authoring)
     mcp_app = mcp_server.http_app(path="/mcp")
 
@@ -172,10 +178,11 @@ def _add_html_routes(app: FastAPI, seam: StandaloneSeam, policy: GuardPolicy) ->
                 return readings, {"code": exc.code, "message": exc.message}
         return readings, None
 
-    @app.get("/devices/{device_id}", response_class=HTMLResponse)
-    async def device_page(request: Request, device_id: str) -> Response:
-        if device_id != seam.session.device_id:
-            return HTMLResponse("not found", status_code=404)
+    async def _render_device(
+        request: Request,
+        device_id: str,
+        action_error: dict[str, Any] | None = None,
+    ) -> Response:
         plugin = seam.session.plugin
         readings, error = (
             await _gather_readings(device_id) if seam.session.connected else ([], None)
@@ -192,9 +199,16 @@ def _add_html_routes(app: FastAPI, seam: StandaloneSeam, policy: GuardPolicy) ->
                 "connected": seam.session.connected,
                 "readings": readings,
                 "readings_error": error,
+                "action_error": action_error,
                 "csrf_token": policy.csrf_token,
             },
         )
+
+    @app.get("/devices/{device_id}", response_class=HTMLResponse)
+    async def device_page(request: Request, device_id: str) -> Response:
+        if device_id != seam.session.device_id:
+            return HTMLResponse("not found", status_code=404)
+        return await _render_device(request, device_id)
 
     @app.get("/devices/{device_id}/readings", response_class=HTMLResponse)
     async def readings_partial(request: Request, device_id: str) -> Response:
@@ -221,12 +235,17 @@ def _add_html_routes(app: FastAPI, seam: StandaloneSeam, policy: GuardPolicy) ->
         return RedirectResponse(url=f"/devices/{device_id}", status_code=303)
 
     @app.post("/devices/{device_id}/connect")
-    async def connect_device(device_id: str) -> Response:
+    async def connect_device(request: Request, device_id: str) -> Response:
         if device_id != seam.session.device_id:
             return HTMLResponse("not found", status_code=404)
-        # the redirected page shows the real connection state
-        with contextlib.suppress(SeamError):
+        try:
             await seam.call("device_connect", {"device_id": device_id})
+        except SeamError as exc:
+            # The M1 fold: a refused connect RENDERS its refusal — the
+            # operator never gets the silent prompt back instead.
+            return await _render_device(
+                request, device_id, action_error={"code": exc.code, "message": exc.message}
+            )
         return _redirect(device_id)
 
     @app.post("/devices/{device_id}/disconnect")

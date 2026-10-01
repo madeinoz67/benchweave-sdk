@@ -44,8 +44,11 @@ def mock_host(plugin) -> LoopingMockHost:
 
 
 @pytest.fixture()
-def seam(plugin, mock_host) -> StandaloneSeam:
-    return StandaloneSeam(PluginSession(plugin, mock_host), transport_kind="mock")
+def seam(plugin) -> StandaloneSeam:
+    return StandaloneSeam(
+        PluginSession(plugin, lambda: LoopingMockHost(mock_exchanges(plugin))),
+        transport_kind="mock",
+    )
 
 
 @pytest.fixture()

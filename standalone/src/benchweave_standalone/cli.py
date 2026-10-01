@@ -40,8 +40,10 @@ def _load(project: Path) -> LoadedPlugin:
 
 def _build_seam(project: Path) -> StandaloneSeam:
     plugin = _load(project)
-    services = LoopingMockHost(mock_exchanges(plugin))
-    return StandaloneSeam(PluginSession(plugin, services), transport_kind="mock")
+    return StandaloneSeam(
+        PluginSession(plugin, lambda: LoopingMockHost(mock_exchanges(plugin))),
+        transport_kind="mock",
+    )
 
 
 @click.group()

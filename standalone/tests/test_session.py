@@ -92,7 +92,7 @@ def test_context_cancel_and_dispatch_marker() -> None:
 def test_lifecycle_open_execute_close(plugin, mock_host) -> None:
     import asyncio
 
-    session = PluginSession(plugin, mock_host)
+    session = PluginSession(plugin, lambda: mock_host)
     assert not session.connected
     asyncio.run(session.connect())
     assert session.connected
@@ -107,13 +107,13 @@ def test_lifecycle_open_execute_close(plugin, mock_host) -> None:
 def test_execute_refuses_before_open(plugin, mock_host) -> None:
     import asyncio
 
-    session = PluginSession(plugin, mock_host)
+    session = PluginSession(plugin, lambda: mock_host)
     with pytest.raises(RuntimeError, match="standalone_session_not_open"):
         asyncio.run(session.execute("read", {"parameter": "voltage"}))
 
 
 def test_verb_timeout_comes_from_the_descriptor(plugin, mock_host) -> None:
-    session = PluginSession(plugin, mock_host)
+    session = PluginSession(plugin, lambda: mock_host)
     assert session.verb_timeout_ms("identify") == 1000
     assert session.verb_timeout_ms("read") == 1000
     with pytest.raises(KeyError, match="standalone_verb_unbounded"):
@@ -124,3 +124,20 @@ def test_mock_exchanges_derive_from_the_plugin_evidence(plugin) -> None:
     script = mock_exchanges(plugin)
     assert [exchange[0]["data"] for exchange in script] == [b"ID?\n", b"V?\n"]
     assert all(exchange[0]["max_bytes"] == 128 for exchange in script)
+
+
+def test_descriptor_layer_refuses_without_presentation_to_absorb(tmp_path: Path) -> None:
+    """F2 pinning arm: a NO-presentation scaffold plus a corrupted
+    descriptor must be refused by the descriptor validation layer itself —
+    no presentation cross-validator exists to absorb the failure here."""
+    from benchweave_sdk.scaffold import create_project
+
+    project = tmp_path / "bare"
+    create_project(project, "example_plugin")
+    assert not (project / "src" / "example_plugin" / "presentation.json").exists()
+    descriptor = project / "src" / "example_plugin" / "descriptor.json"
+    document = json.loads(descriptor.read_text())
+    document.pop("operations")
+    descriptor.write_text(json.dumps(document))
+    with pytest.raises(PluginLoadError, match="standalone_plugin_invalid:"):
+        load_plugin_project(project)
