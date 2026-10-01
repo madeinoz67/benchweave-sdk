@@ -533,6 +533,31 @@ def test_lock_row_plain_reversioned_row_still_admits(
     assert served.CANONICAL_VERSION.fullmatch("0.2.3") is not None
 
 
+@pytest.mark.parametrize("container", [["0.2.2"], "0.2.2"], ids=["list", "string"])
+def test_non_dict_mirror_standards_container_refuses_typed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, container: object
+) -> None:
+    """adv2-F3 (#288 fix-back): a non-dict ``dependency_policy.standards``
+    container crashed classification with a bare AttributeError out of
+    ``_policy_row`` — a live traceback over corrupted lock bytes one lane
+    beside M3's kill rule (any traceback over lock bytes); the mirror is
+    the second hardened load path. The prefix is ``lock_invalid:`` (the
+    lock's own bytes are malformed), not ``policy_mirror_absent:`` — the
+    mirror is present, just unreadable."""
+    import benchweave_sdk.served as served
+
+    lock = json.loads((ROOT / "standards-lock.json").read_bytes())
+    lock["dependency_policy"]["standards"] = container
+    temp = tmp_path / "standards-lock.json"
+    temp.write_bytes(
+        (json.dumps(lock, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    )
+    monkeypatch.setattr(served, "_lock_source", lambda: temp)
+    with pytest.raises(served.ServedStateError, match="^lock_invalid: ") as refusal:
+        served.classify_pin("0.1.2", "otdp")
+    assert "standards" in str(refusal.value), "the unreadable block is named"
+
+
 # --- #288 M4: one canonical move-to derivation, the downgrade labeled. ---
 
 

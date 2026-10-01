@@ -192,7 +192,18 @@ def _policy_row(standard: str) -> dict[str, Any]:
             "policy_mirror_absent: the lock carries no dependency_policy mirror; "
             "re-sync the standards (the range and statuses cannot be classified)"
         )
-    row = policy.get("standards", {}).get(standard)
+    standards = policy.get("standards", {})
+    if not isinstance(standards, dict):
+        # adv2-F3 (#288 fix-back): a present-but-unreadable container is
+        # malformed lock bytes, not absence — the typed refusal keeps this
+        # the second hardened load path beside M3's row grammar (a bare
+        # AttributeError out of classify_pin was the pre-fix crash).
+        raise ServedStateError(
+            f"lock_invalid: the dependency_policy mirror's standards block "
+            f"is not an object: {standards!r} — the mirror cannot be read "
+            "(re-sync the standards from a gateway export)"
+        )
+    row = standards.get(standard)
     if not isinstance(row, dict):
         raise ServedStateError(
             f"policy_mirror_absent: no dependency_policy row for {standard!r}"
