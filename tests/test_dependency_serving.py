@@ -314,12 +314,12 @@ def test_move_to_orders_by_semver_not_lexical_sort(
             # 0.2.2's row becomes a 0.10.0 row (same bytes, re-versioned key);
             # 0.2.1 stays the yanked row so the served set is {0.2.0, 0.10.0}.
     monkeypatch.setattr(served, "_lock_document", lambda: lock)
-    served.lock_rows.cache_clear()
+    served._lock_rows_cached.cache_clear()
     try:
         classification = served.classify_pin("0.1.2", "otdp")
         assert classification.move_to == "0.10.0"
     finally:
-        served.lock_rows.cache_clear()
+        served._lock_rows_cached.cache_clear()
 
 
 def test_retired_fallback_move_to_is_named_as_the_range_lower_bound(
@@ -341,7 +341,7 @@ def test_retired_fallback_move_to_is_named_as_the_range_lower_bound(
         if row["id"] == "otdp":
             row["yanked"] = True
     monkeypatch.setattr(served, "_lock_document", lambda: lock)
-    served.lock_rows.cache_clear()
+    served._lock_rows_cached.cache_clear()
     try:
         classification = served.classify_pin("0.3.0", "otdp")
         assert classification.move_to == "0.2.0", "the fallback is the lower bound"
@@ -350,7 +350,7 @@ def test_retired_fallback_move_to_is_named_as_the_range_lower_bound(
         assert "lower bound" in message, "the fallback is named for what it is"
         assert "highest served version" not in message, "nothing is served on this lock"
     finally:
-        served.lock_rows.cache_clear()
+        served._lock_rows_cached.cache_clear()
 
 
 def test_yank_warning_fires_on_the_envelope_paths() -> None:
@@ -437,3 +437,40 @@ def test_tampered_fixture_schema_refuses_on_the_fixture_path(tmp_path: Path) -> 
     finally:
         victim.write_bytes(original)
         _clear_document_caches()
+
+
+# --- #288: the lock's own integrity — cache, row shape, one derivation. ---
+
+
+def test_lock_rows_cache_follows_an_edited_lock_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """NIT-8 (#288): ``lock_rows``' process cache is keyed on the lock
+    file's ``(mtime_ns, size)`` — an editable checkout that re-syncs its
+    lock is seen by the SAME interpreter, not only the next one. The edit
+    lands between two reads of a temp checkout's lock (the resolution
+    seam, not a monkeypatched document, so the read path is the real one).
+    """
+    import benchweave_sdk.served as served
+
+    lock = json.loads((ROOT / "standards-lock.json").read_bytes())
+    temp = tmp_path / "standards-lock.json"
+    temp.write_bytes(
+        (json.dumps(lock, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    )
+    monkeypatch.setattr(served, "_lock_source", lambda: temp)
+    before = served.lock_rows()
+    dropped = next(
+        row
+        for row in lock["standards"]
+        if row["id"] == "otdp" and row["version"] == "0.2.2"
+    )
+    lock["standards"].remove(dropped)  # the re-sync's shape: a row leaves the lock
+    temp.write_bytes(
+        (json.dumps(lock, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    )
+    after = served.lock_rows()
+    assert ("otdp", "0.2.2", True, False) in before
+    assert ("otdp", "0.2.2", True, False) not in after, (
+        "the cache must re-key on the lock file's (mtime_ns, size)"
+    )

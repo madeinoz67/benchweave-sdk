@@ -48,25 +48,69 @@ class PinClassification:
     detail: str = ""
 
 
-def _lock_document() -> dict[str, Any]:
-    """The packaged lock, or the repository checkout's in editable dev."""
+def _lock_source() -> Path | None:
+    """The lock file's location: packaged-first, checkout fallback.
+
+    Wheels force-include ``benchweave_sdk/standards-lock.json``; an editable
+    checkout keeps it at the repository root — the same resolution posture
+    ``contract_documents`` has always used (PKG-1: neither path is the
+    gateway checkout or the network).
+    """
     packaged = files("benchweave_sdk").joinpath(LOCK_NAME)
     if packaged.is_file():
-        document: dict[str, Any] = json.loads(packaged.read_bytes())
-        return document
+        return Path(str(packaged))
     checkout = Path(__file__).resolve().parents[2] / LOCK_NAME
     if checkout.is_file():
-        loaded: dict[str, Any] = json.loads(checkout.read_bytes())
-        return loaded
-    raise ServedStateError(
-        "lock_missing: this SDK carries no standards lock (packaged or "
-        "checkout); the served set cannot be derived"
-    )
+        return checkout
+    return None
+
+
+def _lock_document() -> dict[str, Any]:
+    """The lock document at ``_lock_source()`` (tests may substitute either)."""
+    source = _lock_source()
+    if source is None:
+        raise ServedStateError(
+            "lock_missing: this SDK carries no standards lock (packaged or "
+            "checkout); the served set cannot be derived"
+        )
+    document: dict[str, Any] = json.loads(source.read_bytes())
+    return document
+
+
+def _lock_fingerprint() -> tuple[int, int] | None:
+    """The lock file's ``(mtime_ns, size)`` — the process cache's key.
+
+    NIT-8 (#288): the cache over ``lock_rows`` previously lived for the
+    interpreter's lifetime, so an editable checkout that re-synced its lock
+    kept serving the pre-sync served set until a new process started. The
+    fingerprint is taken BEFORE the read: a lock that changes between the
+    stat and the parse is cached under the old fingerprint, so the next
+    call re-stats, misses and re-reads — self-correcting. A rewrite that
+    preserves both ``(mtime_ns, size)`` is the residual the key cannot see
+    (disclosed; ns-resolution timestamps make it a non-shape in practice).
+    """
+    source = _lock_source()
+    if source is None:
+        return None
+    stat = source.stat()
+    return (stat.st_mtime_ns, stat.st_size)
+
+
+def lock_rows() -> tuple[tuple[str, str, bool, bool], ...]:
+    """Carried rows as (id, version, active, yanked), sorted and deduplicated.
+
+    Process-cached keyed on the lock file's ``(mtime_ns, size)`` (NIT-8,
+    #288). A test that substitutes the DOCUMENT (``_lock_document``)
+    bypasses the fingerprinted file, so it must clear ``_lock_rows_cached``
+    itself; substituting the SOURCE (``_lock_source``) re-keys naturally.
+    """
+    return _lock_rows_cached(_lock_fingerprint())
 
 
 @cache
-def lock_rows() -> tuple[tuple[str, str, bool, bool], ...]:
-    """Carried rows as (id, version, active, yanked), sorted and deduplicated."""
+def _lock_rows_cached(
+    _fingerprint: tuple[int, int] | None,
+) -> tuple[tuple[str, str, bool, bool], ...]:
     rows: set[tuple[str, str, bool, bool]] = set()
     for row in _lock_document().get("standards", []):
         identifier = row.get("id")
