@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass
 from functools import cache
 from importlib.resources import files
@@ -27,6 +28,13 @@ from typing import Any
 
 LOCK_NAME = "standards-lock.json"
 STANDARD = "otdp"
+# The canonical version grammar every lock row must satisfy (M3, #288):
+# exactly three numerals, no leading zeros — the per-segment rule the
+# gateway's range grammar enforces on declared bounds and the promotion
+# schema enforces on targets. standards_sync reuses this constant so both
+# lock-reading lanes refuse the same rows; pins (external input) keep the
+# gentler `_tuple_or_none` guard in classify_pin.
+CANONICAL_VERSION = re.compile(r"(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)")
 
 
 class ServedStateError(ValueError):
@@ -117,6 +125,17 @@ def _lock_rows_cached(
         version = row.get("version")
         if not isinstance(identifier, str) or not isinstance(version, str):
             raise ServedStateError(f"lock_invalid: a row carries non-string id/version: {row!r}")
+        if CANONICAL_VERSION.fullmatch(version) is None:
+            # M3 (#288): the load point is the one place every consumer
+            # shares — a non-canonical numeral refuses here as a typed
+            # lock_invalid rather than crashing version ordering downstream
+            # (the wildcard shape) or silently joining the served set (the
+            # leading-zero twin, which the gateway's own grammar refuses).
+            raise ServedStateError(
+                f"lock_invalid: row {identifier}@{version!r} is not a canonical "
+                "MAJOR.MINOR.PATCH version (three numerals, no leading zeros); "
+                "re-sync the standards from a gateway export"
+            )
         active = bool(row.get("active", False))
         yanked = bool(row.get("yanked", False))
         rows.add((identifier, version, active, yanked))

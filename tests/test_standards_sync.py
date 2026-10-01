@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -565,6 +566,35 @@ def test_a_malformed_compatibility_block_is_a_lock_invalid_refusal(
     with pytest.raises(ValueError, match="^lock_invalid: "):
         sync(bundle, sdk)
     assert (sdk / "standards-lock.json").read_bytes() == before, "refusal before any write"
+
+
+def _hand_edit_lock(sdk: Path, mutate: Callable[[dict[str, Any]], None]) -> None:
+    """Hand-edit a synced checkout's lock (canonical JSON, the writer's dump shape)."""
+    lock = json.loads((sdk / "standards-lock.json").read_bytes())
+    mutate(lock)
+    (sdk / "standards-lock.json").write_bytes(
+        (json.dumps(lock, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    )
+
+
+def test_sync_check_refuses_malformed_row_version(tmp_path: Path) -> None:
+    """M3 (#288), the sync lane: a lock row version outside the canonical
+    MAJOR.MINOR.PATCH grammar refuses ``lock_invalid:`` naming the row. The
+    no-bundle ``--check`` used to pass this green — the row's file paths
+    still hash right and nothing on the sync path parsed the version
+    field, so a corrupted row rode every lane unnoticed."""
+    bundle = _export(tmp_path)
+    sdk = _synced_sdk(tmp_path, bundle)
+
+    def plant(lock: dict[str, Any]) -> None:
+        for row in lock["standards"]:
+            if row["id"] == "otdp" and row["version"] == "0.2.0":
+                row["version"] = "0.2.x"
+
+    _hand_edit_lock(sdk, plant)
+    with pytest.raises(ValueError, match="^lock_invalid: ") as refusal:
+        sync(None, sdk, check_only=True)
+    assert "0.2.x" in str(refusal.value), "the offending row is named"
 
 
 # --- #215 fix wave: the bump-class gate is pinned; narrowing reports its drops. ---

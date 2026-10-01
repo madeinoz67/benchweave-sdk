@@ -474,3 +474,34 @@ def test_lock_rows_cache_follows_an_edited_lock_file(
     assert ("otdp", "0.2.2", True, False) not in after, (
         "the cache must re-key on the lock file's (mtime_ns, size)"
     )
+
+
+@pytest.mark.parametrize(
+    "malformed", ["0.2.x", "0.02.1"], ids=["wildcard-segment", "leading-zero"]
+)
+def test_lock_row_non_canonical_version_refuses_typed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, malformed: str
+) -> None:
+    """M3 (#288): a lock row whose version is not a canonical
+    MAJOR.MINOR.PATCH numeral refuses typed ``lock_invalid:`` at the one
+    load point — never a bare ``ValueError`` out of version ordering (the
+    wildcard shape crashed ``_move_to``'s tuple comprehension at the
+    review lane's reproduction) and never a silently-served non-canonical
+    numeral (the leading-zero twin parses as a tuple today — LOW 4's
+    class, which would serve a version the gateway's own grammar
+    refuses).
+    """
+    import benchweave_sdk.served as served
+
+    lock = json.loads((ROOT / "standards-lock.json").read_bytes())
+    for row in lock["standards"]:
+        if row["id"] == "otdp" and row["version"] == "0.2.0":
+            row["version"] = malformed
+    temp = tmp_path / "standards-lock.json"
+    temp.write_bytes(
+        (json.dumps(lock, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    )
+    monkeypatch.setattr(served, "_lock_source", lambda: temp)
+    with pytest.raises(served.ServedStateError, match="^lock_invalid: ") as refusal:
+        served.classify_pin("0.1.2", "otdp")
+    assert malformed in str(refusal.value), "the offending row is named"

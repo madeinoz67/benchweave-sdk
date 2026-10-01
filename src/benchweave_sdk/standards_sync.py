@@ -22,6 +22,8 @@ from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
+from .served import CANONICAL_VERSION
+
 LOCK_NAME = "standards-lock.json"
 VENDORED = "src/benchweave_sdk/standards"
 STAMP_NAME = "_GENERATED.txt"
@@ -347,7 +349,19 @@ def _read_lock_file(path: Path) -> dict[str, Any]:
         # here keeps a malformed row a lock_invalid refusal in every lane,
         # rather than a bare KeyError from whichever lane meets it first.
         for standard in lock["standards"]:
-            _ = standard["id"], standard["version"]
+            _ = standard["id"]
+            version = standard["version"]
+            # M3 (#288): the row's version is joined onto ordering and
+            # bump-class judgments downstream, so the shape check rides the
+            # one shared lock reader — a non-canonical numeral is a named
+            # lock_invalid refusal on every lane (the served module's own
+            # load path enforces the same grammar via the shared constant).
+            if not isinstance(version, str) or CANONICAL_VERSION.fullmatch(version) is None:
+                raise ValueError(
+                    f"lock_invalid: row {standard.get('id')!r}@{version!r} is not a "
+                    "canonical MAJOR.MINOR.PATCH version (three numerals, "
+                    "no leading zeros)"
+                )
             for file in standard["files"]:
                 _ = file["path"], file["sha256"]
         compatibility = lock.get("compatibility")
