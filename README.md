@@ -170,7 +170,7 @@ Every preview is labelled `SIMULATED PRESENTATION DATA`. Control interactions cr
 
 - `interfaces`: structural async `Adapter`, `HostServices`, `OperationContext` and optional `CaptureServices` definitions. No SDK superclass is required.
 - `testing`: deterministic `MockContext` and `MockHost`, exact scripted transfers, dispatch markers, cancellation and a manually advanced clock. These are test doubles, not qualified host services.
-- `validation`: pinned local schemas, strict finite JSON, format validation, runtime correlation and basic descriptor S01/S02/S04 checks. Unresolved schema references fail without network retrieval.
+- `validation`: per-pin schema validation against the multi-version vendored standards tree (every lookup resolves the descriptor's own pinned version; the carried set and its mirror are pinned by `standards-lock.json`), strict finite JSON, format validation, runtime correlation and basic descriptor S01/S02/S04 checks. Unresolved schema references fail without network retrieval; unserved pins refuse `version_not_served:` and yanked pins warn with the derived move-to, labeled a downgrade when no served version is newer.
 - `conformance`: reusable operation and quiet lifecycle checks, with configurable wall-clock timeouts for cooperative async calls. Authors must add device-specific failure, profile and measurement tests. Use process isolation for blocking code or code that suppresses cancellation.
 - `presentation`: bounded offline validation of presentation resources and complete configuration presets, using the same validator bytes as the gateway.
 - `packaging`: inventory and integrity checks for a prepared bundle, including duplicate/path/symlink rejection. No installation, signing, publication or dependency execution.

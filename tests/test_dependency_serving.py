@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import warnings
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -314,12 +315,12 @@ def test_move_to_orders_by_semver_not_lexical_sort(
             # 0.2.2's row becomes a 0.10.0 row (same bytes, re-versioned key);
             # 0.2.1 stays the yanked row so the served set is {0.2.0, 0.10.0}.
     monkeypatch.setattr(served, "_lock_document", lambda: lock)
-    served.lock_rows.cache_clear()
+    served._lock_rows_cached.cache_clear()
     try:
         classification = served.classify_pin("0.1.2", "otdp")
         assert classification.move_to == "0.10.0"
     finally:
-        served.lock_rows.cache_clear()
+        served._lock_rows_cached.cache_clear()
 
 
 def test_retired_fallback_move_to_is_named_as_the_range_lower_bound(
@@ -341,7 +342,7 @@ def test_retired_fallback_move_to_is_named_as_the_range_lower_bound(
         if row["id"] == "otdp":
             row["yanked"] = True
     monkeypatch.setattr(served, "_lock_document", lambda: lock)
-    served.lock_rows.cache_clear()
+    served._lock_rows_cached.cache_clear()
     try:
         classification = served.classify_pin("0.3.0", "otdp")
         assert classification.move_to == "0.2.0", "the fallback is the lower bound"
@@ -350,7 +351,7 @@ def test_retired_fallback_move_to_is_named_as_the_range_lower_bound(
         assert "lower bound" in message, "the fallback is named for what it is"
         assert "highest served version" not in message, "nothing is served on this lock"
     finally:
-        served.lock_rows.cache_clear()
+        served._lock_rows_cached.cache_clear()
 
 
 def test_yank_warning_fires_on_the_envelope_paths() -> None:
@@ -437,3 +438,284 @@ def test_tampered_fixture_schema_refuses_on_the_fixture_path(tmp_path: Path) -> 
     finally:
         victim.write_bytes(original)
         _clear_document_caches()
+
+
+# --- #288: the lock's own integrity — cache, row shape, one derivation. ---
+
+
+def test_lock_rows_cache_follows_an_edited_lock_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """NIT-8 (#288): ``lock_rows``' process cache is keyed on the lock
+    file's ``(mtime_ns, size)`` — an editable checkout that re-syncs its
+    lock is seen by the SAME interpreter, not only the next one. The edit
+    lands between two reads of a temp checkout's lock (the resolution
+    seam, not a monkeypatched document, so the read path is the real one).
+    """
+    import benchweave_sdk.served as served
+
+    lock = json.loads((ROOT / "standards-lock.json").read_bytes())
+    temp = tmp_path / "standards-lock.json"
+    temp.write_bytes(
+        (json.dumps(lock, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    )
+    monkeypatch.setattr(served, "_lock_source", lambda: temp)
+    before = served.lock_rows()
+    dropped = next(
+        row
+        for row in lock["standards"]
+        if row["id"] == "otdp" and row["version"] == "0.2.2"
+    )
+    lock["standards"].remove(dropped)  # the re-sync's shape: a row leaves the lock
+    temp.write_bytes(
+        (json.dumps(lock, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    )
+    after = served.lock_rows()
+    assert ("otdp", "0.2.2", True, False) in before
+    assert ("otdp", "0.2.2", True, False) not in after, (
+        "the cache must re-key on the lock file's (mtime_ns, size)"
+    )
+
+
+@pytest.mark.parametrize(
+    "malformed",
+    ["0.2.x", "0.02.1", "1٠.2.2", "0.2.2٠"],
+    ids=["wildcard-segment", "leading-zero", "unicode-digit-mid", "unicode-digit-tail"],
+)
+def test_lock_row_non_canonical_version_refuses_typed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, malformed: str
+) -> None:
+    """M3 (#288): a lock row whose version is not a canonical
+    MAJOR.MINOR.PATCH numeral refuses typed ``lock_invalid:`` at the one
+    load point — never a bare ``ValueError`` out of version ordering (the
+    wildcard shape crashed ``_move_to``'s tuple comprehension at the
+    review lane's reproduction) and never a silently-served non-canonical
+    numeral (the leading-zero twin parses as a tuple today — LOW 4's
+    class, which would serve a version the gateway's own grammar
+    refuses).
+    """
+    import benchweave_sdk.served as served
+
+    lock = json.loads((ROOT / "standards-lock.json").read_bytes())
+    for row in lock["standards"]:
+        if row["id"] == "otdp" and row["version"] == "0.2.0":
+            row["version"] = malformed
+    temp = tmp_path / "standards-lock.json"
+    temp.write_bytes(
+        (json.dumps(lock, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    )
+    monkeypatch.setattr(served, "_lock_source", lambda: temp)
+    with pytest.raises(served.ServedStateError, match="^lock_invalid: ") as refusal:
+        served.classify_pin("0.1.2", "otdp")
+    assert malformed in str(refusal.value), "the offending row is named"
+
+
+def test_lock_row_plain_reversioned_row_still_admits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """adv2-F1 regression arm (#288 fix-back): the ASCII tightening refuses
+    only non-canonical numerals — a plain re-versioned row (the committed
+    shape, one canonical numeral swapped for another) still classifies
+    served, so the grammar did not over-tighten."""
+    import benchweave_sdk.served as served
+
+    lock = json.loads((ROOT / "standards-lock.json").read_bytes())
+    for row in lock["standards"]:
+        if row["id"] == "otdp" and row["version"] == "0.2.2":
+            row["version"] = "0.2.3"
+    temp = tmp_path / "standards-lock.json"
+    temp.write_bytes(
+        (json.dumps(lock, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    )
+    monkeypatch.setattr(served, "_lock_source", lambda: temp)
+    classification = served.classify_pin("0.2.3", "otdp")
+    assert classification.state == "served"
+    assert served.CANONICAL_VERSION.fullmatch("0.2.3") is not None
+
+
+@pytest.mark.parametrize("container", [["0.2.2"], "0.2.2"], ids=["list", "string"])
+def test_non_dict_mirror_standards_container_refuses_typed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, container: object
+) -> None:
+    """adv2-F3 (#288 fix-back): a non-dict ``dependency_policy.standards``
+    container crashed classification with a bare AttributeError out of
+    ``_policy_row`` — a live traceback over corrupted lock bytes one lane
+    beside M3's kill rule (any traceback over lock bytes); the mirror is
+    the second hardened load path. The prefix is ``lock_invalid:`` (the
+    lock's own bytes are malformed), not ``policy_mirror_absent:`` — the
+    mirror is present, just unreadable."""
+    import benchweave_sdk.served as served
+
+    lock = json.loads((ROOT / "standards-lock.json").read_bytes())
+    lock["dependency_policy"]["standards"] = container
+    temp = tmp_path / "standards-lock.json"
+    temp.write_bytes(
+        (json.dumps(lock, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    )
+    monkeypatch.setattr(served, "_lock_source", lambda: temp)
+    with pytest.raises(served.ServedStateError, match="^lock_invalid: ") as refusal:
+        served.classify_pin("0.1.2", "otdp")
+    assert "standards" in str(refusal.value), "the unreadable block is named"
+
+
+def test_two_segment_pin_is_unparsable_and_never_labeled() -> None:
+    """mech-F5 (#288 fix-back): the gateway's version_tuple is a strict
+    three-segment unpack, so pin "0.3" is unparsable there and renders NO
+    downgrade label; the SDK's two-segment tuple (0, 3) ordered 0.2.2 below
+    it and marked the move-to a downgrade — the one divergent cell of the
+    executed seven-state twin table. ``_tuple_or_none`` now requires
+    exactly three segments: an unparsable pin means downgrade False on
+    both sides of the twin."""
+    import benchweave_sdk.served as served
+
+    assert served._tuple_or_none("0.3") is None
+    classification = served.classify_pin("0.3", "otdp")
+    assert classification.state == "unserved"
+    assert classification.move_to == "0.2.2"
+    assert classification.downgrade is False, "twin agreement on the 2-segment pin"
+    message = str(served.refusal_for(classification))
+    assert DOWNGRADE_LABEL not in message
+    assert "not a parseable" in classification.detail
+
+
+# --- #288 M4: one canonical move-to derivation, the downgrade labeled. ---
+
+
+DOWNGRADE_LABEL = " (a downgrade — no served version is newer)"
+
+
+def _served_from(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mutate: Callable[[dict[str, object]], None],
+) -> None:
+    """Point the served module at a temp lock built from the committed one."""
+    import benchweave_sdk.served as served
+
+    lock = json.loads((ROOT / "standards-lock.json").read_bytes())
+    mutate(lock)
+    temp = tmp_path / "standards-lock.json"
+    temp.write_bytes(
+        (json.dumps(lock, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    )
+    monkeypatch.setattr(served, "_lock_source", lambda: temp)
+
+
+def test_move_to_twin_contract(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M4 (#288) twin: over the four table states the SDK classification
+    agrees with the gateway surfaces on the move-to VERSION and the
+    DOWNGRADE marking; the label text is pinned verbatim here and in the
+    gateway's twin — the cross-repo contract (a wording change is a
+    two-repo change by construction).
+    """
+    import benchweave_sdk.served as served
+
+    # State 1 — pin below all served: the derivation is the highest served
+    # version; not a downgrade, not guidance.
+    _served_from(tmp_path, monkeypatch, lambda lock: None)
+    below = served.classify_pin("0.1.2", "otdp")
+    assert (below.move_to, below.downgrade) == ("0.2.2", False)
+
+    # State 2 — yanked pin above all served: the move-to is the newest
+    # healthy served version AND is marked a downgrade.
+    def above(lock: dict[str, object]) -> None:
+        for row in lock["standards"]:  # type: ignore[index]
+            if row["id"] == "otdp" and row["version"] == "0.2.2":
+                row["version"] = "0.2.9"
+                row["yanked"] = True
+
+    _served_from(tmp_path, monkeypatch, above)
+    yanked_above = served.classify_pin("0.2.9", "otdp")
+    assert yanked_above.state == "yanked"
+    assert (yanked_above.move_to, yanked_above.downgrade) == ("0.2.0", True)
+
+    # State 3 — served empty: the derivation names the declared range's
+    # lower bound as GUIDANCE, never a servable target; no downgrade is
+    # claimed (no re-target exists to downgrade from).
+    def nothing_served(lock: dict[str, object]) -> None:
+        for row in lock["standards"]:  # type: ignore[index]
+            if row["id"] == "otdp":
+                row["yanked"] = True
+
+    _served_from(tmp_path, monkeypatch, nothing_served)
+    empty = served.classify_pin("0.3.0", "otdp")
+    assert (empty.move_to, empty.downgrade) == ("0.2.0", False)
+    assert (
+        served.derive_move_to("0.3.0", (), "0.2.0")
+        == served.MoveTo(version="0.2.0", downgrade=False, guidance_only=True)
+    )
+    empty_message = str(served.refusal_for(empty))
+    assert "the declared range's lower bound, named as a fallback" in empty_message
+    assert DOWNGRADE_LABEL not in empty_message, "guidance is not a downgrade claim"
+
+    # State 4 — yanked pin mid-set (the committed lock's own 0.2.1): the
+    # highest served version at or above the pin, not a downgrade. The
+    # re-point matters: state 3's temp lock is still the monkeypatched
+    # source, and this state reads the committed one.
+    _served_from(tmp_path, monkeypatch, lambda lock: None)
+    mid = served.classify_pin("0.2.1", "otdp")
+    assert (mid.move_to, mid.downgrade) == ("0.2.2", False)
+
+    # The unserved-pin refusal above the served set carries the label too —
+    # recommending the newest healthy served version while implying an
+    # upgrade path is the dishonesty the lane caught, whichever state the
+    # pin came from.
+    high = served.classify_pin("9.9.9", "otdp")
+    assert (high.move_to, high.downgrade) == ("0.2.2", True)
+    high_message = str(served.refusal_for(high))
+    assert (
+        "move-to 0.2.2 — the highest served version, the recommended "
+        "re-target (a downgrade — no served version is newer)" in high_message
+    )
+
+
+def test_yanked_pin_above_served_set_warns_of_downgrade(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M4 (#288) new behavior arm: a yanked pin above every served version
+    warns with the downgrade label appended — the exact string is the
+    cross-repo contract (the gateway twin asserts the same literal)."""
+    from benchweave_sdk.validation import YankedPinWarning, _warn_if_yanked_otdp
+
+    def above(lock: dict[str, object]) -> None:
+        for row in lock["standards"]:  # type: ignore[index]
+            if row["id"] == "otdp" and row["version"] == "0.2.2":
+                row["version"] = "0.2.9"
+                row["yanked"] = True
+
+    _served_from(tmp_path, monkeypatch, above)
+    with pytest.warns(YankedPinWarning) as recorded:
+        _warn_if_yanked_otdp("otdp/0.2.9/otdp-device-descriptor.schema.json")
+    message = str(recorded[0].message)
+    assert message == (
+        "otdp 0.2.9 is yanked from serving and auto-selection; the pin stays "
+        "conforming and validates against 0.2.9's own bytes — the move-to is "
+        "0.2.0 (the highest served version, the recommended re-target"
+        " (a downgrade — no served version is newer); migration guidance pending "
+        "(per-version migration notes land from adoption, issue #203 slice 5); "
+        "the dependency_policy mirror in this lock names the yank or retirement "
+        "record)"
+    )
+
+
+def test_yanked_pin_mid_set_warning_stays_byte_identical(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """M4 GREEN control: on the real corpus's only yanked pin (0.2.1, mid
+    set) the warning is byte-identical to the pre-M4 text — the label is
+    the fold's one intended change, nothing else moves."""
+    from benchweave_sdk.validation import YankedPinWarning, _warn_if_yanked_otdp
+
+    with pytest.warns(YankedPinWarning) as recorded:
+        _warn_if_yanked_otdp("otdp/0.2.1/otdp-device-descriptor.schema.json")
+    assert str(recorded[0].message) == (
+        "otdp 0.2.1 is yanked from serving and auto-selection; the pin stays "
+        "conforming and validates against 0.2.1's own bytes — the move-to is "
+        "0.2.2 (the highest served version, the recommended re-target; "
+        "migration guidance pending (per-version migration notes land from "
+        "adoption, issue #203 slice 5); the dependency_policy mirror in this "
+        "lock names the yank or retirement record)"
+    )
+    assert DOWNGRADE_LABEL not in str(recorded[0].message)

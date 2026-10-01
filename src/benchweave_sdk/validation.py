@@ -27,14 +27,18 @@ from .served import (
     lock_file_digests,
     lock_rows,
     refusal_for,
+    served_versions,
 )
 
 
 class YankedPinWarning(UserWarning):
     """A pinned standard version is yanked: conforming, but deprecated.
 
-    The message names the pin and the derived move-to (the highest served
-    version >= the pin — the Q10 ruling's "naming 0.2.2 as the move-to").
+    The message names the pin and the derived move-to (the Q10 ruling's
+    "naming 0.2.2 as the move-to") — the canonical derivation (M4, #288):
+    the highest served version, or the declared range's lower bound as
+    guidance when nothing is served, with the downgrade labeled when the
+    pin orders above every served version.
     """
 
 
@@ -64,7 +68,13 @@ def _warn_if_yanked_otdp(schema_file: str) -> None:
     shares (fold row 25): validating against a yanked version's schema bytes
     warns — whichever way the version was resolved (a descriptor's own pin,
     an envelope's ``otdp_version``, or an explicit ``otdp/<v>/<file>`` key).
-    The message names the pin and the derived move-to (the Q10 ruling).
+    The message names the pin and the derived move-to (the Q10 ruling) —
+    and marks the move-to a downgrade when the pin orders above every
+    served version (M4, #288): the newest healthy served version is the
+    actionable remediation exactly then, and it is named as what it is.
+    On the degenerate nothing-served lock the move-to is the declared
+    range's lower bound, labeled guidance — never presented as a servable
+    re-target (the F-E 10 posture).
     """
     parts = schema_file.split("/")
     if len(parts) < 3 or parts[0] != "otdp":
@@ -72,11 +82,26 @@ def _warn_if_yanked_otdp(schema_file: str) -> None:
     classification = classify_pin(parts[1], "otdp")
     if classification.state != "yanked":
         return
+    if classification.move_to is not None and classification.move_to in served_versions(
+        "otdp"
+    ):
+        target = (
+            f"the move-to is {classification.move_to} (the highest served "
+            "version, the recommended re-target"
+        )
+        if classification.downgrade:
+            target += " (a downgrade — no served version is newer)"
+        target += f"; {classification.migration_note})"
+    else:
+        target = (
+            f"the move-to is {classification.move_to} (the declared range's "
+            "lower bound, named as a fallback: no version of otdp is served "
+            f"on this lock, so it names no servable target; "
+            f"{classification.migration_note})"
+        )
     warnings.warn(
         f"otdp {parts[1]} is yanked from serving and auto-selection; the pin stays "
-        f"conforming and validates against {parts[1]}'s own bytes — the move-to is "
-        f"{classification.move_to} (the highest served version, the recommended "
-        f"re-target; {classification.migration_note})",
+        f"conforming and validates against {parts[1]}'s own bytes — {target}",
         YankedPinWarning,
         stacklevel=3,
     )

@@ -92,14 +92,14 @@ def test_a_lock_row_without_a_vendored_directory_is_a_typed_drift_error(
     import benchweave_sdk.validation as validation_module
 
     monkeypatch.setattr(served, "_lock_document", _lock_with_an_unservable_row)
-    served.lock_rows.cache_clear()
+    served._lock_rows_cached.cache_clear()
     validation_module.contract_documents.cache_clear()
     try:
         with pytest.raises(ValueError, match="^served_set_drift: otdp@0.2.3") as refusal:
             validation_module.contract_documents()
         assert "no such directory" in str(refusal.value)
     finally:
-        served.lock_rows.cache_clear()
+        served._lock_rows_cached.cache_clear()
         validation_module.contract_documents.cache_clear()
 
 

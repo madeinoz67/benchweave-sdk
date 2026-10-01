@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from functools import cache
 from importlib.resources import files
@@ -27,6 +29,19 @@ from typing import Any
 
 LOCK_NAME = "standards-lock.json"
 STANDARD = "otdp"
+# The canonical version grammar every lock row must satisfy (M3, #288):
+# exactly three numerals, no leading zeros — the per-segment rule the
+# gateway's range grammar enforces on declared bounds and the promotion
+# schema enforces on targets. standards_sync reuses this constant so both
+# lock-reading lanes refuse the same rows; pins (external input) keep the
+# gentler `_tuple_or_none` guard in classify_pin. The digit classes are
+# EXPLICIT [0-9], not \d (adv2-F1, #288 fix-back): \d matches any Unicode
+# Nd digit, so a shadow row like 1٠.2.2 fullmatched AND parsed via int()
+# to (10, 2, 2) — outranking every real row and riding --check green.
+# Explicit classes also propagate through `.pattern` concatenation into
+# standards_sync's _RANGE_CLAUSE, where a re.ASCII flag on this compile
+# would be silently dropped.
+CANONICAL_VERSION = re.compile(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)")
 
 
 class ServedStateError(ValueError):
@@ -37,7 +52,9 @@ class ServedStateError(ValueError):
 class PinClassification:
     """One pin's fate: ``served``, ``yanked`` (carried, warned), ``retired``
     (used and dead, never reissued) or ``unserved`` (out-of-range or never
-    carried by this SDK)."""
+    carried by this SDK). ``downgrade`` (M4, #288) marks a non-None
+    move-to that orders below the pin — the derivation's one degenerate
+    case, labeled wherever the move-to is rendered."""
 
     state: str
     standard: str
@@ -46,33 +63,89 @@ class PinClassification:
     move_to: str | None
     migration_note: str
     detail: str = ""
+    downgrade: bool = False
+
+
+def _lock_source() -> Path | None:
+    """The lock file's location: packaged-first, checkout fallback.
+
+    Wheels force-include ``benchweave_sdk/standards-lock.json``; an editable
+    checkout keeps it at the repository root — the same resolution posture
+    ``contract_documents`` has always used (PKG-1: neither path is the
+    gateway checkout or the network).
+    """
+    packaged = files("benchweave_sdk").joinpath(LOCK_NAME)
+    if packaged.is_file():
+        return Path(str(packaged))
+    checkout = Path(__file__).resolve().parents[2] / LOCK_NAME
+    if checkout.is_file():
+        return checkout
+    return None
 
 
 def _lock_document() -> dict[str, Any]:
-    """The packaged lock, or the repository checkout's in editable dev."""
-    packaged = files("benchweave_sdk").joinpath(LOCK_NAME)
-    if packaged.is_file():
-        document: dict[str, Any] = json.loads(packaged.read_bytes())
-        return document
-    checkout = Path(__file__).resolve().parents[2] / LOCK_NAME
-    if checkout.is_file():
-        loaded: dict[str, Any] = json.loads(checkout.read_bytes())
-        return loaded
-    raise ServedStateError(
-        "lock_missing: this SDK carries no standards lock (packaged or "
-        "checkout); the served set cannot be derived"
-    )
+    """The lock document at ``_lock_source()`` (tests may substitute either)."""
+    source = _lock_source()
+    if source is None:
+        raise ServedStateError(
+            "lock_missing: this SDK carries no standards lock (packaged or "
+            "checkout); the served set cannot be derived"
+        )
+    document: dict[str, Any] = json.loads(source.read_bytes())
+    return document
+
+
+def _lock_fingerprint() -> tuple[int, int] | None:
+    """The lock file's ``(mtime_ns, size)`` — the process cache's key.
+
+    NIT-8 (#288): the cache over ``lock_rows`` previously lived for the
+    interpreter's lifetime, so an editable checkout that re-synced its lock
+    kept serving the pre-sync served set until a new process started. The
+    fingerprint is taken BEFORE the read: a lock that changes between the
+    stat and the parse is cached under the old fingerprint, so the next
+    call re-stats, misses and re-reads — self-correcting. A rewrite that
+    preserves both ``(mtime_ns, size)`` is the residual the key cannot see
+    (disclosed; ns-resolution timestamps make it a non-shape in practice).
+    """
+    source = _lock_source()
+    if source is None:
+        return None
+    stat = source.stat()
+    return (stat.st_mtime_ns, stat.st_size)
+
+
+def lock_rows() -> tuple[tuple[str, str, bool, bool], ...]:
+    """Carried rows as (id, version, active, yanked), sorted and deduplicated.
+
+    Process-cached keyed on the lock file's ``(mtime_ns, size)`` (NIT-8,
+    #288). A test that substitutes the DOCUMENT (``_lock_document``)
+    bypasses the fingerprinted file, so it must clear ``_lock_rows_cached``
+    itself; substituting the SOURCE (``_lock_source``) re-keys naturally.
+    """
+    return _lock_rows_cached(_lock_fingerprint())
 
 
 @cache
-def lock_rows() -> tuple[tuple[str, str, bool, bool], ...]:
-    """Carried rows as (id, version, active, yanked), sorted and deduplicated."""
+def _lock_rows_cached(
+    _fingerprint: tuple[int, int] | None,
+) -> tuple[tuple[str, str, bool, bool], ...]:
     rows: set[tuple[str, str, bool, bool]] = set()
     for row in _lock_document().get("standards", []):
         identifier = row.get("id")
         version = row.get("version")
         if not isinstance(identifier, str) or not isinstance(version, str):
             raise ServedStateError(f"lock_invalid: a row carries non-string id/version: {row!r}")
+        if CANONICAL_VERSION.fullmatch(version) is None:
+            # M3 (#288): the load point is the one place every consumer
+            # shares — a non-canonical numeral refuses here as a typed
+            # lock_invalid rather than crashing version ordering downstream
+            # (the wildcard shape) or silently joining the served set (the
+            # leading-zero twin, which the gateway's own grammar refuses).
+            raise ServedStateError(
+                f"lock_invalid: row {identifier}@{version!r} is not a canonical "
+                "MAJOR.MINOR.PATCH version (three numerals, no leading zeros); "
+                "re-sync the standards from a gateway export"
+            )
         active = bool(row.get("active", False))
         yanked = bool(row.get("yanked", False))
         rows.add((identifier, version, active, yanked))
@@ -119,7 +192,18 @@ def _policy_row(standard: str) -> dict[str, Any]:
             "policy_mirror_absent: the lock carries no dependency_policy mirror; "
             "re-sync the standards (the range and statuses cannot be classified)"
         )
-    row = policy.get("standards", {}).get(standard)
+    standards = policy.get("standards", {})
+    if not isinstance(standards, dict):
+        # adv2-F3 (#288 fix-back): a present-but-unreadable container is
+        # malformed lock bytes, not absence — the typed refusal keeps this
+        # the second hardened load path beside M3's row grammar (a bare
+        # AttributeError out of classify_pin was the pre-fix crash).
+        raise ServedStateError(
+            f"lock_invalid: the dependency_policy mirror's standards block "
+            f"is not an object: {standards!r} — the mirror cannot be read "
+            "(re-sync the standards from a gateway export)"
+        )
+    row = standards.get(standard)
     if not isinstance(row, dict):
         raise ServedStateError(
             f"policy_mirror_absent: no dependency_policy row for {standard!r}"
@@ -141,24 +225,65 @@ def _retired(standard: str) -> tuple[str, ...]:
     return tuple(str(item) for item in retired)
 
 
-def _move_to(pin: str, standard: str = STANDARD) -> str | None:
-    """Derived move-to: the highest served (¬yanked) version >= the pin.
+@dataclass(frozen=True)
+class MoveTo:
+    """The canonical move-to derivation's result (M4, #288).
 
-    Ordered by SEMVER, never lexically ("0.10.0" outranks "0.2.0" — fold
-    row 1: a lexical pick steered below-both pins to the older version).
-    An unparsable pin (a dev-suffixed or otherwise malformed string) cannot
-    be ordered against the served set; the highest served version is the
-    best available answer for it — no path here raises a bare parse error
-    (#215 fix F2: classification turns a malformed pin into a typed
-    refusal, never a traceback).
+    ``version`` is the highest served (¬yanked) version — ordered by
+    tuple, never lexically ("0.10.0" outranks "0.2.0", fold row 1) — with
+    the declared range's lower bound as the fallback when nothing is
+    served. ``downgrade`` marks the derivation's one degenerate case: the
+    pin orders above every served version, where the newest healthy
+    served version is still the actionable remediation (the pin's own
+    bytes are yanked or unserved; nothing newer is servable) and is
+    marked as a downgrade so no surface can present it as an upgrade
+    path. An unparsable pin cannot be ordered, so ``downgrade`` is False
+    for it — the ordering claim is undefined, not asserted.
+    ``guidance_only`` marks the nothing-served fallback: the version is
+    the range's lower bound named as guidance, never a servable target
+    (the F-E 10 posture) — no re-target is claimed there, so no downgrade
+    either.
     """
-    served = served_versions(standard)
+
+    version: str
+    downgrade: bool
+    guidance_only: bool
+
+
+def derive_move_to(pin: str, served: Iterable[str], range_lower: str) -> MoveTo:
+    """DEFINITION of the move-to derivation (M4, #288) — the one canonical
+    pure form the SDK re-implements beside the gateway's (two-repo split,
+    no import; pinned to the gateway's format by twin tests asserting the
+    same literal expected strings in both repos).
+
+    The move-to is ``max(served)`` by tuple order; when nothing is served
+    it is the declared range's lower bound, labeled guidance. Disclosed
+    degenerate case: a pin above every served version still derives
+    ``max(served)`` — a downgrade, marked on ``downgrade`` — rather than
+    no answer, because the newest healthy served version is the
+    actionable remediation exactly when the pin's own bytes are unusable;
+    the marking, not suppression, is what keeps the recommendation
+    honest. (The former copy here filtered candidates to ``>= pin``
+    first, a filter that never changed the maximum — the five drifting
+    copies this consolidation replaced all agreed numerically by
+    accident, not by construction.)
+    """
+    ordered = sorted(served, key=_tuple)
+    if not ordered:
+        return MoveTo(version=range_lower, downgrade=False, guidance_only=True)
+    version = ordered[-1]
     pin_order = _tuple_or_none(pin)
-    if pin_order is not None:
-        candidates = [version for version in served if _tuple(version) >= pin_order]
-        if candidates:
-            return max(candidates, key=_tuple)
-    return max(served, key=_tuple) if served else None
+    return MoveTo(
+        version=version,
+        downgrade=pin_order is not None and _tuple(version) < pin_order,
+        guidance_only=False,
+    )
+
+
+def _range_lower_bound(supported: str) -> str:
+    """The declared range's lower bound — the nothing-served fallback's
+    source (the F-E 10 mechanism, named)."""
+    return supported.split(",")[0].lstrip(">=")
 
 
 def _tuple(version: str) -> tuple[int, ...]:
@@ -166,9 +291,19 @@ def _tuple(version: str) -> tuple[int, ...]:
 
 
 def _tuple_or_none(version: str) -> tuple[int, ...] | None:
-    """The numeric parts of an X.Y.Z version, or None when it does not parse."""
+    """The numeric parts of an X.Y.Z version, or None when it does not parse.
+
+    Exactly three segments (mech-F5, #288 fix-back): the gateway's
+    version_tuple is a strict three-segment unpack, so a 2- or 4-segment
+    pin is unparsable here too — an unparsable pin means downgrade False
+    on both sides of the twin (a two-segment tuple ordered real versions
+    below it and rendered the downgrade label the gateway never shows).
+    """
+    parts = version.split(".")
+    if len(parts) != 3:
+        return None
     try:
-        return tuple(int(part) for part in version.split("."))
+        return tuple(int(part) for part in parts)
     except ValueError:
         return None
 
@@ -181,22 +316,27 @@ MIGRATION_NOTE_PENDING = (
 
 
 def classify_pin(pin: str, standard: str = STANDARD) -> PinClassification:
-    """The Q6 taxonomy for one pin, with the five VR-37 fields attached."""
+    """The Q6 taxonomy for one pin, with the five VR-37 fields attached.
+
+    The move-to on every non-served state comes from the one canonical
+    derivation (``derive_move_to``, M4/#288) — the highest served version,
+    or the declared range's lower bound as guidance when nothing is served
+    (the F-E 10 posture) — and its downgrade marking rides the
+    classification so the yank warning and the refusal label it the same
+    way.
+    """
     supported = supported_range(standard)
     carried = carried_versions(standard)
+    move = derive_move_to(pin, served_versions(standard), _range_lower_bound(supported))
     if pin in _retired(standard):
-        # The fallback fires only when no version of the standard is served
-        # (a degenerate lock): it names the declared range's lower bound as
-        # GUIDANCE, and refusal_for labels it as exactly that — a fallback,
-        # never a servable target (#215 fold-wave F-E 10).
-        move_to = _move_to(pin, standard) or supported.split(",")[0].lstrip(">=")
         return PinClassification(
             state="retired",
             standard=standard,
             pin=pin,
             supported_range=supported,
-            move_to=move_to,
+            move_to=move.version,
             migration_note=MIGRATION_NOTE_PENDING,
+            downgrade=move.downgrade,
             detail=(
                 f"{standard} {pin} is a retired identifier — used and dead, never "
                 "reissued; re-target (OTDP's next minor skips the number)"
@@ -214,8 +354,9 @@ def classify_pin(pin: str, standard: str = STANDARD) -> PinClassification:
                 standard=standard,
                 pin=pin,
                 supported_range=supported,
-                move_to=_move_to(pin, standard),
+                move_to=move.version,
                 migration_note=MIGRATION_NOTE_PENDING,
+                downgrade=move.downgrade,
                 detail=f"{standard} {pin} is yanked from serving and auto-selection",
             )
         return PinClassification(
@@ -229,15 +370,16 @@ def classify_pin(pin: str, standard: str = STANDARD) -> PinClassification:
         )
     if _tuple_or_none(pin) is None:
         # F2 (#215): an unparsable pin would otherwise crash version
-        # ordering inside _move_to — the refusal says why it cannot be
-        # classified instead of laundering a parse error.
+        # ordering inside the derivation — the refusal says why it cannot
+        # be classified instead of laundering a parse error.
         return PinClassification(
             state="unserved",
             standard=standard,
             pin=pin,
             supported_range=supported,
-            move_to=_move_to(pin, standard),
+            move_to=move.version,
             migration_note=MIGRATION_NOTE_PENDING,
+            downgrade=move.downgrade,
             detail=(
                 f"{standard} {pin} is not a parseable MAJOR.MINOR.PATCH version "
                 f"and is not carried by this SDK (supported range {supported}); "
@@ -249,8 +391,9 @@ def classify_pin(pin: str, standard: str = STANDARD) -> PinClassification:
         standard=standard,
         pin=pin,
         supported_range=supported,
-        move_to=_move_to(pin, standard),
+        move_to=move.version,
         migration_note=MIGRATION_NOTE_PENDING,
+        downgrade=move.downgrade,
         detail=(
             f"{standard} {pin} is not carried by this SDK (out of the declared "
             f"range {supported} or never retained here)"
@@ -264,11 +407,14 @@ def refusal_for(classification: PinClassification) -> ValueError:
     The move-to is labelled for what the derivation actually is — the
     HIGHEST SERVED version, the recommended re-target (late Forge fold 3,
     #215: "nearest" overpromised an adjacency the pinned derivation does
-    not compute) — except on the retired fallback, where nothing is served
-    and the guidance names the declared range's LOWER BOUND as a fallback,
-    never a servable target (#215 fold-wave F-E 10: a future range edit
-    must not be able to steer a reader at a version no path validates
-    against).
+    not compute) — except on the nothing-served fallback, where the
+    guidance names the declared range's LOWER BOUND as a fallback, never a
+    servable target (#215 fold-wave F-E 10: a future range edit must not
+    be able to steer a reader at a version no path validates against).
+    When the derivation is a DOWNGRADE — the pin orders above every
+    served version (M4, #288) — the note says so: recommending the newest
+    healthy served version while implying an upgrade path is the
+    dishonesty the review lane caught, whichever state the pin came from.
     """
     prefix = (
         "retired_identifier:"
@@ -276,15 +422,20 @@ def refusal_for(classification: PinClassification) -> ValueError:
         else "version_not_served:"
     )
     if classification.move_to is None:
+        # Unreachable from the raised paths (retired/unserved always carry
+        # a derivation); kept so the renderer is total for a served
+        # classification handed here in error.
         move_to_note = (
-            f"no move-to: no version of {classification.standard} is served "
-            "on this lock"
+            f"no move-to: {classification.standard} {classification.pin} is "
+            "served; no re-target is needed"
         )
     elif classification.move_to in served_versions(classification.standard):
         move_to_note = (
             f"move-to {classification.move_to} — the highest served version, "
             "the recommended re-target"
         )
+        if classification.downgrade:
+            move_to_note += " (a downgrade — no served version is newer)"
     else:
         move_to_note = (
             f"move-to {classification.move_to} — the declared range's lower "
