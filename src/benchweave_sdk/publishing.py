@@ -239,9 +239,25 @@ def check_namespace(
 # --- descriptor reading ---------------------------------------------------------
 
 
+def _package_dir(plugin_dir: Path) -> Path:
+    """The plugin's source package directory, discovered not assumed.
+
+    Real plugin trees carry the full dist name (``benchweave_fnirsi_dps150``),
+    not the directory-derived short form, so the package directory is found by
+    glob under ``src/`` and falls back to the plugin root.
+    """
+    if plugin_dir.name.startswith("benchweave_"):
+        return plugin_dir
+    candidates = sorted((plugin_dir / "src").glob("benchweave_*"))
+    for candidate in candidates:
+        if (candidate / "descriptor.json").is_file() or sorted(candidate.glob("*.py")):
+            return candidate
+    return plugin_dir
+
+
 def _find_descriptor(plugin_dir: Path) -> Path:
     candidates = [
-        plugin_dir / "src" / f"benchweave_{plugin_dir.name}" / "descriptor.json",
+        _package_dir(plugin_dir) / "descriptor.json",
         plugin_dir / "descriptor.json",
     ]
     for candidate in candidates:
@@ -376,9 +392,7 @@ def _payload_block(zip_data: bytes, members: list[tuple[str, bytes]]) -> dict[st
 
 def _read_package_dir(plugin_dir: Path) -> tuple[str, list[tuple[str, bytes]]]:
     """Collect the plugin tree's payload members with fixed archive paths."""
-    package_dir = plugin_dir / "src" / f"benchweave_{plugin_dir.name}"
-    if not package_dir.is_dir():
-        package_dir = plugin_dir
+    package_dir = _package_dir(plugin_dir)
     members: list[tuple[str, bytes]] = []
     for source in sorted(package_dir.glob("*.py")):
         members.append((f"plugin/{source.name}", source.read_bytes()))
