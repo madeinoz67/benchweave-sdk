@@ -1,0 +1,94 @@
+/* Standalone host layout over the vendored UI tokens (this file is itself a
+   vendored, inventory-hashed asset). Colors come exclusively from themes.css
+   custom properties; this file adds only layout on top of the tokens. */
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  font-family: var(--bw-font-ui);
+  background: var(--bw-surface-app);
+  color: var(--bw-text-primary);
+}
+
+.banner {
+  display: flex;
+  align-items: center;
+  gap: var(--bw-space-2);
+  padding: var(--bw-space-3) var(--bw-space-4);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  background: var(--bw-surface-banner);
+  color: var(--bw-text-on-banner);
+  border-bottom: 2px solid var(--bw-border-strong);
+}
+
+.content {
+  flex: 1;
+  width: min(48rem, 100%);
+  margin: 0 auto;
+  padding: var(--bw-space-5) var(--bw-space-4);
+}
+
+.footer {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--bw-space-3);
+  padding: var(--bw-space-3) var(--bw-space-4);
+  font-size: 0.85rem;
+  color: var(--bw-text-secondary);
+  border-top: 1px solid var(--bw-border-subtle);
+}
+
+h1 { font-size: 1.5rem; margin: 0 0 var(--bw-space-3); }
+h2 { font-size: 1.1rem; margin: 0 0 var(--bw-space-2); }
+
+.panel {
+  border: 1px solid var(--bw-border-subtle);
+  border-radius: var(--bw-radius-panel);
+  padding: var(--bw-space-4);
+  margin-bottom: var(--bw-space-4);
+  background: var(--bw-surface-panel);
+}
+
+.device-summary { display: grid; grid-template-columns: auto 1fr; gap: var(--bw-space-1) var(--bw-space-3); margin: 0 0 var(--bw-space-3); }
+.device-summary dt { color: var(--bw-text-secondary); }
+.device-summary dd { margin: 0; }
+
+.readings { border-collapse: collapse; width: 100%; font-family: var(--bw-font-data); }
+.readings th, .readings td { text-align: left; padding: var(--bw-space-2) var(--bw-space-3); border-bottom: 1px solid var(--bw-border-subtle); }
+.readings thead th { color: var(--bw-text-secondary); font-family: var(--bw-font-ui); font-weight: 600; }
+.readings .value { font-size: 1.05rem; }
+
+.state {
+  display: inline-block;
+  padding: var(--bw-space-1) var(--bw-space-3);
+  border-radius: var(--bw-radius-control);
+  border: 1px solid var(--bw-border-strong);
+  font-size: 0.85rem;
+}
+.state-connected { color: var(--bw-status-ok-text); border-color: var(--bw-status-ok-border); }
+.state-disconnected { color: var(--bw-text-secondary); }
+
+.notice { border: 1px solid var(--bw-border-strong); border-radius: var(--bw-radius-control); padding: var(--bw-space-3); }
+.notice-refused { border-color: var(--bw-status-critical-border); color: var(--bw-status-critical-text); }
+
+.actions { display: flex; gap: var(--bw-space-3); margin: var(--bw-space-3) 0; }
+
+button, .action {
+  font: inherit;
+  padding: var(--bw-space-2) var(--bw-space-4);
+  border-radius: var(--bw-radius-control);
+  border: 1px solid var(--bw-border-strong);
+  background: var(--bw-surface-control);
+  color: var(--bw-text-primary);
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-block;
+}
+button:focus-visible, .action:focus-visible { outline: none; box-shadow: var(--bw-focus-ring); }
+
+code { font-family: var(--bw-font-data); font-size: 0.9em; }

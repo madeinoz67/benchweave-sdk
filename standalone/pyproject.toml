@@ -1,0 +1,63 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "benchweave-standalone"
+version = "0.1.0"
+description = "Standalone BenchWeave host: one process serving HTMX UI, REST and MCP over a plugin adapter, with no gateway."
+readme = "README.md"
+requires-python = ">=3.13"
+license = "MIT"
+keywords = ["benchweave", "otdp", "standalone", "device-plugin"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3.13",
+  "Typing :: Typed",
+]
+dependencies = [
+  "benchweave-sdk",
+  "click>=8.3,<9",
+  "fastapi>=0.141.1",
+  "fastmcp[server]==4.0.3",
+  "jinja2>=3.1",
+  "jsonschema>=4.23",
+  "uvicorn>=0.52.4",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8.0", "httpx>=0.27"]
+
+[project.scripts]
+benchweave-standalone = "benchweave_standalone.cli:main"
+
+[tool.uv.sources]
+# Dev-only path source (the design record's relocation-cheap coupling): this
+# is the subtree's ONLY repository coupling besides the CI workflow.
+benchweave-sdk = { path = "..", editable = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/benchweave_standalone"]
+
+[dependency-groups]
+dev = [
+  "httpx>=0.27",
+  "mypy>=1.11",
+  "pytest>=8.0",
+  "ruff>=0.6",
+  "types-jsonschema>=4.26.0.20260518",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+files = ["src"]

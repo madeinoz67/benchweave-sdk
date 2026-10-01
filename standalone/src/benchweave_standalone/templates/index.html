@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Standalone host — {{ plugin.package }}{% endblock %}
+{% block content %}
+<h1>Standalone host</h1>
+<p class="lede">
+  One adapter session over one device. No gateway stands behind this host:
+  no {{ absent | join(", ") }}.
+</p>
+{% for device in devices %}
+<section class="panel">
+  <h2>{{ device.manufacturer }} {{ device.model }}</h2>
+  <dl class="device-summary">
+    <dt>device</dt><dd><code>{{ device.id }}</code></dd>
+    <dt>transport</dt><dd>{{ device.transport }}</dd>
+    <dt>connection key</dt><dd><code>{{ device.connection_key }}</code></dd>
+    <dt>state</dt>
+    <dd>
+      {%- if connected %}<span class="state state-connected">connected</span>
+      {%- else %}<span class="state state-disconnected">disconnected</span>{% endif -%}
+    </dd>
+  </dl>
+  <p><a class="action" href="/devices/{{ device.id }}">Open readings page</a></p>
+</section>
+{% endfor %}
+{% endblock %}

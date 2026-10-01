@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}BenchWeave standalone{% endblock %}</title>
+  <meta name="htmx-config" content='{"allowEval": false, "selfRequestsOnly": true}'>
+  <link rel="stylesheet" href="/assets/tokens.css">
+  <link rel="stylesheet" href="/assets/themes.css">
+  <link rel="stylesheet" href="/assets/standalone.css">
+  <script src="/assets/htmx.min.js" defer></script>
+  <script src="/assets/sse.js" defer></script>
+</head>
+<body>
+  <header class="banner" title="Absent gateway guarantees: {{ absent | join(', ') }}">
+    <span aria-hidden="true">&#x2B21;</span> {{ banner }}
+  </header>
+  <main class="content">
+    {% block content %}{% endblock %}
+  </main>
+  <footer class="footer">
+    <span>plugin <strong>{{ plugin.package }}</strong> {{ plugin.plugin_version }}</span>
+    <span>descriptor <code>{{ plugin.descriptor_sha256[:12] }}</code></span>
+  </footer>
+</body>
+</html>

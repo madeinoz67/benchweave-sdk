@@ -1,0 +1,30 @@
+{% if readings_error %}
+<div class="notice notice-refused" role="alert">
+  <p><strong>Readings refused</strong> — {{ readings_error.code }}: {{ readings_error.message }}</p>
+</div>
+{% elif readings %}
+<table class="readings">
+  <thead>
+    <tr>
+      <th scope="col">parameter</th>
+      <th scope="col">value</th>
+      <th scope="col">unit</th>
+      <th scope="col">quality</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in readings %}
+    <tr>
+      <th scope="row">{{ row.name }}</th>
+      <td class="value">{{ row.value }}</td>
+      <td>{{ row.unit if row.unit else "" }}</td>
+      <td>{{ row.quality }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="notice">
+  <p>No readings yet. Connect the device to read its declared parameters.</p>
+</div>
+{% endif %}
