@@ -478,7 +478,9 @@ def test_lock_rows_cache_follows_an_edited_lock_file(
 
 
 @pytest.mark.parametrize(
-    "malformed", ["0.2.x", "0.02.1"], ids=["wildcard-segment", "leading-zero"]
+    "malformed",
+    ["0.2.x", "0.02.1", "1٠.2.2", "0.2.2٠"],
+    ids=["wildcard-segment", "leading-zero", "unicode-digit-mid", "unicode-digit-tail"],
 )
 def test_lock_row_non_canonical_version_refuses_typed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, malformed: str
@@ -506,6 +508,29 @@ def test_lock_row_non_canonical_version_refuses_typed(
     with pytest.raises(served.ServedStateError, match="^lock_invalid: ") as refusal:
         served.classify_pin("0.1.2", "otdp")
     assert malformed in str(refusal.value), "the offending row is named"
+
+
+def test_lock_row_plain_reversioned_row_still_admits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """adv2-F1 regression arm (#288 fix-back): the ASCII tightening refuses
+    only non-canonical numerals — a plain re-versioned row (the committed
+    shape, one canonical numeral swapped for another) still classifies
+    served, so the grammar did not over-tighten."""
+    import benchweave_sdk.served as served
+
+    lock = json.loads((ROOT / "standards-lock.json").read_bytes())
+    for row in lock["standards"]:
+        if row["id"] == "otdp" and row["version"] == "0.2.2":
+            row["version"] = "0.2.3"
+    temp = tmp_path / "standards-lock.json"
+    temp.write_bytes(
+        (json.dumps(lock, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    )
+    monkeypatch.setattr(served, "_lock_source", lambda: temp)
+    classification = served.classify_pin("0.2.3", "otdp")
+    assert classification.state == "served"
+    assert served.CANONICAL_VERSION.fullmatch("0.2.3") is not None
 
 
 # --- #288 M4: one canonical move-to derivation, the downgrade labeled. ---

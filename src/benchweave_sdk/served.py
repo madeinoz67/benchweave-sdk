@@ -34,8 +34,14 @@ STANDARD = "otdp"
 # gateway's range grammar enforces on declared bounds and the promotion
 # schema enforces on targets. standards_sync reuses this constant so both
 # lock-reading lanes refuse the same rows; pins (external input) keep the
-# gentler `_tuple_or_none` guard in classify_pin.
-CANONICAL_VERSION = re.compile(r"(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)")
+# gentler `_tuple_or_none` guard in classify_pin. The digit classes are
+# EXPLICIT [0-9], not \d (adv2-F1, #288 fix-back): \d matches any Unicode
+# Nd digit, so a shadow row like 1٠.2.2 fullmatched AND parsed via int()
+# to (10, 2, 2) — outranking every real row and riding --check green.
+# Explicit classes also propagate through `.pattern` concatenation into
+# standards_sync's _RANGE_CLAUSE, where a re.ASCII flag on this compile
+# would be silently dropped.
+CANONICAL_VERSION = re.compile(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)")
 
 
 class ServedStateError(ValueError):

@@ -577,24 +577,30 @@ def _hand_edit_lock(sdk: Path, mutate: Callable[[dict[str, Any]], None]) -> None
     )
 
 
-def test_sync_check_refuses_malformed_row_version(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "malformed", ["0.2.x", "1٠.2.2"], ids=["wildcard-segment", "unicode-digit"]
+)
+def test_sync_check_refuses_malformed_row_version(tmp_path: Path, malformed: str) -> None:
     """M3 (#288), the sync lane: a lock row version outside the canonical
     MAJOR.MINOR.PATCH grammar refuses ``lock_invalid:`` naming the row. The
     no-bundle ``--check`` used to pass this green — the row's file paths
     still hash right and nothing on the sync path parsed the version
-    field, so a corrupted row rode every lane unnoticed."""
+    field, so a corrupted row rode every lane unnoticed. The unicode-digit
+    arm is adv2-F1 (#288 fix-back): the grammar's ``\\d`` accepted Unicode
+    Nd digits, so the shadow row parsed to (10, 2, 2) and rode ``--check``
+    green (executed by the refute lane)."""
     bundle = _export(tmp_path)
     sdk = _synced_sdk(tmp_path, bundle)
 
     def plant(lock: dict[str, Any]) -> None:
         for row in lock["standards"]:
             if row["id"] == "otdp" and row["version"] == "0.2.0":
-                row["version"] = "0.2.x"
+                row["version"] = malformed
 
     _hand_edit_lock(sdk, plant)
     with pytest.raises(ValueError, match="^lock_invalid: ") as refusal:
         sync(None, sdk, check_only=True)
-    assert "0.2.x" in str(refusal.value), "the offending row is named"
+    assert malformed in str(refusal.value), "the offending row is named"
 
 
 # --- #288 M5: the lock-internal marker/mirror cross-check. ---
