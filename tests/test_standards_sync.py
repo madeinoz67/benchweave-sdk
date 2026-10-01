@@ -713,6 +713,25 @@ def test_active_marked_yanked_row_refuses_check(tmp_path: Path) -> None:
     assert "otdp@0.2.2" in str(refusal.value), "the active row is named"
 
 
+def test_non_dict_mirror_row_refuses_check(tmp_path: Path) -> None:
+    """adv2-F2 (#288 fix-back): a PRESENT-but-non-dict mirror row (a string
+    where the policy object belongs) was silently skipped by the
+    cross-check while ``_verify_marker_mirror``'s own docstring claims
+    shape-unreadable refuses — and served.py classification refuses
+    ``policy_mirror_absent:`` on the same shape at use time, so ``--check``
+    green and use-time refusal diverged on exactly the offline-catch class
+    M5 exists for."""
+    sdk = _mirrored_sdk(tmp_path)
+
+    def scramble(lock: dict[str, Any]) -> None:
+        lock["dependency_policy"]["standards"]["otdp"] = "0.2.2"
+
+    _hand_edit_lock(sdk, scramble)
+    with pytest.raises(ValueError, match="^marker_mirror_drift: ") as refusal:
+        sync(None, sdk, check_only=True)
+    assert "otdp" in str(refusal.value), "the id is named"
+
+
 # --- #215 fix wave: the bump-class gate is pinned; narrowing reports its drops. ---
 
 

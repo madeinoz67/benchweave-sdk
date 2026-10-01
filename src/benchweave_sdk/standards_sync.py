@@ -598,8 +598,10 @@ def _verify_marker_mirror(lock: dict[str, Any]) -> None:
     ``lock_invalid`` refusal). A lock with no mirror skips the pass: the
     served module's ``policy_mirror_absent:`` posture owns that refusal
     when classification needs the mirror, and an id the mirror does not
-    declare skips likewise. A mirror field whose shape cannot be read
-    refuses under this prefix rather than being silently skipped.
+    DECLARE skips likewise (absence). A PRESENT mirror row or field whose
+    shape cannot be read refuses under this prefix rather than being
+    silently skipped (adv2-F2, #288 fix-back: a non-dict row used to skip
+    while the served lane refused the same shape at use time).
     """
     policy = lock.get("dependency_policy")
     if not isinstance(policy, dict):
@@ -612,8 +614,14 @@ def _verify_marker_mirror(lock: dict[str, Any]) -> None:
         rows_by_id.setdefault(str(row.get("id")), []).append(row)
     for identifier in sorted(rows_by_id):
         mirror_row = declared.get(identifier)
-        if not isinstance(mirror_row, dict):
+        if mirror_row is None:
             continue
+        if not isinstance(mirror_row, dict):
+            raise ValueError(
+                f"marker_mirror_drift: {identifier}'s mirrored policy row is "
+                f"not an object: {mirror_row!r} — the cross-check cannot read "
+                "it, and the served lane refuses the same shape at use time"
+            )
         yanked_record = mirror_row.get("yanked", {})
         if not isinstance(yanked_record, dict):
             raise ValueError(
