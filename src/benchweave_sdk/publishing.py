@@ -205,12 +205,17 @@ def check_namespace(
     package_id: str,
     rules: LaneRules,
     existing_namespaces: set[str],
-    existing_packages: set[str],
+    existing_package_owners: dict[str, set[str]],
 ) -> list[str]:
     """Refuse or flag a package id under the committed namespace rules.
 
-    Returns the list of refusal findings (empty = clean). The similarity rule
-    flags lookalikes for human review; collisions and reserved names refuse.
+    Collisions are PER-AUTHOR (owner ruling, issue #223 fold): a publisher's
+    own next version of an existing package id is NOT a collision — it routes
+    to the closure-diff-versus-prior path; the exact id claimed by a
+    different recorded owner still collides; and two different authors may
+    register the same device (plugin) NAME under their own namespaces. The
+    similarity rule flags lookalikes for human review; reserved names and
+    cross-owner collisions refuse.
     """
     findings: list[str] = []
     if _PACKAGE_ID.fullmatch(package_id) is None:
@@ -221,7 +226,8 @@ def check_namespace(
         findings.append(f"namespace_reserved:{publisher}")
     if plugin in rules.reserved_plugins:
         findings.append(f"namespace_reserved:{plugin}")
-    if package_id in existing_packages:
+    owners = existing_package_owners.get(package_id, set())
+    if owners and publisher not in owners:
         findings.append(f"namespace_collision:{package_id}")
     # CR-39: the publisher segment is compared against existing namespaces;
     # the full id against existing packages — a lookalike is flagged for human
@@ -234,7 +240,7 @@ def check_namespace(
         if 0 < distance <= rules.similarity_max_distance:
             findings.append(f"namespace_lookalike:{publisher}~{existing}:{distance}")
     package_skeleton = _skeleton(package_id, rules)
-    for existing in sorted(existing_packages):
+    for existing in sorted(existing_package_owners):
         if existing == package_id:
             continue
         distance = _edit_distance(package_skeleton, _skeleton(existing, rules))
@@ -357,7 +363,9 @@ def _gate_transport_triples(
     )
 
 
-def _gate_firmware(members: list[tuple[str, bytes]], attestation: dict[str, str] | None) -> None:
+def _gate_firmware(
+    members: list[tuple[str, bytes]], attestation: dict[str, Any] | None
+) -> None:
     bundles_firmware = any(path.startswith("firmware/") for path, _data in members)
     if not bundles_firmware:
         return
@@ -368,19 +376,12 @@ def _gate_firmware(members: list[tuple[str, bytes]], attestation: dict[str, str]
             "publisher's own signature alone does not carry firmware "
             "provenance (CR-50)"
         )
-    # Disclosed gap (slice-1 deviation): the registry payload-role enum is
-    # closed at eleven with no firmware role (registry-specification §4), so
-    # bundled firmware bytes cannot ship without mislabelling. Vendor-
-    # distribute the firmware and pin the attestation here; adding a firmware
-    # payload role is an owner-call standards bump, not a silent packager
-    # decision.
-    raise PublishingError(
-        "firmware_role_unavailable: the registry payload-role enum carries no "
-        "firmware role; vendor-distribute the firmware and pin the vendor "
-        "manifest via --firmware-attestation instead of bundling bytes "
-        "(registry-specification §4's closed role list; redistribution rights "
-        "must be established regardless)"
-    )
+    # Owner ruling (issue #223 rework): attested firmware is STATED, never
+    # refused here — enforcement is the client's decision. The registry
+    # payload-role enum carries no firmware role (registry-specification §4),
+    # so the bytes stay vendor-distributed (never bundled; a future role is an
+    # owner-call standards bump) and the attestation is recorded in the
+    # submission draft for the records and the index to advertise.
 
 
 # --- payload assembly -------------------------------------------------------------
@@ -595,7 +596,7 @@ def build_submission(
     capability_declaration: dict[str, bool] | None = None,
     dependencies: list[dict[str, Any]] | None = None,
     transport_triples: tuple[dict[str, str], ...] = (),
-    firmware_attestation: dict[str, str] | None = None,
+    firmware_attestation: dict[str, Any] | None = None,
     licence_spdx: str = "MIT",
     released_at: str = DEFAULT_RELEASED_AT,
 ) -> SubmissionArtifacts:
@@ -622,9 +623,9 @@ def build_submission(
 
     publishers = json.loads((registry_clone / "records" / "publishers.json").read_bytes())
     existing_namespaces = {entry["namespace"] for entry in publishers["publishers"]}
-    existing_packages = _existing_packages(registry_clone)
+    existing_package_owners = _existing_package_owners(registry_clone)
     findings = check_namespace(
-        package_id, rules, existing_namespaces - {publisher}, existing_packages
+        package_id, rules, existing_namespaces - {publisher}, existing_package_owners
     )
     collisions = [f for f in findings if not f.startswith("namespace_lookalike:")]
     if collisions:
@@ -632,8 +633,20 @@ def build_submission(
     lookalikes = sorted(f for f in findings if f.startswith("namespace_lookalike:"))
 
     package_dir_name, tree_members = _read_package_dir(resolved)
+    _gate_firmware(tree_members, firmware_attestation)
+    firmware_members = [m for m in tree_members if m[0].startswith("firmware/")]
+    if firmware_members and firmware_attestation is not None:
+        # Owner ruling (issue #223 rework): attested firmware is stated, not
+        # enforced — and never bundled (the payload-role enum carries no
+        # firmware role). The bytes stay vendor-distributed; the exclusion is
+        # recorded in the draft alongside the attestation.
+        tree_members = [m for m in tree_members if not m[0].startswith("firmware/")]
+        firmware_attestation = {
+            **firmware_attestation,
+            "bytes": "vendor-distributed",
+            "files": sorted(name for name, _data in firmware_members),
+        }
     members = tree_members + _generated_members(deps, package_dir_name)
-    _gate_firmware(members, firmware_attestation)
 
     pyproject = resolved / "pyproject.toml"
     release_version = version or _pyproject_version(pyproject) or "0.0.0"
@@ -779,16 +792,21 @@ def _gate_submission_complete(submission: dict[str, Any], member_paths: set[str]
         )
 
 
-def _existing_packages(registry_clone: Path) -> set[str]:
-    packages: set[str] = set()
+def _existing_package_owners(registry_clone: Path) -> dict[str, set[str]]:
+    """Every published package id mapped to its recorded owners (publisher ids)."""
+    owners: dict[str, set[str]] = {}
     releases = registry_clone / "releases"
     if not releases.is_dir():
-        return packages
+        return owners
     for manifest_path in releases.rglob("manifest.json"):
         parts = manifest_path.relative_to(releases).parts
-        if len(parts) == 5:
-            packages.add(f"{parts[1]}/{parts[2]}")
-    return packages
+        if len(parts) != 5:
+            continue
+        manifest = json.loads(manifest_path.read_bytes())
+        owners.setdefault(f"{parts[1]}/{parts[2]}", set()).add(
+            str(manifest.get("publisher_id", parts[1]))
+        )
+    return owners
 
 
 def _registry_id(registry_clone: Path) -> str:

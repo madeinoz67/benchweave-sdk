@@ -200,19 +200,80 @@ def test_firmware_attestation_control_arm_passes(tmp_path: Path) -> None:
     )
 
 
-def test_bundled_firmware_with_attestation_names_the_role_gap(tmp_path: Path) -> None:
-    """Disclosed deviation: the closed role enum cannot carry firmware bytes."""
+def test_bundled_firmware_with_attestation_publishes_vendor_distributed(
+    tmp_path: Path,
+) -> None:
+    """Owner ruling (issue #223 rework): attested firmware is stated, not
+    refused — enforcement is the client's decision. The bytes never bundle
+    (the payload-role enum carries no firmware role); the attestation and the
+    exclusion are recorded in the draft."""
     plugin = make_plugin(tmp_path)
     firmware = plugin / "src" / "benchweave_wgt_widget" / "firmware"
     firmware.mkdir()
     (firmware / "blob.bin").write_bytes(b"\x00\x01")
+    artifacts = build(
+        tmp_path,
+        plugin=plugin,
+        firmware_attestation={"vendor": "Exampleworks", "manifest": "firmware/vendor.manifest"},
+    )
+    recorded = artifacts.submission["firmware_attestation"]
+    assert recorded["vendor"] == "Exampleworks"
+    assert recorded["bytes"] == "vendor-distributed"
+    assert recorded["files"] == ["firmware/blob.bin"]
+    assert not any(
+        entry["path"].startswith("firmware/")
+        for entry in artifacts.manifest["payload"]["files"]
+    ), "attested firmware bytes stay vendor-distributed, never bundled"
+
+
+def test_same_author_next_version_routes_to_closure_diff(tmp_path: Path) -> None:
+    """F2 (issue #223 rework): --version 0.2.0 on an existing same-author
+    package publishes, carrying the closure diff against the 0.1.0 prior."""
+    plugin = make_plugin(tmp_path)
+    clone = make_registry_clone(tmp_path)
+    prior = clone / "releases" / "benchweave-registry" / "madeinoz67" / "wgt_widget" / "0.1.0"
+    prior.mkdir(parents=True)
+    (prior / "manifest.json").write_bytes(
+        json.dumps(
+            {
+                "registry_id": "benchweave-registry",
+                "package_id": "madeinoz67/wgt_widget",
+                "version": "0.1.0",
+                "publisher_id": "madeinoz67",
+                "dependencies": [],
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+        + b"\n"
+    )
+    artifacts = build(tmp_path, plugin=plugin, version="0.2.0")
+    assert artifacts.manifest["version"] == "0.2.0"
+    assert artifacts.submission["closure"]["prior"] == {"version": "0.1.0"}
+
+
+def test_cross_author_existing_id_still_collides(tmp_path: Path) -> None:
+    plugin = make_plugin(tmp_path)
+    clone = make_registry_clone(tmp_path)
+    hijacked = clone / "releases" / "benchweave-registry" / "acme-labs" / "wgt_widget" / "1.0.0"
+    hijacked.mkdir(parents=True)
+    (hijacked / "manifest.json").write_bytes(
+        json.dumps(
+            {
+                "registry_id": "benchweave-registry",
+                "package_id": "acme-labs/wgt_widget",
+                "version": "1.0.0",
+                "publisher_id": "someone-else",
+                "dependencies": [],
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+        + b"\n"
+    )
     with pytest.raises(PublishingError) as exc:
-        build(
-            tmp_path,
-            plugin=plugin,
-            firmware_attestation={"vendor": "Exampleworks", "manifest": "firmware/vendor.manifest"},
-        )
-    assert str(exc.value).startswith("firmware_role_unavailable:")
+        build(tmp_path, plugin=plugin, publisher="acme-labs")
+    assert str(exc.value).startswith("namespace_collision:")
 
 
 def test_transport_declaration_without_triples_is_refused(tmp_path: Path) -> None:
@@ -321,22 +382,44 @@ def _rules() -> Any:
 
 
 def test_reserved_namespace_is_refused() -> None:
-    findings = check_namespace("benchweave/labs", _rules(), set(), set())
+    findings = check_namespace("benchweave/labs", _rules(), set(), {})
     assert any(f.startswith("namespace_reserved:") for f in findings)
 
 
-def test_collision_is_refused() -> None:
-    findings = check_namespace("madeinoz67/dps150", _rules(), set(), {"madeinoz67/dps150"})
+def test_cross_owner_same_id_collides() -> None:
+    """A different author's claim to an existing package id still collides."""
+    findings = check_namespace(
+        "madeinoz67/dps150", _rules(), set(), {"madeinoz67/dps150": {"acme-labs"}}
+    )
     assert any(f.startswith("namespace_collision:") for f in findings)
 
 
+def test_own_next_version_is_not_a_collision() -> None:
+    """Owner ruling (issue #223 rework): a publisher's own next version of an
+    existing id routes to closure-diff, never namespace_collision."""
+    findings = check_namespace(
+        "madeinoz67/dps150", _rules(), set(), {"madeinoz67/dps150": {"madeinoz67"}}
+    )
+    assert findings == []
+
+
+def test_same_device_name_under_another_namespace_is_allowed() -> None:
+    """Two different authors may register the same device name."""
+    findings = check_namespace(
+        "acme-labs/dps150", _rules(), {"madeinoz67"}, {"madeinoz67/dps150": {"madeinoz67"}}
+    )
+    assert findings == []
+
+
 def test_lookalike_is_flagged_not_refused() -> None:
-    findings = check_namespace("madeinoz68/pub", _rules(), {"madeinoz67"}, set())
+    findings = check_namespace("madeinoz68/pub", _rules(), {"madeinoz67"}, {})
     assert any(f.startswith("namespace_lookalike:") for f in findings)
 
 
 def test_distinct_namespace_is_clean() -> None:
-    findings = check_namespace("acme-power/psu", _rules(), {"madeinoz67"}, {"madeinoz67/dps150"})
+    findings = check_namespace(
+        "acme-power/psu", _rules(), {"madeinoz67"}, {"madeinoz67/dps150": {"madeinoz67"}}
+    )
     assert findings == []
 
 
