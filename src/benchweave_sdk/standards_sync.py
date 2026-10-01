@@ -16,9 +16,10 @@ import shutil
 import time
 import tomllib
 import unicodedata
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from importlib.resources import files
+from operator import eq, ge, gt, le, lt, ne
 from pathlib import Path
 from typing import Any
 
@@ -527,6 +528,132 @@ def verify_installed() -> None:
 def _verify_state(lock_path: Path, tree: Path) -> None:
     lock = _read_lock_file(lock_path)
     _verify_tree(tree, lock)
+    _verify_marker_mirror(lock)
+
+
+_RANGE_CLAUSE = re.compile(
+    r"(>=|<=|==|!=|>|<)(" + CANONICAL_VERSION.pattern + ")"
+)
+_CLAUSE_TEST: dict[str, Callable[[tuple[int, ...], tuple[int, ...]], bool]] = {
+    ">=": ge,
+    "<=": le,
+    "==": eq,
+    "!=": ne,
+    ">": gt,
+    "<": lt,
+}
+
+
+def _range_admits(identifier: str, declared: object, version: str) -> bool:
+    """Whether one canonical row version satisfies the mirror's declared range.
+
+    Minimal by design (M5, #288): the mirror is machine-written by the
+    gateway with comma-separated ``OP X.Y.Z`` clauses over the same
+    canonical grammar M3 pins, judged by tuple comparison. A clause that
+    does not parse refuses under the same ``marker_mirror_drift:`` prefix
+    — the check cannot verify what it cannot parse and stays loud rather
+    than skipping (an unparseable range is drift against everything this
+    pass cross-checks).
+    """
+    if not isinstance(declared, str):
+        raise ValueError(
+            f"marker_mirror_drift: {identifier}'s mirrored range is not a "
+            f"string: {declared!r}"
+        )
+    order = tuple(int(part) for part in version.split("."))
+    for clause in declared.split(","):
+        stripped = clause.strip()
+        match = _RANGE_CLAUSE.fullmatch(stripped)
+        if match is None:
+            raise ValueError(
+                f"marker_mirror_drift: {identifier}'s mirrored range clause "
+                f"{stripped!r} does not parse (expected OP X.Y.Z over the "
+                "canonical grammar)"
+            )
+        operator, bound = match.group(1), match.group(2)
+        bound_order = tuple(int(part) for part in bound.split("."))
+        if not _CLAUSE_TEST[operator](order, bound_order):
+            return False
+    return True
+
+
+def _verify_marker_mirror(lock: dict[str, Any]) -> None:
+    """The lock-internal marker/mirror cross-check (M5, #288), offline.
+
+    ``_verify_tree`` proves the lock's rows against the vendored bytes and
+    stamps; this pass proves the rows against the ``dependency_policy``
+    mirror carried in the SAME file — the block the gateway's manifest
+    owns and the sync mirrors verbatim, which no lane read before this
+    one (a yank-marker flip rode ``--check`` green while the gateway's
+    ``served_set_drift:`` refused the identical plant). Refuses
+    ``marker_mirror_drift:`` (a new machine-matchable prefix, the same
+    vocabulary family as ``policy_mirror_drift:``/``served_set_drift:``)
+    when (a) a row's yanked flag disagrees with membership of (id,
+    version) in the mirror's yanked record, either direction; (b) a
+    carried (id, version) is named in the mirror's retired list; (c) a
+    row's version falls outside the mirror's declared range — a narrowed
+    range that did not drop its rows; (d) the active-marked row is yanked
+    (its out-of-range half is refused by (c) for every row, active
+    included — exactly-one-active stays the served module's own
+    ``lock_invalid`` refusal). A lock with no mirror skips the pass: the
+    served module's ``policy_mirror_absent:`` posture owns that refusal
+    when classification needs the mirror, and an id the mirror does not
+    declare skips likewise. A mirror field whose shape cannot be read
+    refuses under this prefix rather than being silently skipped.
+    """
+    policy = lock.get("dependency_policy")
+    if not isinstance(policy, dict):
+        return
+    declared = policy.get("standards")
+    if not isinstance(declared, dict):
+        return
+    rows_by_id: dict[str, list[dict[str, Any]]] = {}
+    for row in lock.get("standards", []):
+        rows_by_id.setdefault(str(row.get("id")), []).append(row)
+    for identifier in sorted(rows_by_id):
+        mirror_row = declared.get(identifier)
+        if not isinstance(mirror_row, dict):
+            continue
+        yanked_record = mirror_row.get("yanked", {})
+        if not isinstance(yanked_record, dict):
+            raise ValueError(
+                f"marker_mirror_drift: {identifier}'s mirrored yanked record "
+                f"is not an object: {yanked_record!r}"
+            )
+        retired = mirror_row.get("retired", [])
+        if not isinstance(retired, list):
+            raise ValueError(
+                f"marker_mirror_drift: {identifier}'s mirrored retired list "
+                f"is not a list: {retired!r}"
+            )
+        for row in rows_by_id[identifier]:
+            version = str(row.get("version"))
+            label = f"{identifier}@{version}"
+            row_yanked = bool(row.get("yanked", False))
+            if row_yanked != (version in yanked_record):
+                raise ValueError(
+                    f"marker_mirror_drift: {label} carries yanked={row_yanked} "
+                    f"but the mirrored policy's yanked record names "
+                    f"{sorted(yanked_record)}; the marker and the mirror must "
+                    "agree in both directions"
+                )
+            if version in retired:
+                raise ValueError(
+                    f"marker_mirror_drift: {label} is carried by this lock "
+                    f"but the mirrored policy names it retired {retired}; "
+                    "retired bytes must not be carried"
+                )
+            if not _range_admits(identifier, mirror_row.get("range"), version):
+                raise ValueError(
+                    f"marker_mirror_drift: {label} falls outside the mirrored "
+                    f"policy's declared range {mirror_row.get('range')!r}; a "
+                    "narrowed range must drop its rows"
+                )
+            if bool(row.get("active", False)) and row_yanked:
+                raise ValueError(
+                    f"marker_mirror_drift: the active-marked row {label} is "
+                    "yanked; the active row is what auto-selection serves"
+                )
 
 
 def _staging_paths(sdk_root: Path) -> tuple[Path, Path]:

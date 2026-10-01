@@ -597,6 +597,116 @@ def test_sync_check_refuses_malformed_row_version(tmp_path: Path) -> None:
     assert "0.2.x" in str(refusal.value), "the offending row is named"
 
 
+# --- #288 M5: the lock-internal marker/mirror cross-check. ---
+
+
+def _mirrored_sdk(tmp_path: Path) -> Path:
+    """A synced checkout carrying the committed carried shape AND policy
+    mirror: otdp 0.2.1 yank-marked, 0.2.2 active, the committed
+    ``dependency_policy`` block — the state the M5 drift arms plant
+    against, rebuilt through the writer so the markers and the mirror sit
+    exactly where ``_verify_marker_mirror`` reads them."""
+    bundle = _export(tmp_path)
+    document = _manifest(bundle)
+    for row in document["standards"]:
+        if row["id"] == "otdp":
+            if row["version"] == "0.2.1":
+                row["yanked"] = True
+            if row["version"] == "0.2.2":
+                row["active"] = True
+    document["dependency_policy"] = _committed_policy()
+    _rewrite_manifest(bundle, document)
+    return _synced_sdk(tmp_path, bundle)
+
+
+def test_marker_consistent_lock_checks_clean(tmp_path: Path) -> None:
+    """M5 GREEN control: a lock whose row markers agree with its mirrored
+    dependency_policy checks clean — the committed carried shape (0.2.1
+    yank-marked on both sides, 0.2.2 active and in range) is the baseline
+    the drift arms plant against."""
+    sdk = _mirrored_sdk(tmp_path)
+    assert sync(None, sdk, check_only=True) == SyncReport((), (), (), ())
+
+
+def test_yank_marker_flip_refuses_check(tmp_path: Path) -> None:
+    """M5 (#288) clause (a), the review lane's executed plant: flipping the
+    otdp 0.2.1 row's yanked marker true->false passed ``--check`` green —
+    the lane verified lock <-> vendored tree <-> stamps only, and the
+    dependency_policy mirror sitting in the same file was never read —
+    while the gateway's ``served_set_drift:`` refuses the identical
+    plant. The refusal names the row and the mirror's yanked set."""
+    sdk = _mirrored_sdk(tmp_path)
+
+    def flip(lock: dict[str, Any]) -> None:
+        row = next(
+            r for r in lock["standards"] if r["id"] == "otdp" and r["version"] == "0.2.1"
+        )
+        row["yanked"] = False
+
+    _hand_edit_lock(sdk, flip)
+    with pytest.raises(ValueError, match="^marker_mirror_drift: ") as refusal:
+        sync(None, sdk, check_only=True)
+    message = str(refusal.value)
+    assert "otdp@0.2.1" in message, "the row is named"
+    assert "yanked record names" in message, "the mirror's yanked set is named"
+
+
+def test_retired_carried_row_refuses_check(tmp_path: Path) -> None:
+    """M5 (#288) clause (b): a carried (id, version) named in the mirror's
+    retired list refuses — retired bytes must not be carried. The plant
+    retires an IN-RANGE carried version so only clause (b) can fire."""
+    sdk = _mirrored_sdk(tmp_path)
+
+    def retire(lock: dict[str, Any]) -> None:
+        lock["dependency_policy"]["standards"]["otdp"]["retired"].append("0.2.0")
+
+    _hand_edit_lock(sdk, retire)
+    with pytest.raises(ValueError, match="^marker_mirror_drift: ") as refusal:
+        sync(None, sdk, check_only=True)
+    assert "otdp@0.2.0" in str(refusal.value), "the carried retired row is named"
+
+
+def test_out_of_range_row_refuses_check(tmp_path: Path) -> None:
+    """M5 (#288) clause (c): a narrowed range that did not drop its rows
+    refuses — every carried row must fall inside the mirror's declared
+    range. Narrowing the lower bound to 0.2.2 strands the 0.2.0 and 0.2.1
+    rows; the first is named."""
+    sdk = _mirrored_sdk(tmp_path)
+
+    def narrow(lock: dict[str, Any]) -> None:
+        lock["dependency_policy"]["standards"]["otdp"]["range"] = ">=0.2.2,<0.3.0"
+
+    _hand_edit_lock(sdk, narrow)
+    with pytest.raises(ValueError, match="^marker_mirror_drift: ") as refusal:
+        sync(None, sdk, check_only=True)
+    message = str(refusal.value)
+    assert "otdp@0.2.0" in message, "the first out-of-range row is named"
+    assert ">=0.2.2,<0.3.0" in message, "the declared range is named"
+
+
+def test_active_marked_yanked_row_refuses_check(tmp_path: Path) -> None:
+    """M5 (#288) clause (d): the active-marked row must not be yanked. The
+    plant flips 0.2.2's ROW marker and adds it to the mirror's yanked
+    record, so the disagreement check (a) agrees on both sides — only the
+    active-specific refusal can catch this state."""
+    sdk = _mirrored_sdk(tmp_path)
+
+    def yank_the_active(lock: dict[str, Any]) -> None:
+        row = next(
+            r for r in lock["standards"] if r["id"] == "otdp" and r["version"] == "0.2.2"
+        )
+        row["yanked"] = True
+        lock["dependency_policy"]["standards"]["otdp"]["yanked"]["0.2.2"] = {
+            "reason": "planted for the active-row arm",
+            "since": "2026-10-01",
+        }
+
+    _hand_edit_lock(sdk, yank_the_active)
+    with pytest.raises(ValueError, match="^marker_mirror_drift: ") as refusal:
+        sync(None, sdk, check_only=True)
+    assert "otdp@0.2.2" in str(refusal.value), "the active row is named"
+
+
 # --- #215 fix wave: the bump-class gate is pinned; narrowing reports its drops. ---
 
 
@@ -722,6 +832,11 @@ def test_active_repoint_is_named_in_the_report(tmp_path: Path) -> None:
     document = _manifest(bundle)
     for row in document["standards"]:
         if row["id"] == "otdp":
+            # The re-point rides the real carried shape: a real export's
+            # rows carry the yank marker the mirror records (#288 M5's
+            # cross-check reads both sides — a marker-less row beside a
+            # yank-bearing mirror is drift no real sync produces).
+            row["yanked"] = row["version"] == "0.2.1"
             if row["version"] == "0.2.2":
                 row["active"] = False
             if row["version"] == "0.2.0":
