@@ -399,6 +399,12 @@ def package_command(
         raise click.ClickException(str(exc)) from exc
     written = artifacts.write(out)
     output = ConsoleOutput()
+    if artifacts.lookalikes:
+        # CR-39: the similarity flags ride the draft AND the operator's eyes.
+        output.message(
+            "namespace_lookalike flagged for review: " + "; ".join(artifacts.lookalikes),
+            style="yellow",
+        )
     output.message(
         f"Packaged {artifacts.manifest['package_id']}@{artifacts.manifest['version']} "
         f"(manifest sha256 {artifacts.submission['manifest_sha256'][:12]}…); "
