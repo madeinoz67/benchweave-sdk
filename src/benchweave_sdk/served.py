@@ -291,9 +291,19 @@ def _tuple(version: str) -> tuple[int, ...]:
 
 
 def _tuple_or_none(version: str) -> tuple[int, ...] | None:
-    """The numeric parts of an X.Y.Z version, or None when it does not parse."""
+    """The numeric parts of an X.Y.Z version, or None when it does not parse.
+
+    Exactly three segments (mech-F5, #288 fix-back): the gateway's
+    version_tuple is a strict three-segment unpack, so a 2- or 4-segment
+    pin is unparsable here too — an unparsable pin means downgrade False
+    on both sides of the twin (a two-segment tuple ordered real versions
+    below it and rendered the downgrade label the gateway never shows).
+    """
+    parts = version.split(".")
+    if len(parts) != 3:
+        return None
     try:
-        return tuple(int(part) for part in version.split("."))
+        return tuple(int(part) for part in parts)
     except ValueError:
         return None
 

@@ -558,6 +558,26 @@ def test_non_dict_mirror_standards_container_refuses_typed(
     assert "standards" in str(refusal.value), "the unreadable block is named"
 
 
+def test_two_segment_pin_is_unparsable_and_never_labeled() -> None:
+    """mech-F5 (#288 fix-back): the gateway's version_tuple is a strict
+    three-segment unpack, so pin "0.3" is unparsable there and renders NO
+    downgrade label; the SDK's two-segment tuple (0, 3) ordered 0.2.2 below
+    it and marked the move-to a downgrade — the one divergent cell of the
+    executed seven-state twin table. ``_tuple_or_none`` now requires
+    exactly three segments: an unparsable pin means downgrade False on
+    both sides of the twin."""
+    import benchweave_sdk.served as served
+
+    assert served._tuple_or_none("0.3") is None
+    classification = served.classify_pin("0.3", "otdp")
+    assert classification.state == "unserved"
+    assert classification.move_to == "0.2.2"
+    assert classification.downgrade is False, "twin agreement on the 2-segment pin"
+    message = str(served.refusal_for(classification))
+    assert DOWNGRADE_LABEL not in message
+    assert "not a parseable" in classification.detail
+
+
 # --- #288 M4: one canonical move-to derivation, the downgrade labeled. ---
 
 
