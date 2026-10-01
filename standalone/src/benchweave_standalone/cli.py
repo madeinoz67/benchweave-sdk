@@ -1,0 +1,121 @@
+"""The ``benchweave-standalone`` CLI: serve and the stdio MCP entry.
+
+``serve`` validates the plugin's descriptor and presentation documents
+BEFORE binding any port (SW-05 — refusal text carries the SDK's diagnostics
+under a ``standalone_plugin_invalid:`` prefix), reuses the SDK preview
+server's listener rules verbatim (loopback default, wildcard refused,
+non-loopback only with ``--allow-network`` plus a warning — NFR-S1), and
+constructs the COMPLETE guard set unconditionally. The per-launch bearer
+token is printed with the URL. ``mcp`` runs the same MCP server over stdio
+with no HTTP listener and no HTTP guard material (NFR-S4).
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import click
+
+from .mcp import build_mcp
+from .seam import StandaloneSeam
+from .security import GuardPolicy, new_token
+from .session import (
+    LoadedPlugin,
+    PluginLoadError,
+    PluginSession,
+    load_plugin_project,
+    mock_exchanges,
+)
+from .transport import LoopingMockHost
+
+
+def _load(project: Path) -> LoadedPlugin:
+    try:
+        return load_plugin_project(project)
+    except PluginLoadError as exc:
+        click.echo(str(exc), err=True)
+        raise SystemExit(2) from exc
+
+
+def _build_seam(project: Path) -> StandaloneSeam:
+    plugin = _load(project)
+    services = LoopingMockHost(mock_exchanges(plugin))
+    return StandaloneSeam(PluginSession(plugin, services), transport_kind="mock")
+
+
+@click.group()
+@click.version_option()
+def cli() -> None:
+    """Standalone BenchWeave host: one process, no gateway."""
+
+
+@cli.command()
+@click.argument("project", type=click.Path(path_type=Path, exists=True))
+@click.option("--host", default="127.0.0.1", show_default=True)
+@click.option("--port", default=8477, type=click.IntRange(1, 65535), show_default=True)
+@click.option("--allow-network", is_flag=True)
+@click.option("--no-open", is_flag=True)
+@click.option("--transport", type=click.Choice(["mock"]), default="mock", show_default=True)
+@click.option("--authoring", is_flag=True)
+def serve(
+    project: Path,
+    host: str,
+    port: int,
+    allow_network: bool,
+    no_open: bool,
+    transport: str,
+    authoring: bool,
+) -> None:
+    """Serve UI, REST and MCP over one plugin project."""
+    from benchweave_sdk.preview_server import validate_listener
+
+    try:
+        validate_listener(host, allow_network)
+    except ValueError as exc:
+        click.echo(str(exc), err=True)
+        raise SystemExit(2) from exc
+    if allow_network:
+        click.echo(
+            f"warning: listening on {host} exposes this bench beyond loopback; "
+            "the bearer token below is the only gate.",
+            err=True,
+        )
+    seam = _build_seam(project)
+    policy = GuardPolicy.complete(
+        bound_host=host,
+        bound_port=port,
+        bearer_token=new_token(),
+        csrf_token=new_token(),
+    )
+    from .web import build_app
+
+    app = build_app(seam, policy=policy, authoring=authoring)
+    click.echo(f"Serving {seam.session.plugin.package} on http://{host}:{port}")
+    click.echo(f"Bearer token (REST mutations and MCP over HTTP): {policy.bearer_token}")
+    if not no_open:
+        import webbrowser
+
+        webbrowser.open(f"http://{host}:{port}")
+    import uvicorn
+
+    uvicorn.run(app, host=host, port=port, log_level="warning")
+
+
+@cli.command()
+@click.argument("project", type=click.Path(path_type=Path, exists=True))
+@click.option("--authoring", is_flag=True)
+def mcp(project: Path, authoring: bool) -> None:
+    """Run the MCP server over stdio (no HTTP listener, no HTTP guards)."""
+    seam = _build_seam(project)
+    server = build_mcp(seam, authoring=authoring)
+    server.run()
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Entry point returning an exit code (the SDK CLI's shape)."""
+    return int(cli(args=argv, standalone_mode=False) or 0)
+
+
+if __name__ == "__main__":  # pragma: no cover
+    sys.exit(main())

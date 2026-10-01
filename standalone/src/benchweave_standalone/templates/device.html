@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}{{ device_id }} — standalone{% endblock %}
+{% block content %}
+<h1>Device <code>{{ device_id }}</code></h1>
+<div class="actions">
+  {% if connected %}
+  <span class="state state-connected">connected</span>
+  <form method="post" action="/devices/{{ device_id }}/disconnect"
+        hx-post="/devices/{{ device_id }}/disconnect"
+        hx-headers='{"X-CSRF-Token": "{{ csrf_token }}"}'>
+    <button type="submit">Disconnect</button>
+  </form>
+  {% else %}
+  <span class="state state-disconnected">disconnected</span>
+  <form method="post" action="/devices/{{ device_id }}/connect"
+        hx-post="/devices/{{ device_id }}/connect"
+        hx-headers='{"X-CSRF-Token": "{{ csrf_token }}"}'>
+    <button type="submit">Connect</button>
+  </form>
+  {% endif %}
+</div>
+<section class="panel">
+  <h2>Readings</h2>
+  <div id="readings"
+       hx-get="/devices/{{ device_id }}/readings"
+       hx-trigger="every 2s"
+       hx-swap="innerHTML">
+    {% include "readings.html" %}
+  </div>
+</section>
+{% endblock %}
