@@ -1,23 +1,27 @@
 """C5's SDK-side namespace twin: the committed similarity vectors, pinned.
 
-The same five committed vectors in the registry repository's lane-rules.json
-pin the namespace rule in BOTH repos (the twin-test discipline against drift
-between the SDK's package-time check and the registry's vetting CI). The
-committed copy under tests/fixtures/registry-clone/lane-rules.json is
-byte-for-byte the registry repository's file at origin/main @ 21acea1
-(sha256 0701d49aa2153265428182a0a0ea1ccfb810b39155246dde0c26d8663b00a262);
-when a benchweave-registry checkout is available (BENCHWEAVE_REGISTRY_CLONE),
-the copy is cross-checked against the live file so lane-rule drift surfaces
-here too.
+The classifier is NOT flat: the five committed vectors in the registry
+repository's lane-rules.json are satisfiable only by a TWO-COMPARISON-SET
+rule (the registry lane's landed resolution, issue #225): near a RESERVED
+name the verdict is ``reserved``; near a VETTED namespace it is
+``lookalike``. Near = skeleton equality, skeleton-prefix containment, or
+edit distance within the committed max. Each vector's expected label TYPES
+its comparison set — sim-v3 runs reserved (``otdp-tools`` extends the
+reserved ``otdp``); the other four run vetted (``benchweave`` playing an
+abstract incumbent vetted namespace).
 
-Two of the five vectors do not hold under the plain skeleton-plus-edit-distance
-rule as implemented (skeleton distance 4 and 5 respectively, both beyond the
-committed max of 2) and — because both comparators sit in the same
-reserved_namespaces list with identically shaped candidates — no rule keyed
-on lane-rules.json alone can satisfy both expectations at once. They are
-pinned as strict xfails naming the defect: whichever side moves (rule or
-data), this pin forces the reconciliation. Raised with the registry lane and
-the coordinator on issue #225.
+The typed rows below are replicated verbatim from the registry lane's
+committed truth table (benchweave-registry origin/feat/issue225-registry-mgmt
+@ 7fa9765, first committed 114f3b1: tests/fixtures/issue225/
+namespace-vetting.truth-table.json, rows sim-v1..sim-v5) and are
+cross-checked against this repo's committed lane-rules.json copy so neither
+side can drift alone. When a benchweave-registry checkout is available
+(BENCHWEAVE_REGISTRY_CLONE), the copy is also cross-checked against the
+live file.
+
+Gate posture stays surface-local (the twins pin the CLASSIFIER): at SDK
+package time a lookalike is flagged-not-refused and rides the draft; at
+registry vetting admission it refuses (the registry lane's ns-03 row).
 """
 
 from __future__ import annotations
@@ -39,29 +43,21 @@ LANE_RULES_SOURCE_DIGEST = (
     "0701d49aa2153265428182a0a0ea1ccfb810b39155246dde0c26d8663b00a262"
 )
 
-_VECTOR_DEFECT = (
-    "committed-vector defect: skeleton distance exceeds the committed "
-    "max_edit_distance=2, and no rule keyed on lane-rules.json alone can "
-    "satisfy this vector together with the other reserved-list vector — "
-    "the rule or the data must move registry-side (issue #225)"
+#: The typed vector rows, verbatim from the registry lane's committed truth
+#: table (path and commit in the module docstring). comparison_set types the
+#: set each vector exercises; expected is the classifier verdict.
+TYPED_VECTORS: tuple[dict[str, str], ...] = (
+    {"id": "sim-v1", "candidate": "benchweave-labs", "existing": "benchweave",
+     "expected": "lookalike", "comparison_set": "vetted"},
+    {"id": "sim-v2", "candidate": "benchwave", "existing": "benchweave",
+     "expected": "lookalike", "comparison_set": "vetted"},
+    {"id": "sim-v3", "candidate": "otdp-tools", "existing": "otdp",
+     "expected": "reserved", "comparison_set": "reserved"},
+    {"id": "sim-v4", "candidate": "madeinoz68", "existing": "madeinoz67",
+     "expected": "lookalike", "comparison_set": "vetted"},
+    {"id": "sim-v5", "candidate": "acme-power", "existing": "madeinoz67",
+     "expected": "distinct", "comparison_set": "vetted"},
 )
-
-
-def _vectors() -> list[dict[str, str]]:
-    payload = json.loads(LANE_RULES.read_bytes())
-    return payload["similarity_rule"]["vectors"]
-
-
-def _classify(candidate: str, existing: str) -> str:
-    from benchweave_sdk.publishing import check_namespace
-
-    rules = _rules()
-    findings = check_namespace(f"{candidate}/pkg", rules, {existing}, {})
-    if any(f.startswith("namespace_reserved:") for f in findings):
-        return "reserved"
-    if any(f.startswith("namespace_lookalike:") for f in findings):
-        return "lookalike"
-    return "distinct"
 
 
 def _rules() -> Any:
@@ -70,44 +66,50 @@ def _rules() -> Any:
     return LaneRules.load(FIXTURE)
 
 
+def _lane_vectors() -> list[dict[str, str]]:
+    return json.loads(LANE_RULES.read_bytes())["similarity_rule"]["vectors"]
+
+
 def test_the_committed_copy_is_the_registry_repository_s_bytes() -> None:
     digest = hashlib.sha256(LANE_RULES.read_bytes()).hexdigest()
     assert digest == LANE_RULES_SOURCE_DIGEST
 
 
-def _distance_beyond_committed_max(vector: dict[str, str]) -> bool:
-    """True when the vector's skeletons sit beyond max_edit_distance."""
-    from benchweave_sdk.publishing import LaneRules, _edit_distance, _skeleton
+def test_the_typed_rows_agree_with_the_committed_lane_vectors() -> None:
+    """Neither side drifts alone: every typed row's candidate/existing/
+    expected equals the committed lane-rules.json vector with the same
+    (candidate, existing) pair."""
+    by_pair = {
+        (vector["candidate"], vector["existing"]): vector for vector in _lane_vectors()
+    }
+    assert len(by_pair) == len(TYPED_VECTORS)
+    for row in TYPED_VECTORS:
+        vector = by_pair[(row["candidate"], row["existing"])]
+        assert vector["expected"] == row["expected"], row
 
-    rules = LaneRules.load(FIXTURE)
-    distance = _edit_distance(
-        _skeleton(vector["candidate"], rules), _skeleton(vector["existing"], rules)
+
+@pytest.mark.parametrize("row", TYPED_VECTORS, ids=[r["id"] for r in TYPED_VECTORS])
+def test_committed_vectors_pin_the_typed_classifier(row: dict[str, str]) -> None:
+    from benchweave_sdk.publishing import namespace_verdict
+
+    verdict = namespace_verdict(
+        row["candidate"],
+        row["existing"],
+        rules=_rules(),
+        reserved=row["comparison_set"] == "reserved",
     )
-    return distance > rules.similarity_max_distance
+    assert verdict == row["expected"], row
 
 
-def _vector_params() -> list[Any]:
-    """Vectors whose skeletons sit beyond the committed max carry the xfail.
+def test_skeleton_equal_namespaces_verdict_same() -> None:
+    """The strongest impersonation shape — a confusable-folded skeleton
+    EXACTLY equal to an existing namespace — is not 'distinct'."""
+    from benchweave_sdk.publishing import namespace_verdict
 
-    Only where the expectation is lookalike or reserved — a beyond-max
-    distance with a distinct expectation is exactly what the rule says.
-    Strict: a rule change that satisfies one of these pins turns its xfail
-    into an XPASS failure, forcing the reconciliation to be deliberate.
-    """
-    return [
-        pytest.param(
-            vector,
-            marks=pytest.mark.xfail(strict=True, reason=_VECTOR_DEFECT),
-        )
-        if _distance_beyond_committed_max(vector) and vector["expected"] != "distinct"
-        else pytest.param(vector)
-        for vector in json.loads(LANE_RULES.read_bytes())["similarity_rule"]["vectors"]
-    ]
-
-
-@pytest.mark.parametrize("vector", _vector_params())
-def test_committed_vectors_pin_the_sdk_rule(vector: dict[str, str]) -> None:
-    assert _classify(vector["candidate"], vector["existing"]) == vector["expected"]
+    assert namespace_verdict(
+        "n0rthwind-instruments", "northwind-instruments",
+        rules=_rules(), reserved=False,
+    ) == "same"
 
 
 def test_live_registry_clone_matches_the_committed_copy(
@@ -191,10 +193,19 @@ def _package(clone: Path, tmp_path: Path, publisher: str, plugin: str) -> Any:
     )
 
 
-def test_cli_package_refuses_a_reserved_namespace(tmp_path: Path) -> None:
+def test_cli_package_refuses_a_reserved_namespace_exact(tmp_path: Path) -> None:
     result = _package(FIXTURE, tmp_path, "otdp", "probe-ctl")
     assert result.exit_code == 1, result.output
     assert "namespace_reserved:otdp" in result.output
+
+
+def test_cli_package_refuses_an_extension_of_a_reserved_namespace(tmp_path: Path) -> None:
+    """The classifier's near-aware reserved arm at package time: sim-v3's
+    gate semantics — 'otdp-tools' extends the reserved 'otdp' and refuses,
+    never merely flags."""
+    result = _package(FIXTURE, tmp_path, "otdp-tools", "probe-ctl")
+    assert result.exit_code == 1, result.output
+    assert "namespace_reserved:otdp-tools" in result.output
 
 
 def test_cli_package_refuses_a_cross_owner_collision(tmp_path: Path) -> None:
@@ -229,3 +240,21 @@ def test_cli_package_flags_a_lookalike_without_refusing(tmp_path: Path) -> None:
     )
     assert any("harborline-systemz~harborline-systems" in flag
                for flag in submission["namespace_lookalikes"])
+
+
+def test_cli_package_flags_a_containment_lookalike(tmp_path: Path) -> None:
+    """sim-v1's gate semantics: an extension of a vetted namespace
+    ('harborline-systems-labs' extends 'harborline-systems') flags for
+    review, never refuses."""
+    result = _package(FIXTURE, tmp_path, "harborline-systems-labs", "probe-ctl")
+    assert result.exit_code == 0, result.output
+    assert "namespace_lookalike" in result.output
+
+
+def test_cli_package_flags_a_skeleton_equal_namespace(tmp_path: Path) -> None:
+    """The d=0 shape ('n0rthwind-instruments' confusable-folds exactly onto
+    the vetted 'northwind-instruments') flags — the pre-typed rule passed
+    it silently; the typed classifier's near rule covers equality."""
+    result = _package(FIXTURE, tmp_path, "n0rthwind-instruments", "probe-ctl")
+    assert result.exit_code == 0, result.output
+    assert "namespace_lookalike" in result.output

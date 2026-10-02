@@ -743,6 +743,15 @@ def _read_current_status(
             f"{refusing_op}:{status_path} (no status document; run "
             "'benchweave-sdk registry publish-status' first)"
         )
+    if not (directory / "status.sig").is_file():
+        # The held-signature shape the dogfooded release shipped in: the
+        # lineage exists but is unsigned. Refuse with the replay's typed
+        # finding name — never silently overwrite it with a sequence+1
+        # rewrite (cross-lane contract, issue #225).
+        raise RegistryOpsError(
+            f"status_signature_absent:{directory / 'status.sig'} (the status "
+            "lineage is unsigned; sign the baseline before extending it)"
+        )
     current = _load_json(status_path)
     if not isinstance(current, dict) or not isinstance(current.get("sequence"), int):
         raise RegistryOpsError(f"status_invalid:{status_path} (no sequence)")
@@ -895,12 +904,12 @@ def transfer_release(
         )
     if key.publisher not in consent_from:
         raise RegistryOpsError(
-            f"transfer_invalid:consent_from_not_naming:{key.publisher} "
+            f"transfer_consents_incomplete:consent_from_not_naming:{key.publisher} "
             f"(got {consent_from!r})"
         )
     if to_publisher not in consent_to:
         raise RegistryOpsError(
-            f"transfer_invalid:consent_to_not_naming:{to_publisher} "
+            f"transfer_consents_incomplete:consent_to_not_naming:{to_publisher} "
             f"(got {consent_to!r})"
         )
     if not vetting_reference.strip():

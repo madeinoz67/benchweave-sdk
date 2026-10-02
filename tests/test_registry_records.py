@@ -140,7 +140,7 @@ def test_transfer_refuses_consents_that_do_not_name_the_parties(
         "--vetting-ref", "v",
         "--reason", "r", "--actor", "a",
     )
-    assert "transfer_invalid:" in output
+    assert "transfer_consents_incomplete:" in output
     output = _refuse(
         clone, "transfer", PUBLISHED,
         "--to", "harborline-systems",
@@ -149,7 +149,7 @@ def test_transfer_refuses_consents_that_do_not_name_the_parties(
         "--vetting-ref", "v",
         "--reason", "r", "--actor", "a",
     )
-    assert "transfer_invalid:" in output
+    assert "transfer_consents_incomplete:" in output
 
 
 def test_transfer_refuses_a_self_transfer(tmp_path: Path) -> None:

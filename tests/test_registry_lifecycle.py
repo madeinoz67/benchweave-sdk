@@ -270,6 +270,23 @@ def test_yank_without_a_status_refuses_naming_publish_status(
     assert "publish-status" in output
 
 
+def test_keyed_rewrites_refuse_an_unsigned_status_lineage(
+    clone: Path, origin_key: tuple[Path, Any]
+) -> None:
+    """A status.json whose signature is absent (the held-signature shape the
+    dogfooded release shipped in) refuses with the replay's typed finding
+    name — never silently overwritten by a sequence+1 rewrite."""
+    key_path, _public = origin_key
+    _publish(clone, key_path)
+    (clone / "releases" / "benchweave-registry" / "northwind-instruments"
+     / "vmx3-power-supply" / "1.0.0" / "status.sig").unlink()
+    output = _refuse(
+        clone, "yank", RELEASE, "--origin-key", str(key_path),
+        "--reason", "r", "--actor", "a",
+    )
+    assert "status_signature_absent:" in output
+
+
 # --- advise (an advisory is not a yank) --------------------------------------------
 
 

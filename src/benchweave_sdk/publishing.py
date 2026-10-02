@@ -201,6 +201,48 @@ def _edit_distance(left: str, right: str) -> int:
     return previous[-1]
 
 
+def _skeletons_near(left: str, right: str, rules: LaneRules) -> bool:
+    """The committed near rule: skeleton equality, prefix containment, or
+    edit distance within the committed maximum.
+
+    Containment is load-bearing (issue #225's typed resolution): the
+    extension shapes the committed vectors pin (``benchweave-labs`` extends
+    ``benchweave`` at distance 4; ``otdp-tools`` extends ``otdp`` at 5) are
+    near ONLY under containment — and skeleton equality covers the strongest
+    impersonation shape a plain distance bound silently passed.
+    """
+    if left == right:
+        return True
+    if left.startswith(right) or right.startswith(left):
+        return True
+    return _edit_distance(left, right) <= rules.similarity_max_distance
+
+
+def namespace_verdict(
+    candidate: str,
+    existing: str,
+    rules: LaneRules,
+    *,
+    reserved: bool,
+) -> str:
+    """Classify a candidate namespace against an existing name (CR-39).
+
+    Two comparison sets, per the registry lane's landed resolution: near a
+    RESERVED name the verdict is ``reserved`` (a claim on the standard's
+    name — ``otdp-tools`` extends ``otdp``); near a VETTED namespace it is
+    ``lookalike`` (impersonation, for review). Near = skeleton equality,
+    skeleton-prefix containment, or edit distance within the committed max.
+    The twin-test discipline: this rule and the registry's vetting rule are
+    both pinned against the five committed ``lane-rules.json`` vectors.
+    """
+    left, right = _skeleton(candidate, rules), _skeleton(existing, rules)
+    if left == right:
+        return "same"
+    if not _skeletons_near(left, right, rules):
+        return "distinct"
+    return "reserved" if reserved else "lookalike"
+
+
 def check_namespace(
     package_id: str,
     rules: LaneRules,
@@ -222,7 +264,14 @@ def check_namespace(
         findings.append(f"namespace_invalid:{package_id}")
         return findings
     publisher, plugin = package_id.split("/", 1)
-    if publisher in rules.reserved_namespaces:
+    publisher_skeleton = _skeleton(publisher, rules)
+    # The reserved arm is NEAR-AWARE (the classifier's reserved set): a
+    # candidate extending or confusable-folding onto a reserved namespace
+    # refuses, not just the exact name (sim-v3: otdp-tools extends otdp).
+    if any(
+        _skeletons_near(publisher_skeleton, _skeleton(name, rules), rules)
+        for name in sorted(rules.reserved_namespaces)
+    ):
         findings.append(f"namespace_reserved:{publisher}")
     if plugin in rules.reserved_plugins:
         findings.append(f"namespace_reserved:{plugin}")
@@ -231,21 +280,27 @@ def check_namespace(
         findings.append(f"namespace_collision:{package_id}")
     # CR-39: the publisher segment is compared against existing namespaces;
     # the full id against existing packages — a lookalike is flagged for human
-    # review, never silently admitted.
-    publisher_skeleton = _skeleton(publisher, rules)
+    # review, never silently admitted. Near follows the committed classifier
+    # (equality, containment, or distance within the max).
     for existing in sorted(existing_namespaces):
         if existing == publisher:
             continue
-        distance = _edit_distance(publisher_skeleton, _skeleton(existing, rules))
-        if 0 < distance <= rules.similarity_max_distance:
-            findings.append(f"namespace_lookalike:{publisher}~{existing}:{distance}")
+        existing_skeleton = _skeleton(existing, rules)
+        if _skeletons_near(publisher_skeleton, existing_skeleton, rules):
+            findings.append(
+                f"namespace_lookalike:{publisher}~{existing}:"
+                f"{_edit_distance(publisher_skeleton, existing_skeleton)}"
+            )
     package_skeleton = _skeleton(package_id, rules)
     for existing in sorted(existing_package_owners):
         if existing == package_id:
             continue
-        distance = _edit_distance(package_skeleton, _skeleton(existing, rules))
-        if 0 < distance <= rules.similarity_max_distance:
-            findings.append(f"namespace_lookalike:{package_id}~{existing}:{distance}")
+        existing_skeleton = _skeleton(existing, rules)
+        if _skeletons_near(package_skeleton, existing_skeleton, rules):
+            findings.append(
+                f"namespace_lookalike:{package_id}~{existing}:"
+                f"{_edit_distance(package_skeleton, existing_skeleton)}"
+            )
     return findings
 
 
