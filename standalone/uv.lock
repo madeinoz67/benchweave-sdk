@@ -147,7 +147,7 @@ wheels = [
 
 [[package]]
 name = "benchweave-sdk"
-version = "0.4.0"
+version = "0.4.1"
 source = { editable = "../" }
 dependencies = [
     { name = "click" },
@@ -162,18 +162,20 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "click", specifier = ">=8.3,<9" },
+    { name = "cryptography", marker = "extra == 'signing'", specifier = ">=45" },
     { name = "jsonschema", specifier = ">=4.23" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=8.0" },
     { name = "referencing", specifier = ">=0.35" },
     { name = "rfc3339-validator", specifier = ">=0.1.4" },
     { name = "rfc3987", specifier = ">=1.3.8" },
-    { name = "rich", specifier = ">=14,<15" },
+    { name = "rich", specifier = ">=14,<16" },
     { name = "textual", specifier = ">=8.2,<9" },
 ]
-provides-extras = ["test"]
+provides-extras = ["test", "signing"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "cryptography", specifier = ">=45" },
     { name = "mypy", specifier = ">=1.11" },
     { name = "ruff", specifier = ">=0.6" },
     { name = "types-jsonschema", specifier = ">=4.26.0.20260518" },
