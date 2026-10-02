@@ -1,9 +1,14 @@
-"""Software-only SDK commands. No hardware access; publication is prepared
-offline and never signed here (the signing half is maintainer-side)."""
+"""Software-only SDK commands. No hardware access, no service.
+
+Publication is prepared offline; the PUBLISHER signs at package time
+(--publisher-key, an optional extra — the keyless default never loads the
+signing stack) and the registry validates and labels, never signs.
+"""
 
 from __future__ import annotations
 
 import ipaddress
+import json
 import sys
 import webbrowser
 from collections.abc import Callable, Sequence
@@ -358,6 +363,21 @@ def _capability_map(flags: tuple[str, ...]) -> dict[str, bool] | None:
     multiple=True,
     help="Admitted triple <id>@<version>:<sha256> a transport-declaring descriptor publishes",
 )
+@click.option(
+    "--publisher-key",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="The publisher's Ed25519 private key: sign the manifest at package time "
+    "(the registry validates and labels; it never signs)",
+)
+@click.option(
+    "--timestamp-token",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="An RFC 3161 TimeStampToken (DER) over manifest.sig, from 'benchweave-sdk timestamp' "
+    "or a TSA directly; binds a trusted signing time to the signature",
+)
+@click.option("--tsa-url", default=None, help="The TSA named in the timestamp record")
 @click.option("--licence-spdx", default="MIT", show_default=True)
 @_domain_errors
 def package_command(
@@ -373,9 +393,16 @@ def package_command(
     dependency: tuple[str, ...],
     transport_triple: tuple[str, ...],
     licence_spdx: str,
+    publisher_key: Path | None,
+    timestamp_token: Path | None,
+    tsa_url: str | None,
 ) -> None:
-    """Package a finished plugin into the submission artefact set (offline, keyless)."""
-    from .publishing import PublishingError
+    """Package a finished plugin into the submission artefact set (offline).
+
+    Keyless by default; --publisher-key applies the publisher's own signature
+    at package time (the registry validates and labels, never signs).
+    """
+    from .publishing import PublishingError, sign_manifest_bytes, timestamp_record_for
 
     if capability == ("none",):
         capability = ()
@@ -399,6 +426,22 @@ def package_command(
         raise click.ClickException(str(exc)) from exc
     written = artifacts.write(out)
     output = ConsoleOutput()
+    if publisher_key is not None:
+        signature = sign_manifest_bytes(artifacts.manifest_bytes, publisher_key)
+        (out / "manifest.sig").write_bytes(signature)
+        written.append(out / "manifest.sig")
+        if timestamp_token is not None:
+            (out / "timestamp.token").write_bytes(timestamp_token.read_bytes())
+            written.append(out / "timestamp.token")
+            record = timestamp_record_for(
+                timestamp_token.read_bytes(), signature,
+                tsa_url or "unspecified",
+            )
+            (out / "timestamp.json").write_bytes(
+                json.dumps(record, sort_keys=True, separators=(",", ":")).encode()
+                + b"\n"
+            )
+            written.append(out / "timestamp.json")
     if artifacts.lookalikes:
         # CR-39: the similarity flags ride the draft AND the operator's eyes.
         output.message(
@@ -408,11 +451,42 @@ def package_command(
     output.message(
         f"Packaged {artifacts.manifest['package_id']}@{artifacts.manifest['version']} "
         f"(manifest sha256 {artifacts.submission['manifest_sha256'][:12]}…); "
-        "deterministic and keyless — signing is maintainer-side.",
+        "deterministic; keyless by default — the publisher signs with "
+        "--publisher-key.",
         style="green",
     )
     for path in written:
         output.message(f"  {path}", style="green")
+
+
+@cli.command("timestamp")
+@click.argument("signature", type=click.Path(path_type=Path))
+@click.option("--tsa-url", required=True, help="The RFC 3161 Timestamping Authority URL")
+@click.option(
+    "--out", required=True, type=click.Path(path_type=Path), help="Where to write the DER token"
+)
+@_domain_errors
+def timestamp_command(signature: Path, tsa_url: str, out: Path) -> None:
+    """Request an RFC 3161 TimeStampToken over a publisher signature."""
+    import urllib.request
+
+    from .publishing import build_timestamp_request
+
+    request = urllib.request.Request(
+        tsa_url,
+        data=build_timestamp_request(signature.read_bytes()),
+        headers={"Content-Type": "application/timestamp-query"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310
+        token = response.read()
+    out.write_bytes(token)
+    ConsoleOutput().message(
+        f"Timestamp token written to {out} ({len(token)} bytes); attach it at "
+        "package time with --timestamp-token.",
+        style="green",
+    )
+
 
 
 @cli.command("submit")

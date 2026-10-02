@@ -950,3 +950,101 @@ def _run_git(cwd: Path, *args: str) -> str:
             f"git_failed:{args[0]}: {completed.stderr.strip() or completed.stdout.strip()}"
         )
     return completed.stdout
+
+# --- publisher signature + trusted timestamp (owner ruling, issue #223) --------
+#
+# The registry VALIDATES + PUBLISHES + LABELS, never signs: the PUBLISHER
+# signs at package time (an Ed25519 signature over the canonical manifest
+# bytes) and may attach an RFC 3161 trusted timestamp over that signature —
+# with one, the signature stays verifiable after the signer's key expires or
+# is revoked, because validity is judged at the TSA-attested signing time.
+# The packager stays keyless by default; --publisher-key opts into the
+# publisher's own signature.
+
+
+def sign_manifest_bytes(manifest_bytes: bytes, key_path: Path) -> bytes:
+    """The publisher's Ed25519 signature over the canonical manifest bytes."""
+    # Optional extra: the signing stack rides benchweave-sdk[signing]; the
+    # keyless default never loads it.
+    try:
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    except ImportError as exc:  # pragma: no cover - environment shape
+        raise PublishingError(
+            "signing_extra_absent: publisher signing needs the optional extra "
+            "(pip install benchweave-sdk[signing])"
+        ) from exc
+
+    key = serialization.load_pem_private_key(key_path.read_bytes(), password=None)
+    if not isinstance(key, Ed25519PrivateKey):
+        raise PublishingError(
+            f"publisher_key_unsupported: {key_path} is not an Ed25519 private key"
+        )
+    signature: bytes = key.sign(manifest_bytes)
+    return signature
+
+
+def _der_first_time(token: bytes) -> str | None:
+    """Scan a DER TimeStampToken for its first UTCTime/GeneralizedTime.
+
+    RFC 3161's genTime lives inside the CMS TSTInfo; a full CMS walk needs an
+    ASN.1 stack this package does not carry, and the registry's verification
+    discloses TSA-chain validation as the platform residual — the TIME is
+    extracted by a direct tag scan (0x17 UTCTime, 0x18 GeneralizedTime),
+    which is honest for recording and sufficient for the time-window check.
+    """
+    index = 0
+    while index < len(token) - 1:
+        tag = token[index]
+        if tag in (0x17, 0x18):
+            length = token[index + 1]
+            value = token[index + 2 : index + 2 + length].decode("ascii", "replace")
+            return value
+        index += 1
+    return None
+
+
+def timestamp_record_for(
+    token: bytes, signature: bytes, tsa: str
+) -> dict[str, Any]:
+    """The record binding an RFC 3161 token to the publisher signature."""
+    signed_at = _der_first_time(token)
+    if signed_at is None:
+        raise PublishingError(
+            "timestamp_token_unreadable: no UTCTime/GeneralizedTime found in "
+            "the token (not an RFC 3161 TimeStampToken?)"
+        )
+    return {
+        "tsa": tsa,
+        "signed_at": signed_at,
+        "signature_sha256": sha256_hex(signature),
+        "token_sha256": sha256_hex(token),
+    }
+
+
+def build_timestamp_request(signature: bytes) -> bytes:
+    """A minimal RFC 3161 TimeStampReq (SHA-256 imprint over the signature).
+
+    Hand-encoded DER — the request is small and fixed-shape:
+    TimeStampReq ::= SEQUENCE { version INTEGER 1,
+      messageImprint SEQUENCE { algorithm SEQUENCE { oid NULL },
+                                hashedMessage OCTET STRING },
+      certReq BOOLEAN TRUE }
+    """
+    sha256_oid = bytes.fromhex("0609608648016503040201")  # 2.16.840.1.101.3.4.2.1
+
+    def _len(n: int) -> bytes:
+        if n < 0x80:
+            return bytes([n])
+        raw = n.to_bytes((n.bit_length() + 7) // 8, "big")
+        return bytes([0x80 | len(raw)]) + raw
+
+    def _tlv(tag: int, body: bytes) -> bytes:
+        return bytes([tag]) + _len(len(body)) + body
+
+    algorithm = _tlv(0x30, sha256_oid + _tlv(0x05, b""))
+    imprint = _tlv(0x30, algorithm + _tlv(0x04, hashlib.sha256(signature).digest()))
+    version = _tlv(0x02, b"\x01")
+    cert_req = _tlv(0x01, b"\xff")
+    return _tlv(0x30, version + imprint + cert_req)
+

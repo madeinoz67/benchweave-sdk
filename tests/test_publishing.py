@@ -538,3 +538,66 @@ def test_lookalike_flags_ride_the_submission_draft(tmp_path: Path) -> None:
     assert artifacts.submission["namespace_lookalikes"] == artifacts.lookalikes
     assert "namespace_lookalikes" in json.loads(artifacts.submission_bytes)
 
+# --- publisher signing + trusted timestamp (owner ruling 2026-10-02) ------------
+
+
+def _publisher_key(root: Path) -> tuple[Path, Any]:
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    key = Ed25519PrivateKey.generate()
+    key_path = root / "publisher.pem"
+    key_path.write_bytes(
+        key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    )
+    return key_path, key.public_key()
+
+
+def test_sign_manifest_bytes_verifies(tmp_path: Path) -> None:
+    from cryptography.exceptions import InvalidSignature
+
+    from benchweave_sdk.publishing import sign_manifest_bytes
+
+    key_path, public = _publisher_key(tmp_path)
+    signature = sign_manifest_bytes(b"canonical bytes\n", key_path)
+    public.verify(signature, b"canonical bytes\n")
+    with pytest.raises(InvalidSignature):
+        public.verify(signature, b"different bytes\n")
+
+
+def test_timestamp_record_binds_the_signature() -> None:
+    from benchweave_sdk.publishing import timestamp_record_for
+
+    # A minimal DER token carrying a UTCTime (the direct-tag scan reads it).
+    token = bytes([0x17, 13]) + b"261001120000Z"
+    record = timestamp_record_for(token, b"sig-bytes", "https://tsa.example")
+    assert record["tsa"] == "https://tsa.example"
+    assert record["signed_at"] == "261001120000Z"
+    import hashlib
+
+    assert record["signature_sha256"] == hashlib.sha256(b"sig-bytes").hexdigest()
+    assert record["token_sha256"] == hashlib.sha256(token).hexdigest()
+
+
+def test_timestamp_record_refuses_a_token_without_time() -> None:
+    from benchweave_sdk.publishing import timestamp_record_for
+
+    with pytest.raises(PublishingError) as exc:
+        timestamp_record_for(b"\x30\x03\x02\x01\x01", b"sig", "https://tsa.example")
+    assert str(exc.value).startswith("timestamp_token_unreadable:")
+
+
+def test_timestamp_request_is_der_shaped() -> None:
+    import hashlib
+
+    from benchweave_sdk.publishing import build_timestamp_request
+
+    request = build_timestamp_request(b"signature bytes")
+    assert request[0] == 0x30  # DER SEQUENCE
+    digest = hashlib.sha256(b"signature bytes").digest()
+    assert digest in request, "the SHA-256 imprint rides the request"
+
