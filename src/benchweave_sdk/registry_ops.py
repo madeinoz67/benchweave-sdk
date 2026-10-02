@@ -30,6 +30,7 @@ disclosed, not dropped.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import subprocess
@@ -547,3 +548,255 @@ def _now_utc() -> str:
     from datetime import datetime
 
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+# --- the status-document discipline (the section 1.2 fix, generalized) ----------
+#
+# One monotone sequence per release: publish-status writes the baseline pair
+# (sequence 1, lifecycle published); yank and advise rewrite under sequence+1
+# and re-sign — mirroring exactly what the gateway resolver enforces
+# (check_status sequence/expiry gates, _gate_lifecycle's yanked/revoked
+# refusals). CR-12: the origin key is a LOCAL FILE argument to a
+# maintainer-run command; it never enters either repository or any CI.
+# CR-13/Q12 restated: nothing here changes admission semantics — the lane
+# compensates process-side (signed status + records), never admission-side.
+
+_VENDORED_STATUS_SCHEMA = (
+    Path(__file__).parent / "standards" / "registry" / "0.1.1" / "release-status.schema.json"
+)
+_ADVISORY_SEVERITIES = ("info", "low", "medium", "high", "critical")
+
+
+def release_dir(clone: Path, key: SubKey) -> Path:
+    """The release's served directory; absent releases refuse naming the path."""
+    releases = clone / "releases"
+    if not releases.is_dir():
+        raise RegistryOpsError(f"release_absent: no releases/ tree under {clone}")
+    for child in sorted(releases.iterdir()):
+        if child.is_dir():
+            directory = child / key.publisher / key.plugin / key.version
+            if (directory / "manifest.json").is_file():
+                return directory
+            raise RegistryOpsError(
+                f"release_absent:{directory} (no manifest.json under the release path)"
+            )
+    raise RegistryOpsError(f"release_absent:{releases} (empty releases tree)")
+
+
+def _validate_status_doc(doc: dict[str, Any]) -> None:
+    """Refuse any status document that would fail the served schema."""
+    import jsonschema
+
+    schema = json.loads(_VENDORED_STATUS_SCHEMA.read_bytes())
+    try:
+        jsonschema.validate(doc, schema)
+    except jsonschema.ValidationError as exc:
+        raise RegistryOpsError(f"status_invalid:{exc.message}") from exc
+
+
+def _write_status_pair(
+    clone: Path, directory: Path, doc: dict[str, Any], key_path: Path
+) -> Path:
+    """Validate, sign, cross-check the clone's root, then write the pair."""
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+    from .publishing import sign_manifest_bytes
+
+    _validate_status_doc(doc)
+    data = canonical_bytes(doc)
+    signature = sign_manifest_bytes(data, key_path)
+    root = clone / "keys" / "main.pub.pem"
+    if root.is_file():
+        # F2's committed root: a signing key the served root would reject
+        # refuses HERE, before unresolvable bytes ever land in the tree.
+        try:
+            public = serialization.load_pem_public_key(root.read_bytes())
+            assert isinstance(public, Ed25519PublicKey)
+            public.verify(signature, data)
+        except (InvalidSignature, ValueError) as exc:
+            raise RegistryOpsError(
+                f"origin_key_mismatch:{root} does not verify this signature; "
+                "sign with the origin key the clone serves"
+            ) from exc
+    status_path = directory / "status.json"
+    status_path.write_bytes(data)
+    (directory / "status.sig").write_bytes(signature)
+    return status_path
+
+
+def _publisher_contact(clone: Path, publisher: str) -> str | None:
+    """The publisher's support contact from the vetted publishers file."""
+    path = clone / "records" / "publishers.json"
+    if not path.is_file():
+        return None
+    try:
+        publishers = json.loads(path.read_bytes())
+    except ValueError as exc:
+        raise RegistryOpsError(f"publishers_invalid:{path} ({exc})") from exc
+    for entry in publishers.get("publishers", []):
+        if entry.get("publisher_id") == publisher and entry.get("github"):
+            return f"https://github.com/{entry['github']}"
+    return None
+
+
+def publish_status(
+    clone: Path,
+    key: SubKey,
+    *,
+    key_path: Path,
+    reason: str = "initial publication",
+    expires_at: str | None = None,
+    support_state: str = "maintained",
+    support_contact: str | None = None,
+) -> tuple[dict[str, Any], bool]:
+    """Write the baseline status pair (sequence 1, lifecycle published).
+
+    Returns the document and whether the expiry was defaulted (disclosed by
+    the caller — a commissioned expiry is an explicit decision).
+    """
+    from datetime import datetime, timedelta
+
+    directory = release_dir(clone, key)
+    status_path = directory / "status.json"
+    if status_path.is_file():
+        raise RegistryOpsError(
+            f"status_present:{status_path} (sequence 1 is the baseline; "
+            "later motions go through yank/advise under sequence+1)"
+        )
+    manifest_bytes = (directory / "manifest.json").read_bytes()
+    manifest = json.loads(manifest_bytes)
+    if (
+        manifest.get("package_id") != f"{key.publisher}/{key.plugin}"
+        or str(manifest.get("version")) != key.version
+    ):
+        raise RegistryOpsError(
+            f"release_mismatch:{directory / 'manifest.json'} (package_id/version "
+            f"disagree with {key.publisher}/{key.plugin}@{key.version})"
+        )
+    now = _now_utc()
+    defaulted = expires_at is None
+    if defaulted:
+        expires_at = (datetime.now(UTC) + timedelta(days=365)).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
+    contact = support_contact or _publisher_contact(clone, key.publisher)
+    if contact is None:
+        raise RegistryOpsError(
+            "support_contact_absent: no vetted publisher entry names "
+            f"{key.publisher}; pass --support-contact"
+        )
+    doc: dict[str, Any] = {
+        "status_version": "0.1.1",
+        "release": {
+            "registry_id": directory.parents[2].name,
+            "package_id": f"{key.publisher}/{key.plugin}",
+            "version": key.version,
+            "manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
+        },
+        "sequence": 1,
+        "updated_at": now,
+        "expires_at": expires_at,
+        "lifecycle": "published",
+        "reason": reason,
+        "support_state": support_state,
+        "support_contact": contact,
+        "reviews": [],
+        "advisories": [],
+    }
+    _write_status_pair(clone, directory, doc, key_path)
+    return doc, defaulted
+
+
+def _read_current_status(
+    clone: Path, key: SubKey, refusing_op: str
+) -> tuple[Path, dict[str, Any]]:
+    directory = release_dir(clone, key)
+    status_path = directory / "status.json"
+    if not status_path.is_file():
+        raise RegistryOpsError(
+            f"{refusing_op}:{status_path} (no status document; run "
+            "'benchweave-sdk registry publish-status' first)"
+        )
+    current = _load_json(status_path)
+    if not isinstance(current, dict) or not isinstance(current.get("sequence"), int):
+        raise RegistryOpsError(f"status_invalid:{status_path} (no sequence)")
+    return status_path, current
+
+
+def yank_release(
+    clone: Path,
+    key: SubKey,
+    *,
+    key_path: Path,
+    reason: str,
+    actor: str,
+    kind: str = "admitted-release",
+) -> tuple[dict[str, Any], Path]:
+    """Sequence+1 lifecycle yanked, preserving advisories and support fields."""
+    _status_path, current = _read_current_status(clone, key, "yank_status_absent")
+    sequence = int(current["sequence"]) + 1
+    doc = {
+        **current,
+        "sequence": sequence,
+        "lifecycle": "yanked",
+        "reason": reason,
+        "updated_at": _now_utc(),
+    }
+    _write_status_pair(clone, _status_path.parent, doc, key_path)
+    record = append_lifecycle_record(
+        clone, key, "yank",
+        actor=actor, reason=reason, kind=kind,
+        extra={
+            "release_manifest_sha256": doc["release"]["manifest_sha256"],
+            "status_sequence": sequence,
+        },
+    )
+    return doc, record
+
+
+def advise_release(
+    clone: Path,
+    key: SubKey,
+    *,
+    key_path: Path,
+    actor: str,
+    advisory: dict[str, str],
+    kind: str = "admitted-release",
+) -> tuple[dict[str, Any], Path]:
+    """Append one advisory under sequence+1; lifecycle is untouched."""
+    for field, ok in (
+        ("id", bool(advisory.get("id"))),
+        ("summary", bool(advisory.get("summary"))),
+        ("severity", advisory.get("severity") in _ADVISORY_SEVERITIES),
+        ("url", advisory.get("url", "").startswith("https://")),
+    ):
+        if not ok:
+            raise RegistryOpsError(
+                f"advisory_field_invalid:{field} (severity is one of "
+                + "|".join(_ADVISORY_SEVERITIES)
+                + "; url must be https)"
+            )
+    _status_path, current = _read_current_status(clone, key, "advisory_status_absent")
+    existing = list(current.get("advisories", []))
+    if any(entry.get("id") == advisory["id"] for entry in existing):
+        raise RegistryOpsError(
+            f"advisory_duplicate:{advisory['id']} already rides this status"
+        )
+    sequence = int(current["sequence"]) + 1
+    doc = {
+        **current,
+        "sequence": sequence,
+        "advisories": [*existing, dict(advisory)],
+        "updated_at": _now_utc(),
+    }
+    _write_status_pair(clone, _status_path.parent, doc, key_path)
+    record = append_lifecycle_record(
+        clone, key, "advisory",
+        actor=actor,
+        reason=f"advisory {advisory['id']} ({advisory['severity']}): {advisory['summary']}",
+        kind=kind,
+        extra={"advisory": dict(advisory)},
+    )
+    return doc, record
