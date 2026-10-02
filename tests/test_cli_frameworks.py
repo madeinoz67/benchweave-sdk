@@ -47,6 +47,22 @@ def test_findings_render_author_strings_literally() -> None:
     assert "[bold]spoofed[/bold]" in rendered
 
 
+def test_findings_rows_stay_single_line_in_non_terminal_mode() -> None:
+    """S13: non-terminal findings are prefix-shaped machine output — a row
+    must survive rich's default width 80 as ONE greppable line, the same
+    corruption class document() shed."""
+    from benchweave_sdk.console import ConsoleOutput
+
+    stream = StringIO()
+    output = ConsoleOutput(file=stream, terminal=False)
+    long_path = "packages/" + ("very-long-" * 12) + "plugin-directory/panel/index.json"
+    output.findings([("panel_unavailable", long_path, "")])
+    rendered = stream.getvalue()
+    finding_lines = [line for line in rendered.splitlines() if line.startswith("panel_unavailable")]
+    assert len(finding_lines) == 1, rendered
+    assert long_path in rendered, rendered
+
+
 def test_textual_preview_status_lifecycle() -> None:
     from benchweave_sdk.preview_tui import PreviewStatusApp
 

@@ -82,6 +82,26 @@
         "candidate": "madeinoz67-labs",
         "existing": "madeinoz67",
         "expected": "lookalike"
+      },
+      {
+        "candidate": "dev-tools-inc",
+        "existing": "dev",
+        "expected": "reserved"
+      },
+      {
+        "candidate": "devlin-instruments",
+        "existing": "dev",
+        "expected": "distinct"
+      },
+      {
+        "candidate": "5im-psu",
+        "existing": "sim-psu",
+        "expected": "same"
+      },
+      {
+        "candidate": "sim-psu-labs",
+        "existing": "sim-psu",
+        "expected": "reserved"
       }
     ]
   },

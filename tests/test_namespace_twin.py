@@ -1,21 +1,20 @@
 """C5's SDK-side namespace twin: the committed similarity vectors, pinned.
 
-The classifier is NOT flat: the seven committed vectors in the registry
+The classifier is NOT flat: the eleven committed vectors in the registry
 repository's lane-rules.json are satisfiable only by a TWO-COMPARISON-SET
 rule (the registry lane's landed resolution, issue #225): near a RESERVED
 name the verdict is ``reserved``; near a VETTED namespace it is
-``lookalike``. Near = skeleton equality, skeleton-prefix containment, or
-edit distance within the committed max. Each vector's expected label TYPES
-its comparison set — sim-v3 runs reserved (``otdp-tools`` extends the
-reserved ``otdp``); the others run vetted (``benchweave`` and
-``madeinoz67`` playing abstract incumbent vetted namespaces); sim-v6 pins
-skeleton equality itself (``b3nchweave`` confusable-folds onto
-``benchweave``) and expects the ``same`` verdict.
+``lookalike``. Near = skeleton equality, DELIMITER-BOUNDED containment
+(one name's skeleton equals the other's separator-delimited prefix span),
+or edit distance within the committed max. Each vector's expected label
+TYPES its comparison set — the reserved-set rows include sim-v9, whose
+'distinct' documents a name that PASSES the reserved check; sim-v6/v10 pin
+skeleton equality itself and expect the ``same`` verdict.
 
 The typed rows below are replicated verbatim from the registry lane's
 committed truth table (benchweave-registry origin/feat/issue225-registry-mgmt
-@ e913e92, first committed 114f3b1: tests/fixtures/issue225/
-namespace-vetting.truth-table.json, rows sim-v1..sim-v7) and are
+@ ab2eef3, first committed 114f3b1: tests/fixtures/issue225/
+namespace-vetting.truth-table.json, rows sim-v1..sim-v11) and are
 cross-checked against this repo's committed lane-rules.json copy so neither
 side can drift alone. When a benchweave-registry checkout is available
 (BENCHWEAVE_REGISTRY_CLONE — it must carry the registry lane's branch state
@@ -43,11 +42,12 @@ from click.testing import CliRunner
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "registry-clone"
 LANE_RULES = FIXTURE / "lane-rules.json"
-#: Byte-for-byte source of the committed copy: the registry lane's fold
-#: bytes (e913e92) — the cross-branch contract is byte-identical
-#: lane-rules.json on both branches.
+#: Byte-for-byte source of the committed copy: the registry lane's FINAL
+#: vector set (ab2eef3, coordinator-ruled closed; their later residual
+#: commits touch no lane-rules bytes) — the cross-branch contract is
+#: byte-identical lane-rules.json on both branches.
 LANE_RULES_SOURCE_DIGEST = (
-    "1761d91a874991575e45cb0b09d811bfdb7ffd30b6d29525599a76dbd86bc842"
+    "2980cdba5dcd19d441e4578d91b57892d5c138a216ec85255f6b112789c7951e"
 )
 
 #: The typed vector rows, verbatim from the registry lane's committed truth
@@ -68,6 +68,14 @@ TYPED_VECTORS: tuple[dict[str, str], ...] = (
      "expected": "same", "comparison_set": "vetted"},
     {"id": "sim-v7", "candidate": "madeinoz67-labs", "existing": "madeinoz67",
      "expected": "lookalike", "comparison_set": "vetted"},
+    {"id": "sim-v8", "candidate": "dev-tools-inc", "existing": "dev",
+     "expected": "reserved", "comparison_set": "reserved"},
+    {"id": "sim-v9", "candidate": "devlin-instruments", "existing": "dev",
+     "expected": "distinct", "comparison_set": "reserved"},
+    {"id": "sim-v10", "candidate": "5im-psu", "existing": "sim-psu",
+     "expected": "same", "comparison_set": "reserved"},
+    {"id": "sim-v11", "candidate": "sim-psu-labs", "existing": "sim-psu",
+     "expected": "reserved", "comparison_set": "reserved"},
 )
 
 
@@ -356,15 +364,11 @@ def test_classifier_boundary_and_params_parity() -> None:
         try:
             import validate_records as reg
 
-            # One case is excluded until the registry lane's wave-2 lands the
-            # delimiter-boundary ruling: devlin-instruments vs dev — their
-            # LANDED classifier still plain-prefixes skeletons (verdict
-            # 'reserved'); the ruling (and this SDK classifier) say 'distinct'.
-            # The exclusion lifts in the same wave as the held vector re-sync.
-            pending_boundary = {"devlin-instruments"}
-            for candidate, existing, reserved, expected in cases:
-                if candidate in pending_boundary:
-                    continue
+            # The registry lane's wave-2 (ab2eef3) landed the delimiter-bounded
+            # containment ruling; the earlier devlin-instruments exclusion is
+            # lifted and every case cross-checks, plus the reverse span shape.
+            cases_with_reverse = [*cases, ("sim", "sim-psu", True, "reserved")]
+            for candidate, existing, reserved, expected in cases_with_reverse:
                 theirs = reg.namespace_verdict(
                     candidate, existing, reserved=reserved, rules=rules_doc
                 )

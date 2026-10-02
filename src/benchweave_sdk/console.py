@@ -36,8 +36,12 @@ class ConsoleOutput:
 
     def findings(self, rows: list[tuple[str, str, str]]) -> None:
         if not self.terminal:
+            # Machine-shaped failure diagnostics bypass rich (S13, the same
+            # corruption class document() shed): the rows are prefix-shaped,
+            # and a wrap at rich's default width 80 would break the path mid-
+            # token and fragment one finding across lines.
             for code, path, message in rows:
-                self.message(f"{code}: {path}: {message}")
+                self.console.file.write(f"{code}: {path}: {message}\n")
             return
         table = Table(title="Presentation findings", box=None)
         table.add_column("Code", style="yellow")
