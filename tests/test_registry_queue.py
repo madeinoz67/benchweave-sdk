@@ -211,7 +211,7 @@ def test_latest_review_outcome_wins_over_an_earlier_accepted(tmp_path: Path) -> 
     clone = _mini_clone(
         tmp_path,
         records=[
-            "records/submissions/northwind-instruments/osc-probe/0.1.0/artefacts/submission.json",
+            "records/submissions/northwind-instruments/osc-probe/0.1.0/artefacts/.gitkeep",
             "records/submissions/northwind-instruments/osc-probe/0.1.0/review-1.json",
         ],
     )
@@ -251,7 +251,7 @@ def test_rejected_latest_review_maps_to_changes_requested(tmp_path: Path) -> Non
     clone = _mini_clone(
         tmp_path,
         records=[
-            "records/submissions/northwind-instruments/osc-probe/0.1.0/artefacts/submission.json",
+            "records/submissions/northwind-instruments/osc-probe/0.1.0/artefacts/.gitkeep",
             "records/submissions/northwind-instruments/osc-probe/0.1.0/review-1.json",
         ],
     )
@@ -300,7 +300,7 @@ def test_publish_record_dominates_a_closed_pr(tmp_path: Path) -> None:
         records=[
             "records/lifecycle/northwind-instruments/vmx3-power-supply/1.0.0/1-publish.json",
             "records/submissions/northwind-instruments/vmx3-power-supply/1.0.0/artefacts/"
-            "submission.json",
+            ".gitkeep",
         ],
     )
     pr = _pr_fixture(

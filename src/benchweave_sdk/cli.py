@@ -831,16 +831,16 @@ def registry_withdraw_command(
 )
 @click.option("--to", "to_publisher", required=True, help="The receiving publisher id")
 @click.option(
-    "--consent-from", required=True,
-    help="The transferring publisher's consent, naming them",
+    "--consent-from", default=None,
+    help="Optional evidence text from the transferring publisher (the ids always ride)",
 )
 @click.option(
-    "--consent-to", required=True,
-    help="The receiving publisher's consent, naming them",
+    "--consent-to", default=None,
+    help="Optional evidence text from the receiving publisher (the ids always ride)",
 )
 @click.option(
-    "--vetting-ref", required=True,
-    help="Citation of the receiver's vetting (publishers.json entry + V-rows)",
+    "--vetting-ref", default=None,
+    help="Vetting citation; default and only value: publishers.json#<receiver>",
 )
 @click.option("--reason", required=True, help="The transfer reason (recorded)")
 @click.option("--actor", required=True, help="The GitHub identity responsible for this record")
@@ -850,19 +850,21 @@ def registry_transfer_command(
     registry_clone: Path,
     release: str,
     to_publisher: str,
-    consent_from: str,
-    consent_to: str,
-    vetting_ref: str,
+    consent_from: str | None,
+    consent_to: str | None,
+    vetting_ref: str | None,
     reason: str,
     actor: str,
     kind: str,
 ) -> None:
     """Transfer a release to another publisher — transfer is re-vetting (Q9).
 
-    Both consents must name their publisher; the receiver's vetting
-    reference is recorded and resolved by the registry's records CI. Future
-    releases of the plugin publish under the receiver's namespace; existing
-    release paths are immutable history.
+    The record's consents carry both publisher ids (the registry gate's
+    landed semantics), the vetting reference is the canonical
+    publishers.json#<receiver> citation, and the receiver must hold a
+    publishers.json vetting block — the same refusals the registry's records
+    CI makes. Future releases of the plugin publish under the receiver's
+    namespace; existing release paths are immutable history.
     """
     from .registry_ops import parse_release_ref, transfer_release
 

@@ -151,7 +151,10 @@ def load_records_view(clone: Path) -> RecordsView:
 
     submissions_root = clone / "records" / "submissions"
     if submissions_root.is_dir():
-        for path in sorted(submissions_root.rglob("*.json")):
+        # Submission existence is ANY file under <p>/<x>/<v>/ (the tree is the
+        # marker — merged trees keep review records, PR-side trees carry
+        # artefacts); review-record parsing stays gated on review-<n>.json.
+        for path in sorted(p for p in submissions_root.rglob("*") if p.is_file()):
             match = _SUBMISSION_PATH.match(path.relative_to(clone).as_posix())
             if match is None:
                 continue
@@ -652,6 +655,14 @@ def _write_status_pair(
 
 def _publisher_contact(clone: Path, publisher: str) -> str | None:
     """The publisher's support contact from the vetted publishers file."""
+    entry = _publisher_entry(clone, publisher)
+    if entry is not None and entry.get("github"):
+        return f"https://github.com/{entry['github']}"
+    return None
+
+
+def _publisher_entry(clone: Path, publisher: str) -> dict[str, Any] | None:
+    """One publisher's entry from the vetted publishers file, or None."""
     path = clone / "records" / "publishers.json"
     if not path.is_file():
         return None
@@ -659,9 +670,12 @@ def _publisher_contact(clone: Path, publisher: str) -> str | None:
         publishers = json.loads(path.read_bytes())
     except ValueError as exc:
         raise RegistryOpsError(f"publishers_invalid:{path} ({exc})") from exc
-    for entry in publishers.get("publishers", []):
-        if entry.get("publisher_id") == publisher and entry.get("github"):
-            return f"https://github.com/{entry['github']}"
+    entries = publishers.get("publishers", [])
+    if not isinstance(entries, list):
+        return None
+    for entry in entries:
+        if isinstance(entry, dict) and entry.get("publisher_id") == publisher:
+            return entry
     return None
 
 
@@ -884,39 +898,45 @@ def transfer_release(
     key: SubKey,
     *,
     to_publisher: str,
-    consent_from: str,
-    consent_to: str,
-    vetting_reference: str,
+    consent_from: str | None = None,
+    consent_to: str | None = None,
+    vetting_reference: str | None = None,
     reason: str,
     actor: str,
     kind: str = "admitted-release",
 ) -> Path:
     """Append the transfer record (CR-17/Q9: transfer is re-vetting).
 
-    Both consents must name their publisher; the receiver's vetting
-    reference is recorded verbatim — its resolution against publishers.json
-    and the V-rows is the registry's records-CI arm (design section 2.4),
-    not this command's.
+    Consents carry the exact publisher ids (the registry gate's landed
+    semantics: the consents set must CONTAIN both publishers), with the
+    optional free-text evidence strings riding after them. The vetting
+    reference defaults to — and when given must equal — the canonical
+    citation ``publishers.json#<receiver>``, and the receiver must be a
+    publishers.json entry carrying a vetting block; both refusals use the
+    registry gate's standing prefixes so the two surfaces agree.
     """
     if to_publisher == key.publisher:
         raise RegistryOpsError(
             f"transfer_invalid:same_publisher ({to_publisher} already owns the release)"
         )
-    if key.publisher not in consent_from:
+    canonical = f"publishers.json#{to_publisher}"
+    if vetting_reference is not None and vetting_reference != canonical:
         raise RegistryOpsError(
-            f"transfer_consents_incomplete:consent_from_not_naming:{key.publisher} "
-            f"(got {consent_from!r})"
+            f"transfer_vetting_unresolved:{vetting_reference!r} does not resolve "
+            f"to {to_publisher}'s vetting citation ({canonical})"
         )
-    if to_publisher not in consent_to:
+    receiver = _publisher_entry(clone, to_publisher)
+    if receiver is None or "vetting" not in receiver:
         raise RegistryOpsError(
-            f"transfer_consents_incomplete:consent_to_not_naming:{to_publisher} "
-            f"(got {consent_to!r})"
+            f"transfer_receiver_unvetted:{to_publisher} (no publishers.json entry "
+            "with a vetting block; transfer is re-vetting — the receiver must "
+            "be vetted first)"
         )
-    if not vetting_reference.strip():
-        raise RegistryOpsError(
-            "transfer_invalid:vetting_reference_absent (cite the receiver's "
-            "publishers.json entry and V-rows)"
-        )
+    consents = [key.publisher, to_publisher]
+    if consent_from is not None:
+        consents.append(consent_from)
+    if consent_to is not None:
+        consents.append(consent_to)
     return append_lifecycle_record(
         clone, key, "transfer",
         actor=actor, reason=reason, kind=kind,
@@ -924,8 +944,8 @@ def transfer_release(
             "transfer": {
                 "from_publisher": key.publisher,
                 "to_publisher": to_publisher,
-                "consents": [consent_from, consent_to],
-                "vetting_reference": vetting_reference,
+                "consents": consents,
+                "vetting_reference": canonical,
             }
         },
     )

@@ -141,7 +141,6 @@ def test_every_registry_op_is_append_only(clone: Path, origin_key: Path) -> None
         ("transfer", ["transfer", RELEASE, "--to", "harborline-systems",
                       "--consent-from", "northwind-instruments consents",
                       "--consent-to", "harborline-systems accepts",
-                      "--vetting-ref", "publishers.json harborline-systems + V-rows",
                       "--reason", "r", "--actor", "a"], set()),
         ("withdraw", ["withdraw", PRE_ACCEPTANCE, "--reason", "r", "--actor", "a"], set()),
     ]

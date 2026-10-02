@@ -103,14 +103,17 @@ def test_withdraw_after_publication_refuses(tmp_path: Path) -> None:
     ).exists()
 
 
-def test_transfer_appends_the_record_with_both_consents(tmp_path: Path) -> None:
+def test_transfer_appends_the_record_with_both_publisher_ids(tmp_path: Path) -> None:
+    """Consents carry the exact publisher ids (the registry gate's landed
+    semantics — its check is `needed <= set(consents)`), with optional
+    evidence text riding after them; the vetting reference is the canonical
+    publishers.json#<receiver> citation."""
     clone = _clone(tmp_path)
     _ok(
         clone, "transfer", PUBLISHED,
         "--to", "harborline-systems",
         "--consent-from", "northwind-instruments consents per owners-meeting note 7",
         "--consent-to", "harborline-systems accepts per owners-meeting note 7",
-        "--vetting-ref", "publishers.json harborline-systems entry + V-rows V-01..V-06",
         "--reason", "maintenance transfer to the maintainer's org",
         "--actor", "registry-coordinator",
     )
@@ -120,36 +123,62 @@ def test_transfer_appends_the_record_with_both_consents(tmp_path: Path) -> None:
         "from_publisher": "northwind-instruments",
         "to_publisher": "harborline-systems",
         "consents": [
+            "northwind-instruments",
+            "harborline-systems",
             "northwind-instruments consents per owners-meeting note 7",
             "harborline-systems accepts per owners-meeting note 7",
         ],
-        "vetting_reference": "publishers.json harborline-systems entry + V-rows V-01..V-06",
+        "vetting_reference": "publishers.json#harborline-systems",
     }
     assert record["actor"] == "registry-coordinator"
 
 
-def test_transfer_refuses_consents_that_do_not_name_the_parties(
-    tmp_path: Path,
-) -> None:
+def test_transfer_defaults_the_canonical_vetting_citation(tmp_path: Path) -> None:
+    clone = _clone(tmp_path)
+    _ok(
+        clone, "transfer", PUBLISHED,
+        "--to", "harborline-systems",
+        "--reason", "r", "--actor", "a",
+    )
+    transfer = _record(clone, PUBLISHED, "2-transfer.json")["lifecycle"]["transfer"]
+    assert transfer["consents"] == ["northwind-instruments", "harborline-systems"]
+    assert transfer["vetting_reference"] == "publishers.json#harborline-systems"
+
+
+def test_transfer_refuses_a_noncanonical_vetting_reference(tmp_path: Path) -> None:
     clone = _clone(tmp_path)
     output = _refuse(
         clone, "transfer", PUBLISHED,
         "--to", "harborline-systems",
-        "--consent-from", "someone else entirely",
-        "--consent-to", "harborline-systems accepts",
-        "--vetting-ref", "v",
+        "--vetting-ref", "publishers.json harborline-systems entry + V-rows V-01..V-06",
         "--reason", "r", "--actor", "a",
     )
-    assert "transfer_consents_incomplete:" in output
+    assert "transfer_vetting_unresolved:" in output
+    assert "publishers.json#harborline-systems" in output
+
+
+def test_transfer_refuses_an_unvetted_receiver(tmp_path: Path) -> None:
+    """Transfer is re-vetting: a receiver without a publishers.json vetting
+    block refuses with the registry gate's standing prefix."""
+    clone = _clone(tmp_path)
+    pub_path = clone / "records" / "publishers.json"
+    pub = json.loads(pub_path.read_bytes())
+    for entry in pub["publishers"]:
+        if entry["publisher_id"] == "harborline-systems":
+            entry.pop("vetting", None)
+    pub_path.write_text(json.dumps(pub))
     output = _refuse(
         clone, "transfer", PUBLISHED,
         "--to", "harborline-systems",
-        "--consent-from", "northwind-instruments consents",
-        "--consent-to", "a third party accepts",
-        "--vetting-ref", "v",
         "--reason", "r", "--actor", "a",
     )
-    assert "transfer_consents_incomplete:" in output
+    assert "transfer_receiver_unvetted:harborline-systems" in output
+    output = _refuse(
+        clone, "transfer", PUBLISHED,
+        "--to", "acme-instruments",
+        "--reason", "r", "--actor", "a",
+    )
+    assert "transfer_receiver_unvetted:acme-instruments" in output
 
 
 def test_transfer_refuses_a_self_transfer(tmp_path: Path) -> None:
@@ -157,9 +186,6 @@ def test_transfer_refuses_a_self_transfer(tmp_path: Path) -> None:
     output = _refuse(
         clone, "transfer", PUBLISHED,
         "--to", "northwind-instruments",
-        "--consent-from", "northwind-instruments consents",
-        "--consent-to", "northwind-instruments accepts",
-        "--vetting-ref", "v",
         "--reason", "r", "--actor", "a",
     )
     assert "transfer_invalid:" in output
