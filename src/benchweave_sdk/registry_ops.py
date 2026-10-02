@@ -527,7 +527,7 @@ def append_lifecycle_record(
         block.update(extra)
     record = {
         "record_type": "lifecycle",
-        "record_version": "1.1.0",
+        "record_version": RECORD_VERSION,
         "kind": kind,
         "created_at": _now_utc(),
         "actor": actor,
@@ -561,10 +561,35 @@ def _now_utc() -> str:
 # CR-13/Q12 restated: nothing here changes admission semantics — the lane
 # compensates process-side (signed status + records), never admission-side.
 
-_VENDORED_STATUS_SCHEMA = (
-    Path(__file__).parent / "standards" / "registry" / "0.1.1" / "release-status.schema.json"
-)
+_VENDORED_STATUS_SCHEMA_DIR = Path(__file__).parent / "standards" / "registry"
 _ADVISORY_SEVERITIES = ("info", "low", "medium", "high", "critical")
+
+#: The lifecycle record version this CLI stamps (records.schema 1.1.0
+#: semantics: the withdraw op plus per-op required blocks, issue #225 design
+#: section 2.5) — an authored lane constant mirroring the registry
+#: repository's records schema, which this repository's vendored lock does
+#: not carry.
+RECORD_VERSION = "1.1.0"
+
+
+def _status_schema() -> dict[str, Any]:
+    """The ACTIVE registry standard's release-status schema, by derivation.
+
+    The path comes from the served lock row (not a literal), and the status
+    stamp the documents carry comes from the schema's own ``status_version``
+    const — the two can never disagree. Every retained registry version's
+    status schema is byte-identical for this document shape (the lock pins
+    the same digest for each), so the active row serves every status doc.
+    """
+    from .served import active_version
+
+    path = (
+        _VENDORED_STATUS_SCHEMA_DIR
+        / active_version("registry")
+        / "release-status.schema.json"
+    )
+    schema: dict[str, Any] = json.loads(path.read_bytes())
+    return schema
 
 
 def release_dir(clone: Path, key: SubKey) -> Path:
@@ -587,9 +612,8 @@ def _validate_status_doc(doc: dict[str, Any]) -> None:
     """Refuse any status document that would fail the served schema."""
     import jsonschema
 
-    schema = json.loads(_VENDORED_STATUS_SCHEMA.read_bytes())
     try:
-        jsonschema.validate(doc, schema)
+        jsonschema.validate(doc, _status_schema())
     except jsonschema.ValidationError as exc:
         raise RegistryOpsError(f"status_invalid:{exc.message}") from exc
 
@@ -688,7 +712,7 @@ def publish_status(
             f"{key.publisher}; pass --support-contact"
         )
     doc: dict[str, Any] = {
-        "status_version": "0.1.1",
+        "status_version": _status_schema()["properties"]["status_version"]["const"],
         "release": {
             "registry_id": directory.parents[2].name,
             "package_id": f"{key.publisher}/{key.plugin}",

@@ -418,6 +418,18 @@ REGISTER: dict[str, tuple[str, int, tuple[str, ...] | None]] = {
         3,
         ("0.1.1", "0.0.0", "0.1.0"),
     ),
+    "src/benchweave_sdk/registry_ops.py": (
+        "RECORD_VERSION, the lifecycle record version the registry CLI "
+        "stamps (records.schema 1.1.0 semantics: the withdraw op plus "
+        "per-op required blocks, issue #225 design section 2.5) — an "
+        "authored lane constant mirroring the registry repository's records "
+        "schema, which this repository's vendored lock does not carry; the "
+        "status schema path and stamp ARE derived (served.active_version "
+        "and the schema's own status_version const) and stay outside "
+        "this row",
+        1,
+        ("1.1.0",),
+    ),
 }
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
