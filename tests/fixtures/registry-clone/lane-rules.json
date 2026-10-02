@@ -72,6 +72,16 @@
         "candidate": "acme-power",
         "existing": "madeinoz67",
         "expected": "distinct"
+      },
+      {
+        "candidate": "b3nchweave",
+        "existing": "benchweave",
+        "expected": "same"
+      },
+      {
+        "candidate": "madeinoz67-labs",
+        "existing": "madeinoz67",
+        "expected": "lookalike"
       }
     ]
   },
@@ -92,5 +102,10 @@
     "id": "review-checklist",
     "version": "1",
     "path": "review-checklist.md"
+  },
+  "vetting_checklist": {
+    "id": "vetting-checklist",
+    "version": "1",
+    "path": "vetting-checklist.md"
   }
 }

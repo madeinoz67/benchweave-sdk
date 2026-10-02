@@ -1,0 +1,1 @@
+{"actor":"northwind-instruments","created_at":"2026-09-28T00:00:00Z","kind":"community-shared","lifecycle":{"op":"withdraw","plugin":"osc-probe","publisher":"northwind-instruments","reason":"fixture: withdrawn by record while a stale PR stays open (table-repair cell 9)","version":"0.3.0"},"record_type":"lifecycle","record_version":"1.1.0"}

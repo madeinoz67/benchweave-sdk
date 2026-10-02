@@ -394,8 +394,11 @@ def derive_stage(view: RecordsView, key: SubKey, pr: PullRequest | None) -> Stag
     whose partial semantics mark every stage PR state could have raised.
     """
     base = _records_stage(view, key)
-    if base.stage == "published":
-        return base  # precedence 1 dominates every PR-derived stage
+    if base.stage in {"published", "withdrawn"}:
+        # Precedence 1-2 dominate every PR-derived stage: a publish or withdraw
+        # RECORD is records-terminal — a stale open PR can neither lower the
+        # stage (submitted/in-review) nor raise it (signed).
+        return base
     if pr is None:
         # Checked against available PR state: no PR exists — records-final.
         return StageResult(base.stage, base.evidence, False)
@@ -421,8 +424,10 @@ def derive_stage(view: RecordsView, key: SubKey, pr: PullRequest | None) -> Stag
         return StageResult("in review", (f"pr:{pr.number}:review-activity",), False)
     if pr.state == "open":
         return StageResult("submitted", (f"pr:{pr.number}:open",), False)
-    # A merged PR whose records have not landed yet: records-derived, final.
-    return StageResult(base.stage, base.evidence, False)
+    # A merged PR whose records have not landed yet: the records ARE
+    # imminent — the row discloses stage_partial instead of claiming a
+    # records-final stage it is about to leave (fold row 3).
+    return StageResult(base.stage, base.evidence, True)
 
 
 # --- the reports ------------------------------------------------------------------
@@ -596,19 +601,25 @@ def _status_schema() -> dict[str, Any]:
 
 
 def release_dir(clone: Path, key: SubKey) -> Path:
-    """The release's served directory; absent releases refuse naming the path."""
+    """The release's served directory, exhausting every origin candidate.
+
+    A clone may carry more than one origin directory; an earlier-sorting one
+    without this release must not mask the one that has it (the refusal only
+    fires once no candidate carries the manifest).
+    """
     releases = clone / "releases"
     if not releases.is_dir():
         raise RegistryOpsError(f"release_absent: no releases/ tree under {clone}")
-    for child in sorted(releases.iterdir()):
-        if child.is_dir():
-            directory = child / key.publisher / key.plugin / key.version
-            if (directory / "manifest.json").is_file():
-                return directory
-            raise RegistryOpsError(
-                f"release_absent:{directory} (no manifest.json under the release path)"
-            )
-    raise RegistryOpsError(f"release_absent:{releases} (empty releases tree)")
+    absent: list[str] = []
+    for child in sorted(entry for entry in releases.iterdir() if entry.is_dir()):
+        directory = child / key.publisher / key.plugin / key.version
+        if (directory / "manifest.json").is_file():
+            return directory
+        absent.append(str(directory))
+    detail = "; ".join(absent) if absent else "empty releases tree"
+    raise RegistryOpsError(
+        f"release_absent: no manifest.json under any origin ({detail})"
+    )
 
 
 def _validate_status_doc(doc: dict[str, Any]) -> None:
@@ -874,13 +885,21 @@ def withdraw_release(
     *,
     reason: str,
     actor: str,
-    kind: str = "community-shared",
+    kind: str | None = None,
 ) -> Path:
-    """Pre-acceptance withdrawal only (CR-32).
+    """Pre-acceptance withdrawal only (CR-32) — with no default kind.
 
     Refuses once a publish record exists: post-signing withdrawal is an
-    advisory or an unlist, never a silent disappearance.
+    advisory or an unlist, never a silent disappearance. The CR-56 kind tag
+    is the record's class and must be chosen explicitly: pre-acceptance
+    withdrawal has no honest default (fold row 4).
     """
+    if kind is None:
+        raise RegistryOpsError(
+            "record_kind_required: pre-acceptance withdrawal has no honest "
+            "default kind; pass --kind (admitted-release | in-tree-fixture | "
+            "community-shared)"
+        )
     view = load_records_view(clone)
     if "publish" in view.ops(key):
         raise RegistryOpsError(

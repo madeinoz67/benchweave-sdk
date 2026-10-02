@@ -349,6 +349,8 @@ A Python wheel/source distribution and a registry release are different artefact
 
 Show the owner the actual built files, evidence and remaining gaps before publishing. Hardware qualification and local commissioning remain separate. The SDK retains the project's proprietary licence declaration; release owners must establish distribution rights before sharing it publicly.
 
+After your submission lands as a PR, track it without asking anyone: `benchweave-sdk registry status --publisher <you> --registry-clone <clone-of-benchweave-registry>` reports your exact submission set and every release's lifecycle timeline (publishes, advisories, yanks, transfers) from the committed records alone — the contributor-facing half of the queue maintainers see. Stages carry `stage_partial` flags because PR-side review activity is not derivable from records; the maintainer's `registry queue` reads it when a live `gh` is available.
+
 ## Maintenance and release cycle
 
 The main repository's Package workflow builds the gateway and SDK from source distributions, then tests installed wheels in temporary environments on Linux and macOS. It generates, builds and installs an external plugin outside the checkout, runs its tests, checks packaged contract bytes and versions, exercises gateway loading and rejects tampered code.

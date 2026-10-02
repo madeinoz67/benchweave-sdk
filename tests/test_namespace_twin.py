@@ -1,23 +1,26 @@
 """C5's SDK-side namespace twin: the committed similarity vectors, pinned.
 
-The classifier is NOT flat: the five committed vectors in the registry
+The classifier is NOT flat: the seven committed vectors in the registry
 repository's lane-rules.json are satisfiable only by a TWO-COMPARISON-SET
 rule (the registry lane's landed resolution, issue #225): near a RESERVED
 name the verdict is ``reserved``; near a VETTED namespace it is
 ``lookalike``. Near = skeleton equality, skeleton-prefix containment, or
 edit distance within the committed max. Each vector's expected label TYPES
 its comparison set — sim-v3 runs reserved (``otdp-tools`` extends the
-reserved ``otdp``); the other four run vetted (``benchweave`` playing an
-abstract incumbent vetted namespace).
+reserved ``otdp``); the others run vetted (``benchweave`` and
+``madeinoz67`` playing abstract incumbent vetted namespaces); sim-v6 pins
+skeleton equality itself (``b3nchweave`` confusable-folds onto
+``benchweave``) and expects the ``same`` verdict.
 
 The typed rows below are replicated verbatim from the registry lane's
 committed truth table (benchweave-registry origin/feat/issue225-registry-mgmt
-@ 7fa9765, first committed 114f3b1: tests/fixtures/issue225/
-namespace-vetting.truth-table.json, rows sim-v1..sim-v5) and are
+@ e913e92, first committed 114f3b1: tests/fixtures/issue225/
+namespace-vetting.truth-table.json, rows sim-v1..sim-v7) and are
 cross-checked against this repo's committed lane-rules.json copy so neither
 side can drift alone. When a benchweave-registry checkout is available
-(BENCHWEAVE_REGISTRY_CLONE), the copy is also cross-checked against the
-live file.
+(BENCHWEAVE_REGISTRY_CLONE — it must carry the registry lane's branch state
+until that branch merges; main's lane-rules.json differs by design), the
+copy is also cross-checked against the live file.
 
 Gate posture stays surface-local (the twins pin the CLASSIFIER): at SDK
 package time a lookalike is flagged-not-refused and rides the draft; at
@@ -38,9 +41,11 @@ from click.testing import CliRunner
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "registry-clone"
 LANE_RULES = FIXTURE / "lane-rules.json"
-#: Byte-for-byte source of the committed copy (disclosed in the module docstring).
+#: Byte-for-byte source of the committed copy: the registry lane's fold
+#: bytes (e913e92) — the cross-branch contract is byte-identical
+#: lane-rules.json on both branches.
 LANE_RULES_SOURCE_DIGEST = (
-    "0701d49aa2153265428182a0a0ea1ccfb810b39155246dde0c26d8663b00a262"
+    "1761d91a874991575e45cb0b09d811bfdb7ffd30b6d29525599a76dbd86bc842"
 )
 
 #: The typed vector rows, verbatim from the registry lane's committed truth
@@ -57,6 +62,10 @@ TYPED_VECTORS: tuple[dict[str, str], ...] = (
      "expected": "lookalike", "comparison_set": "vetted"},
     {"id": "sim-v5", "candidate": "acme-power", "existing": "madeinoz67",
      "expected": "distinct", "comparison_set": "vetted"},
+    {"id": "sim-v6", "candidate": "b3nchweave", "existing": "benchweave",
+     "expected": "same", "comparison_set": "vetted"},
+    {"id": "sim-v7", "candidate": "madeinoz67-labs", "existing": "madeinoz67",
+     "expected": "lookalike", "comparison_set": "vetted"},
 )
 
 

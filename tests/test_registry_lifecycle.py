@@ -402,3 +402,55 @@ def test_advise_validates_fields_before_writing(
         "--summary", "s", "--url", "http://not-https.example/x",
     )
     assert "advisory_field_invalid:" in output
+
+
+# --- fold-wave rows 2 and 6 -------------------------------------------------------
+
+
+def test_keyed_commands_exhaust_origin_candidates(
+    clone: Path, origin_key: tuple[Path, Any]
+) -> None:
+    """A second origin directory sorting earlier must not mask the release:
+    release_dir exhausts every candidate before refusing (the misleading
+    release_absent on a present release was the fold's row 2)."""
+    key_path, _public = origin_key
+    (clone / "releases" / "aaa-earlier-origin").mkdir()
+    result = _invoke(
+        clone, "publish-status", RELEASE, "--origin-key", str(key_path),
+        "--expires-at", "2030-01-01T00:00:00Z",
+    )
+    assert result.exit_code == 0, result.output
+    assert _read_status(clone)["sequence"] == 1
+
+
+def test_advise_after_yank_stays_yanked_and_appends_the_advisory(
+    clone: Path, origin_key: tuple[Path, Any]
+) -> None:
+    """The §2.3 invited pattern: yank the compromised release, THEN document
+    the CVE — the tree stays coherent (lifecycle yanked, advisory appended,
+    sequences monotone) so the registry's ordering-based sequence pin admits it."""
+    key_path, _public = origin_key
+    _publish(clone, key_path)
+    _ok(
+        clone, "yank", RELEASE, "--origin-key", str(key_path),
+        "--reason", "compromised build", "--actor", "registry-maintainer",
+    )
+    _ok(
+        clone, "advise", RELEASE, "--origin-key", str(key_path),
+        "--actor", "registry-maintainer",
+        "--id", "BW-2026-0002", "--severity", "high",
+        "--summary", "CVE on the yanked release", "--url", "https://example.invalid/cve",
+    )
+    doc = _read_status(clone)
+    _validate_schema(doc)
+    assert doc["sequence"] == 3
+    assert doc["lifecycle"] == "yanked"  # the advisory does not un-yank
+    assert [entry["id"] for entry in doc["advisories"]] == ["BW-2026-0002"]
+    record_names = sorted(
+        path.name
+        for path in (
+            clone / "records" / "lifecycle" / "northwind-instruments"
+            / "vmx3-power-supply" / "1.0.0"
+        ).iterdir()
+    )
+    assert record_names == ["1-publish.json", "2-yank.json", "3-advisory.json"]

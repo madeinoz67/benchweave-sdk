@@ -802,16 +802,20 @@ def registry_unlist_command(
 )
 @click.option("--reason", required=True, help="The withdrawal reason (recorded)")
 @click.option("--actor", required=True, help="The GitHub identity responsible for this record")
-@click.option("--kind", default="community-shared", show_default=True)
+@click.option(
+    "--kind", default=None,
+    help="Required: the record's CR-56 class (admitted-release | in-tree-fixture | "
+    "community-shared) — withdrawal has no honest default",
+)
 @_domain_errors
 def registry_withdraw_command(
-    registry_clone: Path, release: str, reason: str, actor: str, kind: str
+    registry_clone: Path, release: str, reason: str, actor: str, kind: str | None
 ) -> None:
     """Withdraw a submission — pre-acceptance only (contributor).
 
     Refuses once a publish record exists ('withdraw_after_publication:'):
     post-signing withdrawal is an advisory or an unlist, never a silent
-    disappearance (CR-32).
+    disappearance (CR-32). The CR-56 kind tag is required — no default.
     """
     from .registry_ops import parse_release_ref, withdraw_release
 

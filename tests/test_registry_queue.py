@@ -113,12 +113,14 @@ def test_status_publisher_scoped_exact_sets(clone: Path) -> None:
         ("northwind-instruments", "vmx3-power-supply", "1.1.0"),
         ("northwind-instruments", "osc-probe", "0.1.0"),
         ("northwind-instruments", "osc-probe", "0.2.0"),
+        ("northwind-instruments", "osc-probe", "0.3.0"),
     }
     assert harbor_keys == {
         ("harborline-systems", "load-bank-ctl", "1.4.0"),
         ("harborline-systems", "load-bank-ctl", "2.0.0"),
         ("harborline-systems", "sig-analyzer", "0.3.0"),
         ("harborline-systems", "sig-analyzer", "0.4.0"),
+        ("harborline-systems", "sig-analyzer", "0.1.0"),
     }
     # Exact sets are disjoint across publishers (CR-31's exact-set arm).
     assert north_keys.isdisjoint(harbor_keys)
@@ -137,6 +139,7 @@ def test_status_plugin_filter_narrows_within_a_publisher(clone: Path) -> None:
     assert {(row["plugin"], row["version"]) for row in report["submissions"]} == {
         ("osc-probe", "0.1.0"),
         ("osc-probe", "0.2.0"),
+        ("osc-probe", "0.3.0"),
     }
 
 
@@ -318,6 +321,35 @@ def test_publish_record_dominates_a_closed_pr(tmp_path: Path) -> None:
     )
     rows = _rows(_queue(clone, pr_state=pr))
     assert rows[("northwind-instruments", "vmx3-power-supply", "1.0.0")]["stage"] == "published"
+
+
+def test_merged_pr_without_records_discloses_partial(tmp_path: Path) -> None:
+    """A merged PR whose records have not landed: the records ARE imminent, so
+    the row discloses stage_partial rather than claiming records-final (fold
+    row 3's honest-disclosure route)."""
+    clone = _mini_clone(
+        tmp_path,
+        records=[
+            "records/submissions/harborline-systems/sig-analyzer/0.3.0/artefacts/.gitkeep",
+        ],
+    )
+    pr = _pr_fixture(
+        tmp_path,
+        [{
+            "number": 70,
+            "state": "merged",
+            "head_ref": "submission/harborline-systems-sig-analyzer-0.3.0",
+            "files": [
+                "records/submissions/harborline-systems/sig-analyzer/0.3.0/artefacts/"
+                "submission.json",
+            ],
+            "reviews": [],
+        }],
+    )
+    rows = _rows(_queue(clone, pr_state=pr))
+    row = rows[("harborline-systems", "sig-analyzer", "0.3.0")]
+    assert row["stage"] == "submitted"
+    assert row["stage_partial"] is True
 
 
 def test_pr_without_a_resolvable_submission_key_is_disclosed(

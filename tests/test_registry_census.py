@@ -142,7 +142,8 @@ def test_every_registry_op_is_append_only(clone: Path, origin_key: Path) -> None
                       "--consent-from", "northwind-instruments consents",
                       "--consent-to", "harborline-systems accepts",
                       "--reason", "r", "--actor", "a"], set()),
-        ("withdraw", ["withdraw", PRE_ACCEPTANCE, "--reason", "r", "--actor", "a"], set()),
+        ("withdraw", ["withdraw", PRE_ACCEPTANCE, "--reason", "r", "--actor", "a",
+                      "--kind", "community-shared"], set()),
     ]
     for label, argv, allowed_changes in ops:
         before = _snapshot(clone)

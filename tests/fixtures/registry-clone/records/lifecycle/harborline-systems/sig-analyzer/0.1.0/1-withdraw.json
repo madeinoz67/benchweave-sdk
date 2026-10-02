@@ -1,0 +1,1 @@
+{"actor":"harborline-systems","created_at":"2026-09-28T00:00:00Z","kind":"community-shared","lifecycle":{"op":"withdraw","plugin":"sig-analyzer","publisher":"harborline-systems","reason":"fixture: withdrawn by record with review activity on the stale PR (table-repair cell 10)","version":"0.1.0"},"record_type":"lifecycle","record_version":"1.1.0"}

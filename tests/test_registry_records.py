@@ -78,6 +78,7 @@ def test_withdraw_works_pre_acceptance_and_flips_the_queue(tmp_path: Path) -> No
     _ok(
         clone, "withdraw", PRE_ACCEPTANCE,
         "--reason", "superseded by a reworked submission", "--actor", "harborline-systems",
+        "--kind", "community-shared",
     )
     record = _record(clone, PRE_ACCEPTANCE, "1-withdraw.json")
     assert record["lifecycle"]["op"] == "withdraw"
@@ -94,12 +95,27 @@ def test_withdraw_after_publication_refuses(tmp_path: Path) -> None:
     clone = _clone(tmp_path)
     output = _refuse(
         clone, "withdraw", PUBLISHED, "--reason", "too late", "--actor", "whoever",
+        "--kind", "community-shared",
     )
     assert "withdraw_after_publication:" in output
     # And nothing was written.
     assert not (
         clone / "records" / "lifecycle" / "northwind-instruments"
         / "vmx3-power-supply" / "1.0.0" / "2-withdraw.json"
+    ).exists()
+
+
+def test_withdraw_requires_an_explicit_kind(tmp_path: Path) -> None:
+    """Pre-acceptance withdrawal has no honest default kind — the CR-56 tag is
+    the record's class and must be chosen, not defaulted (fold row 4)."""
+    clone = _clone(tmp_path)
+    output = _refuse(
+        clone, "withdraw", PRE_ACCEPTANCE, "--reason", "r", "--actor", "a",
+    )
+    assert "record_kind_required:" in output
+    assert not (
+        clone / "records" / "lifecycle" / "harborline-systems"
+        / "sig-analyzer" / "0.3.0"
     ).exists()
 
 
