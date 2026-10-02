@@ -210,31 +210,55 @@ def _skeleton(name: str, rules: LaneRules) -> str:
     return _fold(name, rules, keep_separators=False)
 
 
-def _boundary_contains(candidate: str, existing: str, rules: LaneRules) -> bool:
-    """Token-boundary containment (the delimiter-boundary ruling, S1): one
-    name extends the other at a REAL separator boundary, confusables
-    folded but separators preserved — 'dev-tools-inc' extends reserved
-    'dev'; 'devlin-instruments' shares the prefix with no boundary and
-    does not.
+def _prefix_span_skeletons(name: str, rules: LaneRules) -> set[str]:
+    """Skeletons of the separator-delimited prefix spans of a name.
+
+    ``sim-psu-labs`` spans sim / sim-psu / sim-psu-labs, and each span is
+    folded WHOLE — its inner separators erased with the rest of the skeleton
+    fold — so a cross-separator claim still matches: span ``a-b`` skeletons
+    to ``ab`` and matches an existing ``a_b`` (the registry classifier's
+    span rule; raw-separator matching misses that shape).
     """
-    left = _fold(candidate, rules, keep_separators=True)
-    right = _fold(existing, rules, keep_separators=True)
-    if left == right:
-        return True
-    return any(
-        left.startswith(right + separator) or right.startswith(left + separator)
-        for separator in rules.separators
+    spans: set[str] = set()
+    tokens: list[str] = []
+    current = ""
+    for char in name:
+        if char in rules.separators:
+            tokens.append(current)
+            spans.add(_skeleton("".join(tokens), rules))
+            current = ""
+        else:
+            current += char
+    tokens.append(current)
+    spans.add(_skeleton("".join(tokens), rules))
+    return {span for span in spans if span}
+
+
+def _span_contains(candidate: str, existing: str, rules: LaneRules) -> bool:
+    """Delimiter-bounded containment, the span rule: one name's skeleton is
+    one of the other's prefix-span skeletons (the full-equality case is
+    handled by the skeleton-equality arm before this runs).
+
+    ``dev-tools-inc`` claims reserved ``dev`` via span "dev";
+    ``devlin-instruments`` does not (its spans are devlin and the whole
+    name); ``sim-psu-labs`` claims ``sim-psu`` via span "sim-psu".
+    """
+    left = _skeleton(candidate, rules)
+    right = _skeleton(existing, rules)
+    return (
+        right in _prefix_span_skeletons(candidate, rules)
+        or left in _prefix_span_skeletons(existing, rules)
     )
 
 
 def _names_near(candidate: str, existing: str, rules: LaneRules) -> bool:
     """The committed near rule on raw names: skeleton equality, edit
-    distance within the committed max, or separator-boundary containment."""
+    distance within the committed max, or span containment."""
     left, right = _skeleton(candidate, rules), _skeleton(existing, rules)
     return (
         left == right
         or _edit_distance(left, right) <= rules.similarity_max_distance
-        or _boundary_contains(candidate, existing, rules)
+        or _span_contains(candidate, existing, rules)
     )
 
 
@@ -269,13 +293,14 @@ def namespace_verdict(
     RESERVED name the verdict is ``reserved`` (a claim on the standard's
     name — ``otdp-tools`` extends ``otdp``); near a VETTED namespace it is
     ``lookalike`` (impersonation, for review). Near = skeleton equality,
-    edit distance within the committed max, or separator-boundary
-    containment (confusables folded, separators preserved — the
-    delimiter-boundary ruling: ``dev-tools-inc`` extends ``dev``;
-    ``devlin-instruments`` does not). Verdict parity with the registry's
-    classifier is pinned on the committed params by the lane-rules vectors
-    twin AND on MOVED params by the twin's param-consumption arm — parity
-    holds on what both consume, not by mirror-implementation.
+    edit distance within the committed max, or prefix-span containment
+    (delimiter-bounded, spans skeletonized whole: ``dev-tools-inc``
+    extends ``dev``; ``devlin-instruments`` does not; a cross-separator
+    span ``a-b`` matches an existing ``a_b``). Verdict parity with the
+    registry's classifier is pinned on the committed params by the
+    lane-rules vectors twin AND on MOVED params by the twin's
+    param-consumption arm — parity holds on what both consume, not by
+    mirror-implementation.
     """
     left, right = _skeleton(candidate, rules), _skeleton(existing, rules)
     if left == right:

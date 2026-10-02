@@ -356,6 +356,12 @@ def test_classifier_boundary_and_params_parity() -> None:
             ("devsense-tools", "dev", True, "distinct"),   # dev+sense, no boundary
             ("devkit", "dev", True, "distinct"),           # no separator at all
             ("madeinoz67labs", "madeinoz67", False, "distinct"),  # no separator
+            # Cross-separator containment (lane A's find): prefix spans are
+            # skeletonized WHOLE — inner separators erased — so span 'a-b'
+            # folds to 'ab' and matches an existing 'a_b'. Raw-separator
+            # matching called these distinct; the span rule does not.
+            ("north-wind-instruments", "north_wind", False, "lookalike"),
+            ("a-b-c-d-e", "a_b", True, "reserved"),
         ]
         for candidate, existing, reserved, expected in cases:
             assert namespace_verdict(candidate, existing, rules, reserved=reserved) == expected, (
