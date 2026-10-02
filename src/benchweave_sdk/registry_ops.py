@@ -800,3 +800,99 @@ def advise_release(
         extra={"advisory": dict(advisory)},
     )
     return doc, record
+
+
+def unlist_release(
+    clone: Path,
+    key: SubKey,
+    *,
+    reason: str,
+    actor: str,
+    kind: str = "admitted-release",
+) -> Path:
+    """Append the unlist record ONLY — no status document is read or written.
+
+    An unlisted release stays resolvable and admissible (CR-32/E4): the
+    catalogue row drops at index regeneration (the registry lane's generator
+    arm); the served state is untouched.
+    """
+    return append_lifecycle_record(
+        clone, key, "unlist", actor=actor, reason=reason, kind=kind
+    )
+
+
+def withdraw_release(
+    clone: Path,
+    key: SubKey,
+    *,
+    reason: str,
+    actor: str,
+    kind: str = "community-shared",
+) -> Path:
+    """Pre-acceptance withdrawal only (CR-32).
+
+    Refuses once a publish record exists: post-signing withdrawal is an
+    advisory or an unlist, never a silent disappearance.
+    """
+    view = load_records_view(clone)
+    if "publish" in view.ops(key):
+        raise RegistryOpsError(
+            f"withdraw_after_publication:{key.publisher}/{key.plugin}@{key.version} "
+            "(a publish record exists; post-signing withdrawal is an advisory "
+            "or an unlist — CR-32)"
+        )
+    return append_lifecycle_record(
+        clone, key, "withdraw", actor=actor, reason=reason, kind=kind
+    )
+
+
+def transfer_release(
+    clone: Path,
+    key: SubKey,
+    *,
+    to_publisher: str,
+    consent_from: str,
+    consent_to: str,
+    vetting_reference: str,
+    reason: str,
+    actor: str,
+    kind: str = "admitted-release",
+) -> Path:
+    """Append the transfer record (CR-17/Q9: transfer is re-vetting).
+
+    Both consents must name their publisher; the receiver's vetting
+    reference is recorded verbatim — its resolution against publishers.json
+    and the V-rows is the registry's records-CI arm (design section 2.4),
+    not this command's.
+    """
+    if to_publisher == key.publisher:
+        raise RegistryOpsError(
+            f"transfer_invalid:same_publisher ({to_publisher} already owns the release)"
+        )
+    if key.publisher not in consent_from:
+        raise RegistryOpsError(
+            f"transfer_invalid:consent_from_not_naming:{key.publisher} "
+            f"(got {consent_from!r})"
+        )
+    if to_publisher not in consent_to:
+        raise RegistryOpsError(
+            f"transfer_invalid:consent_to_not_naming:{to_publisher} "
+            f"(got {consent_to!r})"
+        )
+    if not vetting_reference.strip():
+        raise RegistryOpsError(
+            "transfer_invalid:vetting_reference_absent (cite the receiver's "
+            "publishers.json entry and V-rows)"
+        )
+    return append_lifecycle_record(
+        clone, key, "transfer",
+        actor=actor, reason=reason, kind=kind,
+        extra={
+            "transfer": {
+                "from_publisher": key.publisher,
+                "to_publisher": to_publisher,
+                "consents": [consent_from, consent_to],
+                "vetting_reference": vetting_reference,
+            }
+        },
+    )

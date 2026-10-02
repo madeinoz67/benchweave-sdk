@@ -765,6 +765,126 @@ def registry_advise_command(
     output.message(f"  {record}", style="green")
 
 
+@registry_group.command("unlist")
+@click.argument("release")
+@click.option(
+    "--registry-clone", required=True, type=click.Path(path_type=Path),
+    help="A clone of benchweave-registry",
+)
+@click.option("--reason", required=True, help="The unlist reason (recorded)")
+@click.option("--actor", required=True, help="The GitHub identity responsible for this record")
+@click.option("--kind", default="admitted-release", show_default=True)
+@_domain_errors
+def registry_unlist_command(
+    registry_clone: Path, release: str, reason: str, actor: str, kind: str
+) -> None:
+    """Unlist a release: the record only — the release stays admissible.
+
+    No status document is read or written (CR-32/E4): the catalogue row
+    drops at index regeneration while the release remains resolvable;
+    unlisting is not yanking.
+    """
+    from .registry_ops import parse_release_ref, unlist_release
+
+    record = unlist_release(
+        registry_clone, parse_release_ref(release), reason=reason, actor=actor, kind=kind
+    )
+    output = ConsoleOutput()
+    output.message("Unlist record appended (no status document touched):", style="green")
+    output.message(f"  {record}", style="green")
+
+
+@registry_group.command("withdraw")
+@click.argument("release")
+@click.option(
+    "--registry-clone", required=True, type=click.Path(path_type=Path),
+    help="A clone of benchweave-registry",
+)
+@click.option("--reason", required=True, help="The withdrawal reason (recorded)")
+@click.option("--actor", required=True, help="The GitHub identity responsible for this record")
+@click.option("--kind", default="community-shared", show_default=True)
+@_domain_errors
+def registry_withdraw_command(
+    registry_clone: Path, release: str, reason: str, actor: str, kind: str
+) -> None:
+    """Withdraw a submission — pre-acceptance only (contributor).
+
+    Refuses once a publish record exists ('withdraw_after_publication:'):
+    post-signing withdrawal is an advisory or an unlist, never a silent
+    disappearance (CR-32).
+    """
+    from .registry_ops import parse_release_ref, withdraw_release
+
+    record = withdraw_release(
+        registry_clone, parse_release_ref(release), reason=reason, actor=actor, kind=kind
+    )
+    output = ConsoleOutput()
+    output.message("Withdraw record appended; the queue now derives withdrawn:", style="green")
+    output.message(f"  {record}", style="green")
+
+
+@registry_group.command("transfer")
+@click.argument("release")
+@click.option(
+    "--registry-clone", required=True, type=click.Path(path_type=Path),
+    help="A clone of benchweave-registry",
+)
+@click.option("--to", "to_publisher", required=True, help="The receiving publisher id")
+@click.option(
+    "--consent-from", required=True,
+    help="The transferring publisher's consent, naming them",
+)
+@click.option(
+    "--consent-to", required=True,
+    help="The receiving publisher's consent, naming them",
+)
+@click.option(
+    "--vetting-ref", required=True,
+    help="Citation of the receiver's vetting (publishers.json entry + V-rows)",
+)
+@click.option("--reason", required=True, help="The transfer reason (recorded)")
+@click.option("--actor", required=True, help="The GitHub identity responsible for this record")
+@click.option("--kind", default="admitted-release", show_default=True)
+@_domain_errors
+def registry_transfer_command(
+    registry_clone: Path,
+    release: str,
+    to_publisher: str,
+    consent_from: str,
+    consent_to: str,
+    vetting_ref: str,
+    reason: str,
+    actor: str,
+    kind: str,
+) -> None:
+    """Transfer a release to another publisher — transfer is re-vetting (Q9).
+
+    Both consents must name their publisher; the receiver's vetting
+    reference is recorded and resolved by the registry's records CI. Future
+    releases of the plugin publish under the receiver's namespace; existing
+    release paths are immutable history.
+    """
+    from .registry_ops import parse_release_ref, transfer_release
+
+    record = transfer_release(
+        registry_clone,
+        parse_release_ref(release),
+        to_publisher=to_publisher,
+        consent_from=consent_from,
+        consent_to=consent_to,
+        vetting_reference=vetting_ref,
+        reason=reason,
+        actor=actor,
+        kind=kind,
+    )
+    output = ConsoleOutput()
+    output.message(
+        f"Transfer record appended ({to_publisher} is the recorded receiver):",
+        style="green",
+    )
+    output.message(f"  {record}", style="green")
+
+
 def _renderer_origin(renderer_url: str | None) -> str | None:
     if renderer_url is None:
         return None
