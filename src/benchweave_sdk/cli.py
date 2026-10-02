@@ -495,7 +495,11 @@ def timestamp_command(signature: Path, tsa_url: str, out: Path) -> None:
     "--registry-clone", required=True, type=click.Path(path_type=Path),
     help="Working clone of benchweave-registry; the submission branch is created here",
 )
-@click.option("--base", default="main", show_default=True)
+@click.option(
+    "--base",
+    default=None,
+    help="Base branch (default: the repo's own default — origin/HEAD, else current)",
+)
 @click.option("--open-pr", is_flag=True, help="Open the PR via gh when available")
 @_domain_errors
 def submit_command(artifacts_dir: Path, registry_clone: Path, base: str, open_pr: bool) -> None:

@@ -886,21 +886,65 @@ def _safe_member_path(root: Path, name: str) -> Path:
 # --- the git-native submission channel (CR-6) ------------------------------------
 
 
+def _default_base_branch(registry_clone: Path) -> str:
+    """The repo's own default branch — never a hardcoded name.
+
+    The registry family's default is ``main``, but a submission must work
+    regardless of the source repo's branch naming (CI runners init with
+    differing ``init.defaultBranch``). Resolution order: the remote's HEAD
+    (``origin/HEAD``), then the current checked-out branch, then any single
+    existing branch; a repo with none of those refuses with a prefix.
+    """
+    remote_head = _run_git_optional(
+        registry_clone, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"
+    )
+    if remote_head and remote_head.strip().startswith("origin/"):
+        return remote_head.strip().removeprefix("origin/")
+    current = _run_git_optional(registry_clone, "branch", "--show-current")
+    if current and current.strip():
+        return current.strip()
+    branches = _run_git_optional(
+        registry_clone, "for-each-ref", "--format=%(refname:short)", "refs/heads"
+    )
+    if branches and branches.strip():
+        names = [name for name in branches.splitlines() if name.strip()]
+        if len(names) == 1:
+            return names[0].strip()
+    raise PublishingError(
+        "base_branch_unresolved: no origin/HEAD, no current branch, and not "
+        "exactly one local branch in the clone — pass --base explicitly"
+    )
+
+
+def _run_git_optional(cwd: Path, *args: str) -> str | None:
+    """git output or None (a failing probe is an answer, not an error)."""
+    import subprocess
+
+    completed = subprocess.run(
+        ["git", "-C", str(cwd), *args], capture_output=True, text=True, check=False
+    )
+    return completed.stdout if completed.returncode == 0 else None
+
+
 def submission_branch(
     registry_clone: Path,
     artifacts_dir: Path,
     submission: dict[str, Any],
     *,
-    base: str = "main",
+    base: str | None = None,
 ) -> tuple[str, Path, str | None]:
     """Stage a packaged artefact set into a registry-repo working copy.
 
-    Creates the submission branch off ``base``, copies the artefact set under
+    Creates the submission branch off ``base`` (the repo's OWN default when
+    not given — origin/HEAD, else the current branch, else the single local
+    branch; never a hardcoded name), copies the artefact set under
     ``records/submissions/<publisher>/<plugin>/<version>/artefacts/`` and
     commits it. No service is required at any point: the PR (when ``gh`` is
     present) is sugar on top of a branch plus a compare URL. Returns
     (branch name, staging dir, remote URL or None).
     """
+    if base is None:
+        base = _default_base_branch(registry_clone)
     package_id = str(submission["package_id"])
     version = str(submission["version"])
     publisher, plugin = package_id.split("/", 1)

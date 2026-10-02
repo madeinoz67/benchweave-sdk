@@ -720,7 +720,7 @@ def test_submission_branch_stages_the_signature(tmp_path: Path) -> None:
     )
     repo = tmp_path / "repo"
     repo.mkdir()
-    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(["git", "init", "-q", "-b", "trunk", str(repo)], check=True)
     subprocess.run(
         ["git", "-C", str(repo), "commit", "-q", "--allow-empty", "-m", "init"],
         check=True,
@@ -753,4 +753,59 @@ def _write_key(root: Path, key: Any) -> Path:
         )
     )
     return path
+
+def test_submission_branch_works_on_a_non_main_default(tmp_path: Path) -> None:
+    """RED (CI fix): staging works when the repo's default branch is not
+    'main' - the base derives from the repo itself. Baseline (quoted from
+    the CI reproduction): git_failed:checkout: fatal: 'main' is not a commit
+    and a branch 'submission/...' cannot be created from it."""
+    import os
+    import subprocess
+
+    from benchweave_sdk.publishing import (
+        build_submission,
+        submission_branch,
+    )
+
+    plugin = make_plugin(tmp_path)
+    clone = make_registry_clone(tmp_path)
+    artifacts = build_submission(
+        plugin,
+        registry_clone=clone,
+        source_url="https://github.com/example/widget",
+        revision=HEX40,
+        publisher="madeinoz67",
+        capability_declaration=dict(CAPABILITIES_NONE),
+    )
+    out = tmp_path / "artifacts"
+    artifacts.write(out)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    env = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@t",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@t",
+    }
+    subprocess.run(["git", "init", "-q", "-b", "trunk", str(repo)], check=True, env=env)
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-q", "--allow-empty", "-m", "init"],
+        check=True,
+        env=env,
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "remote", "add", "origin",
+         "https://github.com/example/repo.git"],
+        check=True,
+    )
+    (repo / "records").mkdir()
+    (repo / "records" / "publishers.json").write_bytes(
+        (clone / "records" / "publishers.json").read_bytes()
+    )
+    (repo / "lane-rules.json").write_bytes((clone / "lane-rules.json").read_bytes())
+    submission = json.loads((out / "submission.json").read_bytes())
+    branch, target, _remote = submission_branch(repo, out, submission)
+    assert branch.startswith("submission/")
+    assert "manifest.json" in sorted(p.name for p in target.iterdir())
 
