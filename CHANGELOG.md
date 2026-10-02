@@ -2,6 +2,102 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.1] - 2026-10-02
+
+### Bug Fixes
+
+- Fold wave — twin env filter, standard-set pin, value pins
+- The slice-7 twin scratch fixtures carry the standards lock
+- Fold wave — marker truth, region dedupe, honesty layer, register pin
+- Derive the preview stamps from the vendored lock (PR #66 red)
+- Fold wave — reconnect liveness, startup asset verify, descriptor-layer pin
+- Scope root pytest to tests/ — exclude the standalone/ subtree
+- Re-key the lock_rows cache on the lock file's (mtime_ns, size)
+- Refuse non-canonical lock row versions typed (M3)
+- The canonical version grammar is ASCII (adv2-F1)
+- A present-but-non-dict mirror row refuses the check (adv2-F2)
+- Typed refusal for an unreadable mirror standards container (adv2-F3)
+- _tuple_or_none requires exactly three segments (mech-F5)
+- Discover the source package dir by glob
+- The scoped_transport permission reaches the tier gate (CR-49 fold M3, gateway issue #223)
+- Namespace lookalikes ride the artefact set (CR-39 fold F5, gateway issue #223)
+- Structural TSTInfo parse + imprint binding + staged signatures (folds H1/M1/M2, gateway issue #223)
+- Cryptography in the dev group so mypy resolves the optional signing imports
+- Derive the base branch from the repo — never hardcode main (CI fix, gateway issue #223)
+- The submission commit carries its own git identity (CI fix 2, gateway issue #223)
+
+### Documentation
+
+- Per-pin validation and the served set; drop the self-version claim (DOCS-c)
+
+### Features
+
+- Derive the five version literals from the lock; twin zero-literal counter
+- Constant-folding assembly detection in the twin counter
+- Marker-based environment detection + the shared counter region
+- Render digital_lanes capture views (#244 S2)
+- I1 skeleton — one seam over the scripted mock transport
+- Cross-check lock row markers against the policy mirror (M5)
+- One canonical derive_move_to with the downgrade labeled (M4)
+- Package/submit commands + the six entry gates (issue #223 slice 1)
+- Publisher signs at package time; RFC 3161 timestamp (issue #223)
+
+### Miscellaneous
+
+- Placeholder
+- Remove release-notes placeholder (created in error, pre-release noise)
+- Rebuild committed renderer with the safety behaviours (#242 slice 2)
+- Rebuild committed renderer with the review-fold fixes (#242 slice 2)
+- Rebuild committed renderer with series tokens + assignment (#242 slice 3)
+- Rebuild committed renderer with the folded proofs + palette (#242 slice 3 fold)
+- Rebuild committed renderer with limiting state, triad, staleness (#243 slice 1)
+- Rebuild committed renderer with the S1-fold fixes (#243 slice 1)
+- Rebuild committed renderer with axes, reference lines, provenance (#243 slice 2)
+- Rebuild committed renderer with the S2-fold fixes (#243 slice 2)
+- Rebuild with the addendum fixes (#243 slice 2)
+- Bump version to 0.4.0 for the digital_lanes served-set change
+- Vendor the digital_lanes served set with the fold-wave bytes (plugin-ui 0.3.0 + plugin-ui-preview 0.2.0)
+- Rebuild the bundle with the fold-wave renderer (#244 S2 folds)
+- Rebuild the bundle with the decoder-lane renderer (#244 S3)
+- Rebuild the bundle with the S3 adversary-fold renderer (#244)
+- Rebuild the bundle with the final-fold renderer (#244 S3)
+- Bundle refresh from the current ui/ (the #269-era renderer)
+- Bundle refresh from the S2 renderer ui/ (gateway #244 S2)
+- Bundle refresh from the S3 decoder ui/ (gateway #244 S3)
+- Guard the subtree against artifact sweeps
+- Bump version to 0.4.1 for the registry 0.1.2 active-row motion
+- CodeQL + dependabot baseline (gateway issue #223 slice 1, CR-59)
+- Vendor the registry 0.1.2 served set (gateway issue #223 slice 1)
+- Regenerate uv.lock for the dev-group cryptography entry
+- Bump actions/setup-python from 6.3.0 to 7.0.0 (#76)
+- Bump actions/configure-pages from 5.0.0 to 6.0.0 (#78)
+- Bump actions/download-artifact from 4.3.0 to 8.0.1 (#79)
+- Bump actions/upload-artifact from 4.6.2 to 7.0.1 (#80)
+- Update rich requirement from <15,>=14 to >=14,<16 (#77)
+- Regenerate uv.lock after the rich bump (#77) — fix broken main
+- Regenerate standalone uv.lock after the rich bump (#77) — fix broken main
+- Bump astral-sh/setup-uv from 9.0.0 to 10.2.0 (#81)
+- Bump orhun/git-cliff-action from 4.9.0 to 4.9.1 (#82)
+- V0.4.1 docs sweep + matrix walk
+
+### Style
+
+- Fold the E501 out of the fold's test helper
+
+### Testing
+
+- Assert the twin register cites the D2 trigger (G3a)
+- Move the last lock_rows.cache_clear call to _lock_rows_cached
+
+### Rework
+
+- Per-author collisions; attested firmware stated not refused (issue #223)
+
+
+### Contributors
+
+- Stephen Eaton (61 commits)
+- Dependabot[bot] (7 commits)
 ## [0.3.1] - 2026-09-27
 
 ### Bug Fixes
