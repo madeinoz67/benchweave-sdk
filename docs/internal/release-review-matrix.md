@@ -108,3 +108,17 @@ the checklist is a matrix in `docs/internal`, and a skill walks it.
 | 7 | Contributor window `v0.3.0..HEAD` | Platima — 1 commit in the window (already acknowledged at v0.2.0/v0.3.0, named again per that precedent); excluded: `benchweave-changelog[bot]` (bot) and the owner. Acknowledgment lands in the tag message (the permanent record) and the rendered release notes. |
 | 8 | Gateway `uv.lock` SDK pin | recorded note — the gateway pairing landed with gateway #234 (`sdk_compatibility` mirror + submodule pointer at 0.3.1); the gateway's own `uv.lock` pin moves at its next gateway-side lock run. Gateway #237 (Windows separator/CRLF batch + `retention_policy` SyntaxWarning) rides this release train from the gateway side. |
 | 9 | Served-set bump class | correct-as-is — PATCH for a carried-set growth inside unchanged declared ranges (6 → 11 carried rows); `sdk_bump_class_invalid:` enforces and is mutation-pinned; the gateway check lanes are green at the pairing |
+
+## Result record — v0.4.1 (2026-10-02)
+
+| # | Surface | Result |
+|---|---------|--------|
+| 1 | README stamp | updated → SDK 0.4.1 (OTDP 0.2.2 / adapter API 1.1 correct-as-is) |
+| 2 | Website hero status | updated → SDK 0.3.1 → 0.4.1; OTDP 0.2.2 / adapter API 1.1 correct-as-is |
+| 3 | Docs selector | WALKED TWO-PHASE — phase 2 rides the tag commit (v0.4.1 latest + v0.3.1 prior) |
+| 4 | Compatibility tagline | updated → SDK 0.4.1 against main project >=0.1.0 (floor unchanged) |
+| 5 | Standards badges | updated → registry 0.1.1→0.1.2, plugin-ui 0.2.0→0.3.0, plugin-ui-preview 0.1.1→0.2.0; otdp 0.2.2 / execution 0.2.0 / interface 0.1.0 correct-as-is |
+| 6 | `great-docs.yml` versions | PHASE-2 — tag commit registers v0.4.1 latest:true, demotes v0.3.1 |
+| 7 | Contributor window `v0.3.1..HEAD` | empty — owner + dependabot[bot] + benchweave-changelog[bot] only; recorded result |
+| 8 | Gateway `uv.lock` SDK pin | recorded note — moves at the gateway's next lock run |
+| 9 | Served-set bump class | MINOR — digital_lanes plugin-ui 0.2.0→0.3.0 (declared-range change) + registry 0.1.2 active-row motion; `sdk_bump_class_invalid:` passed |
