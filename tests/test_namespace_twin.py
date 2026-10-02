@@ -349,6 +349,13 @@ def test_classifier_boundary_and_params_parity() -> None:
             ("dev-tools-inc", "dev", True, "reserved"),
             ("sim-psu-labs", "sim-psu", True, "reserved"),
             ("5im-psu", "sim-psu", True, "same"),
+            # Lane A's sharp edge: the span rule's whole point — names sharing a
+            # prefix with NO delimiter after the token are distinct, and a
+            # plain-startswith classifier would return reserved/lookalike for
+            # every one of them. Pinned so that regression class can never land.
+            ("devsense-tools", "dev", True, "distinct"),   # dev+sense, no boundary
+            ("devkit", "dev", True, "distinct"),           # no separator at all
+            ("madeinoz67labs", "madeinoz67", False, "distinct"),  # no separator
         ]
         for candidate, existing, reserved, expected in cases:
             assert namespace_verdict(candidate, existing, rules, reserved=reserved) == expected, (
