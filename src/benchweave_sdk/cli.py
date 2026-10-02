@@ -534,6 +534,65 @@ def submit_command(artifacts_dir: Path, registry_clone: Path, base: str, open_pr
             output.message(f"Open the submission PR: {compare}", style="yellow")
 
 
+@cli.group("registry")
+def registry_group() -> None:
+    """Registry management: queue/status reads and lifecycle writes (offline).
+
+    Every command works on a clone of benchweave-registry; nothing here
+    touches a service, and the keyed commands take their key as a local
+    file argument that never enters any repository or CI (CR-12).
+    """
+
+
+@registry_group.command("queue")
+@click.option(
+    "--registry-clone", required=True, type=click.Path(path_type=Path),
+    help="A clone of benchweave-registry (committed records)",
+)
+@click.option(
+    "--pr-state", type=click.Path(path_type=Path), default=None,
+    help="PR-state fixture (gh-normalized shape) instead of a live gh read",
+)
+@_domain_errors
+def registry_queue_command(registry_clone: Path, pr_state: Path | None) -> None:
+    """Derive every submission's queue stage (CR-27): seven stages, records-first.
+
+    PR state comes from --pr-state or a live `gh pr list --json` when gh can
+    reach the repository; without either the queue degrades loudly
+    (stage_partial: pr_state_unavailable) rather than guessing.
+    """
+    from .registry_ops import gh_available, load_pr_state_fixture, load_pr_state_gh, queue_report
+
+    state = (
+        load_pr_state_fixture(pr_state)
+        if pr_state is not None
+        else (load_pr_state_gh(registry_clone) if gh_available() else None)
+    )
+    ConsoleOutput().document(queue_report(registry_clone, state))
+
+
+@registry_group.command("status")
+@click.option(
+    "--registry-clone", required=True, type=click.Path(path_type=Path),
+    help="A clone of benchweave-registry (committed records)",
+)
+@click.option("--publisher", default=None, help="Scope to one publisher (exact set)")
+@click.option("--plugin", default=None, help="Scope to one plugin within the publisher")
+@_domain_errors
+def registry_status_command(
+    registry_clone: Path, publisher: str | None, plugin: str | None
+) -> None:
+    """Contributor surface (CR-31): your submissions and release timelines.
+
+    Reads committed records only — publisher-scoped exact submission sets
+    plus each release's lifecycle event timeline. No PR state is consulted,
+    so stages carry the same loud stage_partial disclosure as the queue.
+    """
+    from .registry_ops import status_report
+
+    ConsoleOutput().document(status_report(registry_clone, publisher, plugin))
+
+
 def _renderer_origin(renderer_url: str | None) -> str | None:
     if renderer_url is None:
         return None

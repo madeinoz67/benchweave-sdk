@@ -29,7 +29,10 @@ class ConsoleOutput:
     def document(self, value: object) -> None:
         import json
 
-        self.message(json.dumps(value, indent=2))
+        # Machine-readable output bypasses rich: the console's width handling
+        # (wrap or crop) would insert or cut bytes INSIDE JSON string values,
+        # corrupting every downstream parser at narrow terminal widths.
+        self.console.file.write(json.dumps(value, indent=2) + "\n")
 
     def findings(self, rows: list[tuple[str, str, str]]) -> None:
         if not self.terminal:
