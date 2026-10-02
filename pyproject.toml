@@ -66,6 +66,9 @@ dev = [
   "mypy>=1.11",
   "ruff>=0.6",
   "types-jsonschema>=4.26.0.20260518",
+  # Dev-only so CI mypy resolves the optional signing imports; the published
+  # wheel keeps cryptography optional via the `signing` extra (issue #223).
+  "cryptography>=45",
 ]
 
 [tool.ruff]
