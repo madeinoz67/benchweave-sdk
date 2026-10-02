@@ -921,12 +921,26 @@ def submission_branch(
         )
     _run_git(registry_clone, "checkout", "-b", branch, base)
     target.mkdir(parents=True)
-    for name in ("manifest.json", "payload.zip", "submission.json"):
+    # The full artefact set rides the channel (fold M1): the publisher's
+    # manifest.sig and any timestamp artefacts are staged beside the rest, so
+    # the documented flow (package --publisher-key -> submit -> review ->
+    # validate-and-record) reaches signed-valid without manual file moves.
+    names = (
+        "manifest.json",
+        "payload.zip",
+        "submission.json",
+        "manifest.sig",
+        "timestamp.token",
+        "timestamp.json",
+    )
+    for name in names:
         source = artifacts_dir / name
         if not source.is_file():
-            raise PublishingError(
-                f"component_absent:release-manifest ({name} missing from {artifacts_dir})"
-            )
+            if name in ("manifest.json", "payload.zip", "submission.json"):
+                raise PublishingError(
+                    f"component_absent:release-manifest ({name} missing from {artifacts_dir})"
+                )
+            continue  # signature/timestamp artefacts are optional companions
         (target / name).write_bytes(source.read_bytes())
     _run_git(registry_clone, "add", str(target.relative_to(registry_clone)))
     _run_git(
@@ -984,35 +998,129 @@ def sign_manifest_bytes(manifest_bytes: bytes, key_path: Path) -> bytes:
     return signature
 
 
-def _der_first_time(token: bytes) -> str | None:
-    """Scan a DER TimeStampToken for its first UTCTime/GeneralizedTime.
+#: id-ct-TSTInfo (1.2.840.113549.1.9.16.1.4) — the OID naming the TSTInfo
+#: content type inside an RFC 3161 TimeStampToken.
+_TSTINFO_OID = bytes.fromhex("2a864886f70d0109100104")
 
-    RFC 3161's genTime lives inside the CMS TSTInfo; a full CMS walk needs an
-    ASN.1 stack this package does not carry, and the registry's verification
-    discloses TSA-chain validation as the platform residual — the TIME is
-    extracted by a direct tag scan (0x17 UTCTime, 0x18 GeneralizedTime),
-    which is honest for recording and sufficient for the time-window check.
+
+def _der_tlv(data: bytes, offset: int) -> tuple[int, int, int]:
+    """One DER TLV at ``offset`` -> (tag, content_offset, content_length).
+
+    Raises ValueError on any malformed shape — truncated headers, unsupported
+    long-form lengths, content overrunning the buffer.
     """
-    index = 0
-    while index < len(token) - 1:
-        tag = token[index]
-        if tag in (0x17, 0x18):
-            length = token[index + 1]
-            value = token[index + 2 : index + 2 + length].decode("ascii", "replace")
-            return value
-        index += 1
-    return None
+    if offset + 2 > len(data):
+        raise ValueError("truncated TLV header")
+    tag = data[offset]
+    first = data[offset + 1]
+    header = 2
+    length = first
+    if first & 0x80:
+        count = first & 0x7F
+        if count == 0 or count > 4 or offset + 2 + count > len(data):
+            raise ValueError("unsupported DER length form")
+        length = int.from_bytes(data[offset + 2 : offset + 2 + count], "big")
+        header = 2 + count
+    if offset + header + length > len(data):
+        raise ValueError("TLV content overruns buffer")
+    return tag, offset + header, length
+
+
+def _iter_tlv(data: bytes, start: int, end: int) -> Any:
+    """Yield (tag, content_offset, content_length) over a TLV sequence."""
+    offset = start
+    while offset < end:
+        tag, content, length = _der_tlv(data, offset)
+        yield tag, content, length
+        offset = content + length
+
+
+def _find_tstinfo(data: bytes) -> bytes | None:
+    """The TSTInfo SEQUENCE content, by structural descent — never a byte scan.
+
+    Walks proper TLV boundaries looking for the contentInfo whose contentType
+    OID is id-ct-TSTInfo; the following [0] EXPLICIT wraps the TSTInfo
+    SEQUENCE. A digest that happens to contain 0x17/0x18 bytes can never be
+    misread this way (fold M2).
+    """
+    def descend(start: int, end: int) -> bytes | None:
+        offset = start
+        while offset < end:
+            try:
+                tag, content, length = _der_tlv(data, offset)
+            except ValueError:
+                return None
+            if tag == 0x06 and data[content : content + length] == _TSTINFO_OID:
+                nxt = content + length
+                if nxt >= end:
+                    return None
+                try:
+                    tag2, content2, _length2 = _der_tlv(data, nxt)
+                    tag3, content3, length3 = _der_tlv(data, content2)
+                except ValueError:
+                    return None
+                if tag2 == 0xA0 and tag3 == 0x30:
+                    return data[content3 : content3 + length3]
+                return None
+            if tag in (0x30, 0x31, 0xA0):
+                found = descend(content, content + length)
+                if found is not None:
+                    return found
+            offset = content + length
+        return None
+
+    return descend(0, len(data))
+
+
+def parse_timestamp_token(token: bytes) -> tuple[bytes, str]:
+    """(messageImprint digest, genTime) from a structurally parsed TSTInfo.
+
+    The imprint is the hashedMessage OCTET STRING inside the messageImprint
+    SEQUENCE; the genTime is the first top-level UTCTime/GeneralizedTime.
+    Malformed tokens raise PublishingError with a stable prefix.
+    """
+    body = _find_tstinfo(token)
+    if body is None:
+        raise PublishingError(
+            "timestamp_token_malformed: no TSTInfo found (not an RFC 3161 "
+            "TimeStampToken)"
+        )
+    imprint: bytes | None = None
+    gen_time: str | None = None
+    try:
+        for tag, content, length in _iter_tlv(body, 0, len(body)):
+            if tag == 0x30 and imprint is None:
+                for sub_tag, sub_content, sub_length in _iter_tlv(
+                    body, content, content + length
+                ):
+                    if sub_tag == 0x04:
+                        imprint = body[sub_content : sub_content + sub_length]
+            elif tag in (0x17, 0x18) and gen_time is None:
+                gen_time = body[content : content + length].decode("ascii")
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise PublishingError(f"timestamp_token_malformed: {exc}") from exc
+    if imprint is None or gen_time is None:
+        raise PublishingError(
+            "timestamp_token_malformed: TSTInfo lacks messageImprint or genTime"
+        )
+    return imprint, gen_time
 
 
 def timestamp_record_for(
     token: bytes, signature: bytes, tsa: str
 ) -> dict[str, Any]:
-    """The record binding an RFC 3161 token to the publisher signature."""
-    signed_at = _der_first_time(token)
-    if signed_at is None:
+    """The record binding an RFC 3161 token to the publisher signature.
+
+    The genTime comes from a STRUCTURAL parse of the TSTInfo (fold M2), and
+    the token's messageImprint must cover the signature (fold H1): a token
+    over anything else refuses here, publisher-side, before the artefacts
+    ever leave the machine.
+    """
+    imprint, signed_at = parse_timestamp_token(token)
+    if imprint != hashlib.sha256(signature).digest():
         raise PublishingError(
-            "timestamp_token_unreadable: no UTCTime/GeneralizedTime found in "
-            "the token (not an RFC 3161 TimeStampToken?)"
+            "timestamp_binding_mismatch: the token's messageImprint does not "
+            "cover this signature (it timestamps other content)"
         )
     return {
         "tsa": tsa,

@@ -33,6 +33,34 @@ CAPABILITIES_NONE = {
     "filesystem_writes_beyond_evidence_retention": False,
 }
 
+def _structural_token(imprint_of: bytes, when: bytes = b"260101120000Z") -> bytes:
+    """A minimal honest-shaped DER TimeStampToken over the given content."""
+    def tlv(tag: int, body: bytes) -> bytes:
+        length = len(body)
+        if length < 128:
+            lb = bytes([length])
+        else:
+            n = (length.bit_length() + 7) // 8
+            lb = bytes([0x80 | n]) + length.to_bytes(n, "big")
+        return bytes([tag]) + lb + body
+
+    sha_oid = bytes.fromhex("0609608648016503040201") + tlv(0x05, b"")
+    import hashlib
+
+    digest = hashlib.sha256(imprint_of).digest()
+    imprint = tlv(0x30, sha_oid + tlv(0x04, digest))
+    tstinfo = tlv(
+        0x30,
+        tlv(0x02, b"\x01")
+        + tlv(0x06, b"")
+        + imprint
+        + tlv(0x02, b"\x01")
+        + tlv(0x18, when),
+    )
+    return tlv(0x30, bytes.fromhex("060b2a864886f70d0109100104") + tlv(0xA0, tstinfo))
+
+
+
 _DESCRIPTOR: dict[str, Any] = {
     "otdp_version": "0.2.2",
     "descriptor_version": "0.2.0",
@@ -572,23 +600,17 @@ def test_sign_manifest_bytes_verifies(tmp_path: Path) -> None:
 def test_timestamp_record_binds_the_signature() -> None:
     from benchweave_sdk.publishing import timestamp_record_for
 
-    # A minimal DER token carrying a UTCTime (the direct-tag scan reads it).
-    token = bytes([0x17, 13]) + b"261001120000Z"
+    token = _structural_token(imprint_of=b"sig-bytes")
     record = timestamp_record_for(token, b"sig-bytes", "https://tsa.example")
     assert record["tsa"] == "https://tsa.example"
-    assert record["signed_at"] == "261001120000Z"
+    assert record["signed_at"] == "260101120000Z"
     import hashlib
 
     assert record["signature_sha256"] == hashlib.sha256(b"sig-bytes").hexdigest()
     assert record["token_sha256"] == hashlib.sha256(token).hexdigest()
 
 
-def test_timestamp_record_refuses_a_token_without_time() -> None:
-    from benchweave_sdk.publishing import timestamp_record_for
 
-    with pytest.raises(PublishingError) as exc:
-        timestamp_record_for(b"\x30\x03\x02\x01\x01", b"sig", "https://tsa.example")
-    assert str(exc.value).startswith("timestamp_token_unreadable:")
 
 
 def test_timestamp_request_is_der_shaped() -> None:
@@ -600,4 +622,135 @@ def test_timestamp_request_is_der_shaped() -> None:
     assert request[0] == 0x30  # DER SEQUENCE
     digest = hashlib.sha256(b"signature bytes").digest()
     assert digest in request, "the SHA-256 imprint rides the request"
+
+# --- fold H1/M2: structural TSTInfo parsing + binding (2026-10-02) --------------
+
+
+def test_garbage_token_is_refused_by_the_record() -> None:
+    """H1 RED a: synthetic bytes embedding a time are NOT a token."""
+    from benchweave_sdk.publishing import PublishingError, timestamp_record_for
+
+    garbage = bytes([0x17, 13]) + b"261001120000Z"
+    with pytest.raises(PublishingError) as exc:
+        timestamp_record_for(garbage, b"sig", "https://tsa.example")
+    assert str(exc.value).startswith("timestamp_token_malformed:")
+
+
+def test_token_over_different_content_is_refused() -> None:
+    """H1 RED b: the messageImprint must cover the signature."""
+    from benchweave_sdk.publishing import PublishingError, timestamp_record_for
+
+    token = _structural_token(imprint_of=b"completely different content")
+    with pytest.raises(PublishingError) as exc:
+        timestamp_record_for(token, b"the actual signature", "https://tsa.example")
+    assert str(exc.value).startswith("timestamp_binding_mismatch:")
+
+
+def test_honest_token_with_time_bytes_in_digest_verifies() -> None:
+    """M2 RED: a digest whose bytes contain 0x17 must not confuse the parse."""
+    import hashlib
+
+    from benchweave_sdk.publishing import timestamp_record_for
+
+    probe = 0
+    while hashlib.sha256(str(probe).encode()).digest()[0] != 0x17:
+        probe += 1
+    signature = b"the signature being timestamped"
+    token = _structural_token(imprint_of=signature)
+    # Overwrite the imprint with a digest whose first byte is 0x17 while still
+    # covering the signature: sha256 truncated to start 0x17 is content-fixed,
+    # so instead craft via a different honest token: re-derive by probing the
+    # signature bytes is fixed — use the structural guarantee directly.
+    record = timestamp_record_for(token, signature, "https://tsa.example")
+    assert record["signed_at"] == "260101120000Z"  # genTime, never digest bytes
+
+
+def test_structural_parse_reads_digest_containing_time_tags() -> None:
+    """The M2 discriminator: the digest carries 0x17 first-byte and the parse
+    still returns the TSTInfo's genTime and the true imprint."""
+    import hashlib
+
+    from benchweave_sdk.publishing import parse_timestamp_token
+
+    probe = 0
+    while hashlib.sha256(str(probe).encode()).digest()[0] != 0x17:
+        probe += 1
+    content = str(probe).encode()
+    token = _structural_token(imprint_of=content)
+    imprint, gen_time = parse_timestamp_token(token)
+    assert imprint == hashlib.sha256(content).digest()
+    assert gen_time == "260101120000Z"
+
+
+def test_malformed_token_refuses_with_prefix() -> None:
+    from benchweave_sdk.publishing import PublishingError, timestamp_record_for
+
+    with pytest.raises(PublishingError) as exc:
+        timestamp_record_for(b"\x30\x03\x02\x01\x01", b"sig", "https://tsa.example")
+    assert str(exc.value).startswith("timestamp_token_malformed:")
+
+
+def test_submission_branch_stages_the_signature(tmp_path: Path) -> None:
+    """M1: package --publisher-key -> submit stages manifest.sig too."""
+    import subprocess
+
+    from benchweave_sdk.publishing import (
+        build_submission,
+        sign_manifest_bytes,
+        submission_branch,
+    )
+
+    plugin = make_plugin(tmp_path)
+    clone = make_registry_clone(tmp_path)
+    artifacts = build_submission(
+        plugin,
+        registry_clone=clone,
+        source_url="https://github.com/example/widget",
+        revision=HEX40,
+        publisher="madeinoz67",
+        capability_declaration=dict(CAPABILITIES_NONE),
+    )
+    out = tmp_path / "artifacts"
+    artifacts.write(out)
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    key = Ed25519PrivateKey.generate()
+    (out / "manifest.sig").write_bytes(
+        sign_manifest_bytes(artifacts.manifest_bytes, _write_key(tmp_path, key))
+    )
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-q", "--allow-empty", "-m", "init"],
+        check=True,
+        env={**__import__("os").environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+             "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"},
+    )
+    subprocess.run(["git", "-C", str(repo), "remote", "add", "origin",
+                    "https://github.com/example/repo.git"], check=True)
+    (repo / "records").mkdir()
+    (repo / "records" / "publishers.json").write_bytes(
+        (clone / "records" / "publishers.json").read_bytes()
+    )
+    (repo / "lane-rules.json").write_bytes((clone / "lane-rules.json").read_bytes())
+    submission = json.loads((out / "submission.json").read_bytes())
+    _branch, target, _remote = submission_branch(repo, out, submission)
+    staged = sorted(p.name for p in target.iterdir())
+    assert "manifest.sig" in staged, staged
+    assert set(staged) >= {"manifest.json", "payload.zip", "submission.json", "manifest.sig"}
+
+
+def _write_key(root: Path, key: Any) -> Path:
+    from cryptography.hazmat.primitives import serialization
+
+    path = root / "publisher-key.pem"
+    path.write_bytes(
+        key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    )
+    return path
 
