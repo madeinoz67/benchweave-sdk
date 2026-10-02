@@ -987,8 +987,16 @@ def submission_branch(
             continue  # signature/timestamp artefacts are optional companions
         (target / name).write_bytes(source.read_bytes())
     _run_git(registry_clone, "add", str(target.relative_to(registry_clone)))
+    # The commit never depends on the operator's global git identity (CI
+    # runners have none): -c supplies a tool-attributed fallback pair. The
+    # accountable publisher identity rides the records, not this channel
+    # commit's author field.
     _run_git(
         registry_clone,
+        "-c",
+        "user.name=benchweave-sdk-submit",
+        "-c",
+        "user.email=submit@benchweave-sdk.invalid",
         "commit",
         "-m",
         f"submission: {package_id}@{version} (benchweave-sdk submit)",

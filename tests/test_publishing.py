@@ -722,6 +722,11 @@ def test_submission_branch_stages_the_signature(tmp_path: Path) -> None:
     repo.mkdir()
     subprocess.run(["git", "init", "-q", "-b", "trunk", str(repo)], check=True)
     subprocess.run(
+        ["git", "-C", str(repo), "config", "user.email", "fixture@example.invalid"],
+        check=True,
+    )
+    subprocess.run(["git", "-C", str(repo), "config", "user.name", "fixture"], check=True)
+    subprocess.run(
         ["git", "-C", str(repo), "commit", "-q", "--allow-empty", "-m", "init"],
         check=True,
         env={**__import__("os").environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
@@ -808,4 +813,58 @@ def test_submission_branch_works_on_a_non_main_default(tmp_path: Path) -> None:
     branch, target, _remote = submission_branch(repo, out, submission)
     assert branch.startswith("submission/")
     assert "manifest.json" in sorted(p.name for p in target.iterdir())
+
+def test_submission_commits_without_any_git_identity(tmp_path: Path) -> None:
+    """RED (CI fix 2): the flow's own commit never depends on the operator's
+    git identity. Deterministic baseline (quoted from the reproduction, the
+    CI condition): 'fatal: no email was given and auto-detection is
+    disabled' - reproduced by forbidding git's username auto-detection
+    (user.useConfigOnly), which is what a bare CI runner amounts to."""
+    import subprocess
+
+    from benchweave_sdk.publishing import build_submission, submission_branch
+
+    plugin = make_plugin(tmp_path)
+    clone = make_registry_clone(tmp_path)
+    artifacts = build_submission(
+        plugin,
+        registry_clone=clone,
+        source_url="https://github.com/example/widget",
+        revision=HEX40,
+        publisher="madeinoz67",
+        capability_declaration=dict(CAPABILITIES_NONE),
+    )
+    out = tmp_path / "artifacts"
+    artifacts.write(out)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "trunk", str(repo)], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.email", "t@t"], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.name", "t"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-q", "--allow-empty", "-m", "init"],
+        check=True,
+    )
+    # Forbid auto-detection: no identity is derivable from this point on.
+    subprocess.run(
+        ["git", "-C", str(repo), "config", "user.useConfigOnly", "true"], check=True
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "remote", "add", "origin",
+         "https://github.com/example/repo.git"],
+        check=True,
+    )
+    (repo / "records").mkdir()
+    (repo / "records" / "publishers.json").write_bytes(
+        (clone / "records" / "publishers.json").read_bytes()
+    )
+    (repo / "lane-rules.json").write_bytes((clone / "lane-rules.json").read_bytes())
+    submission = json.loads((out / "submission.json").read_bytes())
+    branch, target, _remote = submission_branch(repo, out, submission)
+    assert branch.startswith("submission/")
+    committed = subprocess.run(
+        ["git", "-C", str(repo), "log", "-1", "--format=%an <%ae>"],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    assert committed == "benchweave-sdk-submit <submit@benchweave-sdk.invalid>"
 
