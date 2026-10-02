@@ -33,6 +33,8 @@ import hashlib
 import json
 import os
 import shutil
+import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -267,3 +269,107 @@ def test_cli_package_flags_a_skeleton_equal_namespace(tmp_path: Path) -> None:
     result = _package(FIXTURE, tmp_path, "n0rthwind-instruments", "probe-ctl")
     assert result.exit_code == 0, result.output
     assert "namespace_lookalike" in result.output
+
+
+# --- fold-supplement arms: the delimiter-boundary ruling and the plugin arm ---
+
+
+def test_cli_package_refuses_a_reserved_extension_at_a_separator_boundary(
+    tmp_path: Path,
+) -> None:
+    """S1: 'dev-tools-inc' extends reserved 'dev' at a real separator
+    boundary — refuses as reserved."""
+    result = _package(FIXTURE, tmp_path, "dev-tools-inc", "probe-ctl")
+    assert result.exit_code == 1, result.output
+    assert "namespace_reserved:dev-tools-inc" in result.output
+
+
+def test_cli_package_passes_a_reserved_prefixed_name_without_the_boundary(
+    tmp_path: Path,
+) -> None:
+    """S1's control: 'devlin-instruments' shares reserved dev's prefix with
+    NO separator boundary — skeleton-prefix alone is not containment; it
+    falls to the vetted comparison (distinct against this fixture's
+    namespaces) and packages cleanly."""
+    result = _package(FIXTURE, tmp_path, "devlin-instruments", "probe-ctl")
+    assert result.exit_code == 0, result.output
+    assert "namespace_reserved" not in result.output
+
+
+def test_cli_package_refuses_a_confusable_reserved_plugin(tmp_path: Path) -> None:
+    """S3: '5im-psu' confusable-folds (5->s) exactly onto reserved
+    'sim-psu' — the plugin segment's near arm refuses, not just the exact
+    name."""
+    result = _package(FIXTURE, tmp_path, "harborline-systems", "5im-psu")
+    assert result.exit_code == 1, result.output
+    assert "namespace_reserved:5im-psu" in result.output
+
+
+def test_cli_package_refuses_a_reserved_plugin_extension(tmp_path: Path) -> None:
+    """S3: 'sim-psu-labs' extends reserved 'sim-psu' at a separator
+    boundary — refuses."""
+    result = _package(FIXTURE, tmp_path, "harborline-systems", "sim-psu-labs")
+    assert result.exit_code == 1, result.output
+    assert "namespace_reserved:sim-psu-labs" in result.output
+
+
+def test_classifier_boundary_and_params_parity() -> None:
+    """S1 at the classifier, plus S4's param-consumption parity: a
+    params-moved rules file (extra separator '+', case_sensitive flipped)
+    yields IDENTICAL verdicts on the SDK and registry classifiers — the
+    digest pin can never catch this drift class. Runs the registry
+    classifier from a checkout named by BENCHWEAVE_REGISTRY_CLONE when
+    present; otherwise asserts the SDK verdicts alone (CI has no checkout).
+    """
+    from benchweave_sdk.publishing import LaneRules, namespace_verdict
+
+    with tempfile.TemporaryDirectory() as tmp:
+        clone = Path(tmp) / "rules-clone"
+        clone.mkdir()
+        rules_doc = json.loads(LANE_RULES.read_bytes())
+        params = rules_doc["similarity_rule"]["params"]
+        params["separator_characters"] = [*params["separator_characters"], "+"]
+        params["case_sensitive"] = True
+        (clone / "lane-rules.json").write_text(json.dumps(rules_doc))
+        rules = LaneRules.load(clone)
+
+        cases = [
+            # (candidate, existing, reserved, expected) under the moved params
+            ("otdp+tools", "otdp", True, "reserved"),   # '+' folds + boundary
+            ("Benchweave-Labs", "benchweave", False, "lookalike"),  # both casefold
+            ("devlin-instruments", "dev", True, "distinct"),  # no boundary
+            ("dev-tools-inc", "dev", True, "reserved"),
+            ("sim-psu-labs", "sim-psu", True, "reserved"),
+            ("5im-psu", "sim-psu", True, "same"),
+        ]
+        for candidate, existing, reserved, expected in cases:
+            assert namespace_verdict(candidate, existing, rules, reserved=reserved) == expected, (
+                candidate
+            )
+
+        registry_clone = os.environ.get("BENCHWEAVE_REGISTRY_CLONE")
+        if not registry_clone:
+            pytest.skip("BENCHWEAVE_REGISTRY_CLONE not set; SDK-side parity only")
+
+        scripts = Path(registry_clone) / "scripts"
+        sys.path.insert(0, str(scripts))
+        try:
+            import validate_records as reg
+
+            # One case is excluded until the registry lane's wave-2 lands the
+            # delimiter-boundary ruling: devlin-instruments vs dev — their
+            # LANDED classifier still plain-prefixes skeletons (verdict
+            # 'reserved'); the ruling (and this SDK classifier) say 'distinct'.
+            # The exclusion lifts in the same wave as the held vector re-sync.
+            pending_boundary = {"devlin-instruments"}
+            for candidate, existing, reserved, expected in cases:
+                if candidate in pending_boundary:
+                    continue
+                theirs = reg.namespace_verdict(
+                    candidate, existing, reserved=reserved, rules=rules_doc
+                )
+                ours = namespace_verdict(candidate, existing, rules, reserved=reserved)
+                assert ours == theirs == expected, (candidate, ours, theirs)
+        finally:
+            sys.path.remove(str(scripts))
+            sys.modules.pop("validate_records", None)

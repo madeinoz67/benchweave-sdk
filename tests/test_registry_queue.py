@@ -19,6 +19,23 @@ from click.testing import CliRunner
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "registry-clone"
 
 
+@pytest.fixture()
+def origin_key(tmp_path: Path) -> Path:
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    key = Ed25519PrivateKey.generate()
+    key_path = tmp_path / "origin.pem"
+    key_path.write_bytes(
+        key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    )
+    return key_path
+
+
 def _run(*args: str) -> dict[str, Any]:
     from benchweave_sdk.cli import cli
 
@@ -350,6 +367,37 @@ def test_merged_pr_without_records_discloses_partial(tmp_path: Path) -> None:
     row = rows[("harborline-systems", "sig-analyzer", "0.3.0")]
     assert row["stage"] == "submitted"
     assert row["stage_partial"] is True
+
+
+def test_queue_rows_carry_lifecycle_and_unlist_markers(
+    clone: Path, origin_key: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S10: the stage taxonomy stays the design's seven, but each queue row
+    closes informationally — the served status lifecycle and the unlist
+    record surface as markers beside the stage."""
+    monkeypatch.setattr("benchweave_sdk.registry_ops.gh_available", lambda: False)
+    from benchweave_sdk.cli import cli
+
+    runner = CliRunner()
+    for args in (
+        ["publish-status", "northwind-instruments/vmx3-power-supply@1.0.0",
+         "--origin-key", str(origin_key), "--expires-at", "2030-01-01T00:00:00Z"],
+        ["yank", "northwind-instruments/vmx3-power-supply@1.0.0",
+         "--origin-key", str(origin_key), "--reason", "r", "--actor", "a"],
+        ["unlist", "northwind-instruments/vmx3-power-supply@1.0.0",
+         "--reason", "r", "--actor", "a"],
+    ):
+        result = runner.invoke(cli, ["registry", *args, "--registry-clone", str(clone)])
+        assert result.exit_code == 0, result.output
+    rows = _rows(_queue(clone))
+    row = rows[("northwind-instruments", "vmx3-power-supply", "1.0.0")]
+    assert row["stage"] == "published"  # taxonomy unchanged
+    assert row["lifecycle"] == "yanked"  # served-state marker
+    assert row["unlisted"] is True  # record-driven marker
+    # A row with neither marker carries explicit nulls, not absent keys.
+    quiet = rows[("harborline-systems", "load-bank-ctl", "1.4.0")]
+    assert quiet["lifecycle"] is None
+    assert quiet["unlisted"] is False
 
 
 def test_pr_without_a_resolvable_submission_key_is_disclosed(

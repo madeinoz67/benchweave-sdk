@@ -197,6 +197,57 @@ def test_transfer_refuses_an_unvetted_receiver(tmp_path: Path) -> None:
     assert "transfer_receiver_unvetted:acme-instruments" in output
 
 
+def test_transfer_refuses_a_malformed_receiver_vetting_block(tmp_path: Path) -> None:
+    """S8: key-presence is too weak — an entry whose vetting block is
+    schema-INVALID (a required key missing) must refuse at the CLI with the
+    same prefix the registry's records CI emits, not pass here and refuse
+    there."""
+    clone = _clone(tmp_path)
+    pub_path = clone / "records" / "publishers.json"
+    pub = json.loads(pub_path.read_bytes())
+    for entry in pub["publishers"]:
+        if entry["publisher_id"] == "harborline-systems":
+            entry["vetting"].pop("cited_rows")
+    pub_path.write_text(json.dumps(pub))
+    output = _refuse(
+        clone, "transfer", PUBLISHED,
+        "--to", "harborline-systems",
+        "--reason", "r", "--actor", "a",
+    )
+    assert "transfer_receiver_unvetted:harborline-systems" in output
+
+
+# --- supplement rows: existence checks (S11) ---------------------------------------
+
+
+def test_withdraw_refuses_when_the_submission_is_absent(tmp_path: Path) -> None:
+    clone = _clone(tmp_path)
+    output = _refuse(
+        clone, "withdraw", "northwind-instruments/ghost-plugin@1.0.0",
+        "--reason", "r", "--actor", "a", "--kind", "community-shared",
+    )
+    assert "record_subject_absent:" in output
+
+
+def test_unlist_refuses_when_the_release_is_absent(tmp_path: Path) -> None:
+    clone = _clone(tmp_path)
+    output = _refuse(
+        clone, "unlist", "harborline-systems/sig-analyzer@0.3.0",
+        "--reason", "r", "--actor", "a",
+    )
+    assert "record_subject_absent:" in output
+
+
+def test_transfer_refuses_when_the_release_is_absent(tmp_path: Path) -> None:
+    clone = _clone(tmp_path)
+    output = _refuse(
+        clone, "transfer", "harborline-systems/sig-analyzer@0.3.0",
+        "--to", "northwind-instruments",
+        "--reason", "r", "--actor", "a",
+    )
+    assert "record_subject_absent:" in output
+
+
 def test_transfer_refuses_a_self_transfer(tmp_path: Path) -> None:
     clone = _clone(tmp_path)
     output = _refuse(

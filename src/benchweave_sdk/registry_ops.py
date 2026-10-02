@@ -433,13 +433,66 @@ def derive_stage(view: RecordsView, key: SubKey, pr: PullRequest | None) -> Stag
 # --- the reports ------------------------------------------------------------------
 
 
+def _require_submission(clone: Path, key: SubKey, purpose: str) -> None:
+    """S11: a record-only op refuses when its subject never existed."""
+    directory = clone / key.path
+    if not directory.is_dir():
+        raise RegistryOpsError(
+            f"record_subject_absent:{key.publisher}/{key.plugin}@{key.version} "
+            f"(no submission tree under records/; {purpose})"
+        )
+
+
+def _require_release(clone: Path, key: SubKey, purpose: str) -> None:
+    """S11: release-targeting ops refuse when the release tree is absent."""
+    try:
+        release_dir(clone, key)
+    except RegistryOpsError as exc:
+        raise RegistryOpsError(
+            f"record_subject_absent:{key.publisher}/{key.plugin}@{key.version} "
+            f"(no release tree under releases/; {purpose})"
+        ) from exc
+
+
+def _release_status_lifecycle(clone: Path, key: SubKey) -> str | None:
+    """The served status lifecycle for a key, when a status doc exists."""
+    try:
+        directory = release_dir(clone, key)
+    except RegistryOpsError:
+        return None
+    status_path = directory / "status.json"
+    if not status_path.is_file():
+        return None
+    try:
+        doc = json.loads(status_path.read_bytes())
+    except ValueError:
+        return None
+    lifecycle = doc.get("lifecycle") if isinstance(doc, dict) else None
+    return lifecycle if isinstance(lifecycle, str) else None
+
+
 def _stage_row(
-    view: RecordsView, key: SubKey, prs: dict[SubKey, PullRequest] | None
+    view: RecordsView,
+    key: SubKey,
+    prs: dict[SubKey, PullRequest] | None,
+    *,
+    clone: Path | None = None,
 ) -> dict[str, Any]:
-    """Records-only when no PR state (``prs is None``); full mode otherwise."""
-    if prs is None:
-        return _records_stage(view, key).row(key)
-    return derive_stage(view, key, prs.get(key)).row(key)
+    """Records-only when no PR state (``prs is None``); full mode otherwise.
+
+    With ``clone`` given (the queue), the row also carries the S10 markers:
+    the served status lifecycle and the unlist record — the stage taxonomy
+    stays the design's seven; the markers close the family informationally.
+    """
+    row = (
+        _records_stage(view, key).row(key)
+        if prs is None
+        else derive_stage(view, key, prs.get(key)).row(key)
+    )
+    if clone is not None:
+        row["lifecycle"] = _release_status_lifecycle(clone, key)
+        row["unlisted"] = "unlist" in view.ops(key)
+    return row
 
 
 def queue_report(clone: Path, pr_state: PRState | None) -> dict[str, Any]:
@@ -461,7 +514,7 @@ def queue_report(clone: Path, pr_state: PRState | None) -> dict[str, Any]:
                     "submission keys are never guessed from branch names)"
                 )
     return {
-        "submissions": [_stage_row(view, key, prs) for key in sorted(keys)],
+        "submissions": [_stage_row(view, key, prs, clone=clone) for key in sorted(keys)],
         "disclosures": disclosures,
     }
 
@@ -872,8 +925,10 @@ def unlist_release(
 
     An unlisted release stays resolvable and admissible (CR-32/E4): the
     catalogue row drops at index regeneration (the registry lane's generator
-    arm); the served state is untouched.
+    arm); the served state is untouched. The release must exist (S11) —
+    unlisting targets a served release.
     """
+    _require_release(clone, key, "unlist targets a served release")
     return append_lifecycle_record(
         clone, key, "unlist", actor=actor, reason=reason, kind=kind
     )
@@ -900,6 +955,7 @@ def withdraw_release(
             "default kind; pass --kind (admitted-release | in-tree-fixture | "
             "community-shared)"
         )
+    _require_submission(clone, key, "withdraw targets a submitted submission")
     view = load_records_view(clone)
     if "publish" in view.ops(key):
         raise RegistryOpsError(
@@ -938,18 +994,26 @@ def transfer_release(
         raise RegistryOpsError(
             f"transfer_invalid:same_publisher ({to_publisher} already owns the release)"
         )
+    _require_release(clone, key, "transfer targets a published release")
     canonical = f"publishers.json#{to_publisher}"
     if vetting_reference is not None and vetting_reference != canonical:
         raise RegistryOpsError(
             f"transfer_vetting_unresolved:{vetting_reference!r} does not resolve "
             f"to {to_publisher}'s vetting citation ({canonical})"
         )
+    # S8: mirror the gate, not just key-presence — a receiver whose vetting
+    # block is schema-invalid (a required key missing) refuses HERE with the
+    # same prefix, instead of passing the CLI and failing records CI.
     receiver = _publisher_entry(clone, to_publisher)
-    if receiver is None or "vetting" not in receiver:
+    vetting = receiver.get("vetting") if isinstance(receiver, dict) else None
+    required = ("checklist_id", "checklist_version", "cited_rows", "vetted_by")
+    if not isinstance(vetting, dict) or not all(
+        key in vetting and vetting[key] is not None for key in required
+    ):
         raise RegistryOpsError(
             f"transfer_receiver_unvetted:{to_publisher} (no publishers.json entry "
-            "with a vetting block; transfer is re-vetting — the receiver must "
-            "be vetted first)"
+            "carrying a vetting block with the four required keys; transfer is "
+            "re-vetting — the receiver must be vetted first)"
         )
     consents = [key.publisher, to_publisher]
     if consent_from is not None:
