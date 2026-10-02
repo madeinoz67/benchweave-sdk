@@ -1,0 +1,96 @@
+{
+  "rules_version": 1,
+  "namespace_rules": {
+    "id_grammar": "publisher/plugin",
+    "reserved_namespaces": [
+      "benchweave",
+      "otdp",
+      "dev",
+      "stg"
+    ],
+    "reserved_plugins": [
+      "dc-psu-profile",
+      "sim-psu",
+      "sim-psu-descriptor",
+      "sim-controller",
+      "sim-controller-descriptor"
+    ],
+    "dev_registry_prefix": "dev-"
+  },
+  "source_revision_rules": {
+    "accepted_forms": [
+      "sha1-hex-40",
+      "sha256-hex-64"
+    ],
+    "note": "Publish-time is deliberately stricter than gateway admission's four-name denylist (CR-36): any moving name refuses here."
+  },
+  "similarity_rule": {
+    "algorithm": "skeleton-plus-edit-distance",
+    "params": {
+      "case_sensitive": false,
+      "separator_characters": [
+        "-",
+        "_",
+        ".",
+        "/"
+      ],
+      "confusable_map": {
+        "0": "o",
+        "1": "l",
+        "3": "e",
+        "4": "a",
+        "5": "s",
+        "7": "t",
+        "rn": "m",
+        "vv": "w",
+        "cl": "d"
+      },
+      "max_edit_distance": 2
+    },
+    "vectors": [
+      {
+        "candidate": "benchweave-labs",
+        "existing": "benchweave",
+        "expected": "lookalike"
+      },
+      {
+        "candidate": "benchwave",
+        "existing": "benchweave",
+        "expected": "lookalike"
+      },
+      {
+        "candidate": "otdp-tools",
+        "existing": "otdp",
+        "expected": "reserved"
+      },
+      {
+        "candidate": "madeinoz68",
+        "existing": "madeinoz67",
+        "expected": "lookalike"
+      },
+      {
+        "candidate": "acme-power",
+        "existing": "madeinoz67",
+        "expected": "distinct"
+      }
+    ]
+  },
+  "capability_enumeration": [
+    "network_egress",
+    "subprocess_or_native_library",
+    "filesystem_writes_beyond_evidence_retention"
+  ],
+  "transport_tier_rule": {
+    "status": "pre-committed",
+    "activation_trigger": "The transport lane's gateway activation (issue #167).",
+    "statement": "The scoped_transport tier is granted only to publishers with a recorded provider admission at publish time; the tier assignments are recorded here the moment the transport lane activates, never retrofitted after it (Q15/CR-49).",
+    "admissions": [
+      "madeinoz67"
+    ]
+  },
+  "checklist": {
+    "id": "review-checklist",
+    "version": "1",
+    "path": "review-checklist.md"
+  }
+}

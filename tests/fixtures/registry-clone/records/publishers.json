@@ -1,0 +1,39 @@
+{
+  "publishers": [
+    {
+      "publisher_id": "northwind-instruments",
+      "namespace": "northwind-instruments",
+      "github": "northwind-instruments",
+      "ed25519_public_key_pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAvM4p3y2Ay276nUSVT77Wpn8AkBe/jGcoOHOOq04LhFg=\n-----END PUBLIC KEY-----\n",
+      "key_validity": {
+        "not_before": "2026-01-01T00:00:00Z",
+        "not_after": "2030-01-01T00:00:00Z"
+      },
+      "vetted_at": "2026-09-01T00:00:00Z",
+      "publisher_repo_protections": [
+        {
+          "protection": "push-protection",
+          "state": "declared-not-verified"
+        }
+      ]
+    },
+    {
+      "publisher_id": "harborline-systems",
+      "namespace": "harborline-systems",
+      "github": "harborline-systems",
+      "ed25519_public_key_pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAji8fYSeMIBtOCvCeYPqZdHmVsCCT46GSnVGEwDEAN3s=\n-----END PUBLIC KEY-----\n",
+      "key_validity": {
+        "not_before": "2026-01-01T00:00:00Z",
+        "not_after": "2030-01-01T00:00:00Z"
+      },
+      "vetted_at": "2026-09-01T00:00:00Z",
+      "publisher_repo_protections": [
+        {
+          "protection": "push-protection",
+          "state": "declared-not-verified"
+        }
+      ]
+    }
+  ],
+  "publishers_version": 1
+}
