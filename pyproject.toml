@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "benchweave-sdk"
-version = "0.4.0"
+version = "0.4.1"
 description = "Offline authoring and conformance tools for BenchWeave OTDP device plugins."
 readme = "README.md"
 requires-python = ">=3.13"
@@ -31,6 +31,9 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest>=8.0"]
+# Publisher signing at package time (owner ruling 2026-10-02, issue #223):
+# optional so the keyless default never loads the signing stack.
+signing = ["cryptography>=45"]
 
 [project.urls]
 Homepage = "https://madeinoz67.github.io/benchweave-sdk/"
@@ -63,6 +66,9 @@ dev = [
   "mypy>=1.11",
   "ruff>=0.6",
   "types-jsonschema>=4.26.0.20260518",
+  # Dev-only so CI mypy resolves the optional signing imports; the published
+  # wheel keeps cryptography optional via the `signing` extra (issue #223).
+  "cryptography>=45",
 ]
 
 [tool.ruff]

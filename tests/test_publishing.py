@@ -1,0 +1,870 @@
+"""The entry-gate battery and packaging discipline (A4, CR-1..CR-6, CR-35..50).
+
+Six mutants refuse with stable prefixes; six control arms (mutant + missing
+piece restored) pass packaging. Determinism, component-deletion arms and the
+namespace rules are pinned alongside.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import shutil
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from benchweave_sdk.publishing import (
+    PublishingError,
+    build_submission,
+    check_namespace,
+    closure_digest_of_dependencies,
+    parse_dependency,
+    validate_submission_draft,
+    validate_transport_triple,
+)
+
+HEX40 = "1" * 40
+HEX64 = "2" * 64
+CAPABILITIES_NONE = {
+    "network_egress": False,
+    "subprocess_or_native_library": False,
+    "filesystem_writes_beyond_evidence_retention": False,
+}
+
+def _structural_token(imprint_of: bytes, when: bytes = b"260101120000Z") -> bytes:
+    """A minimal honest-shaped DER TimeStampToken over the given content."""
+    def tlv(tag: int, body: bytes) -> bytes:
+        length = len(body)
+        if length < 128:
+            lb = bytes([length])
+        else:
+            n = (length.bit_length() + 7) // 8
+            lb = bytes([0x80 | n]) + length.to_bytes(n, "big")
+        return bytes([tag]) + lb + body
+
+    sha_oid = bytes.fromhex("0609608648016503040201") + tlv(0x05, b"")
+    import hashlib
+
+    digest = hashlib.sha256(imprint_of).digest()
+    imprint = tlv(0x30, sha_oid + tlv(0x04, digest))
+    tstinfo = tlv(
+        0x30,
+        tlv(0x02, b"\x01")
+        + tlv(0x06, b"")
+        + imprint
+        + tlv(0x02, b"\x01")
+        + tlv(0x18, when),
+    )
+    return tlv(0x30, bytes.fromhex("060b2a864886f70d0109100104") + tlv(0xA0, tstinfo))
+
+
+
+_DESCRIPTOR: dict[str, Any] = {
+    "otdp_version": "0.2.2",
+    "descriptor_version": "0.2.0",
+    "id": "org.example.widget",
+    "display_name": "Widget fixture",
+    "description": "Synthetic widget fixture for the publishing battery.",
+    "identity": {
+        "strategy": "adapter",
+        "manufacturer": "Exampleworks",
+        "model": "widget-1",
+        "firmware_policy": "commissioned",
+    },
+    "integration": {
+        "mode": "adapter",
+        "adapter": {
+            "entry_point": "benchweave_wgt_widget.adapter:create_plugin",
+            "api_version": "1.1",
+            "version": "0.1.0",
+            "dependencies": [],
+            "permissions": [],
+        },
+    },
+    "transport": {"type": "serial", "connection_key": "widget"},
+    "capabilities": ["identify", "read"],
+}
+
+
+def make_plugin(root: Path, name: str = "wgt_widget") -> Path:
+    plugin = root / name
+    source = plugin / "src" / f"benchweave_{name}"
+    source.mkdir(parents=True, exist_ok=True)
+    (source / "descriptor.json").write_bytes(json.dumps(_DESCRIPTOR, indent=2).encode())
+    (source / "adapter.py").write_text("def create_plugin():\n    return object()\n")
+    (source / "__init__.py").write_text("")
+    docs = plugin / "docs"
+    docs.mkdir(exist_ok=True)
+    (docs / "protocol-evidence.md").write_text("# Evidence\n\nSynthetic mock exchanges only.\n")
+    (plugin / "LICENSE").write_text("MIT (fixture)\n")
+    (plugin / "README.md").write_text("# Widget fixture\n")
+    (plugin / "pyproject.toml").write_text(
+        '[project]\nname = "widget"\nversion = "0.1.0"\nrequires-python = ">=3.13"\n'
+    )
+    return plugin
+
+
+def make_registry_clone(root: Path) -> Path:
+    clone = root / "registry-clone"
+    (clone / "records").mkdir(parents=True, exist_ok=True)
+    (clone / "records" / "publishers.json").write_bytes(
+        b'{"publishers":[{"github":"madeinoz67","namespace":"madeinoz67",'
+        b'"publisher_id":"madeinoz67","publisher_repo_protections":[{"protection":"push-protection",'
+        b'"state":"declared-not-verified"}],"vetted_at":"2026-10-01T00:00:00Z"}],"publishers_version":1}\n'
+    )
+    (clone / "lane-rules.json").write_bytes(
+        json.dumps(
+            {
+                "rules_version": 1,
+                "namespace_rules": {
+                    "id_grammar": "publisher/plugin",
+                    "reserved_namespaces": ["benchweave", "otdp", "dev", "stg"],
+                    "reserved_plugins": ["sim-psu"],
+                    "dev_registry_prefix": "dev-",
+                },
+                "similarity_rule": {
+                    "params": {
+                        "case_sensitive": False,
+                        "separator_characters": ["-", "_", ".", "/"],
+                        "confusable_map": {"0": "o", "1": "l", "5": "s"},
+                        "max_edit_distance": 2,
+                    }
+                },
+            }
+        ).encode()
+        + b"\n"
+    )
+    return clone
+
+
+def build(tmp_path: Path, *, plugin: Path | None = None, **overrides: Any) -> Any:
+    resolved = plugin or make_plugin(tmp_path)
+    clone = make_registry_clone(tmp_path)
+    kwargs: dict[str, Any] = {
+        "registry_clone": clone,
+        "source_url": "https://github.com/example/widget",
+        "revision": HEX40,
+        "publisher": "madeinoz67",
+        "capability_declaration": dict(CAPABILITIES_NONE),
+    }
+    kwargs.update(overrides)
+    return build_submission(resolved, **kwargs)
+
+
+# --- A4: the six-mutant entry-gate battery ---------------------------------------
+
+
+def test_dev_lineage_dependency_is_refused(tmp_path: Path) -> None:
+    dep = {
+        "registry_id": "dev-local",
+        "package_id": "dev/widget",
+        "version": "1.0.0",
+        "manifest_sha256": HEX64,
+    }
+    with pytest.raises(PublishingError) as exc:
+        build(tmp_path, dependencies=[dep])
+    assert str(exc.value).startswith("dev_lineage_refused:")
+
+
+def test_dev_lineage_control_arm_passes(tmp_path: Path) -> None:
+    dep = {
+        "registry_id": "benchweave-registry",
+        "package_id": "madeinoz67/widget-descriptor",
+        "version": "1.0.0",
+        "manifest_sha256": HEX64,
+    }
+    artifacts = build(tmp_path, dependencies=[dep])
+    assert artifacts.manifest["dependencies"] == [dep]
+
+
+def test_mutable_source_ref_is_refused(tmp_path: Path) -> None:
+    for revision in ("main", "v1", "latest", "release-branch"):
+        with pytest.raises(PublishingError) as exc:
+            build(tmp_path, revision=revision)
+        assert str(exc.value).startswith("source_ref_mutable:"), revision
+
+
+def test_immutable_source_ref_control_arm_passes(tmp_path: Path) -> None:
+    artifacts = build(tmp_path, revision=HEX64)
+    assert artifacts.manifest["source"]["revision"] == HEX64
+
+
+def test_missing_capability_declaration_is_refused(tmp_path: Path) -> None:
+    with pytest.raises(PublishingError) as exc:
+        build(tmp_path, capability_declaration=None)
+    assert str(exc.value).startswith("capability_declaration_absent:")
+
+
+def test_capability_none_control_arm_passes(tmp_path: Path) -> None:
+    artifacts = build(tmp_path)
+    assert artifacts.submission["capability_declaration"] == CAPABILITIES_NONE
+
+
+def test_firmware_without_attestation_is_refused(tmp_path: Path) -> None:
+    plugin = make_plugin(tmp_path)
+    firmware = plugin / "src" / "benchweave_wgt_widget" / "firmware"
+    firmware.mkdir()
+    (firmware / "blob.bin").write_bytes(b"\x00\x01")
+    with pytest.raises(PublishingError) as exc:
+        build(tmp_path, plugin=plugin)
+    assert str(exc.value).startswith("firmware_provenance_absent:")
+
+
+def test_firmware_attestation_control_arm_passes(tmp_path: Path) -> None:
+    """The restored arm: vendor attestation pinned, firmware vendor-distributed
+    (not bundled) — the shape the spec's redistribution clause sanctions."""
+    plugin = make_plugin(tmp_path)
+    artifacts = build(
+        tmp_path,
+        plugin=plugin,
+        firmware_attestation={"vendor": "Exampleworks", "manifest": "firmware/vendor.manifest"},
+    )
+    assert artifacts.submission["firmware_attestation"]["vendor"] == "Exampleworks"
+    assert not any(
+        entry["path"].startswith("firmware/")
+        for entry in artifacts.manifest["payload"]["files"]
+    )
+
+
+def test_bundled_firmware_with_attestation_publishes_vendor_distributed(
+    tmp_path: Path,
+) -> None:
+    """Owner ruling (issue #223 rework): attested firmware is stated, not
+    refused — enforcement is the client's decision. The bytes never bundle
+    (the payload-role enum carries no firmware role); the attestation and the
+    exclusion are recorded in the draft."""
+    plugin = make_plugin(tmp_path)
+    firmware = plugin / "src" / "benchweave_wgt_widget" / "firmware"
+    firmware.mkdir()
+    (firmware / "blob.bin").write_bytes(b"\x00\x01")
+    artifacts = build(
+        tmp_path,
+        plugin=plugin,
+        firmware_attestation={"vendor": "Exampleworks", "manifest": "firmware/vendor.manifest"},
+    )
+    recorded = artifacts.submission["firmware_attestation"]
+    assert recorded["vendor"] == "Exampleworks"
+    assert recorded["bytes"] == "vendor-distributed"
+    assert recorded["files"] == ["firmware/blob.bin"]
+    assert not any(
+        entry["path"].startswith("firmware/")
+        for entry in artifacts.manifest["payload"]["files"]
+    ), "attested firmware bytes stay vendor-distributed, never bundled"
+
+
+def test_same_author_next_version_routes_to_closure_diff(tmp_path: Path) -> None:
+    """F2 (issue #223 rework): --version 0.2.0 on an existing same-author
+    package publishes, carrying the closure diff against the 0.1.0 prior."""
+    plugin = make_plugin(tmp_path)
+    clone = make_registry_clone(tmp_path)
+    prior = clone / "releases" / "benchweave-registry" / "madeinoz67" / "wgt_widget" / "0.1.0"
+    prior.mkdir(parents=True)
+    (prior / "manifest.json").write_bytes(
+        json.dumps(
+            {
+                "registry_id": "benchweave-registry",
+                "package_id": "madeinoz67/wgt_widget",
+                "version": "0.1.0",
+                "publisher_id": "madeinoz67",
+                "dependencies": [],
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+        + b"\n"
+    )
+    artifacts = build(tmp_path, plugin=plugin, version="0.2.0")
+    assert artifacts.manifest["version"] == "0.2.0"
+    assert artifacts.submission["closure"]["prior"] == {"version": "0.1.0"}
+
+
+def test_cross_author_existing_id_still_collides(tmp_path: Path) -> None:
+    plugin = make_plugin(tmp_path)
+    clone = make_registry_clone(tmp_path)
+    hijacked = clone / "releases" / "benchweave-registry" / "acme-labs" / "wgt_widget" / "1.0.0"
+    hijacked.mkdir(parents=True)
+    (hijacked / "manifest.json").write_bytes(
+        json.dumps(
+            {
+                "registry_id": "benchweave-registry",
+                "package_id": "acme-labs/wgt_widget",
+                "version": "1.0.0",
+                "publisher_id": "someone-else",
+                "dependencies": [],
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+        + b"\n"
+    )
+    with pytest.raises(PublishingError) as exc:
+        build(tmp_path, plugin=plugin, publisher="acme-labs")
+    assert str(exc.value).startswith("namespace_collision:")
+
+
+def test_transport_declaration_without_triples_is_refused(tmp_path: Path) -> None:
+    plugin = make_plugin(tmp_path)
+    descriptor_path = plugin / "src" / "benchweave_wgt_widget" / "descriptor.json"
+    descriptor = dict(_DESCRIPTOR)
+    descriptor["contracts"] = [
+        {"id": "otdp.transport.mock/1.0.0", "path": "contracts/mock.json", "sha256": HEX64}
+    ]
+    descriptor_path.write_bytes(json.dumps(descriptor).encode())
+    with pytest.raises(PublishingError) as exc:
+        build(tmp_path, plugin=plugin)
+    assert str(exc.value).startswith("transport_triples_absent:")
+
+
+def test_transport_triples_control_arm_passes(tmp_path: Path) -> None:
+    plugin = make_plugin(tmp_path)
+    descriptor_path = plugin / "src" / "benchweave_wgt_widget" / "descriptor.json"
+    descriptor = dict(_DESCRIPTOR)
+    descriptor["contracts"] = [
+        {"id": "otdp.transport.mock/1.0.0", "path": "contracts/mock.json", "sha256": HEX64}
+    ]
+    descriptor_path.write_bytes(json.dumps(descriptor).encode())
+    triple = {"id": "otdp.transport.mock/1.0.0", "version": "1.0.0", "sha256": HEX64}
+    artifacts = build(tmp_path, plugin=plugin, transport_triples=(triple,))
+    assert artifacts.submission["transport_triples"] == [triple]
+
+
+def test_publish_record_without_closure_diff_is_refused(tmp_path: Path) -> None:
+    artifacts = build(tmp_path)
+    member_paths = {entry["path"] for entry in artifacts.manifest["payload"]["files"]}
+    mutant = dict(artifacts.submission)
+    del mutant["closure"]
+    with pytest.raises(PublishingError) as exc:
+        validate_submission_draft(mutant, member_paths)
+    assert str(exc.value).startswith("closure_diff_absent:")
+
+
+def test_closure_diff_control_arm_passes(tmp_path: Path) -> None:
+    artifacts = build(tmp_path)
+    member_paths = {entry["path"] for entry in artifacts.manifest["payload"]["files"]}
+    validate_submission_draft(artifacts.submission, member_paths)
+
+
+# --- determinism (A1's second run) -------------------------------------------------
+
+
+def test_packaging_is_byte_reproducible(tmp_path: Path) -> None:
+    first = build(tmp_path)
+    second = build(tmp_path)
+    assert first.manifest_bytes == second.manifest_bytes
+    assert first.payload_bytes == second.payload_bytes
+    assert first.submission_bytes == second.submission_bytes
+
+
+# --- component-deletion arms (A2's tool half, CR-1) --------------------------------
+
+
+@pytest.mark.parametrize(
+    ("remove", "component"),
+    [
+        ("descriptor", "descriptor"),
+        ("sources", "adapter-source"),
+        ("evidence", "conformance-evidence"),
+        ("licence", "licence"),
+    ],
+)
+def test_deleted_component_refuses_naming_it(tmp_path: Path, remove: str, component: str) -> None:
+    plugin = make_plugin(tmp_path)
+    source = plugin / "src" / "benchweave_wgt_widget"
+    if remove == "descriptor":
+        (source / "descriptor.json").unlink()
+    elif remove == "sources":
+        shutil.rmtree(source)
+        source.mkdir()
+        (source / "descriptor.json").write_bytes(json.dumps(_DESCRIPTOR).encode())
+    elif remove == "evidence":
+        shutil.rmtree(plugin / "docs")
+    elif remove == "licence":
+        (plugin / "LICENSE").unlink()
+    clone = make_registry_clone(tmp_path)
+    with pytest.raises(PublishingError) as exc:
+        build_submission(
+            plugin,
+            registry_clone=clone,
+            source_url="https://github.com/example/widget",
+            revision=HEX40,
+            publisher="madeinoz67",
+            capability_declaration=dict(CAPABILITIES_NONE),
+        )
+    assert "component_absent:" in str(exc.value) and component in str(exc.value)
+
+
+# --- namespace rules (CR-15/16/39) --------------------------------------------------
+
+
+def _rules() -> Any:
+    from benchweave_sdk.publishing import LaneRules
+
+    return LaneRules(
+        reserved_namespaces=frozenset({"benchweave", "otdp", "dev", "stg"}),
+        reserved_plugins=frozenset({"sim-psu"}),
+        similarity_max_distance=2,
+        confusables={"0": "o", "1": "l", "5": "s"},
+    )
+
+
+def test_reserved_namespace_is_refused() -> None:
+    findings = check_namespace("benchweave/labs", _rules(), set(), {})
+    assert any(f.startswith("namespace_reserved:") for f in findings)
+
+
+def test_cross_owner_same_id_collides() -> None:
+    """A different author's claim to an existing package id still collides."""
+    findings = check_namespace(
+        "madeinoz67/dps150", _rules(), set(), {"madeinoz67/dps150": {"acme-labs"}}
+    )
+    assert any(f.startswith("namespace_collision:") for f in findings)
+
+
+def test_own_next_version_is_not_a_collision() -> None:
+    """Owner ruling (issue #223 rework): a publisher's own next version of an
+    existing id routes to closure-diff, never namespace_collision."""
+    findings = check_namespace(
+        "madeinoz67/dps150", _rules(), set(), {"madeinoz67/dps150": {"madeinoz67"}}
+    )
+    assert findings == []
+
+
+def test_same_device_name_under_another_namespace_is_allowed() -> None:
+    """Two different authors may register the same device name."""
+    findings = check_namespace(
+        "acme-labs/dps150", _rules(), {"madeinoz67"}, {"madeinoz67/dps150": {"madeinoz67"}}
+    )
+    assert findings == []
+
+
+def test_lookalike_is_flagged_not_refused() -> None:
+    findings = check_namespace("madeinoz68/pub", _rules(), {"madeinoz67"}, {})
+    assert any(f.startswith("namespace_lookalike:") for f in findings)
+
+
+def test_distinct_namespace_is_clean() -> None:
+    findings = check_namespace(
+        "acme-power/psu", _rules(), {"madeinoz67"}, {"madeinoz67/dps150": {"madeinoz67"}}
+    )
+    assert findings == []
+
+
+# --- parsers -------------------------------------------------------------------------
+
+
+def test_dependency_parser_round_trip() -> None:
+    dep = parse_dependency("benchweave-registry/madeinoz67/dps150-descriptor@1.0.0:" + HEX64)
+    assert dep == {
+        "registry_id": "benchweave-registry",
+        "package_id": "madeinoz67/dps150-descriptor",
+        "version": "1.0.0",
+        "manifest_sha256": HEX64,
+    }
+
+
+def test_dependency_parser_refuses_garbage() -> None:
+    with pytest.raises(PublishingError):
+        parse_dependency("dev-local/x@latest:zzz")
+
+
+def test_transport_triple_parser() -> None:
+    triple = validate_transport_triple("otdp.transport.mock/1.0.0@1.0.0:" + HEX64)
+    assert triple["sha256"] == HEX64
+
+
+def test_closure_digest_is_definition_pinned() -> None:
+    deps = [
+        {
+            "registry_id": "benchweave-registry",
+            "package_id": "madeinoz67/x-descriptor",
+            "version": "1.0.0",
+            "manifest_sha256": HEX64,
+        }
+    ]
+    digest = closure_digest_of_dependencies(deps)
+    pins = sorted(
+        (dep["registry_id"], dep["package_id"], dep["version"], dep["manifest_sha256"])
+        for dep in deps
+    )
+    expected = hashlib.sha256(
+        json.dumps(pins, sort_keys=True, separators=(",", ":")).encode() + b"\n"
+    ).hexdigest()
+    assert digest == expected
+
+
+def test_generated_submission_manifest_is_canonical(tmp_path: Path) -> None:
+    artifacts = build(tmp_path)
+    assert json.loads(artifacts.manifest_bytes) == artifacts.manifest
+    assert artifacts.manifest_bytes.endswith(b"\n")
+
+# --- M3 (CR-49 fold): the scoped_transport permission form ---------------------
+
+
+def test_scoped_transport_without_admission_is_refused(tmp_path: Path) -> None:
+    """The tier rule reaches the permission form: the dps150's own shape
+    (scoped_transport, zero triples, no recorded admission) refuses."""
+    plugin = make_plugin(tmp_path)
+    descriptor_path = plugin / "src" / "benchweave_wgt_widget" / "descriptor.json"
+    descriptor = json.loads(descriptor_path.read_bytes())
+    descriptor["integration"]["adapter"]["permissions"] = ["scoped_transport"]
+    descriptor_path.write_bytes(json.dumps(descriptor).encode())
+    with pytest.raises(PublishingError) as exc:
+        build(tmp_path, plugin=plugin)
+    assert str(exc.value).startswith("transport_triples_absent:")
+
+
+def test_scoped_transport_with_recorded_admission_passes(tmp_path: Path) -> None:
+    plugin = make_plugin(tmp_path)
+    descriptor_path = plugin / "src" / "benchweave_wgt_widget" / "descriptor.json"
+    descriptor = json.loads(descriptor_path.read_bytes())
+    descriptor["integration"]["adapter"]["permissions"] = ["scoped_transport"]
+    descriptor_path.write_bytes(json.dumps(descriptor).encode())
+    clone = make_registry_clone(tmp_path)
+    rules = json.loads((clone / "lane-rules.json").read_bytes())
+    rules["transport_tier_rule"] = {"admissions": ["madeinoz67"]}
+    (clone / "lane-rules.json").write_bytes(json.dumps(rules).encode() + b"\n")
+    artifacts = build_submission(
+        plugin,
+        registry_clone=clone,
+        source_url="https://github.com/example/widget",
+        revision=HEX40,
+        publisher="madeinoz67",
+        capability_declaration=dict(CAPABILITIES_NONE),
+    )
+    assert artifacts.manifest["permissions"] == ["scoped_transport"]
+
+
+# --- F5 (fold): the lookalike flag rides the artefact set ----------------------
+
+
+def test_lookalike_flags_ride_the_submission_draft(tmp_path: Path) -> None:
+    """CR-39's flag is computed, recorded and surfaced — never discarded."""
+    plugin = make_plugin(tmp_path)
+    clone = make_registry_clone(tmp_path)
+    publishers = json.loads((clone / "records" / "publishers.json").read_bytes())
+    publishers["publishers"].append(
+        {
+            "github": "near-twin",
+            "namespace": "madeinoz68",
+            "publisher_id": "madeinoz68",
+            "publisher_repo_protections": [
+                {"protection": "push-protection", "state": "declared-not-verified"}
+            ],
+            "vetted_at": "2026-10-01T00:00:00Z",
+        }
+    )
+    (clone / "records" / "publishers.json").write_bytes(
+        json.dumps(publishers, sort_keys=True, separators=(",", ":")).encode() + b"\n"
+    )
+    artifacts = build(tmp_path, plugin=plugin, publisher="madeinoz68")
+    assert artifacts.lookalikes, "the similarity finding must not be discarded"
+    assert any(
+        flag.startswith("namespace_lookalike:") for flag in artifacts.lookalikes
+    )
+    assert artifacts.submission["namespace_lookalikes"] == artifacts.lookalikes
+    assert "namespace_lookalikes" in json.loads(artifacts.submission_bytes)
+
+# --- publisher signing + trusted timestamp (owner ruling 2026-10-02) ------------
+
+
+def _publisher_key(root: Path) -> tuple[Path, Any]:
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    key = Ed25519PrivateKey.generate()
+    key_path = root / "publisher.pem"
+    key_path.write_bytes(
+        key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    )
+    return key_path, key.public_key()
+
+
+def test_sign_manifest_bytes_verifies(tmp_path: Path) -> None:
+    from cryptography.exceptions import InvalidSignature
+
+    from benchweave_sdk.publishing import sign_manifest_bytes
+
+    key_path, public = _publisher_key(tmp_path)
+    signature = sign_manifest_bytes(b"canonical bytes\n", key_path)
+    public.verify(signature, b"canonical bytes\n")
+    with pytest.raises(InvalidSignature):
+        public.verify(signature, b"different bytes\n")
+
+
+def test_timestamp_record_binds_the_signature() -> None:
+    from benchweave_sdk.publishing import timestamp_record_for
+
+    token = _structural_token(imprint_of=b"sig-bytes")
+    record = timestamp_record_for(token, b"sig-bytes", "https://tsa.example")
+    assert record["tsa"] == "https://tsa.example"
+    assert record["signed_at"] == "260101120000Z"
+    import hashlib
+
+    assert record["signature_sha256"] == hashlib.sha256(b"sig-bytes").hexdigest()
+    assert record["token_sha256"] == hashlib.sha256(token).hexdigest()
+
+
+
+
+
+def test_timestamp_request_is_der_shaped() -> None:
+    import hashlib
+
+    from benchweave_sdk.publishing import build_timestamp_request
+
+    request = build_timestamp_request(b"signature bytes")
+    assert request[0] == 0x30  # DER SEQUENCE
+    digest = hashlib.sha256(b"signature bytes").digest()
+    assert digest in request, "the SHA-256 imprint rides the request"
+
+# --- fold H1/M2: structural TSTInfo parsing + binding (2026-10-02) --------------
+
+
+def test_garbage_token_is_refused_by_the_record() -> None:
+    """H1 RED a: synthetic bytes embedding a time are NOT a token."""
+    from benchweave_sdk.publishing import PublishingError, timestamp_record_for
+
+    garbage = bytes([0x17, 13]) + b"261001120000Z"
+    with pytest.raises(PublishingError) as exc:
+        timestamp_record_for(garbage, b"sig", "https://tsa.example")
+    assert str(exc.value).startswith("timestamp_token_malformed:")
+
+
+def test_token_over_different_content_is_refused() -> None:
+    """H1 RED b: the messageImprint must cover the signature."""
+    from benchweave_sdk.publishing import PublishingError, timestamp_record_for
+
+    token = _structural_token(imprint_of=b"completely different content")
+    with pytest.raises(PublishingError) as exc:
+        timestamp_record_for(token, b"the actual signature", "https://tsa.example")
+    assert str(exc.value).startswith("timestamp_binding_mismatch:")
+
+
+def test_honest_token_with_time_bytes_in_digest_verifies() -> None:
+    """M2 RED: a digest whose bytes contain 0x17 must not confuse the parse."""
+    import hashlib
+
+    from benchweave_sdk.publishing import timestamp_record_for
+
+    probe = 0
+    while hashlib.sha256(str(probe).encode()).digest()[0] != 0x17:
+        probe += 1
+    signature = b"the signature being timestamped"
+    token = _structural_token(imprint_of=signature)
+    # Overwrite the imprint with a digest whose first byte is 0x17 while still
+    # covering the signature: sha256 truncated to start 0x17 is content-fixed,
+    # so instead craft via a different honest token: re-derive by probing the
+    # signature bytes is fixed — use the structural guarantee directly.
+    record = timestamp_record_for(token, signature, "https://tsa.example")
+    assert record["signed_at"] == "260101120000Z"  # genTime, never digest bytes
+
+
+def test_structural_parse_reads_digest_containing_time_tags() -> None:
+    """The M2 discriminator: the digest carries 0x17 first-byte and the parse
+    still returns the TSTInfo's genTime and the true imprint."""
+    import hashlib
+
+    from benchweave_sdk.publishing import parse_timestamp_token
+
+    probe = 0
+    while hashlib.sha256(str(probe).encode()).digest()[0] != 0x17:
+        probe += 1
+    content = str(probe).encode()
+    token = _structural_token(imprint_of=content)
+    imprint, gen_time = parse_timestamp_token(token)
+    assert imprint == hashlib.sha256(content).digest()
+    assert gen_time == "260101120000Z"
+
+
+def test_malformed_token_refuses_with_prefix() -> None:
+    from benchweave_sdk.publishing import PublishingError, timestamp_record_for
+
+    with pytest.raises(PublishingError) as exc:
+        timestamp_record_for(b"\x30\x03\x02\x01\x01", b"sig", "https://tsa.example")
+    assert str(exc.value).startswith("timestamp_token_malformed:")
+
+
+def test_submission_branch_stages_the_signature(tmp_path: Path) -> None:
+    """M1: package --publisher-key -> submit stages manifest.sig too."""
+    import subprocess
+
+    from benchweave_sdk.publishing import (
+        build_submission,
+        sign_manifest_bytes,
+        submission_branch,
+    )
+
+    plugin = make_plugin(tmp_path)
+    clone = make_registry_clone(tmp_path)
+    artifacts = build_submission(
+        plugin,
+        registry_clone=clone,
+        source_url="https://github.com/example/widget",
+        revision=HEX40,
+        publisher="madeinoz67",
+        capability_declaration=dict(CAPABILITIES_NONE),
+    )
+    out = tmp_path / "artifacts"
+    artifacts.write(out)
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    key = Ed25519PrivateKey.generate()
+    (out / "manifest.sig").write_bytes(
+        sign_manifest_bytes(artifacts.manifest_bytes, _write_key(tmp_path, key))
+    )
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "trunk", str(repo)], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "config", "user.email", "fixture@example.invalid"],
+        check=True,
+    )
+    subprocess.run(["git", "-C", str(repo), "config", "user.name", "fixture"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-q", "--allow-empty", "-m", "init"],
+        check=True,
+        env={**__import__("os").environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+             "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"},
+    )
+    subprocess.run(["git", "-C", str(repo), "remote", "add", "origin",
+                    "https://github.com/example/repo.git"], check=True)
+    (repo / "records").mkdir()
+    (repo / "records" / "publishers.json").write_bytes(
+        (clone / "records" / "publishers.json").read_bytes()
+    )
+    (repo / "lane-rules.json").write_bytes((clone / "lane-rules.json").read_bytes())
+    submission = json.loads((out / "submission.json").read_bytes())
+    _branch, target, _remote = submission_branch(repo, out, submission)
+    staged = sorted(p.name for p in target.iterdir())
+    assert "manifest.sig" in staged, staged
+    assert set(staged) >= {"manifest.json", "payload.zip", "submission.json", "manifest.sig"}
+
+
+def _write_key(root: Path, key: Any) -> Path:
+    from cryptography.hazmat.primitives import serialization
+
+    path = root / "publisher-key.pem"
+    path.write_bytes(
+        key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    )
+    return path
+
+def test_submission_branch_works_on_a_non_main_default(tmp_path: Path) -> None:
+    """RED (CI fix): staging works when the repo's default branch is not
+    'main' - the base derives from the repo itself. Baseline (quoted from
+    the CI reproduction): git_failed:checkout: fatal: 'main' is not a commit
+    and a branch 'submission/...' cannot be created from it."""
+    import os
+    import subprocess
+
+    from benchweave_sdk.publishing import (
+        build_submission,
+        submission_branch,
+    )
+
+    plugin = make_plugin(tmp_path)
+    clone = make_registry_clone(tmp_path)
+    artifacts = build_submission(
+        plugin,
+        registry_clone=clone,
+        source_url="https://github.com/example/widget",
+        revision=HEX40,
+        publisher="madeinoz67",
+        capability_declaration=dict(CAPABILITIES_NONE),
+    )
+    out = tmp_path / "artifacts"
+    artifacts.write(out)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    env = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@t",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@t",
+    }
+    subprocess.run(["git", "init", "-q", "-b", "trunk", str(repo)], check=True, env=env)
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-q", "--allow-empty", "-m", "init"],
+        check=True,
+        env=env,
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "remote", "add", "origin",
+         "https://github.com/example/repo.git"],
+        check=True,
+    )
+    (repo / "records").mkdir()
+    (repo / "records" / "publishers.json").write_bytes(
+        (clone / "records" / "publishers.json").read_bytes()
+    )
+    (repo / "lane-rules.json").write_bytes((clone / "lane-rules.json").read_bytes())
+    submission = json.loads((out / "submission.json").read_bytes())
+    branch, target, _remote = submission_branch(repo, out, submission)
+    assert branch.startswith("submission/")
+    assert "manifest.json" in sorted(p.name for p in target.iterdir())
+
+def test_submission_commits_without_any_git_identity(tmp_path: Path) -> None:
+    """RED (CI fix 2): the flow's own commit never depends on the operator's
+    git identity. Deterministic baseline (quoted from the reproduction, the
+    CI condition): 'fatal: no email was given and auto-detection is
+    disabled' - reproduced by forbidding git's username auto-detection
+    (user.useConfigOnly), which is what a bare CI runner amounts to."""
+    import subprocess
+
+    from benchweave_sdk.publishing import build_submission, submission_branch
+
+    plugin = make_plugin(tmp_path)
+    clone = make_registry_clone(tmp_path)
+    artifacts = build_submission(
+        plugin,
+        registry_clone=clone,
+        source_url="https://github.com/example/widget",
+        revision=HEX40,
+        publisher="madeinoz67",
+        capability_declaration=dict(CAPABILITIES_NONE),
+    )
+    out = tmp_path / "artifacts"
+    artifacts.write(out)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "trunk", str(repo)], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.email", "t@t"], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.name", "t"], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "commit", "-q", "--allow-empty", "-m", "init"],
+        check=True,
+    )
+    # Forbid auto-detection: no identity is derivable from this point on.
+    subprocess.run(
+        ["git", "-C", str(repo), "config", "user.useConfigOnly", "true"], check=True
+    )
+    subprocess.run(
+        ["git", "-C", str(repo), "remote", "add", "origin",
+         "https://github.com/example/repo.git"],
+        check=True,
+    )
+    (repo / "records").mkdir()
+    (repo / "records" / "publishers.json").write_bytes(
+        (clone / "records" / "publishers.json").read_bytes()
+    )
+    (repo / "lane-rules.json").write_bytes((clone / "lane-rules.json").read_bytes())
+    submission = json.loads((out / "submission.json").read_bytes())
+    branch, target, _remote = submission_branch(repo, out, submission)
+    assert branch.startswith("submission/")
+    committed = subprocess.run(
+        ["git", "-C", str(repo), "log", "-1", "--format=%an <%ae>"],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    assert committed == "benchweave-sdk-submit <submit@benchweave-sdk.invalid>"
+

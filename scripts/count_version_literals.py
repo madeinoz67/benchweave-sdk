@@ -409,6 +409,15 @@ REGISTER: dict[str, tuple[str, int, tuple[str, ...] | None]] = {
         4,
         ("0.1.0", "0.1.0", "0.1.0", "1.0.0"),
     ),
+    "src/benchweave_sdk/publishing.py": (
+        "the submission-manifest schema version the packager stamps "
+        "(MANIFEST_SCHEMA_VERSION; the signed 0.1.2 form is maintainer-side), "
+        "the fallback release version, and the descriptor-derived default "
+        "otdp pin when a descriptor carries none — authored lane constants "
+        "(issue #223 slice 1), not derivations from the vendored lock",
+        3,
+        ("0.1.1", "0.0.0", "0.1.0"),
+    ),
 }
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
