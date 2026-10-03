@@ -70,6 +70,41 @@ def test_rendered_answers_carry_no_carriage_returns(tmp_path: Path) -> None:
     assert raw == (FIXTURES / "base" / ".copier-answers.yml").read_bytes()
 
 
+def test_rendered_tree_carries_no_carriage_returns(tmp_path: Path) -> None:
+    """The WHOLE render is LF on every platform (PR #93's Windows lane):
+    rendered members arrived CRLF there even though the template checkout
+    is LF, so create_project normalizes the rendered tree after copier
+    runs. Byte-compare every member against the fixture — the same R-2
+    arm, stated as a line-ending contract."""
+    destination = tmp_path / "example_plugin"
+    create_project(destination, "example_plugin")
+    rendered = _tree(destination)
+    for relative, content in rendered.items():
+        assert b"\r" not in content, relative
+    assert rendered == _tree(FIXTURES / "base")
+
+
+def test_enforce_lf_rewrites_crlf_and_never_touches_git(tmp_path: Path) -> None:
+    """The normalization helper's contract, unit-pinned: CRLF becomes LF
+    in every rendered text file (nested included), and .git is never
+    touched — upgrade runs it inside a live project repository."""
+    from benchweave_sdk.scaffold import _enforce_lf
+
+    planted = tmp_path / "planted"
+    (planted / "src" / "pkg").mkdir(parents=True)
+    (planted / "src" / "pkg" / "adapter.py").write_bytes(b"def go():\r\n    pass\r\n")
+    (planted / "AI-GUIDE.md").write_bytes(b"# Guide\r\n\r\nbody\r\n")
+    (planted / "already.md").write_bytes(b"# fine\n")
+    git_dir = planted / ".git"
+    git_dir.mkdir()
+    (git_dir / "index").write_bytes(b"BIN\r\nARY\r\n")
+    _enforce_lf(planted)
+    assert (planted / "src" / "pkg" / "adapter.py").read_bytes() == b"def go():\n    pass\n"
+    assert (planted / "AI-GUIDE.md").read_bytes() == b"# Guide\n\nbody\n"
+    assert (planted / "already.md").read_bytes() == b"# fine\n"
+    assert (git_dir / "index").read_bytes() == b"BIN\r\nARY\r\n", ".git must stay untouched"
+
+
 def _tree(root: Path) -> dict[str, bytes]:
     return {
         entry.relative_to(root).as_posix(): entry.read_bytes()

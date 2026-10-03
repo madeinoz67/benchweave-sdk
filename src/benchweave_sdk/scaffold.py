@@ -141,6 +141,24 @@ def _materialize_template(scratch: Path) -> Path:
     return root
 
 
+def _enforce_lf(root: Path) -> None:
+    """Rewrite CRLF to LF across a rendered tree (PR #93's Windows lane).
+
+    The Windows CI lane observes CRLF bytes in rendered members (AI-GUIDE,
+    README, adapter, ...) even though the template checkout is LF and the
+    parity fixture is LF — whatever the exact stage introduces it, the
+    scaffold's output contract is LF on every platform, and this makes it
+    hold mechanically. Every template member is text, so any file whose
+    bytes carry \\r\\n is normalized in place; ``.git`` is never touched
+    (``upgrade`` runs this inside a live project repository).
+    """
+    for entry in root.rglob("*"):
+        if entry.is_file() and ".git" not in entry.relative_to(root).parts:
+            content = entry.read_bytes()
+            if b"\r\n" in content:
+                entry.write_bytes(content.replace(b"\r\n", b"\n"))
+
+
 def _pin_answers(project: Path, sdk_version: str) -> None:
     """Rewrite the fresh answers file's provenance lines to durable values.
 
@@ -354,6 +372,9 @@ def create_project(destination: Path, package: str, *, with_ui: bool = False) ->
                 defaults=True,
                 quiet=True,
             )
+        # PR #93's Windows lane: rendered members can carry CRLF even from
+        # an LF template checkout — the scaffold emits LF on every platform.
+        _enforce_lf(staging)
         _pin_answers(staging, __version__)
         # Generate-time validation contract (previously descriptor_for's
         # dict-level check): a template edit that would render an invalid

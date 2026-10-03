@@ -19,6 +19,7 @@ from typing import Any
 from . import __version__
 from .scaffold import (
     CANONICAL_TEMPLATE_URL,
+    _enforce_lf,
     _normalize_version,
     recorded_sdk_version,
 )
@@ -231,6 +232,10 @@ def upgrade_project(project: Path, *, target_ref: str | None = None) -> tuple[li
         overwrite=True,
         quiet=True,
     )
+    # PR #93's Windows lane: normalize the update's written files to LF (the
+    # scaffold's output contract) — .git is never touched, and the managed
+    # files' content is unchanged apart from line endings.
+    _enforce_lf(project)
     restored = []
     for relative, content in sorted(protected.items()):
         if not (project / relative).is_file():
