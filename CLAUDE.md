@@ -1,5 +1,9 @@
 @AGENTS.md
 
+## Using the SDK
+
+Building a plugin? Start with the [five-step workflow](README.md#five-steps) — install → `new` → `check` → `build` → `inventory`. Everything below is architecture and contributor doctrine.
+
 ## MANDATORY: Use Gortex MCP tools instead of Read/Grep/Glob
 
 A Gortex daemon is configured machine-wide. Whenever you operate on indexed source, you
@@ -149,6 +153,18 @@ Measure on real plugin projects, sync histories, and benches; **never name them*
 
 Git history is forever and a scrub of the tip is not a scrub. Getting it right before the
 commit is the only version of this that works.
+
+## Documentation register (ASD-STE100)
+
+Operator-, user- and developer-facing published documentation — docs-site user guides,
+developer-facing published guides, README instruction
+sections, generated guide text, warnings, cautions, and safety notices — is written in
+ASD-STE100 Simplified Technical English. Dispatch the `document-writer` agent
+(`.claude/agents/document-writer.md`) for any documentation leg that authors or rewrites
+it; the agent carries the register rules and is self-sufficient on any clone. Internal
+engineering records (design records, review rubrics, invariants, tracker text) keep the
+engineering register and are out of scope — STE's controlled language is the wrong
+instrument for them. Never change technical content to obey a register rule.
 
 ---
 
