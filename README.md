@@ -41,7 +41,7 @@ An installed SDK can check its vendored standards offline with `benchweave-sdk s
 
 1. Install the SDK from PyPI with `uv pip install benchweave-sdk`. For more options, see [Installation](#installation).
 2. Run `benchweave-sdk new plugins/acme/model100 --package benchweave_acme_model100`. Replace `acme/model100` with your manufacturer and device name. The independent project contains `src/benchweave_acme_model100/` and `tests/`.
-3. Change into the generated project with `cd plugins/acme/model100`. Replace the explicitly synthetic protocol with verified device behaviour. Then update the protocol's descriptor. The generated `AI-GUIDE.md` describes the design, build, test, review and release steps. `CLAUDE.md` at the root carries agent notes. The seeded skills under `src/benchweave_acme_model100/skills/` ship with the package. The skill `develop-plugin` is for plugin development. The skill `drive-device` is the demo driver to rewrite.
+3. Change into the generated project with `cd plugins/acme/model100`. Replace the explicitly synthetic protocol with verified device behaviour. Then update the descriptor of the generated plugin. The generated `AI-GUIDE.md` describes the design, build, test, review and release steps. `CLAUDE.md` at the root carries agent notes. The seeded skills under `src/benchweave_acme_model100/skills/` ship with the package. The skill `develop-plugin` is for plugin development. The skill `drive-device` is the demo driver to rewrite.
 4. Install the plugin with its test dependencies. Run the plugin tests. Run `benchweave-sdk check src/benchweave_acme_model100/descriptor.json`. Record all applicable S01–S18, C01–C12 and M01–M14 obligations and evidence. The basic SDK checks do not cover all of them.
 5. Build with `uv build`. Prepare the registry metadata and the reviewed evidence. Approve the release before publication or hardware qualification. `benchweave-sdk inventory` helps generate hashes, not a complete registry manifest.
 
@@ -57,9 +57,9 @@ Contributors track their own submissions with `registry status`. The command rep
 
 Maintainers derive the queue with `registry queue`. The queue has 7 stages. The stages come from the records plus the PR state. A `--pr-state` fixture or a live `gh` supplies the PR state. Maintainers write the signed baseline status document of a release with `registry publish-status`. The origin key is a local PEM file argument. The key never enters a repository or CI. Maintainers also manage the release lifecycle:
 
-- `registry yank` sets the status sequence to the next number and signs the record again.
+- `registry yank` sets the status sequence to the next number and signs the status document again.
 - `registry advise` adds an advisory to the served status. The release stays published.
-- `registry unlist` changes the record only. The release stays admissible.
+- `registry unlist` appends a record only. The release stays admissible.
 - `registry withdraw` works before acceptance only.
 - `registry transfer` needs both consents plus the vetting citation of the receiver.
 
