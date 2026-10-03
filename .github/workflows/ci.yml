@@ -98,6 +98,11 @@ jobs:
           [ -d "$BIN" ] || BIN="$RUNNER_TEMP/sdk-smoke/Scripts"
           uv pip install --python "$RUNNER_TEMP/sdk-smoke" smoke-dist/*.whl
           "$BIN/benchweave-sdk" --version
+          # PR #90 carry-forward row R1: the server console script exists on
+          # every default install (extras cannot gate entry points) — smoke
+          # it here so a packaging regression that breaks it fails at PR
+          # time, not at release. --version needs no [server] extra.
+          "$BIN/benchweave-sdk-server" --version
           "$BIN/benchweave-sdk" new "$RUNNER_TEMP/smoke-example" --with-ui
           "$BIN/benchweave-sdk" check "$RUNNER_TEMP/smoke-example/src/example_plugin/descriptor.json"
           "$BIN/benchweave-sdk" sync-standards --check

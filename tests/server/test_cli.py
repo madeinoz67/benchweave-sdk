@@ -170,3 +170,22 @@ def test_main_returns_zero_on_the_help_exit() -> None:
     """--help raises click's Exit(0) under standalone_mode=False; main()
     converts it to 0, the SDK CLI's shape."""
     assert main(["--help"]) == 0
+
+
+# --- PR #90 carry-forward row R4 (prepared, uncommitted) ----------------------
+
+
+def test_version_answers_without_a_runtime_error() -> None:
+    """R4: bare ``@click.version_option()`` infers the distribution name
+    from the module — ``benchweave_sdk_server`` is never a distribution
+    (the host rides benchweave-sdk), so ``--version`` crashed with
+    ``RuntimeError: 'benchweave_sdk_server' is not installed`` on every
+    install shape. The core precedent (benchweave_sdk.cli) passes the
+    derived ``__version__`` explicitly."""
+    from click.testing import CliRunner
+
+    from benchweave_sdk_server.cli import cli
+
+    result = CliRunner().invoke(cli, ["--version"])
+    assert result.exit_code == 0, result.output
+    assert "version" in result.output
