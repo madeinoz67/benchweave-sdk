@@ -271,6 +271,12 @@ def test_a_panel_page_the_host_lacks_renders_the_refusal(
         assert page.status_code == 200
         assert "panel_unavailable" in page.text
         assert "vendor-panel/1.0.0" in page.text
+        # Fold 4: the honesty channel states the TRUE state - a panel page
+        # renders its refusal and nothing below (the host skips binding
+        # gathering for panel pages), so the notice must not claim bindings
+        # render below.
+        assert "render below" not in page.text
+        assert "no bindings" in page.text
         info = client.post(
             "/v1/host_info", json={}, headers={"authorization": "Bearer x"}
         )

@@ -1,8 +1,9 @@
 {% if panel_refusal %}
 <div class="notice notice-refused" role="alert">
   <p><strong>panel_unavailable</strong> — this host does not provide the panel
-    <code>{{ panel_refusal.panel_id }}</code> this page declares. The page's own
-    bindings render below; the panel content is the panel author's.</p>
+    <code>{{ panel_refusal.panel_id }}</code> this page declares. The page renders
+    no bindings: its content is the declared panel's, and the panel author
+    provides it.</p>
 </div>
 {% endif %}
 {% if refusal %}
