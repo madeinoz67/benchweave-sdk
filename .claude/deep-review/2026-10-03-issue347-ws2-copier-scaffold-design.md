@@ -382,10 +382,14 @@ was designed; these notes carry the shipped truth.
    ride the R-2 parity cleanly; an author-edited file the base never
    rendered conflicts add/add — data-safe, reported by name (fold A-F1).
 4. **§2.4:** run_update requires `overwrite=True` on copier 9.x; a
-   missing/unreleased target tag refuses `upgrade_tag_missing:` BEFORE
-   copier shells git (fold A-F2 — not in the original prefix list); upgrade
+   missing/unreleased target tag — and, per fold B-F4, an unresolvable
+   base `_commit` in the answers — refuses `upgrade_tag_missing:` BEFORE
+   copier shells git (not in the original prefix list); upgrade
    also passes sdk_version/otdp_version answers so the version-bearing
-   renders move with the update instead of re-rendering the old pin.
+   renders move with the update instead of re-rendering the old pin. The
+   CI wheel smoke diffs the wheel render against the committed fixture
+   (fold B-F5), so a force-include regression dropping any template member
+   reddens instead of shipping green.
 5. **§7 keyword scan:** `subprocess` appears in tests/test_scaffold_update.py
    (git plumbing; no in-process API — copier itself shells out to git) and
    in the upgrade pre-checks; "subprocess 0" held only for the original

@@ -710,6 +710,31 @@ def test_upgrade_refuses_a_missing_tag_with_the_typed_prefix(tmp_path: Path) -> 
     assert "released templates only" in message
 
 
+def test_upgrade_refuses_a_wrong_base_tag_with_the_typed_prefix(tmp_path: Path) -> None:
+    """B-F4: the tag pre-flight covers the WHOLE resolution class — a wrong
+    or unresolvable ``_commit`` (the base) in the answers must surface as
+    the same typed refusal, never copier's raw git pathspec traceback."""
+    from benchweave_sdk.scaffold_update import upgrade_project
+
+    repo, materialized, _target = _upgrade_stage(tmp_path)
+    project = tmp_path / "P-wrongbase-tag"
+    _scaffold_offline(materialized, repo, project)
+    answers = project / ".copier-answers.yml"
+    rendered = [
+        line
+        for line in answers.read_text(encoding="utf-8").splitlines(keepends=True)
+        if not line.startswith("_commit:")
+    ]
+    rendered[1:1] = ["_commit: v0.0.0-wrong-base\n"]
+    answers.write_text("".join(rendered), encoding="utf-8")
+    _author_commit(project)
+    with pytest.raises(ValueError, match=r"^upgrade_tag_missing: ") as refusal:
+        upgrade_project(project, target_ref=TARGET_TAG)
+    message = str(refusal.value)
+    assert "v0.0.0-wrong-base" in message
+    assert "base" in message, "the refusal must say which side failed to resolve"
+
+
 def test_adopted_project_first_upgrade_conflicts_honestly_on_managed_edits(
     tmp_path: Path,
 ) -> None:

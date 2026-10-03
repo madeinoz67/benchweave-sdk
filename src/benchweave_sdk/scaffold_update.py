@@ -96,12 +96,22 @@ def _answers_src_path(project: Path) -> str | None:
     return None
 
 
-def _require_target_ref(source: str, ref: str) -> None:
-    """Refuse an unresolvable target tag BEFORE copier shells git (fold A-F2).
+def _answers_commit(project: Path) -> str | None:
+    for line in (project / ANSWERS_NAME).read_text(encoding="utf-8").splitlines():
+        if line.startswith("_commit:"):
+            return line.split(":", 1)[1].strip() or None
+    return None
 
-    A local template source is checked offline with rev-parse; a URL needs
-    the same network round-trip the update itself would make, so ls-remote
-    adds no new exposure.
+
+def _require_target_ref(source: str, ref: str, *, role: str = "target") -> None:
+    """Refuse an unresolvable template ref BEFORE copier shells git (A-F2/B-F4).
+
+    Covers the whole tag-resolution failure class: the target tag AND the
+    base ``_commit`` recorded in the answers both resolve here, so neither
+    surfaces as copier's raw git pathspec traceback. A local template source
+    is checked offline with rev-parse; a URL needs the same network
+    round-trip the update itself would make, so ls-remote adds no new
+    exposure.
     """
     if Path(source).is_dir():
         check = subprocess.run(  # noqa: S603, S607 — git has no in-process API
@@ -119,8 +129,9 @@ def _require_target_ref(source: str, ref: str) -> None:
         resolves = check.returncode == 0 and bool(check.stdout.strip())
     if not resolves:
         raise ValueError(
-            f"upgrade_tag_missing: template tag {ref} does not resolve in {source}; "
-            "released templates only — a development install's version has no tag"
+            f"upgrade_tag_missing: the {role} template ref {ref} does not resolve in "
+            f"{source}; released templates only — a development install's version "
+            "has no tag"
         )
 
 
@@ -202,6 +213,9 @@ def upgrade_project(project: Path, *, target_ref: str | None = None) -> tuple[li
     ref = target_ref or f"v{__version__}"
     if source is not None:
         _require_target_ref(source, ref)
+        base = _answers_commit(project)
+        if base:
+            _require_target_ref(source, base, role="base")
     protected = _protected_snapshot(project)
     run_update = _load_run_update()
     run_update(
