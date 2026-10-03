@@ -14,7 +14,6 @@ from typing import Any
 import pytest
 
 import benchweave_sdk
-from benchweave_sdk.scaffold import descriptor_for
 
 ROOT = Path(__file__).resolve().parents[1]
 LOCK = json.loads((ROOT / "standards-lock.json").read_text(encoding="utf-8"))
@@ -50,8 +49,16 @@ def test_adapter_api_version_tracks_descriptor_schema_const() -> None:
     assert expected == benchweave_sdk.ADAPTER_API_VERSION
 
 
-def test_scaffold_descriptor_agrees_with_public_constants() -> None:
-    descriptor = descriptor_for("benchweave_acme_model100")
+def test_scaffold_descriptor_agrees_with_public_constants(tmp_path: Path) -> None:
+    # Post-WS2 the descriptor is rendered template output, not an in-code
+    # dict; the rendered bytes must still track the public constants.
+    from benchweave_sdk.scaffold import create_project
+
+    create_project(tmp_path / "demo", "benchweave_acme_model100")
+    descriptor = json.loads(
+        (tmp_path / "demo" / "src" / "benchweave_acme_model100" / "descriptor.json")
+        .read_text(encoding="utf-8")
+    )
     assert descriptor["otdp_version"] == benchweave_sdk.OTDP_VERSION
     adapter = descriptor["integration"]["adapter"]
     assert adapter["api_version"] == benchweave_sdk.ADAPTER_API_VERSION

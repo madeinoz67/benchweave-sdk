@@ -1,0 +1,12 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+[project]
+name = "{{ package_name | replace('_', '-') }}"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = []
+[project.optional-dependencies]
+test = ["benchweave-sdk=={{ sdk_version }}", "pytest>=8.0"]
+[tool.hatch.build.targets.wheel]
+packages = ["src/{{ package_name }}"]

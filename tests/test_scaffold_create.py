@@ -56,17 +56,18 @@ def test_create_project_refuses_an_existing_staging_path_and_leaves_it_alone(
 def test_interrupted_generation_leaves_no_destination(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # Re-anchored at the render entry (issue #347 WS2): copier, not
+    # Path.write_text, does the writing now, so the old write-text injection
+    # points at nothing (proven: it stopped raising the day of the port).
+    # The seam is the copier loader create_project calls; failing inside the
+    # render still exercises staging creation, cleanup, and no destination.
+    import benchweave_sdk.scaffold as scaffold
+
+    def failing_run_copy(*args: object, **kwargs: object) -> None:
+        raise OSError("disk full")
+
     destination = tmp_path / "demo"
-    original = Path.write_text
-    calls = {"count": 0}
-
-    def failing(self: Path, *args: object, **kwargs: object) -> int:
-        calls["count"] += 1
-        if calls["count"] >= 3:
-            raise OSError("disk full")
-        return original(self, *args, **kwargs)  # type: ignore[arg-type]
-
-    monkeypatch.setattr(Path, "write_text", failing)
+    monkeypatch.setattr(scaffold, "_load_copier", lambda: failing_run_copy)
     with pytest.raises(OSError, match="disk full"):
         create_project(destination, "demo_plugin")
     assert not destination.exists()

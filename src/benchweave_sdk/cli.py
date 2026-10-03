@@ -78,7 +78,7 @@ def new_command(directory: Path, package_name: str, with_ui: bool) -> None:
     # through the symlink-refusing walk, so a destination reached through a
     # symlinked ancestor must become its canonical path up front.
     destination = directory.expanduser().resolve()
-    create_project(destination, package_name)
+    create_project(destination, package_name, with_ui=with_ui)
     if with_ui:
         from .presentation import create_ui_resources
 

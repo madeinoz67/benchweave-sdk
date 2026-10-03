@@ -1,0 +1,17 @@
+# The BenchWeave SDK repository IS the copier template (issue #347 WS2):
+# `new` renders from the packaged copy of this tree; `copier update` clones
+# the tagged repository. No update scripts of any kind ship here: copier
+# gates template scripts behind --trust/--UNSAFE, and this scaffold never
+# requires them.
+package_name:
+  type: str
+  default: example_plugin
+with_ui:
+  type: bool
+  default: false
+sdk_version:
+  type: str
+otdp_version:
+  type: str
+_subdirectory: template
+_skip_if_exists: [pyproject.toml, README.md, CLAUDE.md, tests/*, src/*]

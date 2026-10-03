@@ -1,0 +1,98 @@
+{
+  "otdp_version": "0.2.2",
+  "descriptor_version": "0.1.0",
+  "id": "dev.example.example-plugin",
+  "display_name": "SDK synthetic example",
+  "description": "Simulated read-only protocol; not hardware qualified.",
+  "identity": {
+    "strategy": "adapter",
+    "manufacturer": "SDK Example",
+    "model": "demo",
+    "firmware_policy": "listed",
+    "supported_firmware": [
+      "1.0.0"
+    ]
+  },
+  "integration": {
+    "mode": "adapter",
+    "adapter": {
+      "entry_point": "example_plugin.adapter:create_plugin",
+      "api_version": "1.1",
+      "version": "0.1.0",
+      "dependencies": [],
+      "permissions": [
+        "scoped_transport"
+      ]
+    }
+  },
+  "transport": {
+    "type": "serial",
+    "connection_key": "example_device",
+    "settings": {
+      "baud": 115200,
+      "data_bits": 8,
+      "parity": "none",
+      "stop_bits": 1,
+      "rtscts": false,
+      "max_frame_bytes": 128
+    }
+  },
+  "capabilities": [
+    "identify",
+    "read"
+  ],
+  "operations": {
+    "identify": {
+      "timeout_ms": 1000,
+      "side_effect": "none",
+      "retry": "never",
+      "cancellable": true,
+      "completion": "acknowledged"
+    },
+    "read": {
+      "timeout_ms": 1000,
+      "side_effect": "none",
+      "retry": "never",
+      "cancellable": true,
+      "completion": "acknowledged"
+    }
+  },
+  "parameters": [
+    {
+      "name": "voltage",
+      "description": "Synthetic voltage",
+      "type": "float",
+      "access": "ro",
+      "semantic": "measurement",
+      "unit": "V",
+      "binding": {
+        "kind": "adapter",
+        "key": "voltage"
+      },
+      "read_policy": {
+        "max_age_ms": 0,
+        "destructive": false
+      }
+    }
+  ],
+  "required_features": [
+    "otdp.core/0.1.0",
+    "otdp.adapter/0.1.0"
+  ],
+  "provenance": {
+    "sources": [
+      {
+        "title": "SDK synthetic protocol",
+        "reference": "protocol.md",
+        "revision": "0.1.0"
+      }
+    ],
+    "test_vectors": [
+      {
+        "id": "example",
+        "path": "vectors.json",
+        "purpose": "Synthetic identify/read exchanges"
+      }
+    ]
+  }
+}

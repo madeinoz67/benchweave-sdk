@@ -1,0 +1,29 @@
+# Agent notes for this plugin project
+
+Project: synthetic BenchWeave device plugin (package `{{ package_name }}`). This
+file is developer tooling at the repository root: it never enters the wheel
+(`packages = ["src/{{ package_name }}"]`), and if a release ever ships it, the
+registry manifest catalogues it as `documentation`, not `skill`.
+
+## Commands
+
+- Run the tests: `pytest`
+- Validate the descriptor offline: `benchweave-sdk check src/{{ package_name }}/descriptor.json`
+- Build the wheel and sdist: `uv build`
+- Pin dependencies: `uv lock`
+
+## Where things are
+
+- `AI-GUIDE.md` — the five build-out prompts (facts, implementation,
+  demonstration, review, release)
+- `src/{{ package_name }}/skills/` — the seeded agent skills:
+  `develop-plugin/SKILL.md` (authoring workflow, elicitation questions,
+  release mechanics) and `drive-device/SKILL.md` (the synthetic demo
+  driver; rewrite it for the real device)
+- `src/{{ package_name }}/descriptor.json` — the OTDP descriptor under check
+
+## Safety rails
+
+This project is synthetic: do not contact hardware, flash firmware or
+energise outputs while authoring plugin code, and publish nothing without
+separate authority from the project owner.

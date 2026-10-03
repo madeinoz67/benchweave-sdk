@@ -51,7 +51,14 @@ server = [
   # gateway's renderer corpus and what this host serves.
   "benchweave-ui-html==0.1.0",
   "uvicorn>=0.52.4",
+  # WS2: the folded authoring lane's plugin_new renders through the copier
+  # template too (the standalone tree's benchweave-sdk[scaffold] dep, rebased).
+  "copier>=9.18,<10",
 ]
+# Copier-backed `new` (issue #347 WS2): the scaffold renders from the packaged
+# copier template; optional so the base install never gains the copier tree
+# (the signing-extra shape — absence refuses with scaffold_extra_absent).
+scaffold = ["copier>=9.18,<10"]
 
 [project.urls]
 Homepage = "https://madeinoz67.github.io/benchweave-sdk/"
@@ -70,13 +77,18 @@ packages = ["src/benchweave_sdk", "src/benchweave_sdk_server"]
 # Packaged so an installed SDK can verify its vendored tree offline
 # (`benchweave-sdk sync-standards --check` without a repository checkout).
 "standards-lock.json" = "benchweave_sdk/standards-lock.json"
+# The copier template (issue #347 WS2): the repo root IS the template
+# (copier.yml + _subdirectory: template); the wheel ships that exact shape so
+# an installed SDK renders offline with no network and no repository.
+"copier.yml" = "benchweave_sdk/scaffold_template/copier.yml"
+"template" = "benchweave_sdk/scaffold_template/template"
 
 [tool.hatch.build.targets.sdist]
 # Root files are anchored (/name): hatchling matches include patterns with
 # gitignore depth semantics, so an unanchored "README.md" also picked up
 # .claude/deep-review/README.md. "/src" is anchored for the same reason —
 # an unanchored "src" would also match every src/ subtree at depth.
-include = ["/src", "/pyproject.toml", "/README.md", "/hatch_build.py", "/standards-lock.json"]
+include = ["/src", "/pyproject.toml", "/README.md", "/hatch_build.py", "/standards-lock.json", "/copier.yml", "/template"]
 
 [tool.hatch.build.hooks.custom]
 
@@ -95,12 +107,18 @@ dev = [
   # installs chromium and runs the marker.
   "playwright>=1.49",
   "axe-playwright-python>=0.1.7",
+  # Same shape for the scaffold extra (issue #347 WS2): mypy type-checks the
+  # lazy copier import; users still install copier only via [scaffold].
+  "copier>=9.18,<10",
 ]
 
 [tool.ruff]
 line-length = 100
 target-version = "py313"
-extend-exclude = ["docs"]
+# `docs` is site content; `template/` and the scaffold fixtures are generated
+# plugin bytes under byte-parity test (R-2), not authored repo code — linting
+# them would push generated-plugin aesthetics into the repo gate.
+extend-exclude = ["docs", "template", "tests/fixtures/scaffold_expected"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
@@ -115,3 +133,6 @@ testpaths = ["tests"]
 markers = [
   "browser: Playwright-driven axe WCAG 2.2 A/AA over the real app factory (both themes) plus the doctored-template control; CI runs these in the dedicated browser lane with chromium installed — deselect locally with -m 'not browser'",
 ]
+# Generated scaffold output under byte-parity test (R-2): its tests/ tree is
+# plugin content, not this suite's — collecting it imports example_plugin.
+norecursedirs = ["tests/fixtures/scaffold_expected"]

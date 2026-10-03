@@ -28,19 +28,24 @@ FIXTURE_SCHEMA_TEMPLATE = (
 
 
 class TestScaffoldDerivation:
-    """scaffold.py:530 — the example descriptor's pin is derived (§1.4)."""
+    """The example descriptor's pin is derived (§1.4). Since WS2 the
+    descriptor is template output, so the derivation is pinned through the
+    R-2 fixture's rendered bytes (byte-identical to create_project output)."""
+
+    def _rendered_descriptor(self) -> dict[str, object]:
+        path = (
+            REPO
+            / "tests/fixtures/scaffold_expected/base/src/example_plugin/descriptor.json"
+        )
+        return json.loads(path.read_text(encoding="utf-8"))
 
     def test_example_descriptor_pins_the_lock_active_version(self) -> None:
-        from benchweave_sdk.scaffold import descriptor_for
-
-        assert descriptor_for("demo_package")["otdp_version"] == active_version("otdp")
+        assert self._rendered_descriptor()["otdp_version"] == active_version("otdp")
 
     def test_example_descriptor_validates(self) -> None:
         """The scaffold generates what the SDK validates today (validation
         itself resolves the active schema — the parity the slice pins)."""
-        from benchweave_sdk.scaffold import descriptor_for
-
-        validate_descriptor(descriptor_for("demo_package"))
+        validate_descriptor(self._rendered_descriptor())  # type: ignore[arg-type]
 
 
 class TestGeneratedDocumentDerivations:
@@ -284,7 +289,7 @@ class TestTwinCounter:
         self, tmp_path: Path
     ) -> None:
         """G2b: the register cannot become a laundering list without a
-        visible register edit — a planted literal inside scaffold.py fails
+        visible register edit — a planted literal inside publishing.py fails
         the expectation, never the count."""
         scratch = tmp_path / "scratch-repo"
         (scratch / "scripts").mkdir(parents=True)
@@ -294,9 +299,9 @@ class TestTwinCounter:
         shutil.copytree(
             REPO / "src/benchweave_sdk_server", scratch / "src/benchweave_sdk_server"
         )
-        scaffold_py = scratch / "src/benchweave_sdk/scaffold.py"
-        scaffold_py.write_bytes(
-            scaffold_py.read_bytes() + b'\n_PLANT = "9.9.9"\n',  # noqa: E501
+        registered = scratch / "src/benchweave_sdk/publishing.py"
+        registered.write_bytes(
+            registered.read_bytes() + b'\n_PLANT = "9.9.9"\n',  # noqa: E501
         )
         result = subprocess.run(
             [sys.executable, str(scratch / "scripts/count_version_literals.py")],
@@ -305,8 +310,8 @@ class TestTwinCounter:
             check=False,
         )
         assert result.returncode == 1, result.stdout + result.stderr
-        assert "register expectation failed: src/benchweave_sdk/scaffold.py" in result.stdout
-        assert "expects 4 literals, found 5" in result.stdout
+        assert "register expectation failed: src/benchweave_sdk/publishing.py" in result.stdout
+        assert "expects 3 literals, found 4" in result.stdout
 
 
 class TestRegisteredDisposition:
@@ -427,16 +432,15 @@ class TestFoldHardening:
     def test_a_registered_value_substitution_fails_the_value_pin(
         self, tmp_path: Path
     ) -> None:
-        """Fold row 6: the scaffold register pins the VALUES — a
-        semantics-changing substitution (supported_firmware 1.0.0 -> 9.9.9)
-        fails at unchanged cardinality. RED at the fold base: the count
-        stayed 4 and the substitution passed."""
+        """Fold row 6: the publishing register pins the VALUES — a
+        semantics-changing substitution (MANIFEST_SCHEMA_VERSION 0.1.1 ->
+        9.9.9) fails at unchanged cardinality."""
         scratch = self._scratch_sdk_repo(tmp_path)
-        scaffold = scratch / "src/benchweave_sdk/scaffold.py"
-        text = scaffold.read_text(encoding="utf-8")
-        old = '"supported_firmware": ["1.0.0"]'
+        publishing = scratch / "src/benchweave_sdk/publishing.py"
+        text = publishing.read_text(encoding="utf-8")
+        old = '"0.1.1"'
         assert old in text
-        scaffold.write_text(text.replace(old, '"supported_firmware": ["9.9.9"]'), encoding="utf-8")
+        publishing.write_text(text.replace(old, '"9.9.9"'), encoding="utf-8")
         result = subprocess.run(
             [sys.executable, str(scratch / "scripts/count_version_literals.py")],
             capture_output=True,
@@ -473,16 +477,12 @@ class TestRegisterPinDefense:
         register = self._counter_register(COUNTER)
         assert set(register) == {
             "src/benchweave_sdk/standards/plugin-ui/contracts.py",
-            "src/benchweave_sdk/scaffold.py",
             "src/benchweave_sdk/publishing.py",
             "src/benchweave_sdk/registry_ops.py",
         }
         contracts = register["src/benchweave_sdk/standards/plugin-ui/contracts.py"]
         assert contracts[1] == 3
         assert contracts[2] is None  # digest-pinned whole, no value pin
-        scaffold = register["src/benchweave_sdk/scaffold.py"]
-        assert scaffold[1] == 4
-        assert scaffold[2] == ("0.1.0", "0.1.0", "0.1.0", "1.0.0")
         publishing = register["src/benchweave_sdk/publishing.py"]
         assert publishing[1] == 3
         assert publishing[2] == ("0.1.1", "0.0.0", "0.1.0")
@@ -491,17 +491,17 @@ class TestRegisterPinDefense:
         assert registry_ops[2] == ("1.1.0",)
 
     def test_a_register_edit_is_detected_by_the_pin(self, tmp_path: Path) -> None:
-        """The pin's teeth: a scratch copy with the scaffold expectation
-        loosened (4 -> 5) fails the same comparison the committed pin
+        """The pin's teeth: a scratch copy with the publishing expectation
+        loosened (3 -> 4) fails the same comparison the committed pin
         makes."""
         scratch = tmp_path / "twin-register-edited.py"
         text = COUNTER.read_text(encoding="utf-8")
-        edited = text.replace('4,\n        ("0.1.0"', '5,\n        ("0.1.0"')
+        edited = text.replace('3,\n        ("0.1.1"', '4,\n        ("0.1.1"')
         assert edited != text, "the mutation arm's needle vanished from the twin"
         scratch.write_text(edited, encoding="utf-8")
         register = self._counter_register(scratch)
         with pytest.raises(AssertionError):
-            assert register["src/benchweave_sdk/scaffold.py"][1] == 4
+            assert register["src/benchweave_sdk/publishing.py"][1] == 3
 
     def test_a_lock_path_redirect_fails_loudly(self, tmp_path: Path) -> None:
         """The standard-set pin reads the COMMITTED lock path: a redirected

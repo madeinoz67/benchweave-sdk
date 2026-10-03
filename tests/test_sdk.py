@@ -134,10 +134,16 @@ def test_conformance_catches_wrong_identity_and_lifecycle_io(tmp_path: Path) -> 
 
 
 @pytest.mark.parametrize("stage", ["open", "next_event", "close", "execute"])
-def test_conformance_times_out_stalled_adapter(stage: str) -> None:
+def test_conformance_times_out_stalled_adapter(stage: str, tmp_path: Path) -> None:
+    import json
     from typing import Any
 
-    descriptor = scaffold.descriptor_for("stall_plugin")
+    scaffold.create_project(tmp_path / "stall", "stall_plugin")
+    descriptor = json.loads(
+        (tmp_path / "stall" / "src" / "stall_plugin" / "descriptor.json").read_text(
+            encoding="utf-8"
+        )
+    )
 
     class Stalled:
         async def open(self, *args: Any) -> None:

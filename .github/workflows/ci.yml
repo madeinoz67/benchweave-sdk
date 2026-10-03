@@ -39,7 +39,9 @@ jobs:
           python-version: "3.13"
 
       - name: Sync environment
-        run: uv sync --locked --extra test --extra server
+        # --extra scaffold (WS2: the copier template render + update lane run
+        # on every push); --extra server (the folded standalone host, #309).
+        run: uv sync --locked --extra test --extra server --extra scaffold
 
       - name: Lint
         run: |
@@ -100,7 +102,9 @@ jobs:
           uv venv "$RUNNER_TEMP/sdk-smoke"
           BIN="$RUNNER_TEMP/sdk-smoke/bin"
           [ -d "$BIN" ] || BIN="$RUNNER_TEMP/sdk-smoke/Scripts"
-          uv pip install --python "$RUNNER_TEMP/sdk-smoke" smoke-dist/*.whl
+          # [scaffold] rides the wheel install too: `new` from the installed
+          # wheel renders through the packaged copier template (WS2).
+          uv pip install --python "$RUNNER_TEMP/sdk-smoke" "smoke-dist/*.whl[scaffold]"
           "$BIN/benchweave-sdk" --version
           # PR #90 carry-forward row R1: the server console script exists on
           # every default install (extras cannot gate entry points) — smoke

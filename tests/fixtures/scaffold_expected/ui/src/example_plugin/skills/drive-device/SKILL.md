@@ -1,0 +1,29 @@
+---
+name: example-plugin-device-operation
+description: Drive the example_plugin synthetic demo device - identify and read
+  the voltage parameter over the mock exchanges; the template to rewrite
+  for the real instrument.
+---
+
+# Driving the example_plugin device (synthetic demo)
+
+This skill drives the SEEDED SYNTHETIC PROTOCOL, not a real instrument:
+`ID?` + LF returns `SDK Example,demo,SIM001,1.0.0` + LF; `V?` + LF returns
+a finite ASCII voltage + LF. Supported verbs are `identify` and `read` of
+the `voltage` parameter (unit V, read-only measurement).
+
+Open the adapter via `create_plugin()`, `open(descriptor, services,
+context)`, then execute `identify` (no arguments) and `read`
+(`{"parameter": "voltage"}`). Expect `status: "ok"` with identity fields
+or a measurement value; the mock exchanges in `vectors.json` and
+`tests/test_plugin.py` are the exact reference.
+
+**Rewrite this skill for the real device.** It is the honesty placeholder
+the synthetic `adapter.py` and `protocol.py` already are: replace the
+exchanges, verbs, parameters, error handling and any capture/decode flow
+with the real instrument's evidenced behaviour, and keep every command
+traceable to the manual or captures.
+
+Safety: authoring and driving stay on mocks - do not contact hardware,
+flash firmware or energise outputs from plugin code, and publish nothing
+without separate authority.

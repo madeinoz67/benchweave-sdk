@@ -1,0 +1,39 @@
+{
+  "contract_version": "0.3.0",
+  "plugin_id": "dev.example.example-plugin",
+  "descriptor_sha256": "9c4f80da496ba392d91483e49db4fcc3b878319640fe30773b7689162d8b8458",
+  "bindings": [
+    {
+      "id": "voltage",
+      "kind": "observation",
+      "target_id": "voltage"
+    }
+  ],
+  "pages": [
+    {
+      "id": "readings",
+      "title": "Readings",
+      "kind": "readings",
+      "bindings": [
+        "voltage"
+      ],
+      "required": true,
+      "plots": [
+        {
+          "kind": "time_series",
+          "binding_id": "voltage",
+          "x": "time",
+          "y": [
+            "value"
+          ],
+          "channel_hints": [
+            {
+              "variable_id": "value",
+              "color_role": "muted"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
