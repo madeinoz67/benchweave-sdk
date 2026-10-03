@@ -534,6 +534,363 @@ def submit_command(artifacts_dir: Path, registry_clone: Path, base: str, open_pr
             output.message(f"Open the submission PR: {compare}", style="yellow")
 
 
+@cli.group("registry")
+def registry_group() -> None:
+    """Registry management: queue/status reads and lifecycle writes (offline).
+
+    Every command works on a clone of benchweave-registry; nothing here
+    touches a service, and the keyed commands take their key as a local
+    file argument that never enters any repository or CI (CR-12).
+    """
+
+
+@registry_group.command("queue")
+@click.option(
+    "--registry-clone", required=True, type=click.Path(path_type=Path),
+    help="A clone of benchweave-registry (committed records)",
+)
+@click.option(
+    "--pr-state", type=click.Path(path_type=Path), default=None,
+    help="PR-state fixture (gh-normalized shape) instead of a live gh read",
+)
+@_domain_errors
+def registry_queue_command(registry_clone: Path, pr_state: Path | None) -> None:
+    """Derive every submission's queue stage (CR-27): seven stages, records-first.
+
+    PR state comes from --pr-state or a live `gh pr list --json` when gh can
+    reach the repository; without either the queue degrades loudly
+    (stage_partial: pr_state_unavailable) rather than guessing.
+    """
+    from .registry_ops import gh_available, load_pr_state_fixture, load_pr_state_gh, queue_report
+
+    state = (
+        load_pr_state_fixture(pr_state)
+        if pr_state is not None
+        else (load_pr_state_gh(registry_clone) if gh_available() else None)
+    )
+    ConsoleOutput().document(queue_report(registry_clone, state))
+
+
+@registry_group.command("status")
+@click.option(
+    "--registry-clone", required=True, type=click.Path(path_type=Path),
+    help="A clone of benchweave-registry (committed records)",
+)
+@click.option("--publisher", default=None, help="Scope to one publisher (exact set)")
+@click.option("--plugin", default=None, help="Scope to one plugin within the publisher")
+@_domain_errors
+def registry_status_command(
+    registry_clone: Path, publisher: str | None, plugin: str | None
+) -> None:
+    """Contributor surface (CR-31): your submissions and release timelines.
+
+    Reads committed records only — publisher-scoped exact submission sets
+    plus each release's lifecycle event timeline. No PR state is consulted,
+    so stages carry the same loud stage_partial disclosure as the queue.
+    """
+    from .registry_ops import status_report
+
+    ConsoleOutput().document(status_report(registry_clone, publisher, plugin))
+
+
+@registry_group.command("publish-status")
+@click.argument("release")
+@click.option(
+    "--registry-clone", required=True, type=click.Path(path_type=Path),
+    help="A clone of benchweave-registry (the release tree lives here)",
+)
+@click.option(
+    "--origin-key", required=True, type=click.Path(path_type=Path),
+    help="The origin Ed25519 private key, a LOCAL PEM file — it never enters "
+    "any repository or CI (CR-12); the registry validates and labels, "
+    "never signs",
+)
+@click.option(
+    "--expires-at", default=None,
+    help="Status expiry (RFC 3339); default +365d, disclosed",
+)
+@click.option("--reason", default="initial publication", show_default=True)
+@click.option("--support-state", default="maintained", show_default=True)
+@click.option(
+    "--support-contact", default=None,
+    help="Default: the publisher's vetted GitHub contact",
+)
+@_domain_errors
+def registry_publish_status_command(
+    registry_clone: Path,
+    release: str,
+    origin_key: Path,
+    expires_at: str | None,
+    reason: str,
+    support_state: str,
+    support_contact: str | None,
+) -> None:
+    """Write a release's baseline status document (sequence 1) and sign it.
+
+    The durable fix for the slice-1 vacancy: every release carries a
+    schema-complete status.json plus status.sig, so a clean clone resolves.
+    CR-13/Q12 restated: this is the registry's process-side compensation —
+    it changes no admission semantics; the resolver's gates (sequence,
+    expiry, lifecycle) enforce at read time, and admission is consumed
+    read-only.
+    """
+    from .registry_ops import parse_release_ref, publish_status
+
+    doc, defaulted = publish_status(
+        registry_clone,
+        parse_release_ref(release),
+        key_path=origin_key,
+        reason=reason,
+        expires_at=expires_at,
+        support_state=support_state,
+        support_contact=support_contact,
+    )
+    output = ConsoleOutput()
+    release_dir = (
+        registry_clone / "releases" / doc["release"]["registry_id"]
+        / doc["release"]["package_id"].replace("/", "/") / doc["release"]["version"]
+    )
+    output.message(
+        f"Baseline status written (sequence {doc['sequence']}, lifecycle "
+        f"{doc['lifecycle']}) and signed:",
+        style="green",
+    )
+    output.path(f"  {release_dir / 'status.json'}")
+    output.path(f"  {release_dir / 'status.sig'}")
+    if defaulted:
+        output.message(
+            "expires_at defaulted to updated_at + 365 days; pass --expires-at "
+            "to commission an explicit expiry",
+            style="yellow",
+        )
+
+
+@registry_group.command("yank")
+@click.argument("release")
+@click.option(
+    "--registry-clone", required=True, type=click.Path(path_type=Path),
+    help="A clone of benchweave-registry",
+)
+@click.option(
+    "--origin-key", required=True, type=click.Path(path_type=Path),
+    help="The origin Ed25519 private key, a LOCAL PEM file (CR-12)",
+)
+@click.option("--reason", required=True, help="The yank reason (recorded in status and record)")
+@click.option("--actor", required=True, help="The GitHub identity responsible for this record")
+@click.option("--kind", default="admitted-release", show_default=True)
+@_domain_errors
+def registry_yank_command(
+    registry_clone: Path,
+    release: str,
+    origin_key: Path,
+    reason: str,
+    actor: str,
+    kind: str,
+) -> None:
+    """Yank a release: status sequence+1 lifecycle yanked, re-signed, recorded.
+
+    Advisories and support fields are preserved, not reset. CR-13/Q12
+    restated: yank is served state plus records — the gateway's admission
+    gate refuses yanked releases at read time; nothing here weakens it.
+    """
+    from .registry_ops import parse_release_ref, yank_release
+
+    doc, record = yank_release(
+        registry_clone,
+        parse_release_ref(release),
+        key_path=origin_key,
+        reason=reason,
+        actor=actor,
+        kind=kind,
+    )
+    output = ConsoleOutput()
+    output.message(
+        f"Yanked at status sequence {doc['sequence']}; record appended:",
+        style="green",
+    )
+    output.path(f"  {record}")
+
+
+@registry_group.command("advise")
+@click.argument("release")
+@click.option(
+    "--registry-clone", required=True, type=click.Path(path_type=Path),
+    help="A clone of benchweave-registry",
+)
+@click.option(
+    "--origin-key", required=True, type=click.Path(path_type=Path),
+    help="The origin Ed25519 private key, a LOCAL PEM file (CR-12)",
+)
+@click.option("--actor", required=True, help="The GitHub identity responsible for this record")
+@click.option("--id", required=True, help="Advisory identifier (e.g. BW-2026-0001)")
+@click.option("--severity", required=True, help="info | low | medium | high | critical")
+@click.option("--summary", required=True, help="One-line summary")
+@click.option("--url", required=True, help="https URL to the full advisory")
+@click.option("--kind", default="admitted-release", show_default=True)
+@_domain_errors
+def registry_advise_command(
+    registry_clone: Path,
+    release: str,
+    origin_key: Path,
+    actor: str,
+    id: str,
+    severity: str,
+    summary: str,
+    url: str,
+    kind: str,
+) -> None:
+    """Attach a security/quality advisory; lifecycle stays published.
+
+    An advisory is not a yank: the release stays admissible and the advisory
+    rides the served status's advisories[] under sequence+1, re-signed.
+    CR-13/Q12 restated as for yank — process-side records, never admission
+    semantics.
+    """
+    from .registry_ops import advise_release, parse_release_ref
+
+    doc, record = advise_release(
+        registry_clone,
+        parse_release_ref(release),
+        key_path=origin_key,
+        actor=actor,
+        advisory={"id": id, "severity": severity, "summary": summary, "url": url},
+        kind=kind,
+    )
+    output = ConsoleOutput()
+    output.message(
+        f"Advisory {id} attached at status sequence {doc['sequence']}; "
+        "record appended:",
+        style="green",
+    )
+    output.path(f"  {record}")
+
+
+@registry_group.command("unlist")
+@click.argument("release")
+@click.option(
+    "--registry-clone", required=True, type=click.Path(path_type=Path),
+    help="A clone of benchweave-registry",
+)
+@click.option("--reason", required=True, help="The unlist reason (recorded)")
+@click.option("--actor", required=True, help="The GitHub identity responsible for this record")
+@click.option("--kind", default="admitted-release", show_default=True)
+@_domain_errors
+def registry_unlist_command(
+    registry_clone: Path, release: str, reason: str, actor: str, kind: str
+) -> None:
+    """Unlist a release: the record only — the release stays admissible.
+
+    No status document is read or written (CR-32/E4): the catalogue row
+    drops at index regeneration while the release remains resolvable;
+    unlisting is not yanking.
+    """
+    from .registry_ops import parse_release_ref, unlist_release
+
+    record = unlist_release(
+        registry_clone, parse_release_ref(release), reason=reason, actor=actor, kind=kind
+    )
+    output = ConsoleOutput()
+    output.message("Unlist record appended (no status document touched):", style="green")
+    output.path(f"  {record}")
+
+
+@registry_group.command("withdraw")
+@click.argument("release")
+@click.option(
+    "--registry-clone", required=True, type=click.Path(path_type=Path),
+    help="A clone of benchweave-registry",
+)
+@click.option("--reason", required=True, help="The withdrawal reason (recorded)")
+@click.option("--actor", required=True, help="The GitHub identity responsible for this record")
+@click.option(
+    "--kind", default=None,
+    help="Required: the record's CR-56 class (admitted-release | in-tree-fixture | "
+    "community-shared) — withdrawal has no honest default",
+)
+@_domain_errors
+def registry_withdraw_command(
+    registry_clone: Path, release: str, reason: str, actor: str, kind: str | None
+) -> None:
+    """Withdraw a submission — pre-acceptance only (contributor).
+
+    Refuses once a publish record exists ('withdraw_after_publication:'):
+    post-signing withdrawal is an advisory or an unlist, never a silent
+    disappearance (CR-32). The CR-56 kind tag is required — no default.
+    """
+    from .registry_ops import parse_release_ref, withdraw_release
+
+    record = withdraw_release(
+        registry_clone, parse_release_ref(release), reason=reason, actor=actor, kind=kind
+    )
+    output = ConsoleOutput()
+    output.message("Withdraw record appended; the queue now derives withdrawn:", style="green")
+    output.path(f"  {record}")
+
+
+@registry_group.command("transfer")
+@click.argument("release")
+@click.option(
+    "--registry-clone", required=True, type=click.Path(path_type=Path),
+    help="A clone of benchweave-registry",
+)
+@click.option("--to", "to_publisher", required=True, help="The receiving publisher id")
+@click.option(
+    "--consent-from", default=None,
+    help="Optional evidence text from the transferring publisher (the ids always ride)",
+)
+@click.option(
+    "--consent-to", default=None,
+    help="Optional evidence text from the receiving publisher (the ids always ride)",
+)
+@click.option(
+    "--vetting-ref", default=None,
+    help="Vetting citation; default and only value: publishers.json#<receiver>",
+)
+@click.option("--reason", required=True, help="The transfer reason (recorded)")
+@click.option("--actor", required=True, help="The GitHub identity responsible for this record")
+@click.option("--kind", default="admitted-release", show_default=True)
+@_domain_errors
+def registry_transfer_command(
+    registry_clone: Path,
+    release: str,
+    to_publisher: str,
+    consent_from: str | None,
+    consent_to: str | None,
+    vetting_ref: str | None,
+    reason: str,
+    actor: str,
+    kind: str,
+) -> None:
+    """Transfer a release to another publisher — transfer is re-vetting (Q9).
+
+    The record's consents carry both publisher ids (the registry gate's
+    landed semantics), the vetting reference is the canonical
+    publishers.json#<receiver> citation, and the receiver must hold a
+    publishers.json vetting block — the same refusals the registry's records
+    CI makes. Future releases of the plugin publish under the receiver's
+    namespace; existing release paths are immutable history.
+    """
+    from .registry_ops import parse_release_ref, transfer_release
+
+    record = transfer_release(
+        registry_clone,
+        parse_release_ref(release),
+        to_publisher=to_publisher,
+        consent_from=consent_from,
+        consent_to=consent_to,
+        vetting_reference=vetting_ref,
+        reason=reason,
+        actor=actor,
+        kind=kind,
+    )
+    output = ConsoleOutput()
+    output.message(
+        f"Transfer record appended ({to_publisher} is the recorded receiver):",
+        style="green",
+    )
+    output.path(f"  {record}")
+
+
 def _renderer_origin(renderer_url: str | None) -> str | None:
     if renderer_url is None:
         return None

@@ -152,6 +152,16 @@ class LaneRules:
     similarity_max_distance: int
     confusables: dict[str, str]
     dev_prefix: str = "dev-"
+    #: The separator set the similarity fold consumes (S4: parsed from the
+    #: committed params, not hardcoded — a registry-side separator edit
+    #: diverges the two classifiers' verdicts silently otherwise).
+    separators: tuple[str, ...] = ("-", "_", ".", "/")
+    #: Parsed from the committed params and CONSUMED AS PARSED ONLY: both
+    #: classifiers casefold unconditionally today, so acting on this field
+    #: here would diverge verdicts under a moved params file — the twin's
+    #: param-consumption arm pins that parity; acting on the key is a
+    #: coordinated two-sided motion, never a silent one.
+    case_sensitive: bool = False
     #: Q15's tier rule: the publishers with a RECORDED provider admission,
     #: the only ones who may publish a scoped_transport-declaring release
     #: without publishing its admitted contract triples (the transport lane
@@ -169,18 +179,87 @@ class LaneRules:
             similarity_max_distance=int(params["max_edit_distance"]),
             confusables=dict(params["confusable_map"]),
             dev_prefix=str(rules["namespace_rules"]["dev_registry_prefix"]),
+            separators=tuple(params.get("separator_characters", ("-", "_", ".", "/"))),
+            case_sensitive=bool(params.get("case_sensitive", False)),
             transport_admissions=frozenset(tier.get("admissions", [])),
         )
 
 
-def _skeleton(name: str, rules: LaneRules) -> str:
-    """Fold a name to its confusable skeleton (lowercase, separators out)."""
+def _fold(name: str, rules: LaneRules, *, keep_separators: bool) -> str:
+    """Casefold and apply the confusable map; separators stripped or kept.
+
+    Casefolding is unconditional: ``case_sensitive`` is consumed as parsed
+    (see LaneRules) but not acted on — the registry classifier casefolds
+    unconditionally, and parity under moved params is what the twin's
+    param-consumption arm pins.
+    """
     folded = name.casefold()
-    for separator in ("-", "_", ".", "/"):
+    if keep_separators:
+        for source, target in sorted(rules.confusables.items(), key=lambda kv: -len(kv[0])):
+            folded = folded.replace(source, target)
+        return folded
+    for separator in rules.separators:
         folded = folded.replace(separator, "")
     for source, target in sorted(rules.confusables.items(), key=lambda kv: -len(kv[0])):
         folded = folded.replace(source, target)
     return folded
+
+
+def _skeleton(name: str, rules: LaneRules) -> str:
+    """Fold a name to its confusable skeleton (casefolded, separators out)."""
+    return _fold(name, rules, keep_separators=False)
+
+
+def _prefix_span_skeletons(name: str, rules: LaneRules) -> set[str]:
+    """Skeletons of the separator-delimited prefix spans of a name.
+
+    ``sim-psu-labs`` spans sim / sim-psu / sim-psu-labs, and each span is
+    folded WHOLE — its inner separators erased with the rest of the skeleton
+    fold — so a cross-separator claim still matches: span ``a-b`` skeletons
+    to ``ab`` and matches an existing ``a_b`` (the registry classifier's
+    span rule; raw-separator matching misses that shape).
+    """
+    spans: set[str] = set()
+    tokens: list[str] = []
+    current = ""
+    for char in name:
+        if char in rules.separators:
+            tokens.append(current)
+            spans.add(_skeleton("".join(tokens), rules))
+            current = ""
+        else:
+            current += char
+    tokens.append(current)
+    spans.add(_skeleton("".join(tokens), rules))
+    return {span for span in spans if span}
+
+
+def _span_contains(candidate: str, existing: str, rules: LaneRules) -> bool:
+    """Delimiter-bounded containment, the span rule: one name's skeleton is
+    one of the other's prefix-span skeletons (the full-equality case is
+    handled by the skeleton-equality arm before this runs).
+
+    ``dev-tools-inc`` claims reserved ``dev`` via span "dev";
+    ``devlin-instruments`` does not (its spans are devlin and the whole
+    name); ``sim-psu-labs`` claims ``sim-psu`` via span "sim-psu".
+    """
+    left = _skeleton(candidate, rules)
+    right = _skeleton(existing, rules)
+    return (
+        right in _prefix_span_skeletons(candidate, rules)
+        or left in _prefix_span_skeletons(existing, rules)
+    )
+
+
+def _names_near(candidate: str, existing: str, rules: LaneRules) -> bool:
+    """The committed near rule on raw names: skeleton equality, edit
+    distance within the committed max, or span containment."""
+    left, right = _skeleton(candidate, rules), _skeleton(existing, rules)
+    return (
+        left == right
+        or _edit_distance(left, right) <= rules.similarity_max_distance
+        or _span_contains(candidate, existing, rules)
+    )
 
 
 def _edit_distance(left: str, right: str) -> int:
@@ -199,6 +278,36 @@ def _edit_distance(left: str, right: str) -> int:
             )
         previous = current
     return previous[-1]
+
+
+def namespace_verdict(
+    candidate: str,
+    existing: str,
+    rules: LaneRules,
+    *,
+    reserved: bool,
+) -> str:
+    """Classify a candidate namespace against an existing name (CR-39).
+
+    Two comparison sets, per the registry lane's landed resolution: near a
+    RESERVED name the verdict is ``reserved`` (a claim on the standard's
+    name — ``otdp-tools`` extends ``otdp``); near a VETTED namespace it is
+    ``lookalike`` (impersonation, for review). Near = skeleton equality,
+    edit distance within the committed max, or prefix-span containment
+    (delimiter-bounded, spans skeletonized whole: ``dev-tools-inc``
+    extends ``dev``; ``devlin-instruments`` does not; a cross-separator
+    span ``a-b`` matches an existing ``a_b``). Verdict parity with the
+    registry's classifier is pinned on the committed params by the
+    lane-rules vectors twin AND on MOVED params by the twin's
+    param-consumption arm — parity holds on what both consume, not by
+    mirror-implementation.
+    """
+    left, right = _skeleton(candidate, rules), _skeleton(existing, rules)
+    if left == right:
+        return "same"
+    if not _names_near(candidate, existing, rules):
+        return "distinct"
+    return "reserved" if reserved else "lookalike"
 
 
 def check_namespace(
@@ -222,30 +331,42 @@ def check_namespace(
         findings.append(f"namespace_invalid:{package_id}")
         return findings
     publisher, plugin = package_id.split("/", 1)
-    if publisher in rules.reserved_namespaces:
+    # Both reserved arms are NEAR-AWARE with the same predicate as the
+    # classifier's reserved set: skeleton equality, committed distance, or
+    # separator-boundary containment. The plugin segment carries the same
+    # threat model as the namespace segment (S3): 'anyone/5im-psu'
+    # confusable-folds onto reserved 'sim-psu' and 'anyone/sim-psu-labs'
+    # extends it — both refuse, never merely flag.
+    if any(
+        _names_near(publisher, name, rules)
+        for name in sorted(rules.reserved_namespaces)
+    ):
         findings.append(f"namespace_reserved:{publisher}")
-    if plugin in rules.reserved_plugins:
+    if any(_names_near(plugin, name, rules) for name in sorted(rules.reserved_plugins)):
         findings.append(f"namespace_reserved:{plugin}")
     owners = existing_package_owners.get(package_id, set())
     if owners and publisher not in owners:
         findings.append(f"namespace_collision:{package_id}")
     # CR-39: the publisher segment is compared against existing namespaces;
     # the full id against existing packages — a lookalike is flagged for human
-    # review, never silently admitted.
-    publisher_skeleton = _skeleton(publisher, rules)
+    # review, never silently admitted. Near follows the committed classifier
+    # (equality, boundary containment, or distance within the max).
     for existing in sorted(existing_namespaces):
         if existing == publisher:
             continue
-        distance = _edit_distance(publisher_skeleton, _skeleton(existing, rules))
-        if 0 < distance <= rules.similarity_max_distance:
-            findings.append(f"namespace_lookalike:{publisher}~{existing}:{distance}")
-    package_skeleton = _skeleton(package_id, rules)
+        if _names_near(publisher, existing, rules):
+            findings.append(
+                f"namespace_lookalike:{publisher}~{existing}:"
+                f"{_edit_distance(_skeleton(publisher, rules), _skeleton(existing, rules))}"
+            )
     for existing in sorted(existing_package_owners):
         if existing == package_id:
             continue
-        distance = _edit_distance(package_skeleton, _skeleton(existing, rules))
-        if 0 < distance <= rules.similarity_max_distance:
-            findings.append(f"namespace_lookalike:{package_id}~{existing}:{distance}")
+        if _names_near(package_id, existing, rules):
+            findings.append(
+                f"namespace_lookalike:{package_id}~{existing}:"
+                f"{_edit_distance(_skeleton(package_id, rules), _skeleton(existing, rules))}"
+            )
     return findings
 
 

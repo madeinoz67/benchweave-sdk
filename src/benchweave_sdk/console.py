@@ -26,15 +26,32 @@ class ConsoleOutput:
     def message(self, text: str, *, style: str | None = None) -> None:
         self.console.print(text, style=style if self.terminal else None, markup=False)
 
+    def path(self, text: str) -> None:
+        """One width-safe line naming a filesystem path.
+
+        Rich's wrapping console splits long paths mid-word at its default
+        width 80 (CI terminals; the same corruption class document() and
+        findings() shed) — and these lines are exactly what operators and
+        tests grep for, so they bypass rich entirely.
+        """
+        self.console.file.write(text + "\n")
+
     def document(self, value: object) -> None:
         import json
 
-        self.message(json.dumps(value, indent=2))
+        # Machine-readable output bypasses rich: the console's width handling
+        # (wrap or crop) would insert or cut bytes INSIDE JSON string values,
+        # corrupting every downstream parser at narrow terminal widths.
+        self.console.file.write(json.dumps(value, indent=2) + "\n")
 
     def findings(self, rows: list[tuple[str, str, str]]) -> None:
         if not self.terminal:
+            # Machine-shaped failure diagnostics bypass rich (S13, the same
+            # corruption class document() shed): the rows are prefix-shaped,
+            # and a wrap at rich's default width 80 would break the path mid-
+            # token and fragment one finding across lines.
             for code, path, message in rows:
-                self.message(f"{code}: {path}: {message}")
+                self.console.file.write(f"{code}: {path}: {message}\n")
             return
         table = Table(title="Presentation findings", box=None)
         table.add_column("Code", style="yellow")

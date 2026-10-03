@@ -46,6 +46,12 @@ The generated runtime has no dependency on this SDK. The plugin test extra pins 
 
 ## Documentation
 
+### Registry management (eight `registry` commands)
+
+The `benchweave-sdk registry` family manages a clone of the [benchweave-registry](https://github.com/madeinoz67/benchweave-registry) repository offline and git-natively — every command takes `--registry-clone`. Contributors track their own submissions with `registry status` (exact submission sets and per-release lifecycle timelines, from committed records alone). Maintainers derive the queue with `registry queue` (seven stages from records plus PR state — a `--pr-state` fixture or a live `gh`), write a release's baseline signed status document with `registry publish-status` (the origin key is a local PEM file argument that never enters any repository or CI), and manage lifecycle: `registry yank` (status sequence+1, re-signed), `registry advise` (an advisory rides the served status; the release stays published), `registry unlist` (record only — the release stays admissible), `registry withdraw` (pre-acceptance only), and `registry transfer` (both consents plus the receiver's vetting citation). All record writes are append-only new files under `records/lifecycle/…`; no command deletes or rewrites history.
+
+Status documents on the registry's own dogfooded release are an interim: `publish-status` refuses when a baseline already exists (`status_present:`), and no CLI command signs an EXISTING unsigned baseline — that signature is a maintainer ceremony kept out-of-band with the origin-key mint by design, not a CLI operation.
+
 The versioned documentation site is published at <https://madeinoz67.github.io/benchweave-sdk/>. Start from the rendered [plugin SDK guide](https://madeinoz67.github.io/benchweave-sdk/docs/user-guide/plugin-sdk.html); the version selector on each docs page switches between the released versions and the current `main` build.
 
 ## Directory structure
