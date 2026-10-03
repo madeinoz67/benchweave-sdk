@@ -409,8 +409,17 @@ class ScenarioAdapter:
 
 def scenario_session(plugin: LoadedPlugin, selection: ScenarioSelection) -> PluginSession:
     """One session over the scenario adapter — the author's adapter is
-    never imported (a broken adapter still serves all nine states)."""
-    scenario_plugin = replace(plugin, adapter_factory=ScenarioAdapter)
+    never imported (a broken adapter still serves all nine states).
+
+    The diagnostic is CLEARED here (refute fold, both lanes): it describes
+    the AUTHOR's adapter, which scenario mode does not use — preserving it
+    made the seam refuse every device op although the host-shipped
+    scenario adapter was healthy (serve still prints the diagnostic to
+    stderr at startup; the non-scenario degrade keeps it end to end).
+    """
+    scenario_plugin = replace(
+        plugin, adapter_factory=ScenarioAdapter, load_diagnostic=None
+    )
     identify_declared = "identify" in plugin.descriptor.get("capabilities", [])
     return PluginSession(
         scenario_plugin,

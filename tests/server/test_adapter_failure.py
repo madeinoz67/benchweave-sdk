@@ -210,25 +210,110 @@ def test_scenario_mode_serves_the_nine_on_a_broken_adapter(
     tmp_path: Path, scenario_id: str, outcome: str
 ) -> None:
     """§4.5 composes with §4.2: scenario mode never imports the author's
-    adapter, so the broken project still serves all nine states."""
+    adapter, so the broken project still serves all nine states — driven
+    through the SEAM (the refute fold: the earlier direct session.connect()
+    bypassed the seam's degraded-refusal path, the exact layer where the
+    composition broke)."""
     import asyncio
+
+    from benchweave_sdk_server.errors import SeamError
 
     project = _import_broken_project(tmp_path)
     seam, _ = _build_seam(project, scenario=scenario_id)
 
     async def run() -> None:
         if outcome == "refused":
-            with pytest.raises(RuntimeError, match="standalone_connect_failed"):
-                await seam.session.connect()
+            with pytest.raises(SeamError) as caught:
+                await seam.call("device_connect", {"device_id": DEV})
+            assert caught.value.code == "not_ready"
             return
-        await seam.session.connect()
-        envelope = await seam.session.execute("read", {"parameter": "voltage"})
+        await seam.call("device_connect", {"device_id": DEV})
         if outcome == "rejected":
-            assert envelope["error"]["code"] == "DEVICE_REJECTED"
-        elif outcome == "absent":
-            assert envelope["data"]["value"] is None
+            with pytest.raises(SeamError) as caught:
+                await seam.call(
+                    "parameter_read", {"device_id": DEV, "parameter": "voltage"}
+                )
+            assert caught.value.details["adapter"]["code"] == "DEVICE_REJECTED"
+            return
+        data = await seam.call(
+            "parameter_read", {"device_id": DEV, "parameter": "voltage"}
+        )
+        if outcome == "absent":
+            assert data["value"] is None
         else:
-            assert envelope["data"]["source"] == "scenario"
-        await seam.session.close()
+            assert data["source"] == "scenario"
+        await seam.call("device_disconnect", {"device_id": DEV})
+
+    asyncio.run(run())
+
+
+# --- FOLD-1 (refute HIGH, both lanes): degraded+scenario composes -------------
+
+
+@pytest.mark.parametrize(
+    ("scenario_id", "connects"),
+    [
+        ("normal", True),
+        ("loading", True),
+        ("stale", True),
+        ("disconnected", False),
+        ("warning", True),
+        ("critical", True),
+        ("trip", True),
+        ("recovery", True),
+        ("request-rejected", True),
+    ],
+)
+def test_a_degraded_project_serves_all_nine_over_the_seam(
+    tmp_path: Path, scenario_id: str, connects: bool
+) -> None:
+    """The design's §4.2/§4.5 headline, proven at the SEAM layer (the
+    refute lanes' finding: scenario_session's replace() preserved
+    load_diagnostic, so the seam refused every device op although the
+    scenario adapter — the host-shipped one — was healthy; the old test
+    drove session.connect() directly and bypassed exactly this refusal)."""
+    from fastapi.testclient import TestClient
+
+    project = _import_broken_project(tmp_path)
+    seam, _ = _build_seam(project, scenario=scenario_id)
+    policy = _policy()
+    with TestClient(build_app(seam, policy=policy), base_url="http://127.0.0.1:8477") as client:
+        connect = client.post(
+            "/v1/device_connect",
+            json={"device_id": DEV},
+            headers={"authorization": f"Bearer {policy.bearer_token}"},
+        )
+        if not connects:
+            assert connect.status_code == 409
+            assert connect.json()["error"]["code"] == "not_ready"
+            return
+        assert connect.status_code == 200, connect.text
+        read = client.post(
+            "/v1/parameter_read",
+            json={"device_id": DEV, "parameter": "voltage"},
+            headers={"authorization": f"Bearer {policy.bearer_token}"},
+        )
+        if scenario_id == "request-rejected":
+            assert read.status_code == 409
+            assert read.json()["error"]["details"]["adapter"]["code"] == "DEVICE_REJECTED"
+            return
+        assert read.status_code == 200, read.text
+        assert read.json()["data"]["source"] == "scenario"
+
+
+def test_non_scenario_degraded_mode_still_shows_the_diagnostic(tmp_path: Path) -> None:
+    """FOLD-1 arm (c): clearing the diagnostic in scenario mode must not
+    weaken the honest degrade — plain serve still refuses device ops and
+    renders the diagnostic."""
+    import asyncio
+
+    plugin = load_plugin_project(_import_broken_project(tmp_path))
+    seam = StandaloneSeam(PluginSession(plugin, lambda: None), transport_kind="mock")  # type: ignore[arg-type]
+
+    async def run() -> None:
+        with pytest.raises(Exception) as caught:
+            await seam.call("device_connect", {"device_id": DEV})
+        assert caught.value.code == "not_ready"
+        assert caught.value.details["load_diagnostic"].startswith("standalone_plugin_import:")
 
     asyncio.run(run())
