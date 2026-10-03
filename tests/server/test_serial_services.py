@@ -424,3 +424,39 @@ def test_two_backends_agree_on_the_adapters_exchange_flow() -> None:
     live = MockContext("live", deadline_monotonic=host.monotonic() + 1.0)
     with pytest.raises(ConformanceError):
         _run(host.transfer({"kind": "stream_send", "data": b"X"}, live))
+
+
+def test_the_capture_reservation_rides_the_services_configuration(tmp_path: Path) -> None:
+    """A02: the capture reservation is the composer's configuration, not a
+    silent default — at the design's rate class a default 16 MiB writer
+    would cap a serial capture at about 80 seconds."""
+    port = LoopbackPort()
+    services = SerialCaptureServices(
+        SerialLink(port),
+        max_frame_bytes=64,
+        capture_root=tmp_path,
+        capture_max_bytes=8 * 1024,
+    )
+    # Mid-stream: a single append that crosses the reservation is refused
+    # at append (the services guard), naming the reservation.
+    _run(services.artifact_append("cap-bound", b"\x01" * (4 * 1024), _ctx()))
+    with pytest.raises(ValueError, match="max_bytes reservation"):
+        _run(services.artifact_append("cap-bound", b"\x02" * (8 * 1024), _ctx()))
+    # Tail: a sub-threshold byte that crosses the reservation refuses at
+    # finalise (the writer's own check at the last flush).
+    services2 = SerialCaptureServices(
+        SerialLink(LoopbackPort()),
+        max_frame_bytes=64,
+        capture_root=tmp_path / "tail",
+        capture_max_bytes=8 * 1024,
+    )
+    _run(services2.artifact_append("cap-tail", b"\x01" * (8 * 1024), _ctx()))
+    _run(services2.artifact_append("cap-tail", b"\x01", _ctx()))
+    with pytest.raises(ValueError, match="max_bytes reservation"):
+        _run(
+            services2.artifact_finalise(
+                "cap-tail",
+                {"format": "raw_binary", "started_at": "2026-10-04T00:00:00Z"},
+                _ctx(),
+            )
+        )

@@ -289,6 +289,7 @@ class SerialCaptureServices:
         max_frame_bytes: int,
         capture_root: Any = None,
         evidence_path: Any = None,
+        capture_max_bytes: int | None = None,
     ) -> None:
         if (
             not isinstance(max_frame_bytes, int)
@@ -298,6 +299,17 @@ class SerialCaptureServices:
             raise ValueError(
                 "standalone_serial_frame: max_frame_bytes must be a positive integer"
             )
+        self._capture_max_bytes = capture_max_bytes
+        # Flush at the block size OR at the reservation, whichever is
+        # tighter — a small reservation must reach the writer promptly, or
+        # a sub-block capture would buffer in RAM forever (the writer's
+        # max_bytes never seeing a byte until finalise).
+        self._flush_threshold = (
+            min(self._BLOCK, capture_max_bytes)
+            if capture_max_bytes is not None
+            else self._BLOCK
+        )
+
         self._link = link
         self._max_frame_bytes = max_frame_bytes
         self._ceiling = min(link.transfer_ceiling, max_frame_bytes)
@@ -305,6 +317,7 @@ class SerialCaptureServices:
         self._evidence_path = evidence_path
         self._writers: dict[str, StandaloneCaptureWriter] = {}
         self._buffers: dict[str, bytearray] = {}
+        self._flushed: dict[str, int] = {}
         self.evidence: list[dict[str, Any]] = []
 
     @property
@@ -403,8 +416,12 @@ class SerialCaptureServices:
     def _writer_for(self, capture_id: str) -> StandaloneCaptureWriter:
         writer = self._writers.get(capture_id)
         if writer is None:
-            writer = StandaloneCaptureWriter(root=self._capture_root)
+            kwargs: dict[str, Any] = {"root": self._capture_root}
+            if self._capture_max_bytes is not None:
+                kwargs["max_bytes"] = self._capture_max_bytes
+            writer = StandaloneCaptureWriter(**kwargs)
             self._writers[capture_id] = writer
+        return writer
         return writer
 
     async def artifact_append(self, capture_id: str, data: bytes, context: Any) -> None:
@@ -412,10 +429,25 @@ class SerialCaptureServices:
         buffer = self._buffers.get(capture_id)
         if buffer is None:
             buffer = self._buffers[capture_id] = bytearray()
+        if (
+            self._capture_max_bytes is not None
+            and len(buffer) + len(data) > self._capture_max_bytes
+            and (self._capture_max_bytes - len(buffer)) >= 0
+            and self._flushed.get(capture_id, 0)
+            + len(buffer)
+            + len(data)
+            > self._capture_max_bytes
+        ):
+            raise ValueError(
+                f"append of {len(data)} bytes exceeds the declared "
+                f"max_bytes reservation ({self._capture_max_bytes} bytes, "
+                f"{self._flushed.get(capture_id, 0) + len(buffer)} already staged)"
+            )
         buffer += bytes(data)
-        while len(buffer) >= self._BLOCK:
-            block = bytes(buffer[: self._BLOCK])
-            del buffer[: self._BLOCK]
+        while len(buffer) >= self._flush_threshold:
+            block = bytes(buffer[: self._flush_threshold])
+            del buffer[: self._flush_threshold]
+            self._flushed[capture_id] = self._flushed.get(capture_id, 0) + len(block)
             await self._writer_for(capture_id).artifact_append(capture_id, block, context)
 
     async def artifact_finalise(
@@ -425,7 +457,10 @@ class SerialCaptureServices:
         writer; the digest is computed by the writer over flushed bytes."""
         writer = self._writers.pop(capture_id, None)
         if writer is None:
-            writer = StandaloneCaptureWriter(root=self._capture_root)
+            kwargs2: dict[str, Any] = {"root": self._capture_root}
+            if self._capture_max_bytes is not None:
+                kwargs2["max_bytes"] = self._capture_max_bytes
+            writer = StandaloneCaptureWriter(**kwargs2)
         buffer = self._buffers.pop(capture_id, None) or bytearray()
         if buffer:
             await writer.artifact_append(capture_id, bytes(buffer), context)
