@@ -437,6 +437,14 @@ class ScenarioAdapter:
         self.closed = True
 
 
+def wrap_scenario_plugin(plugin: LoadedPlugin) -> LoadedPlugin:
+    """Bind the host-shipped scenario adapter over any loaded plugin (the
+    reload path's scenario wrapper: a reloaded project serves the scenario
+    adapter the same way a fresh construction does, with its own
+    capabilities read at wrap time)."""
+    return replace(plugin, adapter_factory=ScenarioAdapter, load_diagnostic=None)
+
+
 def scenario_session(plugin: LoadedPlugin, selection: ScenarioSelection) -> PluginSession:
     """One session over the scenario adapter — the author's adapter is
     never imported (a broken adapter still serves all nine states).
@@ -446,15 +454,19 @@ def scenario_session(plugin: LoadedPlugin, selection: ScenarioSelection) -> Plug
     made the seam refuse every device op although the host-shipped
     scenario adapter was healthy (serve still prints the diagnostic to
     stderr at startup; the non-scenario degrade keeps it end to end).
+
+    The services factory reads ``session.plugin`` at connect time (the
+    late-bound shape ``mock_plugin_session`` established): a reload swaps
+    the loaded plugin and the next connection derives its script from the
+    CURRENT plugin's own descriptor and selection, never a stale closure.
     """
-    scenario_plugin = replace(
-        plugin, adapter_factory=ScenarioAdapter, load_diagnostic=None
-    )
-    identify_declared = "identify" in plugin.descriptor.get("capabilities", [])
-    return PluginSession(
-        scenario_plugin,
+    session: PluginSession = PluginSession(
+        wrap_scenario_plugin(plugin),
         lambda: LoopingMockHost(
-            scenario_exchanges(plugin, selection.current),
-            establishment=1 if identify_declared else 0,
+            scenario_exchanges(session.plugin, selection.current),
+            establishment=(
+                1 if "identify" in session.plugin.descriptor.get("capabilities", []) else 0
+            ),
         ),
     )
+    return session

@@ -45,10 +45,13 @@ def mock_host(plugin) -> LoopingMockHost:
 
 @pytest.fixture()
 def seam(plugin) -> StandaloneSeam:
-    return StandaloneSeam(
-        PluginSession(plugin, lambda: LoopingMockHost(mock_exchanges(plugin))),
-        transport_kind="mock",
-    )
+    # mock_plugin_session: the factory reads the CURRENT plugin at connect
+    # time (the reload-honest late-bound shape; a closure over the original
+    # plugin would keep serving the previous version's script after a
+    # reload swapped it).
+    from benchweave_sdk_server.session import mock_plugin_session
+
+    return StandaloneSeam(mock_plugin_session(plugin), transport_kind="mock")
 
 
 @pytest.fixture()

@@ -95,9 +95,9 @@ def build_app(
     # package's own verifier — one verifier per byte set (§4.6).
     verify_renderer_assets()
     # The presentation model is the SEAM's (built once at seam
-    # construction, SW-41): this host's declared feature/panel sets drove
-    # its validation, and the unavailable-page disclosures ride it.
-    presentation = seam.presentation
+    # construction, SW-41, and REBUILT on reload): this host's declared
+    # feature/panel sets drove its validation, and the unavailable-page
+    # disclosures ride it. Routes read it per request through the seam.
     mcp_server = build_mcp(seam, authoring=authoring)
     mcp_app = mcp_server.http_app(path="/mcp")
 
@@ -117,7 +117,7 @@ def build_app(
     app.state.policy = policy
 
     _add_rest_routes(app, seam)
-    _add_html_routes(app, seam, policy, scenario=scenario, presentation=presentation)
+    _add_html_routes(app, seam, policy, scenario=scenario)
     _add_events_route(app, seam)
     _add_asset_routes(app)
     # REST routes are included BEFORE the "/" mount: a mount at "/" swallows
@@ -176,12 +176,17 @@ def _add_html_routes(
     policy: GuardPolicy,
     *,
     scenario: ScenarioSelection | None = None,
-    presentation: HostPresentation,
 ) -> None:
     """Server-rendered pages plus the HTMX poll partials (SW-20/SW-27)."""
 
     simulated = seam.transport_kind == "mock"
     mode_banner = Markup(mode_banner_html(simulated=simulated))
+
+    def pres() -> HostPresentation:
+        """The CURRENT presentation model, read per request: a reload
+        rebuilds it on the seam, and a closure captured at build time
+        would keep rendering the previous version's pages forever."""
+        return seam.presentation
 
     def shared(**extra: Any) -> dict[str, Any]:
         context: dict[str, Any] = {
@@ -189,6 +194,8 @@ def _add_html_routes(
             "absent": catalogue.ABSENT_GUARANTEES,
             "plugin": seam.session.plugin,
             "csrf_token": policy.csrf_token,
+            "reload_state": seam.reload_state,
+            "pending_reload": seam.pending_reload,
         }
         context.update(extra)
         return context
@@ -202,8 +209,8 @@ def _add_html_routes(
             context=shared(
                 devices=devices,
                 connected=seam.session.connected,
-                pages=presentation.pages,
-                has_presentation=presentation.available,
+                pages=pres().pages,
+                has_presentation=pres().available,
             ),
         )
 
@@ -250,7 +257,7 @@ def _add_html_routes(
         plugin = seam.session.plugin
         readings, error = (
             await _gather_readings(device_id)
-            if seam.session.connected and not presentation.available
+            if seam.session.connected and not pres().available
             else ([], None)
         )
         try:
@@ -271,8 +278,8 @@ def _add_html_routes(
                 load_diagnostic=plugin.load_diagnostic,
                 scenarios=SCENARIOS if scenario is not None else None,
                 scenario_current=scenario.current if scenario is not None else None,
-                pages=presentation.pages,
-                has_presentation=presentation.available,
+                pages=pres().pages,
+                has_presentation=pres().available,
                 presets=presets,
             ),
         )
@@ -423,14 +430,14 @@ def _add_html_routes(
 
         parts = [
             plot_host_html(view, seam.observation_ring)
-            for view in presentation.plot_views
+            for view in pres().plot_views
             if view.page_id == page_id
         ]
         return Markup("".join(parts))
 
     @app.get("/pages/{page_id}", response_class=HTMLResponse)
     async def page_route(request: Request, page_id: str) -> Response:
-        page = presentation.page(page_id)
+        page = pres().page(page_id)
         if page is None:
             return HTMLResponse("not found", status_code=404)
         severity = "neutral"
@@ -502,7 +509,7 @@ def _add_html_routes(
         coalescing-by-poll, disclosed as D-I2a until the event bus lands at
         I2c). The no-data lines SURVIVE the swap (fold R-b: a disclosure
         that vanishes on poll is a laundered disclosure)."""
-        page = presentation.page(page_id)
+        page = pres().page(page_id)
         if page is None:
             return HTMLResponse("not found", status_code=404)
         severity = "neutral"
@@ -631,7 +638,7 @@ def _add_html_routes(
     async def stage_page(request: Request, page_id: str) -> Response:
         """Stage the page's inputs (host state, no device I/O): the first
         of the two deliberate actions — Stage, then Apply."""
-        page = presentation.page(page_id)
+        page = pres().page(page_id)
         if page is None:
             return HTMLResponse("not found", status_code=404)
         form = await request.form()
@@ -679,7 +686,7 @@ def _add_html_routes(
     @app.post("/pages/{page_id}/apply")
     async def apply_page(request: Request, page_id: str) -> Response:
         """Apply every staged value (write, then read-back — SW-23)."""
-        page = presentation.page(page_id)
+        page = pres().page(page_id)
         if page is None:
             return HTMLResponse("not found", status_code=404)
         try:
@@ -712,6 +719,25 @@ def _add_html_routes(
             )
         return _redirect()
 
+    @app.post("/reload/confirm")
+    async def confirm_reload_route(request: Request) -> Response:
+        """The operator's Q11 confirmation (CSRF POST): proceeds a reload
+        that pended because it changes adapter code while a device is
+        connected. With nothing pending it answers 409 — a confirm for a
+        reload nobody asked for is refused, never a silent no-op."""
+        if seam.pending_reload is None:
+            return HTMLResponse(
+                "no reload is waiting for confirmation", status_code=409
+            )
+        try:
+            await seam.confirm_reload(source="ui")
+        except SeamError as exc:
+            return HTMLResponse(
+                f"{exc.code}: {exc.message}",
+                status_code=ERROR_HTTP_STATUS[exc.code],
+            )
+        return _redirect(seam.session.device_id)
+
     if scenario is not None:
 
         @app.post("/devices/{device_id}/scenario")
@@ -735,6 +761,30 @@ def _add_html_routes(
                     action_error={"code": "invalid_request", "message": str(exc)},
                 )
             return _redirect()
+
+
+#: The event kinds whose SSE payload is a human advisory rather than the
+#: JSON row (htmx's sse-swap renders the data into the page — the two
+#: reload advisories say what happened in words; everything else swaps
+#: nowhere and stays the compact JSON a script can read).
+_ADVISORY_TEXT: dict[str, str] = {
+    "plugin_reloaded": (
+        "Plugin reloaded — refresh pages to see the new version."
+    ),
+    "reload_confirmation_required": (
+        "A reload is waiting for operator confirmation — confirm it on this page."
+    ),
+}
+
+
+def _sse_data(row: dict[str, Any]) -> str:
+    advisory = _ADVISORY_TEXT.get(str(row.get("kind")))
+    if advisory is not None:
+        return advisory
+    return json.dumps(
+        {"id": row["id"], "kind": row["kind"], "data": row["data"]},
+        separators=(",", ":"),
+    )
 
 
 def _add_events_route(app: FastAPI, seam: StandaloneSeam) -> None:
@@ -765,11 +815,7 @@ def _add_events_route(app: FastAPI, seam: StandaloneSeam) -> None:
             while True:
                 rows = seam.events.after(last)
                 for row in rows:
-                    payload = json.dumps(
-                        {"id": row["id"], "kind": row["kind"], "data": row["data"]},
-                        separators=(",", ":"),
-                    )
-                    yield f"id: {row['id']}\nevent: {row['kind']}\ndata: {payload}\n\n"
+                    yield f"id: {row['id']}\nevent: {row['kind']}\ndata: {_sse_data(row)}\n\n"
                     last = row["id"]
                 if not rows:
                     await asyncio.sleep(0.2)

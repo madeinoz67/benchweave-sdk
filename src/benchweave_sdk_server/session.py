@@ -39,6 +39,34 @@ class PluginLoadError(ValueError):
     """A plugin project could not be loaded or validated; always prefixed."""
 
 
+def package_py_digest(plugin: LoadedPlugin) -> str:
+    """The loaded package's adapter-code digest: every ``*.py`` file under
+    the package, path-and-bytes, sorted. Computed at load, recomputed at
+    reload — the mechanical adapter-code/contract-only discrimination
+    Q11's confirmation branch rides."""
+    hasher = hashlib.sha256()
+    for path in sorted(plugin.package_dir.rglob("*.py")):
+        hasher.update(path.relative_to(plugin.package_dir).as_posix().encode())
+        hasher.update(b"\0")
+        hasher.update(path.read_bytes())
+    return hasher.hexdigest()
+
+
+def evict_plugin_modules(package: str) -> None:
+    """Drop the plugin's modules from the import cache so a reload
+    re-executes the CURRENT bytes. ``importlib`` caches by name; without
+    eviction a reload would keep handing out the previous adapter object
+    forever — the one case where reload silently fails its whole purpose."""
+    prefix = f"{package}."
+    for name in [
+        module
+        for module in list(sys.modules)
+        if module == package or module.startswith(prefix)
+    ]:
+        del sys.modules[name]
+    importlib.invalidate_caches()
+
+
 @dataclass(frozen=True, slots=True)
 class LoadedPlugin:
     """A validated plugin project ready to serve.
@@ -215,6 +243,20 @@ def load_plugin_project(project_root: Path) -> LoadedPlugin:
     )
 
 
+def mock_plugin_session(plugin: LoadedPlugin) -> PluginSession:
+    """A session whose mock factory derives its script from the CURRENT
+    plugin at connect time — a reload swaps the loaded plugin and the next
+    connection speaks the new plugin's own vectors (a closure over the
+    ORIGINAL plugin would keep serving the previous version's script; the
+    late-bound ``session.plugin`` read cannot go stale)."""
+    from .transport import LoopingMockHost
+
+    session: PluginSession = PluginSession(
+        plugin, lambda: LoopingMockHost(mock_exchanges(session.plugin))
+    )
+    return session
+
+
 class HostOperationContext:
     """A live ``OperationContext``: real clock, descriptor-declared deadline.
 
@@ -375,3 +417,14 @@ class PluginSession:
                 f"close-{uuid.uuid4().hex[:8]}", self._lifecycle_timeout_ms()
             )
             await adapter.close(context)
+
+    async def reload_plugin(self, plugin: LoadedPlugin) -> None:
+        """Swap the loaded plugin: run the adapter's quiet/disconnect path
+        on the session it was serving, then bind the new plugin with a
+        clean slate (no identity, not connected). The caller reconnects if
+        the session was open; a load that failed never reaches here, so
+        the previous version is structurally the one that stays loaded
+        until this method swaps it atomically."""
+        await self.close()
+        self.identity = None
+        self._plugin = plugin

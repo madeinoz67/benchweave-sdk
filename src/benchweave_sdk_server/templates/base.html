@@ -19,9 +19,34 @@
   <div class="banner-region" title="Absent gateway guarantees: {{ absent | join(', ') }}">
     {{ mode_banner }}
   </div>
+  <div class="advisory-region" hx-ext="sse" sse-connect="/events">
+    {# Reload advisories ride the event bus so EVERY open page shows them
+       (SW-29); the region starts empty and fills from the stream. #}
+    <div id="reload-advisory" sse-swap="plugin_reloaded" hx-swap="innerHTML" role="status"></div>
+    <div id="reload-confirm-advisory" sse-swap="reload_confirmation_required" hx-swap="innerHTML" role="status"></div>
+  </div>
   <main class="content">
     {% block content %}{% endblock %}
   </main>
+  <section class="authoring-panel" aria-label="Plugin authoring state">
+    {# SW-29: display-only disclosure rendered in every mode — the
+       authoring TOOLS stay NFR-S8-gated; this panel is not capability. #}
+    <dl>
+      <dt>plugin</dt><dd>{{ plugin.package }} {{ plugin.plugin_version }}</dd>
+      <dt>descriptor</dt><dd><code>{{ plugin.descriptor_sha256[:12] }}</code></dd>
+      <dt>validation</dt><dd>{{ plugin.load_diagnostic or "validation clean" }}</dd>
+      <dt>last reload</dt>
+      <dd>{% if reload_state %}{{ reload_state.at }} by {{ reload_state.source }}{% else %}not reloaded{% endif %}</dd>
+    </dl>
+    {% if pending_reload %}
+    <form method="post" action="/reload/confirm"
+          hx-post="/reload/confirm"
+          hx-headers='{"X-CSRF-Token": "{{ csrf_token }}"}'>
+      <p role="alert">A reload is waiting for confirmation (triggered by {{ pending_reload.source }}).</p>
+      <button type="submit">Confirm reload</button>
+    </form>
+    {% endif %}
+  </section>
   <footer class="footer">
     <span>plugin <strong>{{ plugin.package }}</strong> {{ plugin.plugin_version }}</span>
     <span>descriptor <code>{{ plugin.descriptor_sha256[:12] }}</code></span>

@@ -38,6 +38,7 @@ from fastmcp.tools import ToolResult
 from benchweave_sdk.scaffold import create_project
 from benchweave_sdk.validation import YankedPinWarning, validate_descriptor
 
+from .errors import SeamError
 from .jsonpatch import JSONPatchError, apply_patch
 
 
@@ -574,6 +575,17 @@ def _standards_check() -> dict[str, Any]:
         raise AuthoringError(f"standards drift: {exc}", code="unavailable") from exc
 
 
+# --- plugin_reload (SW-38 + Q11) ----------------------------------------------
+
+
+async def _plugin_reload(seam: Any, source: str) -> dict[str, Any]:
+    """Run the reload through the seam (the only mutation path). The Q11
+    pending state is a RESULT, not an error: the wrapper returns it as
+    structured data so an agent sees the confirmation is waitable."""
+    result: dict[str, Any] = await seam.reload_plugin(source=source)
+    return result
+
+
 # --- registration ---------------------------------------------------------------
 
 
@@ -658,6 +670,23 @@ def register_authoring_tools(mcp: FastMCP, *, seam: Any = None) -> None:
         except AuthoringError as exc:
             return _error(exc)
 
+    async def plugin_reload(source: str = "mcp") -> Any:
+        try:
+            return await _plugin_reload(_needs_seam(), source)
+        except AuthoringError as exc:
+            return _error(exc)
+        except SeamError as exc:
+            return ToolResult(
+                structured_content={
+                    "error": {
+                        "code": exc.code,
+                        "message": exc.message,
+                        **({"details": exc.details} if exc.details else {}),
+                    }
+                },
+                is_error=True,
+            )
+
     plugin_new.__doc__ = (
         "Scaffold a synthetic SDK plugin project (create_project, plus UI "
         "resources with --with-ui); returns the created file inventory."
@@ -709,6 +738,15 @@ def register_authoring_tools(mcp: FastMCP, *, seam: Any = None) -> None:
         "Verify the running SDK's vendored standards tree against its "
         "packaged lock (the sync-standards --check lane)."
     )
+    plugin_reload.__doc__ = (
+        "Reload the loaded plugin project: guards (conflict while a value "
+        "is staged or a capture is in flight), re-import, re-validate; a "
+        "failed load keeps the previous version loaded and returns its "
+        "diagnostics. When the reload changes adapter code while a device "
+        "is connected on an attended host, the result is the pending state "
+        "confirmation_required and the operator confirms in the UI; "
+        "unattended mode proceeds."
+    )
     mcp.tool(plugin_new, name="plugin_new", description=plugin_new.__doc__ or "")
     mcp.tool(plugin_check, name="plugin_check", description=plugin_check.__doc__ or "")
     mcp.tool(ui_check, name="ui_check", description=ui_check.__doc__ or "")
@@ -729,3 +767,4 @@ def register_authoring_tools(mcp: FastMCP, *, seam: Any = None) -> None:
     mcp.tool(preset_check, name="preset_check", description=preset_check.__doc__ or "")
     mcp.tool(inventory, name="inventory", description=inventory.__doc__ or "")
     mcp.tool(standards_check, name="standards_check", description=standards_check.__doc__ or "")
+    mcp.tool(plugin_reload, name="plugin_reload", description=plugin_reload.__doc__ or "")

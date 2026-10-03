@@ -28,6 +28,7 @@ import hashlib
 import json
 import time
 import uuid
+from collections.abc import Callable
 from importlib import metadata
 from typing import TYPE_CHECKING, Any, cast
 
@@ -37,7 +38,13 @@ from benchweave_sdk.testing import ConformanceError
 from . import catalogue
 from .errors import SeamError
 from .events import EventBus
-from .session import PluginSession
+from .session import (
+    PluginLoadError,
+    PluginSession,
+    evict_plugin_modules,
+    load_plugin_project,
+    package_py_digest,
+)
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     # The presentation model and the observation ring import the
@@ -93,7 +100,14 @@ def sdk_version() -> str:
 class StandaloneSeam:
     """One seam over one adapter session; the surfaces are its adapters."""
 
-    def __init__(self, session: PluginSession, *, transport_kind: str) -> None:
+    def __init__(
+        self,
+        session: PluginSession,
+        *,
+        transport_kind: str,
+        unattended: bool = False,
+        reload_wrapper: Callable[[Any], Any] | None = None,
+    ) -> None:
         self._session = session
         self._transport_kind = transport_kind
         # Lazy by contract (see the module's TYPE_CHECKING note): these run
@@ -126,6 +140,18 @@ class StandaloneSeam:
         # the browser stream and MCP. The seam is the only mutation path,
         # so it is the only publisher.
         self.events = EventBus()
+        # Authoring/reload state (I2c §4.2): unattended mode waives the Q11
+        # confirmation; the adapter-code digest is computed at load and
+        # recomputed at reload (the mechanical adapter/contract
+        # discrimination); the pending confirmation is a STATE, never an
+        # error; _capture_in_flight is the reload guard's capture leg —
+        # no capture exists until I3 arms it.
+        self._unattended = unattended
+        self._reload_wrapper = reload_wrapper
+        self._adapter_sha256 = package_py_digest(session.plugin)
+        self._pending_reload: dict[str, Any] | None = None
+        self._capture_in_flight = False
+        self.reload_state: dict[str, Any] | None = None
 
     @property
     def session(self) -> PluginSession:
@@ -144,6 +170,16 @@ class StandaloneSeam:
     def staged(self) -> dict[str, Any]:
         """The staging map (host state): parameter name → staged value."""
         return self._staged
+
+    @property
+    def unattended(self) -> bool:
+        """Whether the host runs in unattended mode (Q11's waiver)."""
+        return self._unattended
+
+    @property
+    def pending_reload(self) -> dict[str, Any] | None:
+        """The pending Q11 confirmation, when one is waiting."""
+        return self._pending_reload
 
     def _correlation(self, supplied: str | None) -> str:
         return supplied or f"bws-{uuid.uuid4().hex[:12]}"
@@ -733,6 +769,152 @@ class StandaloneSeam:
             "device_id": self._session.device_id,
             "preset_id": preset_id,
             "applied": applied,
+        }
+
+    # --- reload (I2c §4.2, SW-38 + Q11) --------------------------------------
+
+    def _reload_guards(self, correlation: str) -> None:
+        """The conflict guards every reload path runs: a staged value that
+        was never applied, and a capture in flight (no capture exists until
+        I3; the flag is the state I3's capture_start will hold)."""
+        if self._staged:
+            raise self._fail(
+                "conflict",
+                "a staged value is unapplied: apply or clear staging before "
+                "reloading",
+                correlation,
+            )
+        if self._capture_in_flight:
+            raise self._fail(
+                "conflict",
+                "a capture is in flight: stop it before reloading",
+                correlation,
+            )
+
+    async def reload_plugin(self, source: str, *, confirmed: bool = False) -> dict[str, Any]:
+        """Reload the loaded project: guards, re-import, re-validate; on a
+        load failure the PREVIOUS version stays loaded and the diagnostics
+        return. The Q11 branch: when the reload would change ADAPTER CODE
+        (the package's ``.py`` digest differs) and a session is connected
+        and the host is attended, the reload does not run — it PENDS, the
+        advisory rides the bus, and the operator confirms in the UI. In
+        unattended mode the same change proceeds (the PRD's benches with
+        no energy-sourcing instruments case)."""
+        from datetime import UTC, datetime
+
+        correlation = self._correlation(None)
+        self._reload_guards(correlation)
+        project_root = self._session.plugin.project_root
+        package = self._session.plugin.package
+        # Re-import the CURRENT bytes: the import cache is evicted first so
+        # the reload cannot hand back the previous adapter object.
+        evict_plugin_modules(package)
+        try:
+            loaded = load_plugin_project(project_root)
+        except PluginLoadError as exc:
+            raise self._fail(
+                "invalid_request",
+                f"reload refused, the previous version stays loaded: {exc}",
+                correlation,
+                diagnostic=str(exc),
+            ) from exc
+        next_adapter_sha256 = package_py_digest(loaded)
+        adapter_changed = next_adapter_sha256 != self._adapter_sha256
+        if (
+            adapter_changed
+            and self._session.connected
+            and not self._unattended
+            and not confirmed
+        ):
+            at = datetime.now(UTC).isoformat()
+            message = (
+                "the reload changes adapter code while a device is "
+                "connected; confirm in the UI to proceed"
+            )
+            self._pending_reload = {
+                "at": at,
+                "source": source,
+                "adapter_sha256_previous": self._adapter_sha256,
+                "adapter_sha256_next": next_adapter_sha256,
+            }
+            self.events.publish(
+                "reload_confirmation_required",
+                {"message": message, "source": source, "at": at},
+            )
+            return {
+                "status": "confirmation_required",
+                "message": message,
+                "adapter_changed": True,
+                "source": source,
+            }
+        return await self._complete_reload(loaded, source)
+
+    async def confirm_reload(self, source: str) -> dict[str, Any]:
+        """The operator's UI confirmation of a pending Q11 reload: re-run
+        the full path (guards and validation included — the files may have
+        changed again) with the confirmation granted."""
+        if self._pending_reload is None:
+            raise self._fail(
+                "invalid_request", "no reload is waiting for confirmation", ""
+            )
+        return await self.reload_plugin(source, confirmed=True)
+
+    async def _complete_reload(
+        self, loaded: Any, source: str
+    ) -> dict[str, Any]:
+        from datetime import UTC, datetime
+
+        correlation = self._correlation(None)
+        self._reload_guards(correlation)
+        effective = self._reload_wrapper(loaded) if self._reload_wrapper else loaded
+        was_connected = self._session.connected
+        # Quiet/disconnect, then the atomic swap: everything after this
+        # point serves the new plugin.
+        await self._session.reload_plugin(effective)
+        self._presentation = self._presentation.__class__(
+            package_dir=self._session.plugin.package_dir,
+            has_presentation=self._session.plugin.has_presentation,
+        )
+        self._preset_digests = self._pin_presets()
+        # The observation ring belongs to the PREVIOUS plugin version:
+        # samples from the old code would launder into the new version's
+        # plots, so the ring resets with the plugin.
+        self.observation_ring.clear()
+        self._adapter_sha256 = package_py_digest(self._session.plugin)
+        self._pending_reload = None
+        reconnected = False
+        refusal: dict[str, Any] | None = None
+        if was_connected:
+            try:
+                await self._session.connect()
+                reconnected = self._session.connected
+            except (RuntimeError, TimeoutError, ConnectionError) as exc:
+                refusal = {
+                    "code": "not_ready",
+                    "message": f"reload succeeded; reconnect refused: {exc}",
+                }
+        at = datetime.now(UTC).isoformat()
+        plugin = self._session.plugin
+        self.reload_state = {"at": at, "source": source}
+        self.events.publish(
+            "plugin_reloaded",
+            {
+                "package": plugin.package,
+                "version": plugin.plugin_version,
+                "descriptor_sha256": plugin.descriptor_sha256,
+                "source": source,
+                "at": at,
+                "reconnected": reconnected,
+            },
+        )
+        return {
+            "status": "reloaded",
+            "package": plugin.package,
+            "version": plugin.plugin_version,
+            "descriptor_sha256": plugin.descriptor_sha256,
+            "reconnected": reconnected,
+            "reconnect_refusal": refusal,
+            "source": source,
         }
 
     # --- the event bus (I2c §4.2) -------------------------------------------
