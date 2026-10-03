@@ -369,7 +369,11 @@ def _add_html_routes(
         refusal = None
         no_data: list[Any] = []
         if page.panel_id is None:
-            if page.kind == "readings" and seam.session.connected:
+            if page.kind == "readings":
+                # The page always probes its bindings: a not-connected
+                # device answers not_ready and the page renders the refused
+                # state (the disconnected baseline's own severity — the
+                # honest negative, never a silent blank).
                 tiles, severities, refusal = await _page_reading_state(
                     seam.session.device_id, page
                 )
@@ -402,7 +406,7 @@ def _add_html_routes(
         severity = "neutral"
         tiles: list[str] = []
         refusal = None
-        if page.panel_id is None and page.kind == "readings" and seam.session.connected:
+        if page.panel_id is None and page.kind == "readings":
             tiles, severities, refusal = await _page_reading_state(
                 seam.session.device_id, page
             )
