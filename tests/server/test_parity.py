@@ -177,11 +177,15 @@ def _expected_severities(starter: Path) -> dict[str, str]:
     }
 
 
-def _expected_tile(data: dict, *, label: str) -> str:
+def _expected_tile(data: dict, *, label: str, max_age_ms: float | None) -> str:
     """The exact partial output the page must contain, built from the LIVE
-    read through the design's rules (independent of the host's render)."""
+    read through the design's rules (independent of the host's render).
+    The staleness verdict is DERIVED from the read's age against the
+    descriptor's own window (fold R-d: the oracle stops hardcoding
+    "fresh" — a stale read must fail the oracle, not pass it)."""
     from benchweave_ui_html.data import ReadingData
     from benchweave_ui_html.partials import render_reading
+    from benchweave_ui_html.staleness import staleness
 
     value = data["value"]
     if value is None:
@@ -200,9 +204,20 @@ def _expected_tile(data: dict, *, label: str) -> str:
             unit=str(data.get("unit") or ""),
             quality=data["quality"],
             freshness=f"{float(data['age_ms']):g} ms",
-            stale_verdict="fresh",
+            stale_verdict=staleness(float(data["age_ms"]), max_age_ms),
         )
     )
+
+
+def _descriptor_max_age(client: TestClient) -> dict[str, float | None]:
+    """Every parameter's declared staleness window, from the loaded
+    descriptor (ST-1: the descriptor's own read_policy, never a default)."""
+    from benchweave_sdk_server.presentation import descriptor_max_age_ms
+
+    parameters = client.app.state.seam.session.plugin.descriptor.get("parameters", [])
+    return {
+        str(row.get("name")): descriptor_max_age_ms(row) for row in parameters
+    }
 
 
 # --- 1 + 2: component and severity parity, per scenario ------------------------
@@ -242,10 +257,12 @@ def test_component_and_severity_parity(scenario_app, starter: Path) -> None:
     # manifest page (enumerated from the loaded presentation, never a
     # hardcoded route list). The page render and the ordered read pass
     # leave the looping mock's head aligned (see _read_all).
+    windows = _descriptor_max_age(client)
     reads = _read_all(client, policy)
     for parameter, data in reads.items():
         # HTML and REST arms assert equal values (the tile shows the read).
-        assert _expected_tile(data, label=parameter) in body, (scenario_id, parameter)
+        oracle = _expected_tile(data, label=parameter, max_age_ms=windows[parameter])
+        assert oracle in body, (scenario_id, parameter)
         assert data["quality"] in body
     assert f'data-bw-page-severity="{expected[scenario_id]}"' in body
     if scenario_id == "loading":
@@ -472,11 +489,12 @@ def test_control_bypass_tile_must_red_the_component_arm(
     client, policy, scenario_id = scenario_app
     _connect(client)
     reads = _read_all(client, policy)
+    windows = _descriptor_max_age(client)
     parameter = _observation_bindings(client)[0]
     data = reads[parameter]
     # The suite's oracle stays the partial's exact output; the HOST side
     # is sabotaged onto the I1-era hand tile.
-    oracle = _expected_tile(data, label=parameter)
+    oracle = _expected_tile(data, label=parameter, max_age_ms=windows[parameter])
     monkeypatch.setattr(host_presentation, "PARTIAL_TILES", False)
     try:
         hand, _severity = host_presentation.reading_tile_html(
@@ -526,7 +544,9 @@ def test_control_hand_tile_on_one_binding_must_red_the_containment_arm(
     monkeypatch.setattr(web_module, "reading_tile_html", selective)
     try:
         body = client.get(f"/pages/{_manifest_pages(client)[0]}").text
-        oracle = _expected_tile(reads[victim], label=victim)
+        oracle = _expected_tile(
+            reads[victim], label=victim, max_age_ms=_descriptor_max_age(client)[victim]
+        )
         with pytest.raises(AssertionError):
             assert oracle in body, victim
     finally:
@@ -557,3 +577,23 @@ def test_control_quality_corrupt_must_red_the_severity_arm(
             assert f'data-bw-page-severity="{expected[scenario_id]}"' in body
     finally:
         monkeypatch.setitem(host_presentation.QUALITY_SEVERITY, quality, truth)
+
+def test_the_oracle_verdict_is_derived_not_hardcoded() -> None:
+    """Fold R-d's discrimination arm: the expected tile's stale verdict
+    follows the age against the window — a read one millisecond past the
+    window produces an oracle carrying the stale marker, so a host that
+    rendered every tile fresh would fail the suite (the hardcoded
+    "fresh" oracle could not catch it)."""
+    fresh = _expected_tile(
+        {"value": 1.0, "unit": "V", "quality": "valid", "age_ms": 500},
+        label="voltage",
+        max_age_ms=500.0,
+    )
+    assert "bw-reading--stale" not in fresh
+    stale = _expected_tile(
+        {"value": 1.0, "unit": "V", "quality": "valid", "age_ms": 501},
+        label="voltage",
+        max_age_ms=500.0,
+    )
+    assert "bw-reading--stale" in stale
+    assert 'data-bw-stale="true"' in stale
