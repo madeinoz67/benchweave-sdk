@@ -47,3 +47,6 @@ _great_docs_build/
 .bu-venv/
 .bu-scratch/
 dist/
+
+# parallel-lane worktrees (2026-09-28 owner directive; gateway repo convention)
+.wt/
