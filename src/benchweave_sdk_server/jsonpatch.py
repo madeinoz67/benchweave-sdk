@@ -240,9 +240,24 @@ def apply_patch(document: Any, patch: Any) -> Any:
             if op == "move" and source == operation["path"]:
                 # RFC 6902 §4.4: equal from and path leave the value in place.
                 continue
-            value = copy.deepcopy(_walk(result, parse_pointer(source)))
+            source_tokens = parse_pointer(source)
+            if op == "move" and len(tokens) > len(source_tokens) and (
+                tokens[: len(source_tokens)] == source_tokens
+            ):
+                # The pointer-level proper-prefix check (both container
+                # forms): the destination is INSIDE the subtree being
+                # moved. The dict form trips the structural failure on its
+                # own (remove-then-add cannot reach the target); the array
+                # form's re-indexing RESOLVES the post-removal path and
+                # silently accepted a move of a value into itself.
+                raise JSONPatchError(
+                    "move_into_self",
+                    f"cannot move {source!r} into its own descendant "
+                    f"{operation['path']!r}",
+                )
+            value = copy.deepcopy(_walk(result, source_tokens))
             if op == "move":
-                result = _op_remove(result, parse_pointer(source))
+                result = _op_remove(result, source_tokens)
             result = _op_add(result, tokens, value)
         else:  # test
             if "value" not in operation:

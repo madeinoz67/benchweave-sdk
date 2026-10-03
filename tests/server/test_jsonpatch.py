@@ -235,6 +235,41 @@ def test_move_into_own_subtree_is_refused() -> None:
         )
 
 
+def test_move_of_a_whole_array_into_its_own_slot_is_refused() -> None:
+    """The CLASS, not the dict instance (the lanes' FOLD-C): re-indexing
+    defeats the dict form's structural failure — removing /foo first
+    leaves a shorter list whose /foo/1 still RESOLVES, so the array form
+    silently accepted a move of a value into itself. The proper-prefix
+    check is pointer-level: no container form escapes it."""
+    with pytest.raises(JSONPatchError) as caught:
+        apply_patch(
+            {"foo": [1, 2, 3]},
+            [{"op": "move", "from": "/foo", "path": "/foo/1"}],
+        )
+    assert "move_into_self" in str(caught.value)
+
+
+def test_move_of_an_array_element_into_its_own_descendant_is_refused() -> None:
+    """The second array repro: the element being moved is itself a list,
+    and the destination is inside that list — accepted today because the
+    removal re-indexes the parent before the add resolves."""
+    with pytest.raises(JSONPatchError):
+        apply_patch(
+            {"outer": [[10, 20], [30]]},
+            [{"op": "move", "from": "/outer/0", "path": "/outer/0/1"}],
+        )
+
+
+def test_intra_array_reordering_still_moves() -> None:
+    """The boundary the prefix check must NOT cross: moving an element
+    within its own PARENT (neither path a prefix of the other) is the
+    RFC's own remove-then-add rotation and stays legal."""
+    assert apply_patch(
+        {"foo": ["a", "b", "c"]},
+        [{"op": "move", "from": "/foo/0", "path": "/foo/2"}],
+    ) == {"foo": ["b", "c", "a"]}
+
+
 def test_remove_of_the_root_is_refused() -> None:
     with pytest.raises(JSONPatchError):
         apply_patch({"a": 1}, [{"op": "remove", "path": ""}])
