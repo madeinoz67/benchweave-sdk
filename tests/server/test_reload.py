@@ -165,6 +165,30 @@ def test_reload_reimports_changed_adapter_code(tmp_path) -> None:
     assert seam.session.plugin.adapter_factory is not old_factory
 
 
+def test_the_observation_ring_resets_with_the_plugin(tmp_path) -> None:
+    """The ring belongs to the plugin version that fed it: a reload swaps
+    the plugin, so the previous version's samples must not launder into
+    the new version's plots — the ring is empty after the swap, and the
+    first post-reload read lands in the FRESH ring (lane-2's annex: the
+    clear existed in _complete_reload; nothing pinned it)."""
+    project = _project(tmp_path)
+    seam = _seam(project)
+    _call(seam, "device_connect", DEV)
+    _call(seam, "parameter_read", {**DEV, "parameter": "voltage"})
+    assert seam.observation_ring.snapshot("voltage"), "sanity: the read recorded"
+    asyncio.run(seam.reload_plugin(source="test"))
+    assert seam.observation_ring.snapshot("voltage") == [], (
+        "the previous version's samples survived the swap"
+    )
+    # The reload reconnected the session; the next read is the fresh
+    # plugin's own first observation.
+    _call(seam, "parameter_read", {**DEV, "parameter": "voltage"})
+    fresh = seam.observation_ring.snapshot("voltage")
+    assert fresh and fresh[-1][1] == 3.3, (
+        "post-reload records must land in the fresh ring"
+    )
+
+
 def test_reload_reconnects_a_connected_session_and_reads_still_serve(tmp_path) -> None:
     project = _project(tmp_path)
     seam = _seam(project)
