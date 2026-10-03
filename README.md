@@ -222,9 +222,15 @@ The extra installs FastAPI, FastMCP, Jinja2 and Uvicorn. It adds the command `be
 benchweave-sdk-server serve /path/to/plugin-project --transport mock --port 8477 --no-open
 ```
 
-The transport is the scripted mock transport. It replays the exact exchanges that the plugin's `vectors.json` declares. This extra does not provide a real hardware transport. Every page carries the banner `STANDALONE — no gateway`. There are no leases, policy, approvals, procedures or run records behind this process. The startup output prints the URL and a per-launch bearer token. REST mutations and MCP-over-HTTP calls require this token. The listener rules match the local UI preview: loopback by default, wildcard listeners refused, non-loopback only with `--allow-network`.
+The transport is the scripted mock transport. It replays the exact exchanges that the plugin's `vectors.json` declares. This extra does not provide a real hardware transport.
 
-A default install does not include the extra. The `benchweave-sdk-server` command still exists on a default install. The `serve` and `mcp` commands then stop before they do any work. They print `benchweave_sdk_server_extras_missing: install 'benchweave-sdk[server]'` and exit with code 2.
+Every page carries the banner `STANDALONE — no gateway`. This process has no leases, policy, approvals, procedures or run records behind it.
+
+The startup output prints the URL and a bearer token for each launch. REST mutations and MCP-over-HTTP calls need this token.
+
+The listener rules are the same as for the local UI preview. The listener uses the loopback interface by default. The command rejects wildcard listeners. A non-loopback host needs `--allow-network`.
+
+A default installation does not include the extra. The `benchweave-sdk-server` command still exists in a default installation. The `serve` and `mcp` commands then stop before they do any work. They print `benchweave_sdk_server_extras_missing: install 'benchweave-sdk[server]' for the serve and mcp commands` and exit with code 2.
 
 ## Public surfaces
 
