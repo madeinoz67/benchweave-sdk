@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import NoReturn
+from typing import TYPE_CHECKING, NoReturn
 
 import click
 
@@ -33,8 +33,19 @@ from .session import (
 )
 from .transport import LoopingMockHost
 
+if TYPE_CHECKING:
+    from .scenarios import ScenarioSelection
+
 #: What a default (no-extra) install hears from serve/mcp: the prefixed
 #: error names the install command (the R-9 shim pattern, exit 2).
+def _scenario_ids() -> tuple[str, ...]:
+    """The nine scenario ids, for the CLI's choice set (lazy import — the
+    cli module stays importable on a default install)."""
+    from .scenarios import SCENARIOS
+
+    return tuple(row.id for row in SCENARIOS)
+
+
 _EXTRAS_MESSAGE = (
     "benchweave_sdk_server_extras_missing: install 'benchweave-sdk[server]' "
     "for the serve and mcp commands"
@@ -55,11 +66,40 @@ def _load(project: Path) -> LoadedPlugin:
         raise SystemExit(2) from exc
 
 
-def _build_seam(project: Path) -> StandaloneSeam:
+def _build_seam(
+    project: Path, *, transport: str = "mock", scenario: str | None = None
+) -> tuple[StandaloneSeam, ScenarioSelection | None]:
+    """Compose the seam over one transport (§4.1's composition step).
+
+    Transport selection happens HERE and nowhere else: the factory bound
+    below is the transport's whole expression, and nothing server-side —
+    the seam, the routes, the templates — knows or cares which one it is.
+    A scenario selection is refused on any transport but the mock
+    (scenarios do not exist on real hardware, the banner rule's sibling)
+    and returns the mutable selection the device page can switch.
+    """
+    from .scenarios import ScenarioSelection, scenario_session
+
     plugin = _load(project)
-    return StandaloneSeam(
-        PluginSession(plugin, lambda: LoopingMockHost(mock_exchanges(plugin))),
-        transport_kind="mock",
+    if scenario is not None:
+        if transport != "mock":
+            click.echo(
+                "standalone_scenario_mock_only: scenarios exist on the mock "
+                "transport; serve real hardware without --scenario",
+                err=True,
+            )
+            raise SystemExit(2)
+        selection = ScenarioSelection(scenario)
+        return (
+            StandaloneSeam(scenario_session(plugin, selection), transport_kind="mock"),
+            selection,
+        )
+    return (
+        StandaloneSeam(
+            PluginSession(plugin, lambda: LoopingMockHost(mock_exchanges(plugin))),
+            transport_kind=transport,
+        ),
+        None,
     )
 
 
@@ -76,6 +116,12 @@ def cli() -> None:
 @click.option("--allow-network", is_flag=True)
 @click.option("--no-open", is_flag=True)
 @click.option("--transport", type=click.Choice(["mock"]), default="mock", show_default=True)
+@click.option(
+    "--scenario",
+    type=click.Choice(_scenario_ids()),
+    default=None,
+    help="Serve one of the nine baseline states (mock transport only).",
+)
 @click.option("--authoring", is_flag=True)
 def serve(
     project: Path,
@@ -84,6 +130,7 @@ def serve(
     allow_network: bool,
     no_open: bool,
     transport: str,
+    scenario: str | None,
     authoring: bool,
 ) -> None:
     """Serve UI, REST and MCP over one plugin project."""
@@ -113,14 +160,14 @@ def serve(
             "the bearer token below is the only gate.",
             err=True,
         )
-    seam = _build_seam(project)
+    seam, selection = _build_seam(project, transport=transport, scenario=scenario)
     policy = GuardPolicy.complete(
         bound_host=host,
         bound_port=port,
         bearer_token=new_token(),
         csrf_token=new_token(),
     )
-    app = build_app(seam, policy=policy, authoring=authoring)
+    app = build_app(seam, policy=policy, authoring=authoring, scenario=selection)
     click.echo(f"Serving {seam.session.plugin.package} on http://{host}:{port}")
     click.echo(f"Bearer token (REST mutations and MCP over HTTP): {policy.bearer_token}")
     if not no_open:
@@ -140,7 +187,7 @@ def mcp(project: Path, authoring: bool) -> None:
     except ImportError as exc:
         _require_server_extra(exc)
 
-    seam = _build_seam(project)
+    seam, _ = _build_seam(project)
     server = build_mcp(seam, authoring=authoring)
     server.run()
 

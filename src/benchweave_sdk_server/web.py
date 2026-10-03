@@ -28,6 +28,7 @@ from . import catalogue
 from .assets import ui_assets_root, verify_ui_assets
 from .errors import ERROR_HTTP_STATUS, SeamError
 from .mcp import build_mcp
+from .scenarios import SCENARIOS, ScenarioSelection
 from .seam import StandaloneSeam
 from .security import GuardPolicy, install_guards
 
@@ -51,12 +52,21 @@ def _failure(exc: SeamError) -> JSONResponse:
     return JSONResponse(exc.body(), status_code=ERROR_HTTP_STATUS[exc.code])
 
 
-def build_app(seam: StandaloneSeam, *, policy: GuardPolicy, authoring: bool = False) -> FastAPI:
+def build_app(
+    seam: StandaloneSeam,
+    *,
+    policy: GuardPolicy,
+    authoring: bool = False,
+    scenario: ScenarioSelection | None = None,
+) -> FastAPI:
     """Compose the one app; the seam is the only thing routes talk to.
 
     Construction verifies the vendored asset inventory first (SW-05's
     posture, NFR-P3): tampered or missing bytes refuse STARTUP — never a
     half-serving app whose shell answers 200 while its assets 500.
+    ``scenario`` (scenario mode only) arms the device page's scenario
+    select — a host-side route mutating the selection, never a catalogue
+    operation (D-B1).
     """
     verify_ui_assets(ui_assets_root())
     mcp_server = build_mcp(seam, authoring=authoring)
@@ -78,7 +88,7 @@ def build_app(seam: StandaloneSeam, *, policy: GuardPolicy, authoring: bool = Fa
     app.state.policy = policy
 
     _add_rest_routes(app, seam)
-    _add_html_routes(app, seam, policy)
+    _add_html_routes(app, seam, policy, scenario=scenario)
     _add_asset_routes(app)
     # REST routes are included BEFORE the "/" mount: a mount at "/" swallows
     # every route included after it, so /v1 must land first (app.py:1040-1048).
@@ -130,7 +140,13 @@ def _add_rest_routes(app: FastAPI, seam: StandaloneSeam) -> None:
         )
 
 
-def _add_html_routes(app: FastAPI, seam: StandaloneSeam, policy: GuardPolicy) -> None:
+def _add_html_routes(
+    app: FastAPI,
+    seam: StandaloneSeam,
+    policy: GuardPolicy,
+    *,
+    scenario: ScenarioSelection | None = None,
+) -> None:
     """Server-rendered pages plus the HTMX readings partial (SW-20/SW-27)."""
 
     @app.get("/", response_class=HTMLResponse)
@@ -201,6 +217,8 @@ def _add_html_routes(app: FastAPI, seam: StandaloneSeam, policy: GuardPolicy) ->
                 "readings_error": error,
                 "action_error": action_error,
                 "csrf_token": policy.csrf_token,
+                "scenarios": SCENARIOS if scenario is not None else None,
+                "scenario_current": scenario.current if scenario is not None else None,
             },
         )
 
@@ -255,6 +273,30 @@ def _add_html_routes(app: FastAPI, seam: StandaloneSeam, policy: GuardPolicy) ->
         with contextlib.suppress(SeamError):
             await seam.call("device_disconnect", {"device_id": device_id})
         return _redirect(device_id)
+
+    if scenario is not None:
+
+        @app.post("/devices/{device_id}/scenario")
+        async def select_scenario(request: Request, device_id: str) -> Response:
+            """Switch the scenario selection — host state, not a catalogue op.
+
+            The connect-button idiom (HTML POST + CSRF): the mutation arms
+            the mock factory's NEXT-connection script, so the swap takes
+            effect on reconnect — a live connection keeps the transport it
+            opened with (the M1 fold's per-connection services, honestly).
+            """
+            if device_id != seam.session.device_id:
+                return HTMLResponse("not found", status_code=404)
+            form = await request.form()
+            try:
+                scenario.select(str(form.get("scenario", "")))
+            except ValueError as exc:
+                return await _render_device(
+                    request,
+                    device_id,
+                    action_error={"code": "invalid_request", "message": str(exc)},
+                )
+            return _redirect(device_id)
 
 
 def _add_asset_routes(app: FastAPI) -> None:
