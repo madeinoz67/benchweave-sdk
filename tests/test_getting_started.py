@@ -159,6 +159,38 @@ def sections(text: str) -> list[str]:
 class Record:
     line: str
     proc: subprocess.CompletedProcess[str]
+    cwd: Path
+    venv: Path | None
+
+
+def _base_env() -> dict[str, str]:
+    """The child environment every page command runs in (see the call-site
+    comment for why the two runner markers are stripped)."""
+    return {
+        key: value
+        for key, value in os.environ.items()
+        if key not in ("VIRTUAL_ENV", "UV_PROJECT_ENVIRONMENT")
+    }
+
+
+def _apply_activation(cwd: Path, env: dict[str, str]) -> Path | None:
+    """T2: the two effects an activation line itself has, applied natively.
+
+    Sets VIRTUAL_ENV to the cwd's `.venv` and prepends the venv's scripts
+    directory (`bin` on POSIX, `Scripts` on Windows — whichever exists) with
+    the platform's PATH separator. Returns the venv, or None when there is
+    no `.venv` at the cwd (a named failure upstream).
+    """
+    candidate = cwd / ".venv"
+    if not candidate.is_dir():
+        return None
+    env["VIRTUAL_ENV"] = str(candidate)
+    for name in ("bin", "Scripts"):
+        scripts = candidate / name
+        if scripts.is_dir():
+            env["PATH"] = os.pathsep.join([str(scripts), env.get("PATH", "")])
+            break
+    return candidate
 
 
 def execute_sequence(
@@ -177,30 +209,20 @@ def execute_sequence(
     # of `venv` would make the page's uv commands create a project-local
     # venv/ inside the scaffolded plugin, which then rides into uv build's
     # artifacts (fold B-F2's poison, kept out of the page's world).
-    env = {
-        key: value
-        for key, value in os.environ.items()
-        if key not in ("VIRTUAL_ENV", "UV_PROJECT_ENVIRONMENT")
-    }
+    env = _base_env()
     venv: Path | None = None
     translated_installs = 0
 
     for block in blocks:
         for line in block:
             if line in ACTIVATION_LINES:
-                candidate = cwd / ".venv"
-                if not candidate.is_dir():
+                activated = _apply_activation(cwd, env)
+                if activated is None:
                     failures.append(
                         f"getting_started_activation_without_venv: {line} at {cwd}"
                     )
                     return failures, records
-                venv = candidate
-                env["VIRTUAL_ENV"] = str(candidate)
-                for name in ("bin", "Scripts"):
-                    scripts = candidate / name
-                    if scripts.is_dir():
-                        env["PATH"] = os.pathsep.join([str(scripts), env.get("PATH", "")])
-                        break
+                venv = activated
                 continue
 
             parts = shlex.split(line)
@@ -318,13 +340,17 @@ def execute_sequence(
                     f"(timeout after {COMMAND_TIMEOUT_S}s)"
                 )
                 return failures, records
-            records.append(Record(line=line, proc=proc))
+            records.append(Record(line=line, proc=proc, cwd=cwd, venv=venv))
             if proc.returncode != 0:
                 output = (proc.stdout + proc.stderr).strip().splitlines()
-                detail = output[-1] if output else "(no output)"
+                # A collection error's traceback sits ABOVE the summary tail;
+                # a one-line window hid the Windows lane's actual ImportError
+                # (PR #103) — keep enough context to read the cause on the
+                # next run instead of guessing across CI cycles.
+                detail = "\n".join(output[-40:]) if output else "(no output)"
                 failures.append(
                     f"getting_started_command_failed: {line} "
-                    f"(exit {proc.returncode}): {detail}"
+                    f"(exit {proc.returncode}):\n{detail}"
                 )
                 return failures, records
 
@@ -341,6 +367,50 @@ def execute_sequence(
     return failures, records
 
 
+def _import_probes(record: Record) -> list[str]:
+    """Failure-path diagnostics, not page commands: when pytest cannot even
+    summarize, run the venv's own python in the same cwd and import exactly
+    what the generated test module imports at collection time. The stderr
+    names the missing module directly, on any OS — PR #103's Windows
+    collection error was undiagnosable because the harness had eaten the
+    traceback; these probes make the next failure self-describing."""
+    if record.venv is None:
+        return []
+    python: Path | None = None
+    for scripts in ("bin", "Scripts"):
+        for name in ("python", "python.exe"):
+            if (record.venv / scripts / name).is_file():
+                python = record.venv / scripts / name
+                break
+        if python is not None:
+            break
+    if python is None:
+        return ["getting_started_probe: no python found in the page's venv"]
+    modules = ["benchweave_sdk.testing", "benchweave_sdk.validation"]
+    sources = sorted((record.cwd / "src").iterdir()) if (record.cwd / "src").is_dir() else []
+    if sources:
+        modules.append(f"{sources[0].name}.adapter")
+    findings: list[str] = []
+    for module in modules:
+        probe = subprocess.run(
+            [str(python), "-c", f"import {module}"],
+            cwd=record.cwd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=COMMAND_TIMEOUT_S,
+            check=False,
+        )
+        if probe.returncode != 0:
+            tail = probe.stderr.strip().splitlines()[-1:] or ["(no output)"]
+            findings.append(
+                f"getting_started_probe: the venv python cannot import {module}: "
+                f"{tail[0]}"
+            )
+    return findings
+
+
 def content_failures(records: list[Record]) -> list[str]:
     """The value-free output assertions over the recorded sequence."""
     failures: list[str] = []
@@ -353,8 +423,9 @@ def content_failures(records: list[Record]) -> list[str]:
         if summary is None:
             failures.append(
                 "getting_started_pytest_summary: no '<n> passed' in the pytest output; "
-                f"tail was {output[-200:]!r}"
+                f"tail was {output[-1500:]!r}"
             )
+            failures += _import_probes(pytest_run)
         elif int(summary.group(1)) < 1:
             failures.append("getting_started_pytest_summary: zero tests passed")
 
@@ -419,6 +490,49 @@ def wheel(tmp_path_factory: pytest.TempPathFactory) -> Path:
     built = sorted(out.glob("*.whl"))
     assert len(built) == 1, f"expected exactly one wheel, found {[path.name for path in built]}"
     return built[0]
+
+
+# --- T2's environment emulation, unit-pinned cross-OS ----------------------------------
+
+
+def test_the_child_env_strips_the_runner_environment_markers() -> None:
+    """The page's world starts clean: the runner's VIRTUAL_ENV and
+    UV_PROJECT_ENVIRONMENT must not leak into any page command."""
+    saved = {key: os.environ.get(key) for key in ("VIRTUAL_ENV", "UV_PROJECT_ENVIRONMENT")}
+    try:
+        os.environ["VIRTUAL_ENV"] = "/definitely/not/the/pages"
+        os.environ["UV_PROJECT_ENVIRONMENT"] = "venv"
+        env = _base_env()
+    finally:
+        for key, value in saved.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+    assert "VIRTUAL_ENV" not in env
+    assert "UV_PROJECT_ENVIRONMENT" not in env
+
+
+def test_activation_prepends_the_windows_shaped_scripts_dir(tmp_path: Path) -> None:
+    """PR #103: the Windows lane is the only place the `Scripts` branch runs
+    against a real venv. This pins the emulation's shape locally: a venv laid
+    out the Windows way (Scripts/) activates with Scripts prepended using
+    the platform separator and VIRTUAL_ENV set; a POSIX-shaped venv (bin/)
+    activates with bin; a missing venv returns None for the named failure."""
+    windows_like = tmp_path / "w" / ".venv"
+    (windows_like / "Scripts").mkdir(parents=True)
+    env = {"PATH": "/base"}
+    assert _apply_activation(tmp_path / "w", env) == windows_like
+    assert env["VIRTUAL_ENV"] == str(windows_like)
+    assert env["PATH"].split(os.pathsep)[0] == str(windows_like / "Scripts")
+
+    posix_like = tmp_path / "p" / ".venv"
+    (posix_like / "bin").mkdir(parents=True)
+    env = {"PATH": "/base"}
+    assert _apply_activation(tmp_path / "p", env) == posix_like
+    assert env["PATH"].split(os.pathsep)[0] == str(posix_like / "bin")
+
+    assert _apply_activation(tmp_path / "empty", {"PATH": "/base"}) is None
 
 
 # --- the page's shape ------------------------------------------------------------
