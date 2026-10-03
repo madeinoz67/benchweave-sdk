@@ -379,7 +379,6 @@ def test_the_description_does_not_overstate_plotted_channels(starter_project) ->
     overstating."""
     from dataclasses import replace as _replace
 
-    from benchweave_sdk.preview_models import PlotChannel
 
     view = _scaffold_plot_view(starter_project)
     second = _replace(view.channels[0], variable_id="aux")
