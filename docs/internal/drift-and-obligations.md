@@ -8,7 +8,12 @@ rubric's G5 gate is the obligation; this file is the detail behind it.
 ## "If a PR touches X, it must also do Y"
 
 1. **CLI-visible behavior** 🪝 (a command, flag, or output shape in `src/benchweave_sdk/cli.py`)
-   → `user_guide/plugin-sdk.qmd` and the README's five-steps section.
+   → `user_guide/plugin-sdk.qmd`, the README's five-steps section, and the first-timer
+   pages (`user_guide/getting-started.qmd`, `which-checkout.qmd`, `glossary.qmd`,
+   `troubleshooting.qmd`). The getting-started page's `sh` blocks are EXECUTED by
+   `tests/test_getting_started.py` and every `benchweave-sdk` mention across the four
+   pages is registration-checked there — a CLI change that breaks the page's commands or
+   names a subcommand the pages cite reddens the sdk lane, not just review.
 
 2. **Scaffold output changes** 🪝 (a generated project that looks different) → the copier
    template at the repository root (`copier.yml` + `template/`, packaged into the wheel at
@@ -45,8 +50,10 @@ rubric's G5 gate is the obligation; this file is the detail behind it.
 
 6. **SDK behavioral changes** → the behavioral test suite lives here (`tests/`:
    `test_standards_sync`, `test_cli_frameworks`, `test_presentation_cli`,
-   `test_preview_server`, `test_preview_cli`, `test_preview_fixtures`, `test_sdk`, plus the
-   regression modules beside them) and runs in this repository's CI. A behavior change with
+   `test_preview_server`, `test_preview_cli`, `test_preview_fixtures`, `test_sdk`,
+   `test_getting_started` (the docs-as-tests lane over `user_guide/getting-started.qmd`,
+   issue #347 WS4), plus the regression modules beside them) and runs in this
+   repository's CI. A behavior change with
    no coverage here is a required change; name the module that should carry the test.
    Modules that compare the SDK with the gateway stay main-side (`tests/sdk/` in the
    gateway checkout: `test_presentation_packaging` and the agreement modules), because
