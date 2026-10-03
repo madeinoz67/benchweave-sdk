@@ -24,9 +24,14 @@ symlinked components.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
+import os
+import re
 import shutil
+import subprocess
+import sys
 import tempfile
 import warnings
 from pathlib import Path
@@ -586,6 +591,112 @@ async def _plugin_reload(seam: Any, source: str) -> dict[str, Any]:
     return result
 
 
+# --- plugin_test (SW-39) -------------------------------------------------------
+
+#: The subprocess timeout for a plugin's test run. This is authoring
+#: hygiene, not a commissioned protective bound: it exists so a hung test
+#: cannot hold the tool (and its worker thread) forever — NFR-S7's
+#: containment at test time. The value is generous against the scaffolded
+#: suite's own runtime and is a named constant, never an inline literal.
+TEST_TIMEOUT_S: int = 120
+
+#: Per-test rows from pytest's own ``-v`` lines: the honest parseable
+#: surface, one (test, outcome) per line, no summary-line guessing.
+_TEST_LINE: re.Pattern[str] = re.compile(
+    r"^(\S+::\S+) (PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS)\b"
+)
+
+#: How much captured output the result carries: enough to read a failure,
+#: bounded so one chatty test cannot flood the wire.
+_OUTPUT_LIMIT: int = 8000
+
+
+def _truncate(text: str) -> str:
+    if len(text) <= _OUTPUT_LIMIT:
+        return text
+    return text[-_OUTPUT_LIMIT:]
+
+
+def _run_project_tests(
+    project_root: Path, timeout_s: int
+) -> dict[str, Any]:
+    """Run the plugin's pytest suite in a SUBPROCESS with a timeout —
+    never in-process (NFR-S7: plugin code already runs in the host with
+    full authority; a hung or crashing test must not take the host down).
+    The scaffolded suite carries the SDK conformance arms (check_lifecycle,
+    validate_result over the adapter), so running the suite runs both.
+    pytest's own exit code is plumbed through honestly (5 collects
+    nothing, 1 is failures, 0 is clean)."""
+    tests_dir = project_root / "tests"
+    if not tests_dir.is_dir():
+        raise AuthoringError(
+            f"no tests/ directory under {project_root}: nothing to run"
+        )
+    command = [
+        sys.executable,
+        "-m",
+        "pytest",
+        "tests",
+        "-v",
+        "--tb=line",
+        "-p",
+        "no:cacheprovider",
+    ]
+    # The plugin's tests import its package the same way the HOST loads
+    # it (the loader puts the project's src/ on sys.path); the subprocess
+    # equivalent is PYTHONPATH — an installed project needs nothing, an
+    # uninstalled one stays runnable.
+    environment = {
+        **os.environ,
+        "PYTHONPATH": os.pathsep.join(
+            [str(project_root / "src"), os.environ.get("PYTHONPATH", "")]
+        ).rstrip(os.pathsep),
+    }
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=project_root,
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        partial = exc.stdout if isinstance(exc.stdout, str) else ""
+        return {
+            "status": "timeout",
+            "exit_code": None,
+            "tests": _parse_test_lines(partial),
+            "output": _truncate(partial),
+            "message": (
+                f"the test run timed out after {timeout_s}s and was killed; "
+                "per-test rows are the partial parse of what it printed"
+            ),
+        }
+    return {
+        "status": "done",
+        "exit_code": completed.returncode,
+        "tests": _parse_test_lines(completed.stdout),
+        "output": _truncate(completed.stdout),
+        "message": "",
+    }
+
+
+def _parse_test_lines(stdout: str) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for line in stdout.splitlines():
+        found = _TEST_LINE.match(line.strip())
+        if found is not None:
+            rows.append({"test": found.group(1), "outcome": found.group(2)})
+    return rows
+
+
+def _plugin_test(seam: Any, timeout_s: int = TEST_TIMEOUT_S) -> dict[str, Any]:
+    plugin, _package = _plugin_paths(seam)
+    return _run_project_tests(Path(plugin.project_root), timeout_s)
+
+
 # --- registration ---------------------------------------------------------------
 
 
@@ -687,6 +798,14 @@ def register_authoring_tools(mcp: FastMCP, *, seam: Any = None) -> None:
                 is_error=True,
             )
 
+    async def plugin_test(timeout_s: int = TEST_TIMEOUT_S) -> Any:
+        # Blocking subprocess work off the event loop, the mcp.py worker
+        # precedent: the tool's caller keeps serving while pytest runs.
+        try:
+            return await asyncio.to_thread(_plugin_test, _needs_seam(), timeout_s)
+        except AuthoringError as exc:
+            return _error(exc)
+
     plugin_new.__doc__ = (
         "Scaffold a synthetic SDK plugin project (create_project, plus UI "
         "resources with --with-ui); returns the created file inventory."
@@ -747,6 +866,12 @@ def register_authoring_tools(mcp: FastMCP, *, seam: Any = None) -> None:
         "confirmation_required and the operator confirms in the UI; "
         "unattended mode proceeds."
     )
+    plugin_test.__doc__ = (
+        "Run the plugin's pytest suite in a subprocess with a timeout "
+        "(never in-process — a hung test must not take the host down). "
+        "Returns pass/fail per test plus truncated output; the scaffolded "
+        "suite carries the SDK conformance arms, so running it runs both."
+    )
     mcp.tool(plugin_new, name="plugin_new", description=plugin_new.__doc__ or "")
     mcp.tool(plugin_check, name="plugin_check", description=plugin_check.__doc__ or "")
     mcp.tool(ui_check, name="ui_check", description=ui_check.__doc__ or "")
@@ -768,3 +893,4 @@ def register_authoring_tools(mcp: FastMCP, *, seam: Any = None) -> None:
     mcp.tool(inventory, name="inventory", description=inventory.__doc__ or "")
     mcp.tool(standards_check, name="standards_check", description=standards_check.__doc__ or "")
     mcp.tool(plugin_reload, name="plugin_reload", description=plugin_reload.__doc__ or "")
+    mcp.tool(plugin_test, name="plugin_test", description=plugin_test.__doc__ or "")
