@@ -128,3 +128,17 @@ code { font-family: var(--bw-font-data); font-size: 0.9em; }
 .banner-region {
   margin-block-end: 0.5rem;
 }
+
+/* htmx request-indicator rules (fold R-f): htmx injects a <style> for
+   these at boot, which the strict style-src 'self' CSP blocks — the host
+   ships the same rules from its own stylesheet so the blocked injection
+   loses nothing (the classes keep working for swap indicators). */
+.htmx-indicator {
+  opacity: 0;
+  transition: opacity 200ms ease-in;
+}
+
+.htmx-request .htmx-indicator,
+.htmx-request.htmx-indicator {
+  opacity: 1;
+}

@@ -102,3 +102,13 @@ def _test_policy():
     return GuardPolicy.complete(
         bound_host="127.0.0.1", bound_port=8477, bearer_token="t", csrf_token="t"
     )
+
+
+def test_the_htmx_indicator_rules_have_a_same_origin_equivalent() -> None:
+    """Fold R-f: htmx injects a <style> for its indicator classes at boot,
+    which the strict style-src 'self' CSP blocks - the host ships the same
+    rules from its own stylesheet so the blocked injection loses nothing."""
+    css = (ROOT / "standalone.css").read_text(encoding="utf-8")
+    assert ".htmx-indicator" in css
+    assert "opacity: 0" in css
+    assert ".htmx-request" in css
