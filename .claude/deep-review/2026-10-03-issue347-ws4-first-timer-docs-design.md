@@ -406,3 +406,24 @@ checker rides the existing test lane; every check shape already holds somewhere 
    shapes, never values.
 
 No hard blocker found. **BUILD.**
+
+---
+
+## Corrigendum (adversarial fold, 2026-10-04)
+
+The two-lane review folded RED-first; two of its findings correct this record's own
+text, recorded here rather than silently rewritten:
+
+- **The §2.2 landing flip is withdrawn** (finding B-F1, HIGH). Measured on a built tree:
+`homepage: user_guide` promotes the first user-guide page to the site root, where its
+relative `.qmd` hrefs are not rewritten and 404, the sibling pages' links to the promoted
+page dangle, and every inbound citation of `user-guide/getting-started.html` (README,
+CLAUDE.md) points at a page that no longer renders. Sixteen dead links in total. Risk
+3's recorded fallback is taken: `homepage: index`, with the getting-started link at the
+top of `index.qmd`. `scripts/check_docs_links.py` (run in the docs lane) holds the
+built-tree half: every internal href on the authored front-door pages resolves, and the
+sitemap contains every page the README and CLAUDE.md cite.
+- **§2.1's line-count promises are withdrawn** (finding B-F3). The record's "the
+two-line created message" assumed a fixed wrap; the CLI wraps at the terminal width
+(measured: three lines at 80 columns, one at 120). The page quotes message text and
+promises no wrap; `over two lines` is banned from the four pages by test.

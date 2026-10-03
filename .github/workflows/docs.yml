@@ -70,6 +70,15 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # changelog fetch; passed through to --from-repo builds
 
+      - name: Link integrity (authored front-door pages + inbound citations)
+        # Fold B-F1 (issue #347 WS4): the landing-flip defect was only visible on a
+        # BUILT tree. Scoped to the pages this repository authors (root index +
+        # user-guide/**) plus the README/CLAUDE.md citation contract; the renderer's
+        # own surfaces and the approximated v/ buckets carry pre-existing href
+        # quirks, named in the script's docstring, that widening past this scope
+        # would have to clear first.
+        run: uv run python scripts/check_docs_links.py
+
       - name: Save docs artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

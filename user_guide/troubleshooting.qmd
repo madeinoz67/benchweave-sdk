@@ -44,7 +44,7 @@ benchweave-sdk inventory dist/
 
 **Cause.** `uv run` resolves its own environment and dependencies. It does not use the activated environment from Step 0.
 
-**Fix.** Use the activated environment. Run the tests with `pytest` after `source .venv/bin/activate`. Alternatively, run `uv run --extra test pytest` inside the plugin project.
+**Fix.** Use the activated environment. Run the tests with `pytest` after `source .venv/bin/activate`. The [Get started](getting-started.qmd) page teaches this one path.
 
 ## An installed tool misses a command
 

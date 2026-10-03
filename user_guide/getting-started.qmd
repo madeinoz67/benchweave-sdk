@@ -71,7 +71,7 @@ Generate a synthetic plugin project:
 benchweave-sdk new plugins/acme/model100 --package benchweave_acme_model100
 ```
 
-You should see this message over two lines:
+You should see this message:
 
 ```text
 Created synthetic plugin at <your-path>/plugins/acme/model100;
@@ -120,7 +120,7 @@ Run the offline descriptor check:
 benchweave-sdk check src/benchweave_acme_model100/descriptor.json
 ```
 
-You should see this message over two lines:
+You should see this message:
 
 ```text
 Descriptor schema and basic S01/S02/S04 checks passed; full conformance and

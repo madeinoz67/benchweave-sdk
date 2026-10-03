@@ -310,9 +310,12 @@ changelog:
 # --------
 # : index - (default) separate homepage from the README / index source
 # : user_guide - the first user-guide page becomes the landing page
-# First-timer front door (issue #347 WS4): the docs site's landing page is the
-# runnable getting-started path, not the overview.
-homepage: user_guide
+# Fold B-F1 (2026-10-04): homepage: user_guide measured broken when built —
+# the promoted page's relative .qmd hrefs 404 at the site root and every
+# inbound citation of user-guide/getting-started.html dangles (sixteen dead
+# links; scripts/check_docs_links.py). The recorded fallback stands: the
+# index homepage, with the getting-started link at the top of index.qmd.
+homepage: index
 
 # User Guide
 # ----------

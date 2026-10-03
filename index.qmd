@@ -1,3 +1,5 @@
+New to the plugin SDK? Start with the [Get started](user-guide/getting-started.qmd) page. It walks the path from an empty directory to a first check-pass, with the command and the expected output at every step.
+
 The **BenchWeave plugin developer SDK** is the offline toolkit to develop BenchWeave OTDP device plugins. Use it to generate a plugin project. Use it to implement and test the plugin against SDK-supplied interfaces and scripted mocks. Use it to validate descriptor and presentation contracts offline. Use it to prepare a reviewed release. You do not import gateway internals in any of these steps.
 
 The SDK is a separate wheel from the BenchWeave gateway. PyPI publishes it as `benchweave-sdk`. The [main BenchWeave repository](https://github.com/madeinoz67/benchweave) mounts it at `packages/sdk` as a git submodule. The SDK has its own CI and release cycle. Python 3.13+, OTDP 0.2.2 and adapter API 1.1 are the baseline. `pyproject.toml` and the changelog give the SDK's own version. This page does not claim a version.

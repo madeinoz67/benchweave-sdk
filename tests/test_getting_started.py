@@ -40,10 +40,15 @@ synthetic descriptor declares — is pinned against the template descriptor's
 
 Planted-violation arms, permanent on every push: a fake subcommand, a bogus
 flag and a wrong path, each doctored into a copy of the page and each REQUIRED
-to redden; plus two arms this module adds beyond the design's three — an
-unrecognized-line arm proving the abort bites, and a registration arm for the
-citation check. A checker that passes a planted violation is itself broken
-(the ``test_registry_census`` planted-command pattern, and WS3's R-5c).
+to redden; plus the fold's arms — an unrecognized-line arm (the design's
+abort demo, made permanent), a registration arm for the citation check, a
+fence-census arm (A-F1: a ```console re-fence left every test green), a
+non-canonical-install arm (A-F2: an unquoted variant ran verbatim against
+PyPI), a shell-operator arm (A-F5: `|| true` must abort, not run with the
+guard dropped), and an environment arm (A-F3: an SDK line before the page's
+own install rode the runner's venv through a green sequence). A checker
+that passes a planted violation is itself broken (the ``test_registry_census``
+planted-command pattern, and WS3's R-5c).
 
 What this module does NOT catch: the ASD-STE100 register of the prose, and
 whether a "you should see" quote matches the wording of a command's output —
@@ -76,7 +81,23 @@ PAGES = (
     GUIDE_DIR / "troubleshooting.qmd",
 )
 README = REPO / "README.md"
+GREAT_DOCS_YML = REPO / "great-docs.yml"
+CITED_GETTING_STARTED = (
+    "https://madeinoz67.github.io/benchweave-sdk/docs/user-guide/getting-started.html"
+)
 TEMPLATE_DESCRIPTOR = REPO / "template" / "src" / "{{ package_name }}" / "descriptor.json.jinja"
+
+# A-F1 (fold): only sh blocks execute and only sh/text blocks feed the
+# registration scan, so a re-fence to any other language (bash, console, ...)
+# silently removes a block from BOTH checks. Measured live: a ```console
+# re-fence on which-checkout.qmd left every test green. The census is pinned
+# per page; re-fencing is a shape change that updates it deliberately.
+EXPECTED_FENCES = {
+    "getting-started.qmd": {"sh": 11, "text": 6},
+    "which-checkout.qmd": {"sh": 3},
+    "glossary.qmd": {},
+    "troubleshooting.qmd": {"sh": 3},
+}
 
 INSTALL_LINE = "uv pip install 'benchweave-sdk[scaffold]'"
 ACTIVATION_LINES = (
@@ -151,7 +172,16 @@ def execute_sequence(
     failures: list[str] = []
     records: list[Record] = []
     cwd = scratch
-    env = {key: value for key, value in os.environ.items() if key != "VIRTUAL_ENV"}
+    # VIRTUAL_ENV is the page's own variable (T2 sets it at the activation
+    # line); UV_PROJECT_ENVIRONMENT must not leak either — a runner convention
+    # of `venv` would make the page's uv commands create a project-local
+    # venv/ inside the scaffolded plugin, which then rides into uv build's
+    # artifacts (fold B-F2's poison, kept out of the page's world).
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key not in ("VIRTUAL_ENV", "UV_PROJECT_ENVIRONMENT")
+    }
     venv: Path | None = None
     translated_installs = 0
 
@@ -179,6 +209,19 @@ def execute_sequence(
                 return failures, records
             head = parts[0]
 
+            # A-F5 (fold): a shell operator the harness will not interpret
+            # must abort by name. Running the first command with the guard
+            # silently dropped is not execution of the page.
+            if any(
+                part in {"||", "&&", ";", "|"} or part.startswith((">", "<"))
+                for part in parts
+            ):
+                failures.append(
+                    f"getting_started_unrecognized_line: {line} "
+                    "(shell operator the harness refuses)"
+                )
+                return failures, records
+
             # Directory-state builtins: no shell exists here to run them, so
             # the harness applies them natively. Not a translation — the
             # command's effect (change directory / make directory) is exactly
@@ -197,6 +240,22 @@ def execute_sequence(
                 (cwd / parts[1]).mkdir(parents=True, exist_ok=True)
                 continue
 
+            # A-F2 (fold): any SDK-naming uv pip install that is not the
+            # canonical line aborts. A differently-worded variant ran
+            # verbatim against PyPI inside the sequence and every test stayed
+            # green — the refusal closes that hole before anything installs.
+            if (
+                head == "uv"
+                and "benchweave-sdk" in line
+                and {"pip", "install"} <= set(parts)
+                and line != INSTALL_LINE
+            ):
+                failures.append(
+                    f"getting_started_install_line_not_canonical: {line!r} installs "
+                    f"the SDK but is not the canonical form {INSTALL_LINE!r}"
+                )
+                return failures, records
+
             # T1 — the one declared command substitution.
             if line == INSTALL_LINE:
                 if venv is None:
@@ -213,6 +272,26 @@ def execute_sequence(
                     f"benchweave-sdk[scaffold] @ {wheel.as_uri()}",
                 ]
                 translated_installs += 1
+
+            # A-F3 (fold): benchweave-sdk and pytest must come from the
+            # page's own environment. Before activation there is none, and a
+            # resolution from the runner's venv let a broken install pass
+            # green (measured: an inserted pre-activation --version rode the
+            # runner's environment through an all-green sequence).
+            if head in ("benchweave-sdk", "pytest"):
+                if venv is None:
+                    failures.append(
+                        f"getting_started_environment_not_ready: {line} runs "
+                        "before the page's Step 0/1 environment exists"
+                    )
+                    return failures, records
+                resolved_head = shutil.which(head, path=env.get("PATH"))
+                if resolved_head is None or not resolved_head.startswith(str(venv)):
+                    failures.append(
+                        f"getting_started_wrong_environment: {line} resolved "
+                        f"outside the page's environment ({resolved_head})"
+                    )
+                    return failures, records
 
             if shutil.which(head, path=env.get("PATH")) is None:
                 failures.append(
@@ -370,6 +449,34 @@ def test_every_step_section_keeps_its_commands() -> None:
         )
 
 
+def fence_census(text: str) -> dict[str, int]:
+    """One entry per fenced block, keyed by its language tag."""
+    census: dict[str, int] = {}
+    for language, _body in ANY_FENCE.findall(text):
+        key = language or "(none)"
+        census[key] = census.get(key, 0) + 1
+    return census
+
+
+def census_problems(named: dict[str, str]) -> list[str]:
+    problems: list[str] = []
+    for name, text in named.items():
+        census = fence_census(text)
+        if census != EXPECTED_FENCES[name]:
+            problems.append(
+                f"getting_started_fence_census: {name}: {census} != "
+                f"{EXPECTED_FENCES[name]} — a re-fenced block escapes the "
+                "executor (sh) or the registration scan (sh/text)"
+            )
+    return problems
+
+
+def test_the_fence_language_census_is_pinned() -> None:
+    named = {page.name: page.read_text(encoding="utf-8") for page in PAGES}
+    problems = census_problems(named)
+    assert problems == [], "\n" + "\n".join(problems)
+
+
 # --- the sequence -----------------------------------------------------------------
 
 
@@ -415,6 +522,63 @@ def test_an_unrecognized_line_aborts_the_sequence(tmp_path: Path, wheel: Path) -
     ), failures
 
 
+# --- the fold's rows, each with the miss it closes ------------------------------------
+
+
+def test_a_refenced_block_reddens_the_census() -> None:
+    """A-F1's live proof: a ```console re-fence on which-checkout.qmd left
+    every test green (measured, 12 passed) — the block escaped the executor
+    and the registration scan. The census now reds on the same doctoring."""
+    named = {page.name: page.read_text(encoding="utf-8") for page in PAGES}
+    doctored = dict(named)
+    doctored["which-checkout.qmd"] = named["which-checkout.qmd"].replace(
+        "```sh\n", "```console\n", 1
+    )
+    problems = census_problems(doctored)
+    assert problems and "which-checkout" in problems[0], problems
+
+
+def test_a_noncanonical_install_line_reddens(tmp_path: Path, wheel: Path) -> None:
+    """A-F2's live proof: an unquoted `uv pip install benchweave-sdk` beside
+    the canonical line ran verbatim against PyPI inside the sequence and the
+    module stayed green (measured, 12 passed). The refusal aborts before any
+    install runs."""
+    text = PAGE.read_text(encoding="utf-8")
+    doctored = "```sh\nuv pip install benchweave-sdk\n```\n" + text
+    failures, _records = execute_sequence(extract_sh_blocks(doctored), tmp_path, wheel)
+    assert failures and failures[0].startswith(
+        "getting_started_install_line_not_canonical:"
+    ), failures
+
+
+def test_a_shell_operator_line_aborts(tmp_path: Path, wheel: Path) -> None:
+    """A-F5: `cmd || true` must abort as a shell construct, not run with the
+    guard silently dropped."""
+    text = PAGE.read_text(encoding="utf-8")
+    doctored = "```sh\nbenchweave-sdk doctor || true\n```\n" + text
+    failures, _records = execute_sequence(extract_sh_blocks(doctored), tmp_path, wheel)
+    assert failures and failures[0].startswith(
+        "getting_started_unrecognized_line:"
+    ), failures
+
+
+def test_an_sdk_use_outside_the_page_environment_reddens(
+    tmp_path: Path, wheel: Path
+) -> None:
+    """A-F3's live proof: a benchweave-sdk line before Step 0/1 resolved from
+    the runner's own venv, exited 0, and the whole sequence stayed green
+    (that is the ride the row names). It must abort before running."""
+    text = PAGE.read_text(encoding="utf-8")
+    doctored = "```sh\nbenchweave-sdk --version\n```\n" + text
+    failures, _records = execute_sequence(extract_sh_blocks(doctored), tmp_path, wheel)
+    assert failures and failures[0].startswith(
+        (
+            "getting_started_environment_not_ready:",
+            "getting_started_wrong_environment:",
+        )
+    ), failures
+
+
 # --- registration of every CLI mention ----------------------------------------------
 
 
@@ -423,7 +587,10 @@ def registered_subcommands() -> set[str]:
 
 
 def command_citations(text: str) -> list[tuple[str, list[str]]]:
-    """(subcommand, cited flags) for every CLI mention, backticked or fenced."""
+    """(subcommand, cited flags) for every CLI mention: backticked spans,
+    fenced sh/text lines, and — since the fold's A-F4 — unbackticked prose
+    (flags are not collected from bare prose; spans and fences stay the flag
+    surfaces)."""
     found: list[tuple[str, list[str]]] = []
     for span in re.findall(r"`([^`\n]+)`", text):
         match = COMMAND_IN_SPAN.search(span)
@@ -438,6 +605,11 @@ def command_citations(text: str) -> list[tuple[str, list[str]]]:
             if match:
                 flags = FLAG.findall(line[match.end() :])
                 found.append((match.group(1), flags))
+    prose = re.sub(r"`[^`\n]+`", "", ANY_FENCE.sub("", text))
+    for match in re.finditer(
+        r"benchweave-sdk\s+([a-z][a-z0-9-]*|--version|--help)", prose
+    ):
+        found.append((match.group(1), []))
     return found
 
 
@@ -493,6 +665,16 @@ def test_a_planted_unregistered_mention_is_caught() -> None:
     problems = registration_problems(GUIDE_DIR / "which-checkout.qmd", doctored, set(cli.commands))
     assert any("frobnicate" in problem for problem in problems), (
         "the registration check passed a planted command"
+    )
+
+
+def test_a_planted_unbackticked_mention_is_caught() -> None:
+    """A-F4: an unbackticked prose mention must not escape the scan."""
+    text = (GUIDE_DIR / "which-checkout.qmd").read_text(encoding="utf-8")
+    doctored = text + "\nRun benchweave-sdk frobnicate to repair the mount.\n"
+    citations = {subcommand for subcommand, _flags in command_citations(doctored)}
+    assert "frobnicate" in citations, (
+        "an unbackticked prose mention escaped the registration scan"
     )
 
 
@@ -554,3 +736,77 @@ def test_the_pages_firmware_value_matches_the_template_descriptor() -> None:
         f"getting_started_firmware_pin: the page cites --firmware {sorted(cited)}; "
         f"the template descriptor declares {sorted(declared)}"
     )
+
+
+# --- the fold's static pins (pages, navigation, citations) ----------------------------
+
+
+def test_the_pages_teach_one_test_path() -> None:
+    """B-F2: `uv run --extra test pytest` on a UV_PROJECT_ENVIRONMENT=venv
+    machine creates a project-local venv/ inside the plugin, and that tree
+    rides into the build outputs. No page may TEACH that form. The G8
+    symptom row still NAMES `uv run pytest` — a reader who hit it must find
+    the row — but its Fix offers the activated environment only."""
+    for page in PAGES:
+        assert "uv run --extra test" not in page.read_text(encoding="utf-8"), (
+            f"getting_started_single_path: {page.name} teaches the uv run "
+            "deviation that builds a second environment inside the project"
+        )
+    row = (GUIDE_DIR / "troubleshooting.qmd").read_text(encoding="utf-8")
+    row_body = row.split("`uv run pytest` reports a missing module", 1)[1]
+    row_fix = row_body.split("**Fix.**", 1)[1].split("\n## ", 1)[0]
+    assert "pytest` after `source .venv/bin/activate" in row_fix, (
+        "getting_started_single_path: the G8 row's fix must offer the "
+        "activated-environment path"
+    )
+    assert "uv run" not in row_fix, (
+        "getting_started_single_path: the G8 row's fix must not offer uv run"
+    )
+
+
+def test_expected_output_promises_no_line_count() -> None:
+    """B-F3: the CLI wraps its messages at the terminal width (measured: the
+    created-message is three lines at 80 columns, one line at 120). The page
+    promises the message text, never a wrap."""
+    for page in PAGES:
+        assert "over two lines" not in page.read_text(encoding="utf-8"), (
+            f"getting_started_width_promise: {page.name} promises a "
+            "terminal-width-dependent line count"
+        )
+
+
+def test_the_landing_flip_stays_reverted() -> None:
+    """B-F1 static half: homepage: user_guide promotes the first user-guide
+    page to the site root, where its relative .qmd hrefs 404 and every
+    inbound citation of user-guide/getting-started.html dangles (measured:
+    sixteen dead links). The recorded fallback stands; the built-tree half
+    is scripts/check_docs_links.py in the docs lane."""
+    yml = GREAT_DOCS_YML.read_text(encoding="utf-8")
+    assert re.search(r"^homepage:\s*user_guide\s*$", yml, re.M) is None, (
+        "getting_started_landing_flip: the flip measured broken when built; "
+        "re-flipping requires re-proving the built-tree link check"
+    )
+    index = (REPO / "index.qmd").read_text(encoding="utf-8")
+    assert "getting-started.qmd" in index.split("# Installation", 1)[0], (
+        "getting_started_landing_flip: index.qmd must link the getting-started "
+        "page above the fold (the recorded fallback's top-of-index link)"
+    )
+
+
+def test_inbound_citations_name_the_rendered_location() -> None:
+    for source in (README, REPO / "CLAUDE.md"):
+        text = source.read_text(encoding="utf-8")
+        assert CITED_GETTING_STARTED in text, (
+            f"getting_started_inbound_citation: {source.name} does not cite "
+            f"{CITED_GETTING_STARTED}"
+        )
+
+
+def test_relative_links_resolve_inside_the_user_guide() -> None:
+    for page in PAGES:
+        text = page.read_text(encoding="utf-8")
+        for target in re.findall(r"\]\(([^)#?]+\.qmd)\)", text):
+            assert (page.parent / target).is_file(), (
+                f"getting_started_page_link: {page.name} links {target}, "
+                "which is not a sibling page"
+            )
