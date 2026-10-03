@@ -36,9 +36,12 @@ Run every command from the directory that contains `pyproject.toml`.
 ## Move between SDK versions
 
 - `benchweave-sdk upgrade` — move the project to the installed SDK's released
-  template tag. Run it on a committed and clean git tree. A file that you and
-  the template both changed gets conflict markers; resolve both sides, then
-  commit. Files the template no longer carries are kept and reported.
+  template tag. Run it on a committed and clean git tree. The upgrade
+  refreshes a managed file that you did not edit. When your edits and the
+  template's changes touch the same lines of a file, the upgrade writes
+  conflict markers; resolve both sides, then commit. Files the template no
+  longer carries: your own files are kept and reported; managed files are
+  removed, and git history keeps them.
 - `benchweave-sdk adopt` — write the provenance record for a project made
   before the copier port. `adopt` infers the package name and base version
   from `pyproject.toml` and refuses a project whose provenance it cannot

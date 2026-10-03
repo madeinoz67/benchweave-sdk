@@ -237,7 +237,15 @@ def test_update_keeps_the_update_promise(
     # copier.yml is template CONFIG, never a rendered member — a config-only
     # delta touches nothing in the project.
     changed = sorted(
-        relative.removeprefix("template/")
+        # Project-relative paths (the .jinja suffix is template-side only):
+        # this set is compared against project file names in A2/A5 below.
+        # WS3 fold: the suffix mismatch was masked in WS2 — every member its
+        # tests mutated was .jinja-less, and a clean checkout's delta set is
+        # empty — but any .jinja-bearing template delta (the skills, the
+        # answers template) made `changed` name paths that never exist in
+        # the project, so the A2 carve-out and the A5 footprint both went
+        # blind for exactly those files.
+        relative.removeprefix("template/").removesuffix(".jinja")
         for relative in set(base) | set(target)
         if relative.startswith("template/") and base.get(relative) != target.get(relative)
     )
@@ -280,8 +288,8 @@ def test_update_keeps_the_update_promise(
     for relative, content in author_state.items():
         if relative == ".copier-answers.yml":
             continue
-        if relative in changed and relative == "AI-GUIDE.md":
-            continue  # the managed file rides the 3-way merge
+        if relative in changed and (relative == "AI-GUIDE.md" or relative in managed_assets):
+            continue  # managed files ride the 3-way merge when the template moves them
         assert updated[relative] == content, relative
 
     # A3 provenance: the answers' _commit advanced to the target ref and the
@@ -552,50 +560,64 @@ def test_upgrade_conflicts_loudly_on_an_author_edited_managed_skill(tmp_path: Pa
 
 
 def test_upgrade_renders_managed_assets_with_the_installed_stamp(tmp_path: Path) -> None:
-    """R-5d's production promise on the ``upgrade_project`` lane: a project
-    whose stored answers name an OLD template version still gets the managed
-    assets rendered with the INSTALLED SDK's stamp. The ``data`` override in
-    ``upgrade_project`` is the mechanism. Measured on this lane: a raw
-    ``run_update`` over a genuinely aged project (answers AND file bytes at
-    the old stamp) moves the template's content but KEEPS the aged stamp on
-    the version-bearing line — the fresh stamp never lands. WS2 could not
-    pin this (its only managed file, AI-GUIDE, carried no version token);
-    WS3's version-bearing assets make it checkable."""
+    """R-5d's production promise on the ``upgrade_project`` lane, aged BYTES
+    edition (adversary fold B-F1): a project rendered at an OLD SDK version
+    — managed bytes AND answers both carrying the old stamp — upgrades to
+    the installed SDK and every managed asset re-stamps to the INSTALLED
+    version. The ``data`` override in ``upgrade_project`` is the mechanism:
+    a raw ``run_update`` takes its render context from the stored answers,
+    so without the override the aged stamp simply stays (measured: the
+    template's content moves, the stamp does not). Aging only the answers
+    is NOT enough — the project bytes then disagree with the old render and
+    the 3-way merge preserves them as author edits, keeping the test green
+    with the guard deleted. The bytes must age too. WS2 could not pin any
+    of this (its only managed file, AI-GUIDE, carried no version token)."""
+    from copier import run_copy
+
     from benchweave_sdk.scaffold_update import upgrade_project
 
+    old = "0.0.1-old"
     base = dict(_repo_template_members() or {})
     assert base
-    target = dict(base)
-    target["template/AGENTS.md.jinja"] = base["template/AGENTS.md.jinja"].replace(
-        b"plugin project", b"plugin project (target moved)"
-    )
-    repo = _build_tagged_template_repo(tmp_path, base, target)
-    materialized = tmp_path / "materialized-stamp"
+    # No template delta beyond the tag: the only moving bytes are the version
+    # stamps, which is exactly what this test isolates.
+    repo = _build_tagged_template_repo(tmp_path, base, base)
+    materialized = tmp_path / "materialized-aged"
     _write_tree(materialized, base)
-    project = tmp_path / "P-stamp"
-    _scaffold_offline(materialized, repo, project)
-    # Age the project the way a real upgrade starts: the answers still name
-    # the old SDK version (the base was rendered with the current one; a
-    # truly old project would differ in more lines, but the sdk_version
-    # answer is the only one that flows into the managed assets' stamps).
-    answers = project / ".copier-answers.yml"
-    aged = [
-        line.replace(f"sdk_version: {__version__}", "sdk_version: 0.0.1-old")
-        for line in answers.read_text(encoding="utf-8").splitlines(keepends=True)
-    ]
-    answers.write_bytes("".join(aged).encode())
-    _author_commit(project)
-    conflicted, _restored = upgrade_project(project, target_ref=TARGET_TAG)
-    assert conflicted == []
-    assert (project / "AGENTS.md").read_bytes() == (
-        FIXTURES / "base" / "AGENTS.md"
-    ).read_bytes().replace(b"plugin project", b"plugin project (target moved)"), (
-        "AGENTS.md must carry the installed SDK's stamp, never the aged pin"
+    project = tmp_path / "P-aged"
+    run_copy(
+        str(materialized),
+        str(project),
+        data={
+            "package_name": PACKAGE,
+            "with_ui": False,
+            "sdk_version": old,
+            "otdp_version": active_version("otdp"),
+        },
+        defaults=True,
+        quiet=True,
     )
-    skill = project / ".claude" / "skills" / "benchweave-descriptor" / "SKILL.md"
-    assert skill.read_bytes() == (
-        FIXTURES / "base" / ".claude" / "skills" / "benchweave-descriptor" / "SKILL.md"
-    ).read_bytes(), "the skill footer's stamp must be the installed SDK's, never the aged pin"
+    _enforce_lf(project)
+    _pin_local_answers(project, repo, _git_out(repo, "rev-parse", BASE_TAG))
+    # The project is genuinely aged: bytes and answers both carry the old
+    # stamp, and the answers record it.
+    assert f"benchweave-sdk {old}".encode() in (project / "AGENTS.md").read_bytes()
+    assert f"sdk_version: {old}" in (project / ".copier-answers.yml").read_text(
+        encoding="utf-8"
+    )
+    _author_commit(project)
+    conflicted, restored = upgrade_project(project, target_ref=TARGET_TAG)
+    assert conflicted == [] and restored == []
+    managed = sorted(
+        member.removeprefix("template/").removesuffix(".jinja")
+        for member in base
+        if member == "template/AGENTS.md.jinja" or member.startswith("template/.claude/")
+    )
+    assert len(managed) == 6, managed
+    for relative in managed:
+        assert (project / relative).read_bytes() == (
+            FIXTURES / "base" / relative
+        ).read_bytes(), f"{relative} must re-stamp to the installed SDK's version"
 
 
 def test_skip_list_is_load_bearing_on_update(tmp_path: Path) -> None:

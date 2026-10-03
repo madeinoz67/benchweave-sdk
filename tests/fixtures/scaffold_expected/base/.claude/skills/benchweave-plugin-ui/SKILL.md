@@ -29,7 +29,9 @@ or hardware.
 - `benchweave-sdk preview-ui <envelope.json> --descriptor <descriptor.json>
   --resources <resource-root> --catalogue <binding-catalogue.json>` — serve the
   preview API and the bundled renderer locally. Extra flags: `--fixtures`,
-  `--renderer-url`, `--host`, `--port`, `--allow-network`, `--no-open`.
+  `--renderer-url`, `--host`, `--port`, `--allow-network`, `--no-open`, plus
+  the shared presentation flags `--firmware`, repeatable `--feature` and
+  repeatable `--panel`.
 
 ## Rules that bite
 

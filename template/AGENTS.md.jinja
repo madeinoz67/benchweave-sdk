@@ -36,9 +36,12 @@ Do the five steps in order. Run every command from the directory that contains
 ## Keep the project current
 
 Run `benchweave-sdk upgrade` on a committed and clean git tree. The upgrade
-moves the managed files of this template. Your own files stay byte-identical.
-A file that you and the template both changed gets conflict markers; resolve
-both sides, then commit. Projects made before the copier port need
+refreshes a managed file that you did not edit. Your own files stay
+byte-identical; a file of yours that the template drops is kept and reported.
+When your edits and the template's changes touch the same lines of a file,
+the upgrade writes conflict markers; resolve both sides, then commit. A
+managed file that the template no longer carries is removed; git history
+keeps it. Projects made before the copier port need
 `benchweave-sdk adopt` first.
 
 ## Skills
@@ -63,6 +66,6 @@ The directory `.claude/skills/` holds five SDK-managed skills:
 
 - `AI-GUIDE.md` — the five build-out prompts.
 - `UI-GUIDE.md` — UI authoring; present in projects made with `--with-ui`.
-- Rendered guide for this SDK version:
-  https://madeinoz67.github.io/benchweave-sdk/docs/v/{{ sdk_version }}/
+- Rendered guide for this SDK version (the v-prefixed release tag bucket):
+  https://madeinoz67.github.io/benchweave-sdk/docs/v/v{{ sdk_version }}/
 - Guide source: `user_guide/plugin-sdk.qmd` in the benchweave-sdk repository.

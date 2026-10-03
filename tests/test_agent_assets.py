@@ -136,10 +136,22 @@ def citation_violations(
     violations: list[str] = []
     for name, text in sorted(assets.items()):
         for code in CODE_CITATION.findall(text):
-            if f"{code}:" not in source_text:
-                violations.append(f"{name}: cited code `{code}:` is not in the SDK source")
-            if f"{code}:" not in guide_text:
-                violations.append(f"{name}: cited code `{code}:` is not in the user guide")
+            # Adversary fold A-F2: substring halves admitted plausible
+            # neighbors (`max_bytes:`, `operation_id:` occur in both halves
+            # as dictionary keys and envelope fields). Both halves are now
+            # anchored to the citation surfaces: the source half requires the
+            # code at a string-literal start (where refusal messages raise
+            # it), the guide half requires the guide's own backticked
+            # `` `code:` `` listing — the convention its refusal-code
+            # sections use.
+            if re.search(rf"[\"']{re.escape(code)}:", source_text) is None:
+                violations.append(
+                    f"{name}: cited code `{code}:` is not raised in the SDK source"
+                )
+            if f"`{code}:`" not in guide_text:
+                violations.append(
+                    f"{name}: cited code `{code}:` is not listed in the user guide"
+                )
         for match in COMMAND_CITATION.finditer(text):
             subcommand = match.group(1)
             if subcommand not in commands:
@@ -220,6 +232,48 @@ def test_planted_missing_heading_is_caught() -> None:
     )
 
 
+def test_planted_plausible_neighbor_is_caught() -> None:
+    """Arm (iv), adversary fold A-F2: a substring that occurs in BOTH halves
+    but is not a refusal code must not pass. ``max_bytes:`` and
+    ``operation_id:`` occur in SDK source and in the guide (as dictionary
+    keys and envelope fields) — the raise-site/backtick anchoring is what
+    separates a refusal code from these plausible neighbors."""
+    for neighbor in ("max_bytes", "operation_id"):
+        planted = {
+            "PLANTED.md": (
+                f"The writer refuses with `{neighbor}:` when the exchange is "
+                'wrong. See section "3. Run the checks".\n'
+            )
+        }
+        violations = citation_violations(
+            planted,
+            source_text=sdk_source_text(),
+            guide_text=GUIDE.read_text(encoding="utf-8"),
+            commands=registered_commands(),
+            registry_commands=registry_subcommands(),
+        )
+        assert any(neighbor in violation for violation in violations), (
+            f"`{neighbor}:` is a plausible neighbor that must not pass; got {violations}"
+        )
+
+
+def test_planted_registry_subcommand_is_caught() -> None:
+    """Arm (v), adversary fold F5: a two-word ``benchweave-sdk registry …``
+    mention whose second word the registry group does not register must not
+    pass — the first-token check alone would accept it."""
+    planted = {
+        "PLANTED.md": "Run `benchweave-sdk registry frobnicate` to repair a record.\n"
+    }
+    violations = citation_violations(
+        planted,
+        source_text=sdk_source_text(),
+        guide_text=GUIDE.read_text(encoding="utf-8"),
+        commands=registered_commands(),
+        registry_commands=registry_subcommands(),
+    )
+    assert any("frobnicate" in violation for violation in violations), violations
+
+
 # --- R-5b: the real assets, exhaustively -------------------------------------
 
 
@@ -270,6 +324,19 @@ def test_prose_refusal_skills_cite_no_codes() -> None:
         assert not CODE_CITATION.findall(assets[name]), (
             f"{name} cites a code the design says it must not"
         )
+
+
+def test_the_versioned_docs_url_uses_the_tag_prefixed_bucket() -> None:
+    """Adversary fold A-F1: the versioned docs buckets are keyed by the
+    release TAG — ``docs/v/v0.6.0/``, tags carry the leading ``v`` (the same
+    convention ``scaffold.py`` pins with ``_commit: v{__version__}`` and
+    ``scripts/assemble_docs_site.py`` builds under ``docs/v/<tag>/``) — not
+    by the bare version. A rendered ``docs/v/0.6.0/`` URL is a dead link in
+    every generated project."""
+    agents = (TEMPLATE / "AGENTS.md.jinja").read_text(encoding="utf-8")
+    assert "https://madeinoz67.github.io/benchweave-sdk/docs/v/v{{ sdk_version }}/" in agents, (
+        "the docs URL must name the v-prefixed tag bucket, not the bare version"
+    )
 
 
 def test_assets_carry_no_version_literals() -> None:

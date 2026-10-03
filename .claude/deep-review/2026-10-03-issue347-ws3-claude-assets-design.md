@@ -46,8 +46,10 @@ Verified facts the design stands on:
    proven in-tree format.
 3. **The real diagnostic surface is mixed, and the assets must respect the mix.** STD-4
    (`docs/internal/invariants.md`) pins the `snake_case:` refusal-prefix contract for the
-   standards/validation/provider lanes: `version_not_served:`, `retired_identifier:`, the six
-   `provider_*` codes, `signing_extra_absent:` (`publishing.py:1161`),
+   standards/validation/provider lanes: the six transport-provider-lane codes
+   (`version_not_served:`/`retired_identifier:` are real served-set refusals in `served.py`
+   that the guide documents, but they sit OUTSIDE STD-4's enumerated list — fold F4
+   correction of this record's original wording), `signing_extra_absent:` (`publishing.py:1161`),
    `status_present:` (README, registry), `benchweave_sdk_server_extras_missing:` (server
    extra), `served_set_drift:`/`vendored_digest_mismatch:` (drift doc §5). The `doctor`
    command (WS1b, merged) refuses with `project_directory_not_found:` / `project_not_a_directory:`
