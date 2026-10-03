@@ -20,6 +20,9 @@ import json
 import math
 import threading
 import time
+import uuid
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
@@ -495,3 +498,201 @@ def serial_plugin_session(
         return SerialCaptureServices(SerialLink(transport), max_frame_bytes=max_frame)
 
     return PluginSession(plugin, factory)
+
+
+@dataclass(frozen=True)
+class SerialPortHooks:
+    """The two port hooks discovery needs, injectable so tests never open a
+    real port (the Transport protocol's posture, one level up)."""
+
+    enumerate_ports: Callable[[], list[Any]]
+    open_port: Callable[[str, dict[str, Any]], Any]
+
+
+def _pyserial_enumerate() -> list[Any]:
+    try:
+        from serial.tools import list_ports  # type: ignore[import-untyped]
+    except ImportError as exc:
+        raise RuntimeError(
+            "standalone_serial_pyserial_missing: install 'benchweave-sdk[server]' "
+            "for serial transport support"
+        ) from exc
+    return list(list_ports.comports())
+
+
+def _default_hooks() -> SerialPortHooks:
+    return SerialPortHooks(enumerate_ports=_pyserial_enumerate, open_port=open_serial_port)
+
+
+def usb_identity_filter(plugin: LoadedPlugin) -> dict[str, Any] | None:
+    """The descriptor's declared USB identity hint — ``x-`` extension keys
+    under ``transport.settings`` (the only schema-legal lane; the descriptor
+    schema grants no addresses). ``None`` when nothing is declared."""
+    settings = _serial_settings(plugin)
+    vid = settings.get("x-standalone-usb-vid")
+    pid = settings.get("x-standalone-usb-pid")
+    if vid is None and pid is None:
+        return None
+    return {"vid": vid, "pid": pid}
+
+
+def _identity_int(value: Any) -> int | None:
+    """A USB id as int: ints pass through, strings parse as base-16 with an
+    optional 0x prefix; anything else (bool included) never matches."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        text = value.strip().lower().removeprefix("0x")
+        try:
+            return int(text, 16)
+        except ValueError:
+            return None
+    return None
+
+
+def _port_matches(port: Any, hint: dict[str, Any]) -> bool:
+    """The candidate carries every USB id the descriptor declares. A
+    candidate whose port object lacks an id (``vid``/``pid`` None) never
+    matches a declared id — VID alone is distrusted, the fork's posture."""
+    for key in ("vid", "pid"):
+        declared = hint.get(key)
+        if declared is None:
+            continue
+        want = _identity_int(declared)
+        if want is None:
+            return False
+        actual = _identity_int(getattr(port, key, None))
+        if actual is None or actual != want:
+            return False
+    return True
+
+
+def _port_name(port: Any) -> str:
+    return str(getattr(port, "device", None) or port)
+
+
+def _identify_timeout_ms(plugin: LoadedPlugin) -> int:
+    """The descriptor's identify bound; unbounded identify falls back to the
+    strictest declared timeout (the session's lifecycle rule — derived, not
+    invented)."""
+    policies = plugin.descriptor.get("operations", {})
+    row = policies.get("identify", {})
+    if isinstance(row, dict):
+        declared = int(row.get("timeout_ms", 0))
+        if declared > 0:
+            return declared
+    timeouts = [
+        int(item.get("timeout_ms", 0))
+        for item in policies.values()
+        if isinstance(item, dict)
+    ]
+    return max(timeouts) if timeouts else 1000
+
+
+async def _confirm_by_identify(
+    plugin: LoadedPlugin,
+    port: Any,
+    hooks: SerialPortHooks,
+    timeout_ms: int,
+) -> dict[str, Any] | None:
+    """Open one candidate and run the adapter's identify over a fresh link:
+    the ONLY transmission discovery performs. The answered identity must
+    match the descriptor's declared manufacturer and model; a silent,
+    erroring or foreign port is omitted (an unconfirmed port is not a
+    device)."""
+    from .session import HostOperationContext
+
+    transport = None
+    link: SerialLink | None = None
+    adapter: Any = None
+    try:
+        transport = hooks.open_port(_port_name(port), _serial_settings(plugin))
+        link = SerialLink(transport)
+        services = SerialCaptureServices(
+            link, max_frame_bytes=int(_serial_settings(plugin).get("max_frame_bytes", 0)) or 4096
+        )
+        adapter = plugin.adapter_factory() if plugin.adapter_factory else None
+        if adapter is None:
+            return None
+        context = HostOperationContext(
+            f"discover-{uuid.uuid4().hex[:8]}", timeout_ms=timeout_ms
+        )
+        await adapter.open(plugin.descriptor, services, context)
+        envelope = await adapter.execute(
+            {
+                "operation_id": context.operation_id,
+                "verb": "identify",
+                "arguments": {},
+            },
+            context,
+        )
+        if envelope.get("status") != "ok":
+            return None
+        data = envelope.get("data")
+        if not isinstance(data, dict):
+            return None
+        declared = plugin.descriptor.get("identity", {})
+        if (
+            data.get("manufacturer") != declared.get("manufacturer")
+            or data.get("model") != declared.get("model")
+        ):
+            return None
+        return data
+    except Exception:
+        # A silent, erroring or foreign candidate is omitted, not reported:
+        # an unconfirmed port is not a device (AR-4's posture).
+        return None
+    finally:
+        if adapter is not None:
+            with contextlib.suppress(Exception):
+                close_context = HostOperationContext(
+                    f"discover-close-{uuid.uuid4().hex[:8]}", timeout_ms=timeout_ms
+                )
+                await adapter.close(close_context)
+        if link is not None:
+            with contextlib.suppress(Exception):
+                link.close()
+
+
+def _device_row(plugin: LoadedPlugin, identity: dict[str, Any]) -> dict[str, Any]:
+    """One _DEVICE_SUMMARY row, schema-verbatim."""
+    transport = plugin.descriptor.get("transport", {})
+    return {
+        "id": plugin.device_id,
+        "manufacturer": str(identity.get("manufacturer", "")),
+        "model": str(identity.get("model", "")),
+        "transport": str(transport.get("type", "")),
+        "connection_key": str(transport.get("connection_key", "")),
+    }
+
+
+async def discover_serial_devices(
+    plugin: LoadedPlugin,
+    *,
+    hooks: SerialPortHooks | None = None,
+    connected_device: str | None = None,
+    connected_identity: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Enumerate candidate ports, filter by the descriptor's declared USB
+    identity WHERE DECLARED, confirm each survivor by its identify answer,
+    and return the confirmed devices as _DEVICE_SUMMARY rows. The ONLY
+    transmissions are the identify exchanges; the connected session's port
+    is served from the session's established identity without re-probing."""
+    effective = hooks or _default_hooks()
+    hint = usb_identity_filter(plugin)
+    timeout_ms = _identify_timeout_ms(plugin)
+    rows: list[dict[str, Any]] = []
+    for port in effective.enumerate_ports():
+        name = _port_name(port)
+        if connected_device is not None and name == connected_device:
+            rows.append(_device_row(plugin, connected_identity or {}))
+            continue
+        if hint is not None and not _port_matches(port, hint):
+            continue
+        answered = await _confirm_by_identify(plugin, port, effective, timeout_ms)
+        if answered is None:
+            continue
+        rows.append(_device_row(plugin, answered))
+    return rows

@@ -107,9 +107,13 @@ class StandaloneSeam:
         transport_kind: str,
         unattended: bool = False,
         reload_wrapper: Callable[[Any], Any] | None = None,
+        serial_ports: Any = None,
+        serial_device_path: str | None = None,
     ) -> None:
         self._session = session
         self._transport_kind = transport_kind
+        self._serial_ports = serial_ports
+        self._serial_device_path = serial_device_path
         # Lazy by contract (see the module's TYPE_CHECKING note): these run
         # inside the guarded serve/mcp bodies, never at the console entry's
         # module import.
@@ -151,6 +155,7 @@ class StandaloneSeam:
         self._adapter_sha256 = project_py_digest(session.plugin)
         self._pending_reload: dict[str, Any] | None = None
         self._capture_in_flight = False
+        self._discovery_cache: list[dict[str, Any]] | None = None
         self.reload_state: dict[str, Any] | None = None
         # The op-vs-reload mutex (the refute lanes' serialization class):
         # a device-mutating sequence (an apply's write→read-back span, a
@@ -188,6 +193,13 @@ class StandaloneSeam:
     def pending_reload(self) -> dict[str, Any] | None:
         """The pending Q11 confirmation, when one is waiting."""
         return self._pending_reload
+
+    @property
+    def discovery_cache(self) -> list[dict[str, Any]] | None:
+        """The last discovery result (host state): None until a scan runs.
+        GET / serves this on the serial transport — never a live scan
+        (NFR-O3: a page load must not transmit to candidate ports)."""
+        return self._discovery_cache
 
     def _correlation(self, supplied: str | None) -> str:
         return supplied or f"bws-{uuid.uuid4().hex[:12]}"
@@ -313,6 +325,20 @@ class StandaloneSeam:
     async def _op_device_discover(
         self, arguments: dict[str, Any], correlation: str
     ) -> dict[str, Any]:
+        if self._transport_kind == "serial":
+            from .serial import discover_serial_devices
+
+            session = self._session
+            devices = await discover_serial_devices(
+                session.plugin,
+                hooks=self._serial_ports,
+                connected_device=(
+                    self._serial_device_path if session.connected else None
+                ),
+                connected_identity=session.identity,
+            )
+            self._discovery_cache = devices
+            return {"devices": devices}
         descriptor = self._session.plugin.descriptor
         identity = descriptor.get("identity", {})
         transport = descriptor.get("transport", {})

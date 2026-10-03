@@ -32,4 +32,28 @@
   {% endif %}
 </section>
 {% endfor %}
+
+{% if scan_available %}
+<section class="panel">
+  <h2>Discovery</h2>
+  {# NFR-O3: serial hosts scan explicitly; loading this page never transmits. #}
+  {% if scan_error %}
+  <div class="notice notice-refused" role="alert">
+    <p><strong>Scan refused</strong> — {{ scan_error.code }}: {{ scan_error.message }}</p>
+  </div>
+  {% endif %}
+  {% if not devices %}
+  <p class="hint">
+    No devices listed yet. A scan opens candidate ports and asks each for its
+    identity; nothing else is transmitted, and loading this page transmits
+    nothing.
+  </p>
+  {% endif %}
+  <form method="post" action="/discover"
+        hx-post="/discover"
+        hx-headers='{"X-CSRF-Token": "{{ csrf_token }}"}'>
+    <button type="submit">Scan for devices</button>
+  </form>
+</section>
+{% endif %}
 {% endblock %}
