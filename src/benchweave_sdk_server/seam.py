@@ -27,15 +27,25 @@ import asyncio
 import time
 import uuid
 from importlib import metadata
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from benchweave_sdk.testing import ConformanceError
 
 from . import catalogue
 from .errors import SeamError
-from .plots import ObservationRing
-from .presentation import SUPPORTED_FEATURES, SUPPORTED_PANELS, HostPresentation
 from .session import PluginSession
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    # The presentation model and the observation ring import the
+    # ``benchweave-ui-html`` extra at MODULE level; the seam keeps them OUT
+    # of its own module-level chain (PR #97's Windows red: cli.py imports
+    # this module at line 28, and a default install's console entry died
+    # at plots.py's ui_html import before the extras guard could answer).
+    # The CLI module chain imports nothing from the extra set (the A-E
+    # contract); the lazy imports below run only when a seam is
+    # constructed — inside the guarded serve/mcp bodies.
+    from .plots import ObservationRing
+    from .presentation import HostPresentation
 
 #: Adapter envelope error codes → interface codes (SW-12 distinctness kept:
 #: the adapter's own code and dispatch_state ride in ``details`` verbatim).
@@ -68,6 +78,12 @@ class StandaloneSeam:
     def __init__(self, session: PluginSession, *, transport_kind: str) -> None:
         self._session = session
         self._transport_kind = transport_kind
+        # Lazy by contract (see the module's TYPE_CHECKING note): these run
+        # inside the guarded serve/mcp bodies, never at the console entry's
+        # module import.
+        from .plots import ObservationRing
+        from .presentation import HostPresentation
+
         # The presentation model is host state owned by the seam (the PRD
         # §6 diagram's named component): built once, read by every surface.
         self._presentation = HostPresentation(
@@ -76,7 +92,7 @@ class StandaloneSeam:
         )
         # The bounded observation ring (§3.3): fed by every successful
         # parameter read — host-observed samples, nothing fabricated.
-        self.observation_ring = ObservationRing()
+        self.observation_ring: ObservationRing = ObservationRing()
 
     @property
     def session(self) -> PluginSession:
@@ -161,6 +177,8 @@ class StandaloneSeam:
     async def _op_host_info(
         self, arguments: dict[str, Any], correlation: str
     ) -> dict[str, Any]:
+        from .presentation import SUPPORTED_FEATURES, SUPPORTED_PANELS
+
         plugin = self._session.plugin
         return {
             "mode": "standalone",

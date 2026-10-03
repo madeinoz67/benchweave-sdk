@@ -89,7 +89,19 @@ def test_mcp_command_builds_without_an_http_listener(starter_project: Path) -> N
 #: caught starlette through security.py when the name list had only the
 #: four direct dependencies -- a simulation weaker than reality is a
 #: false pass, so the set names the closure, not the extras table).
-_SERVER_EXTRA_MODULES = ("fastapi", "fastmcp", "uvicorn", "jinja2", "starlette", "pydantic")
+#: benchweave_ui_html joined the closure with the I2a presentation
+#: render (PR #97's Windows red: the sim's miss — the plot wrapper put it
+#: in the CLI module chain through seam.py; the set names the closure, not
+#: the extras table).
+_SERVER_EXTRA_MODULES = (
+    "fastapi",
+    "fastmcp",
+    "uvicorn",
+    "jinja2",
+    "starlette",
+    "pydantic",
+    "benchweave_ui_html",
+)
 
 
 def _simulate_default_install(monkeypatch: pytest.MonkeyPatch, *blocked: str) -> None:
@@ -189,3 +201,26 @@ def test_version_answers_without_a_runtime_error() -> None:
     result = CliRunner().invoke(cli, ["--version"])
     assert result.exit_code == 0, result.output
     assert "version" in result.output
+
+
+def test_serve_without_the_full_extra_closure_refuses_through_the_entry(
+    starter_project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PR #97's Windows red, as an arm: blocking the extra's FULL import
+    closure (benchweave_ui_html included — the sim's miss), the console
+    entry's own module chain must stay importable and the serve command
+    must answer the prefixed refusal. Pre-fix, the entry died at import:
+    cli.py:28 (from .seam import ...) -> seam.py:36 (from .plots import
+    ObservationRing) -> plots.py:26 (from benchweave_ui_html.plot import
+    ...) -> ModuleNotFoundError — the A-E contract (the CLI module chain
+    imports nothing from the extra set) broken by the plot wrapper."""
+    _simulate_default_install(monkeypatch, *_SERVER_EXTRA_MODULES)
+    monkeypatch.delitem(sys.modules, "benchweave_sdk_server.cli", raising=False)
+    import benchweave_sdk_server.cli as cli_module
+
+    result = CliRunner().invoke(
+        cli_module.cli, ["serve", str(starter_project), "--no-open"]
+    )
+    assert result.exit_code == 2, result.output
+    assert "benchweave_sdk_server_extras_missing:" in result.output
+    assert "benchweave-sdk[server]" in result.output
