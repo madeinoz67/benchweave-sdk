@@ -327,3 +327,74 @@ def test_the_lane_hydrator_draws_synthetic_columns(page: Page, server_url: str) 
         }"""
     )
     assert drawn == "3", "the hydrator drew the three synthetic columns"
+
+
+def test_a_reload_advisory_lands_on_the_open_page(
+    page: Page, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    """FOLD-E F7 — the exit gate's advisory leg as a BROWSER arm: a real
+    page, the real /events stream, and the advisory TEXT rendered into
+    #reload-advisory after a reload fires (template markup presence is
+    not the claim; the rendered advisory is). The test owns the seam, so
+    the reload is driven host-side while the browser watches."""
+    import asyncio as _asyncio
+    import threading as _threading
+    import time as _time
+
+    import uvicorn
+
+    from benchweave_sdk_server.cli import _build_seam
+    from benchweave_sdk_server.security import GuardPolicy, new_token
+    from benchweave_sdk_server.web import build_app
+
+    project = _scaffold(tmp_path_factory.mktemp("advisory") / "starter")
+    port = _free_port()
+    seam, _selection = _build_seam(project, unattended=True)
+    app = build_app(
+        seam,
+        policy=GuardPolicy.complete(
+            bound_host="127.0.0.1",
+            bound_port=port,
+            bearer_token=new_token(),
+            csrf_token=new_token(),
+        ),
+    )
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_config=None,
+                            lifespan="on")
+    server = uvicorn.Server(config)
+    thread = _threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    try:
+        while not server.started:
+            _time.sleep(0.02)
+        url = f"http://127.0.0.1:{port}"
+        page.goto(url + "/pages/readings")
+        # Nothing yet: the advisory region starts empty.
+        assert page.locator("#reload-advisory").inner_text() == ""
+        # Fire a real reload host-side (unattended, no changes pending: the
+        # reload proceeds and publishes plugin_reloaded). Playwright's sync
+        # API hosts its own event loop in this thread, so the reload runs
+        # on a worker thread's loop — the seam is loop-agnostic and the
+        # event bus is thread-guarded.
+        outcome: dict[str, object] = {}
+
+        def _fire() -> None:
+            outcome["result"] = _asyncio.run(seam.reload_plugin(source="mcp"))
+
+        worker = _threading.Thread(target=_fire)
+        worker.start()
+        worker.join(timeout=30)
+        result = outcome["result"]
+        assert isinstance(result, dict) and result["status"] == "reloaded", result
+        # The SSE push renders the advisory text into the region — the
+        # bounded poll is the event-driven wait, not a blind sleep.
+        for _ in range(80):
+            if "Plugin reloaded" in page.locator("#reload-advisory").inner_text():
+                break
+            _time.sleep(0.1)
+        assert "Plugin reloaded" in page.locator("#reload-advisory").inner_text(), (
+            "the reload advisory must render on the open page"
+        )
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10)

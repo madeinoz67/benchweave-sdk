@@ -89,6 +89,9 @@ def _tool_handlers(seam: StandaloneSeam) -> dict[str, Callable[..., Any]]:
             seam, "preset_apply", {"device_id": device_id, "preset_id": preset_id}
         )
 
+    async def events_get(after_id: int) -> Any:
+        return await _dispatch(seam, "events_get", {"after_id": after_id})
+
     handlers: dict[str, Callable[..., Any]] = {
         "host_info": host_info,
         "device_discover": device_discover,
@@ -100,6 +103,7 @@ def _tool_handlers(seam: StandaloneSeam) -> dict[str, Callable[..., Any]]:
         "parameter_apply": parameter_apply,
         "preset_list": preset_list,
         "preset_apply": preset_apply,
+        "events_get": events_get,
     }
     missing = set(catalogue.served_operations()) - set(handlers)
     extra = set(handlers) - set(catalogue.served_operations())
@@ -202,7 +206,7 @@ def build_mcp(seam: StandaloneSeam, *, authoring: bool = False) -> FastMCP:
     if authoring:
         from .authoring import register_authoring_tools
 
-        register_authoring_tools(mcp)
+        register_authoring_tools(mcp, seam=seam)
     _pin_all(mcp)
     return mcp
 

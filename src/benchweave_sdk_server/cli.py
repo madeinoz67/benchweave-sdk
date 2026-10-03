@@ -29,11 +29,8 @@ from .seam import StandaloneSeam
 from .session import (
     LoadedPlugin,
     PluginLoadError,
-    PluginSession,
     load_plugin_project,
-    mock_exchanges,
 )
-from .transport import LoopingMockHost
 
 if TYPE_CHECKING:
     from .scenarios import ScenarioSelection
@@ -69,7 +66,11 @@ def _load(project: Path) -> LoadedPlugin:
 
 
 def _build_seam(
-    project: Path, *, transport: str = "mock", scenario: str | None = None
+    project: Path,
+    *,
+    transport: str = "mock",
+    scenario: str | None = None,
+    unattended: bool = False,
 ) -> tuple[StandaloneSeam, ScenarioSelection | None]:
     """Compose the seam over one transport (§4.1's composition step).
 
@@ -78,9 +79,19 @@ def _build_seam(
     the seam, the routes, the templates — knows or cares which one it is.
     A scenario selection is refused on any transport but the mock
     (scenarios do not exist on real hardware, the banner rule's sibling)
-    and returns the mutable selection the device page can switch.
+    and returns the mutable selection the device page can switch. The
+    session factories read the CURRENT plugin at connect time (the
+    late-bound ``mock_plugin_session`` shape) so a reload's reconnect
+    speaks the new plugin's own script; scenario mode additionally hands
+    the seam the scenario wrapper so a reload re-binds the scenario
+    adapter over the reloaded project.
     """
-    from .scenarios import ScenarioSelection, scenario_session
+    from .scenarios import (
+        ScenarioSelection,
+        scenario_session,
+        wrap_scenario_plugin,
+    )
+    from .session import mock_plugin_session
 
     plugin = _load(project)
     if scenario is not None:
@@ -93,13 +104,19 @@ def _build_seam(
             raise SystemExit(2)
         selection = ScenarioSelection(scenario)
         return (
-            StandaloneSeam(scenario_session(plugin, selection), transport_kind="mock"),
+            StandaloneSeam(
+                scenario_session(plugin, selection),
+                transport_kind="mock",
+                unattended=unattended,
+                reload_wrapper=wrap_scenario_plugin,
+            ),
             selection,
         )
     return (
         StandaloneSeam(
-            PluginSession(plugin, lambda: LoopingMockHost(mock_exchanges(plugin))),
+            mock_plugin_session(plugin),
             transport_kind=transport,
+            unattended=unattended,
         ),
         None,
     )
@@ -132,6 +149,12 @@ def cli() -> None:
     help="Serve one of the nine baseline states (mock transport only).",
 )
 @click.option("--authoring", is_flag=True)
+@click.option(
+    "--unattended",
+    is_flag=True,
+    help="Waive the reload confirmation for adapter-code changes while a "
+    "device is connected (valid only with --authoring; Q11 option 2).",
+)
 def serve(
     project: Path,
     host: str,
@@ -141,8 +164,13 @@ def serve(
     transport: str,
     scenario: str | None,
     authoring: bool,
+    unattended: bool,
 ) -> None:
     """Serve UI, REST and MCP over one plugin project."""
+    if unattended and not authoring:
+        raise click.UsageError(
+            "--unattended requires --authoring (Q11: it waives an operator gate)"
+        )
     try:
         # All three ride the [server] extra: web and uvicorn directly, and
         # security through starlette's middleware base -- the module-level
@@ -169,7 +197,9 @@ def serve(
             "the bearer token below is the only gate.",
             err=True,
         )
-    seam, selection = _build_seam(project, transport=transport, scenario=scenario)
+    seam, selection = _build_seam(
+        project, transport=transport, scenario=scenario, unattended=unattended
+    )
     if seam.session.plugin.load_diagnostic is not None:
         # §4.5: the degraded load BINDS (exit 0) with its diagnostic on
         # stderr — the author sees the UI and the reason before the adapter
@@ -194,14 +224,24 @@ def serve(
 @cli.command()
 @click.argument("project", type=click.Path(path_type=Path, exists=True))
 @click.option("--authoring", is_flag=True)
-def mcp(project: Path, authoring: bool) -> None:
+@click.option(
+    "--unattended",
+    is_flag=True,
+    help="Waive the reload confirmation for adapter-code changes while a "
+    "device is connected (valid only with --authoring; Q11 option 2).",
+)
+def mcp(project: Path, authoring: bool, unattended: bool) -> None:
     """Run the MCP server over stdio (no HTTP listener, no HTTP guards)."""
+    if unattended and not authoring:
+        raise click.UsageError(
+            "--unattended requires --authoring (Q11: it waives an operator gate)"
+        )
     try:
         from .mcp import build_mcp
     except ImportError as exc:
         _require_server_extra(exc)
 
-    seam, _ = _build_seam(project)
+    seam, _ = _build_seam(project, unattended=unattended)
     server = build_mcp(seam, authoring=authoring)
     server.run()
 

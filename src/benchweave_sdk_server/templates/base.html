@@ -11,17 +11,44 @@
   <link rel="stylesheet" href="/assets/standalone.css">
   <link rel="stylesheet" href="/assets/uplot.css">
   <script src="/assets/htmx.min.js" defer></script>
-  <script src="/assets/sse.js" defer></script>
   <script src="/assets/uplot.min.js" defer></script>
   <script src="/assets/bw-plot.js" defer></script>
+  <script src="/assets/bw-events.js" defer></script>
 </head>
 <body>
   <div class="banner-region" title="Absent gateway guarantees: {{ absent | join(', ') }}">
     {{ mode_banner }}
   </div>
+  <div class="advisory-region">
+    {# Reload advisories ride the event bus so EVERY open page shows them
+       (SW-29); bw-events.js fills these regions from the /events stream
+       (the vendored htmx-1 SSE extension is incompatible with htmx 2 —
+       the advisory rides a native EventSource, first-party). #}
+    <div id="reload-advisory" role="status"></div>
+    <div id="reload-confirm-advisory" role="status"></div>
+  </div>
   <main class="content">
     {% block content %}{% endblock %}
   </main>
+  <section class="authoring-panel" aria-label="Plugin authoring state">
+    {# SW-29: display-only disclosure rendered in every mode — the
+       authoring TOOLS stay NFR-S8-gated; this panel is not capability. #}
+    <dl>
+      <dt>plugin</dt><dd>{{ plugin.package }} {{ plugin.plugin_version }}</dd>
+      <dt>descriptor</dt><dd><code>{{ plugin.descriptor_sha256[:12] }}</code></dd>
+      <dt>validation</dt><dd>{{ plugin.load_diagnostic or "validation clean" }}</dd>
+      <dt>last reload</dt>
+      <dd>{% if reload_state %}{{ reload_state.at }} by {{ reload_state.source }}{% else %}not reloaded{% endif %}</dd>
+    </dl>
+    {% if pending_reload %}
+    <form method="post" action="/reload/confirm"
+          hx-post="/reload/confirm"
+          hx-headers='{"X-CSRF-Token": "{{ csrf_token }}"}'>
+      <p role="alert">A reload is waiting for confirmation (triggered by {{ pending_reload.source }}).</p>
+      <button type="submit">Confirm reload</button>
+    </form>
+    {% endif %}
+  </section>
   <footer class="footer">
     <span>plugin <strong>{{ plugin.package }}</strong> {{ plugin.plugin_version }}</span>
     <span>descriptor <code>{{ plugin.descriptor_sha256[:12] }}</code></span>

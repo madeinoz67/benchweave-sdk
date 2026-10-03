@@ -2,6 +2,11 @@
   "api_version": 1,
   "assets": [
     {
+      "path": "bw-events.js",
+      "size": 1150,
+      "sha256": "851f3b2882e6431f01c05bbac53d895969d6fe89ed2f73ea15922db6e6fe3623"
+    },
+    {
       "path": "bw-plot.js",
       "size": 5219,
       "sha256": "6e7a8839f3148df903e11b38d6c1105925b5e1e4aa315e6e41ea73de3b7fdc30"
@@ -12,14 +17,9 @@
       "sha256": "e209dda5c8235479f3166defc7750e1dbcd5a5c1808b7792fc2e6733768fb447"
     },
     {
-      "path": "sse.js",
-      "size": 10320,
-      "sha256": "8eed8df4df350126be9dc4fa2496e6eb9890e32f6202a29746e3c3c0e7004c13"
-    },
-    {
       "path": "standalone.css",
-      "size": 4299,
-      "sha256": "945961783a3cc9ed5f93c400a6c80b0af5b3cce2760a677de751db29877b75a5"
+      "size": 5124,
+      "sha256": "b1c05ab8d9600f8e24487509d37113b7800fae9a8b2bbca5eb25d98d2a36de60"
     },
     {
       "path": "uplot-LICENCE",

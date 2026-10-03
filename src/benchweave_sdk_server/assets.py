@@ -1,6 +1,6 @@
 """Vendored UI assets, digest-verified at construction (NFR-P3).
 
-The host owns its shell assets (``htmx.min.js``, ``sse.js``,
+The host owns its shell assets (``htmx.min.js``, ``bw-events.js``,
 ``standalone.css``): ``inventory.json`` lists every host-owned file with
 its size and sha256, and :func:`verify_ui_assets` re-checks each one —
 same traversal refusals, prefixed ``standalone_ui_asset_*`` — so tampered

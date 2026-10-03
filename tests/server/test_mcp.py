@@ -18,7 +18,21 @@ from benchweave_sdk_server.mcp import (
 )
 
 DEV = {"device_id": "example_device"}
-AUTHORING_TOOLS = {"plugin_new", "plugin_check", "ui_check"}
+AUTHORING_TOOLS = {
+    "plugin_new",
+    "plugin_check",
+    "ui_check",
+    # I2c (SW-35 remainder + SW-36)
+    "contract_get",
+    "contract_patch",
+    "preset_get",
+    "preset_put",
+    "settings_schema_get",
+    "settings_schema_put",
+    "preset_check",
+    "inventory",
+    "standards_check",
+}
 
 
 def test_served_tool_names_are_the_catalogue_prefix_set(seam) -> None:

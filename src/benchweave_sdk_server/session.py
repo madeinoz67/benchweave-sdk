@@ -22,6 +22,7 @@ import hashlib
 import importlib
 import json
 import math
+import shutil
 import sys
 import time
 import uuid
@@ -37,6 +38,63 @@ from benchweave_sdk.validation import validate_descriptor
 
 class PluginLoadError(ValueError):
     """A plugin project could not be loaded or validated; always prefixed."""
+
+
+def project_py_digest(plugin: LoadedPlugin) -> str:
+    """The loaded project's adapter-code digest: every ``*.py`` file
+    under the project's ``src/`` tree (the package AND any top-level
+    sibling modules it imports — the loader puts the whole src root on
+    ``sys.path``, so a sibling IS loaded adapter code), path-and-bytes,
+    sorted. Computed at load, recomputed at reload — the mechanical
+    adapter-code/contract-only discrimination Q11's confirmation branch
+    rides. A deliberate superset of the exact loaded closure: an edit to
+    an unloaded Python file may ask for confirmation unnecessarily, but
+    loaded code can never slip PAST the digest."""
+    src_root = plugin.project_root / "src"
+    hasher = hashlib.sha256()
+    for path in sorted(src_root.rglob("*.py")):
+        hasher.update(path.relative_to(src_root).as_posix().encode())
+        hasher.update(b"\0")
+        hasher.update(path.read_bytes())
+    return hasher.hexdigest()
+
+
+def evict_plugin_modules(package: str, src_root: Path | None = None) -> None:
+    """Drop the plugin's modules from the import cache so a reload
+    re-executes the CURRENT bytes. ``importlib`` caches by name; without
+    eviction a reload would keep handing out the previous adapter object
+    forever — the one case where reload silently fails its whole purpose.
+    The eviction covers the package, its submodules, AND every cached
+    module whose file lives under the project's ``src/`` root (top-level
+    siblings the package imports are loaded adapter code too)."""
+    prefix = f"{package}."
+    for name in [
+        module
+        for module in list(sys.modules)
+        if module == package or module.startswith(prefix)
+    ]:
+        del sys.modules[name]
+    importlib.invalidate_caches()
+    if src_root is None:
+        return
+    # The BYTECODE cache is the second staleness cache: a same-size edit
+    # within the same mtime second validates a stale .pyc and the
+    # re-import serves the OLD code anyway (observed with the lanes'
+    # MARK repro). A reload means "serve the current bytes" — the
+    # project's own __pycache__ directories go with the modules.
+    for cache_dir in src_root.rglob("__pycache__"):
+        if cache_dir.is_dir():
+            shutil.rmtree(cache_dir, ignore_errors=True)
+    root = src_root.resolve()
+    for name, module in list(sys.modules.items()):
+        module_file = getattr(module, "__file__", None)
+        if not module_file:
+            continue
+        try:
+            if Path(module_file).resolve().is_relative_to(root):
+                del sys.modules[name]
+        except OSError:
+            continue
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,6 +170,25 @@ def mock_exchanges(
     return script
 
 
+def _evict_foreign_package(package: str, src: Path) -> None:
+    """Drop cached modules of ``package`` whose files live OUTSIDE this
+    project's src root, so a fresh load imports THIS project's bytes (the
+    import cache is keyed by name, not by path)."""
+    root = src.resolve()
+    prefix = f"{package}."
+    for name in list(sys.modules):
+        if name != package and not name.startswith(prefix):
+            continue
+        module_file = getattr(sys.modules.get(name), "__file__", None)
+        if not module_file:
+            continue
+        try:
+            if not Path(module_file).resolve().is_relative_to(root):
+                del sys.modules[name]
+        except OSError:
+            continue
+
+
 def load_plugin_project(project_root: Path) -> LoadedPlugin:
     """Load and validate one plugin project; refuse before any port binds.
 
@@ -164,15 +241,23 @@ def load_plugin_project(project_root: Path) -> LoadedPlugin:
     else:
         if str(src) not in sys.path:
             sys.path.insert(0, str(src))
+        # A same-named package cached from ANOTHER project's root would win
+        # the import by name and serve ITS bytes (invisible while every
+        # test project had identical content; a broken or edited sibling
+        # makes it load wrong code on a FRESH load). The reload path
+        # pre-evicts; a fresh load defends itself the same way.
+        _evict_foreign_package(package, src)
         try:
             module = importlib.import_module(module_name)
             adapter = getattr(module, factory_name)
-        except (
-            ImportError,
-            AttributeError,
-            SyntaxError,
-            SystemExit,
-        ) as exc:
+        except (Exception, SystemExit) as exc:  # noqa: BLE001 - plugin import code
+            # ANY exception raised while executing the plugin's adapter
+            # module at import time is an adapter import failure — the
+            # tuple form let a module-level NameError (the lanes' arm)
+            # escape as a raw traceback instead of the degraded load.
+            # SystemExit is BaseException, NOT Exception: it stays listed
+            # explicitly because a plugin calling sys.exit() at import
+            # must degrade the load, not kill the host (refute fold 2).
             # Refute fold 2: SyntaxError (the most common authoring failure —
             # it previously escaped as a raw traceback with serve exit 1)
             # and SystemExit (a plugin calling sys.exit() at import
@@ -213,6 +298,20 @@ def load_plugin_project(project_root: Path) -> LoadedPlugin:
         has_presentation=has_presentation,
         load_diagnostic=diagnostic,
     )
+
+
+def mock_plugin_session(plugin: LoadedPlugin) -> PluginSession:
+    """A session whose mock factory derives its script from the CURRENT
+    plugin at connect time — a reload swaps the loaded plugin and the next
+    connection speaks the new plugin's own vectors (a closure over the
+    ORIGINAL plugin would keep serving the previous version's script; the
+    late-bound ``session.plugin`` read cannot go stale)."""
+    from .transport import LoopingMockHost
+
+    session: PluginSession = PluginSession(
+        plugin, lambda: LoopingMockHost(mock_exchanges(session.plugin))
+    )
+    return session
 
 
 class HostOperationContext:
@@ -375,3 +474,14 @@ class PluginSession:
                 f"close-{uuid.uuid4().hex[:8]}", self._lifecycle_timeout_ms()
             )
             await adapter.close(context)
+
+    async def reload_plugin(self, plugin: LoadedPlugin) -> None:
+        """Swap the loaded plugin: run the adapter's quiet/disconnect path
+        on the session it was serving, then bind the new plugin with a
+        clean slate (no identity, not connected). The caller reconnects if
+        the session was open; a load that failed never reaches here, so
+        the previous version is structurally the one that stays loaded
+        until this method swaps it atomically."""
+        await self.close()
+        self.identity = None
+        self._plugin = plugin

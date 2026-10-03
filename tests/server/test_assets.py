@@ -26,7 +26,7 @@ def test_the_inventory_lists_only_host_owned_files() -> None:
     committed = json.loads((ROOT / "inventory.json").read_text())
     assert {row["path"] for row in committed["assets"]} == {
         "htmx.min.js",
-        "sse.js",
+        "bw-events.js",
         "standalone.css",
         "uplot.min.js",
         "uplot.css",

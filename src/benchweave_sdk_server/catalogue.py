@@ -352,7 +352,47 @@ CATALOGUE: tuple[OperationSpec, ...] = (
     _deferred("capture_series", "Fetch a decimated capture series (I3: capture, SW-33)."),
     _deferred("capture_annotate", "Annotate a stored capture (I3: capture, SW-54)."),
     _deferred("artifact_read", "Read a bounded artifact window (I3: capture artifacts)."),
-    _deferred("events_get", "Fetch seam events after a cursor (I2: the event bus, SW-26)."),
+    _spec(
+        "events_get",
+        (
+            "Fetch the seam's events after a cursor: the state changes "
+            "(connect, disconnect, stage, apply, preset, reload) and "
+            "every refused seam operation — unknown, deferred, "
+            "invalid-argument and adapter-reported alike — in one "
+            "monotonic gap-free order, the same sequence the /events "
+            "stream carries."
+        ),
+        _object(
+            {
+                "after_id": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Return events with id greater than this cursor",
+                }
+            },
+            ["after_id"],
+        ),
+        _object(
+            {
+                "events": {
+                    "type": "array",
+                    "items": _object(
+                        {
+                            "id": {"type": "integer"},
+                            "kind": {"type": "string"},
+                            "data": {"type": "object"},
+                        },
+                        ["id", "kind", "data"],
+                    ),
+                },
+                "last_id": {
+                    "type": "integer",
+                    "description": "The newest event id (0 when nothing published)",
+                },
+            },
+            ["events", "last_id"],
+        ),
+    ),
 )
 
 _BY_NAME: dict[str, OperationSpec] = {row.name: row for row in CATALOGUE}

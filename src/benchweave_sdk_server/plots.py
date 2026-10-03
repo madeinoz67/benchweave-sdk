@@ -72,6 +72,13 @@ class ObservationRing:
         ring = self._samples.setdefault(parameter, deque(maxlen=self.cap))
         ring.append((float(monotonic_ms), float(value)))
 
+    def clear(self) -> None:
+        """Drop every sample. A reload resets the ring: the previous
+        plugin version's observations are not the new version's data, and
+        plotting them would launder one version's samples into another's
+        axes."""
+        self._samples.clear()
+
     def snapshot(self, parameter: str) -> list[tuple[float, float]]:
         """The parameter's samples in acquisition order (oldest first)."""
         return list(self._samples.get(parameter, ()))

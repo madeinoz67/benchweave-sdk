@@ -28,6 +28,7 @@ import hashlib
 import json
 import time
 import uuid
+from collections.abc import Callable
 from importlib import metadata
 from typing import TYPE_CHECKING, Any, cast
 
@@ -36,7 +37,14 @@ from benchweave_sdk.testing import ConformanceError
 
 from . import catalogue
 from .errors import SeamError
-from .session import PluginSession
+from .events import EventBus
+from .session import (
+    PluginLoadError,
+    PluginSession,
+    evict_plugin_modules,
+    load_plugin_project,
+    project_py_digest,
+)
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     # The presentation model and the observation ring import the
@@ -50,7 +58,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from .plots import ObservationRing
     from .presentation import HostPresentation
 
-#: Adapter envelope error codes → interface codes (SW-12 distinctness kept:
+#: The adapter envelope error codes → interface codes (SW-12 distinctness kept:
 #: the adapter's own code and dispatch_state ride in ``details`` verbatim).
 _ADAPTER_CODE_MAP: dict[str, str] = {
     "INVALID_ARGUMENT": "invalid_request",
@@ -66,6 +74,20 @@ _ADAPTER_CODE_MAP: dict[str, str] = {
     "INTERNAL_ERROR": "internal_error",
 }
 
+#: The operations whose success is a state change (I2c §4.2): exactly these
+#: publish an event. Reads (``host_info``, discovery, ``device_get``,
+#: ``parameter_read``, ``events_get`` itself) mutate nothing and publish
+#: nothing — a watcher must not generate traffic by watching.
+_STATE_EVENT_OPS: frozenset[str] = frozenset(
+    {
+        "device_connect",
+        "device_disconnect",
+        "parameter_stage",
+        "parameter_apply",
+        "preset_apply",
+    }
+)
+
 
 def sdk_version() -> str:
     """The SDK version this host runs on, derived — never a literal."""
@@ -78,7 +100,14 @@ def sdk_version() -> str:
 class StandaloneSeam:
     """One seam over one adapter session; the surfaces are its adapters."""
 
-    def __init__(self, session: PluginSession, *, transport_kind: str) -> None:
+    def __init__(
+        self,
+        session: PluginSession,
+        *,
+        transport_kind: str,
+        unattended: bool = False,
+        reload_wrapper: Callable[[Any], Any] | None = None,
+    ) -> None:
         self._session = session
         self._transport_kind = transport_kind
         # Lazy by contract (see the module's TYPE_CHECKING note): these run
@@ -107,6 +136,30 @@ class StandaloneSeam:
         # refuses. A file added after construction is not served — the
         # running host serves the configuration it started with.
         self._preset_digests: dict[str, str] = self._pin_presets()
+        # The seam event bus (I2c §4.2): one append-only order for REST,
+        # the browser stream and MCP. The seam is the only mutation path,
+        # so it is the only publisher.
+        self.events = EventBus()
+        # Authoring/reload state (I2c §4.2): unattended mode waives the Q11
+        # confirmation; the adapter-code digest is computed at load and
+        # recomputed at reload (the mechanical adapter/contract
+        # discrimination); the pending confirmation is a STATE, never an
+        # error; _capture_in_flight is the reload guard's capture leg —
+        # no capture exists until I3 arms it.
+        self._unattended = unattended
+        self._reload_wrapper = reload_wrapper
+        self._adapter_sha256 = project_py_digest(session.plugin)
+        self._pending_reload: dict[str, Any] | None = None
+        self._capture_in_flight = False
+        self.reload_state: dict[str, Any] | None = None
+        # The op-vs-reload mutex (the refute lanes' serialization class):
+        # a device-mutating sequence (an apply's write→read-back span, a
+        # staging write against the map an apply is flushing) must not
+        # interleave with a reload's quiet-close→swap or with each other —
+        # every await point inside those spans is an interleaving window.
+        # The lock is loop-level (single event loop); it serializes async
+        # interleavings, which is exactly the class the lanes reproduced.
+        self._op_mutex = asyncio.Lock()
 
     @property
     def session(self) -> PluginSession:
@@ -125,6 +178,16 @@ class StandaloneSeam:
     def staged(self) -> dict[str, Any]:
         """The staging map (host state): parameter name → staged value."""
         return self._staged
+
+    @property
+    def unattended(self) -> bool:
+        """Whether the host runs in unattended mode (Q11's waiver)."""
+        return self._unattended
+
+    @property
+    def pending_reload(self) -> dict[str, Any] | None:
+        """The pending Q11 confirmation, when one is waiting."""
+        return self._pending_reload
 
     def _correlation(self, supplied: str | None) -> str:
         return supplied or f"bws-{uuid.uuid4().hex[:12]}"
@@ -153,25 +216,54 @@ class StandaloneSeam:
     ) -> dict[str, Any]:
         """Execute one catalogue operation; return its data or raise ``SeamError``."""
         correlation = self._correlation(correlation_id)
-        row = catalogue.spec(operation)
-        if row is None:
-            raise self._fail(
-                "invalid_request",
-                f"unknown operation: {operation}",
-                correlation,
-                closed_catalogue=catalogue.deferred_operations() + catalogue.served_operations(),
+        try:
+            row = catalogue.spec(operation)
+            if row is None:
+                raise self._fail(
+                    "invalid_request",
+                    f"unknown operation: {operation}",
+                    correlation,
+                    closed_catalogue=(
+                        catalogue.deferred_operations() + catalogue.served_operations()
+                    ),
+                )
+            if not row.implemented:
+                raise self._fail(
+                    "unavailable",
+                    f"operation not implemented in this increment: {operation}",
+                    correlation,
+                    reason="increment_deferral",
+                )
+            self._validate(row.name, arguments or {}, correlation)
+            handler = getattr(self, f"_op_{row.name}")
+            result = await handler(arguments or {}, correlation)
+        except SeamError as exc:
+            # EVERY seam-exit refusal rides the bus (FOLD-E): the unknown
+            # operation, the deferred operation, the argument-validation
+            # refusal and the handler's own — a watching page must see
+            # what was refused and why, not only handler failures.
+            self.events.publish(
+                "refused",
+                {"operation": operation, "code": exc.code, "message": exc.message},
             )
-        if not row.implemented:
-            raise self._fail(
-                "unavailable",
-                f"operation not implemented in this increment: {operation}",
-                correlation,
-                reason="increment_deferral",
-            )
-        self._validate(row.name, arguments or {}, correlation)
-        handler = getattr(self, f"_op_{row.name}")
-        result = await handler(arguments or {}, correlation)
+            raise
+        if row.name in _STATE_EVENT_OPS:
+            self.events.publish(row.name, self._event_data(row.name, result))
         return cast(dict[str, Any], result)
+
+    def _event_data(self, operation: str, result: dict[str, Any]) -> dict[str, Any]:
+        """The event payload for one state change: small, derived from the
+        operation's own result — never a second source of truth."""
+        data: dict[str, Any] = {"device_id": result.get("device_id")}
+        if operation == "parameter_stage":
+            data["parameter"] = result.get("parameter")
+            data["staged"] = list(result.get("staged", []))
+        elif operation == "parameter_apply":
+            data["applied_count"] = len(result.get("applied", []))
+        elif operation == "preset_apply":
+            data["preset_id"] = result.get("preset_id")
+            data["applied_count"] = len(result.get("applied", []))
+        return data
 
     def _validate(self, name: str, arguments: dict[str, Any], correlation: str) -> None:
         from jsonschema import Draft202012Validator
@@ -390,21 +482,26 @@ class StandaloneSeam:
     async def _op_parameter_stage(
         self, arguments: dict[str, Any], correlation: str
     ) -> dict[str, Any]:
-        if arguments["device_id"] != self._session.device_id:
-            raise self._fail(
-                "not_found", f"no such device: {arguments['device_id']}", correlation
-            )
-        self._refuse_degraded(correlation)
-        name = arguments["parameter"]
-        value = arguments["value"]
-        self._stageable(name, value, correlation)
-        self._staged[name] = value
-        return {
-            "device_id": self._session.device_id,
-            "parameter": name,
-            "value": value,
-            "staged": list(self._staged),
-        }
+        # Under the op mutex: a stage must not land between an in-flight
+        # apply's last write and its staging-map clear — the apply flushes
+        # exactly the batch it fixed, and a value staged mid-flight is the
+        # NEXT apply's business, not something the clear may eat.
+        async with self._op_mutex:
+            if arguments["device_id"] != self._session.device_id:
+                raise self._fail(
+                    "not_found", f"no such device: {arguments['device_id']}", correlation
+                )
+            self._refuse_degraded(correlation)
+            name = arguments["parameter"]
+            value = arguments["value"]
+            self._stageable(name, value, correlation)
+            self._staged[name] = value
+            return {
+                "device_id": self._session.device_id,
+                "parameter": name,
+                "value": value,
+                "staged": list(self._staged),
+            }
 
     async def _apply_batch(
         self, batch: dict[str, Any], correlation: str
@@ -462,17 +559,22 @@ class StandaloneSeam:
     async def _op_parameter_apply(
         self, arguments: dict[str, Any], correlation: str
     ) -> dict[str, Any]:
-        if arguments["device_id"] != self._session.device_id:
-            raise self._fail(
-                "not_found", f"no such device: {arguments['device_id']}", correlation
-            )
-        if not self._staged:
-            raise self._fail(
-                "invalid_request", "nothing is staged to apply", correlation
-            )
-        applied = await self._apply_batch(self._staged, correlation)
-        self._staged.clear()
-        return {"device_id": self._session.device_id, "applied": applied}
+        # Under the op mutex for the WHOLE span (empty-check, batch,
+        # clear): the write→read-back sequence and the staging-map flush
+        # are one operation — a reload or stage interleaving inside it is
+        # a cross-adapter chimera or a vanished stage respectively.
+        async with self._op_mutex:
+            if arguments["device_id"] != self._session.device_id:
+                raise self._fail(
+                    "not_found", f"no such device: {arguments['device_id']}", correlation
+                )
+            if not self._staged:
+                raise self._fail(
+                    "invalid_request", "nothing is staged to apply", correlation
+                )
+            applied = await self._apply_batch(self._staged, correlation)
+            self._staged.clear()
+            return {"device_id": self._session.device_id, "applied": applied}
 
     def _pin_presets(self) -> dict[str, str]:
         """Digest every declared preset once, at construction."""
@@ -482,6 +584,22 @@ class StandaloneSeam:
             for path in sorted(presets_dir.glob("*.json")):
                 digests[path.stem] = hashlib.sha256(read_file(path)).hexdigest()
         return digests
+
+    def repin_preset(self, preset_id: str) -> str:
+        """Re-pin one preset's serving digest after the host's OWN authorized
+        write (the authoring ``preset_put``). The construction pin governs
+        bytes the host did not write; this moves the pin WITH the host's
+        write so the running host serves its authorized configuration
+        without a reload, and returns the new digest."""
+        path = (
+            self._session.plugin.package_dir
+            / "config"
+            / "presets"
+            / f"{preset_id}.json"
+        )
+        digest = hashlib.sha256(read_file(path)).hexdigest()
+        self._preset_digests[preset_id] = digest
+        return digest
 
     def _preset_rows(self, correlation: str) -> list[dict[str, Any]]:
         """The plugin's declared presets under ``config/presets/`` — the
@@ -574,104 +692,350 @@ class StandaloneSeam:
     async def _op_preset_apply(
         self, arguments: dict[str, Any], correlation: str
     ) -> dict[str, Any]:
-        if arguments["device_id"] != self._session.device_id:
-            raise self._fail(
-                "not_found", f"no such device: {arguments['device_id']}", correlation
-            )
-        self._refuse_degraded(correlation)
-        if not self._session.connected:
-            raise self._fail("not_ready", "device is not connected", correlation)
-        identity = self._session.identity
-        if identity is None:
-            raise self._fail(
-                "not_ready",
-                "device identity not established: the firmware gate cannot run",
-                correlation,
-            )
-        firmware = str(identity.get("firmware", ""))
-        if not firmware:
-            raise self._fail(
-                "not_ready",
-                "device identity carries no firmware: the firmware gate cannot run",
-                correlation,
-            )
-        preset_id = arguments["preset_id"]
-        raw = self._preset_bytes(preset_id, correlation)
-        try:
-            preset = json.loads(raw)
-        except ValueError as exc:
-            raise self._fail(
-                "invalid_request",
-                f"malformed preset document: {preset_id}: {exc}",
-                correlation,
-            ) from exc
-        plugin = self._session.plugin
-        try:
-            descriptor_raw = read_file(plugin.package_dir / "descriptor.json")
-            settings_raw = read_file(
-                plugin.package_dir / "config" / "settings.schema.json"
-            )
-        except (OSError, ValueError) as exc:
-            raise self._fail(
-                "invalid_request",
-                f"unreadable configuration documents: {exc}",
-                correlation,
-            ) from exc
-        if hashlib.sha256(descriptor_raw).hexdigest() != plugin.descriptor_sha256:
-            raise self._fail(
-                "invalid_request",
-                "descriptor bytes drifted since load",
-                correlation,
-                finding="digest_mismatch",
-            )
-        report = validate_preset(
-            raw,
-            descriptor_raw=descriptor_raw,
-            settings_schema_raw=settings_raw,
-            firmware=firmware,
-        )
-        if not report.valid:
-            findings = [
-                {"code": finding.code, "path": finding.path, "message": finding.message}
-                for finding in report.findings
-            ]
-            if any(finding.code == "incompatible_firmware" for finding in report.findings):
-                supported = [
-                    str(row) for row in (preset or {}).get("supported_firmware", [])
-                ]
+        # Under the op mutex for the WHOLE span (firmware gate,
+        # validation, the transient batch's write→read-back): the
+        # batch never enters _staged, so without the mutex a reload
+        # landing inside the span serves the write on the old adapter
+        # and the read-back on the new one — a cross-adapter chimera
+        # reported SUCCESS (SW-23's read-back rule broken).
+        async with self._op_mutex:
+            if arguments["device_id"] != self._session.device_id:
                 raise self._fail(
-                    "conflict",
-                    f"preset firmware mismatch: device {firmware}, "
-                    f"preset {preset_id} supports {supported}",
-                    correlation,
-                    device_firmware=firmware,
-                    preset_firmware=supported,
+                    "not_found", f"no such device: {arguments['device_id']}", correlation
                 )
+            self._refuse_degraded(correlation)
+            if not self._session.connected:
+                raise self._fail("not_ready", "device is not connected", correlation)
+            identity = self._session.identity
+            if identity is None:
+                raise self._fail(
+                    "not_ready",
+                    "device identity not established: the firmware gate cannot run",
+                    correlation,
+                )
+            firmware = str(identity.get("firmware", ""))
+            if not firmware:
+                raise self._fail(
+                    "not_ready",
+                    "device identity carries no firmware: the firmware gate cannot run",
+                    correlation,
+                )
+            preset_id = arguments["preset_id"]
+            raw = self._preset_bytes(preset_id, correlation)
+            try:
+                preset = json.loads(raw)
+            except ValueError as exc:
+                raise self._fail(
+                    "invalid_request",
+                    f"malformed preset document: {preset_id}: {exc}",
+                    correlation,
+                ) from exc
+            plugin = self._session.plugin
+            try:
+                descriptor_raw = read_file(plugin.package_dir / "descriptor.json")
+                settings_raw = read_file(
+                    plugin.package_dir / "config" / "settings.schema.json"
+                )
+            except (OSError, ValueError) as exc:
+                raise self._fail(
+                    "invalid_request",
+                    f"unreadable configuration documents: {exc}",
+                    correlation,
+                ) from exc
+            if hashlib.sha256(descriptor_raw).hexdigest() != plugin.descriptor_sha256:
+                raise self._fail(
+                    "invalid_request",
+                    "descriptor bytes drifted since load",
+                    correlation,
+                    finding="digest_mismatch",
+                )
+            report = validate_preset(
+                raw,
+                descriptor_raw=descriptor_raw,
+                settings_schema_raw=settings_raw,
+                firmware=firmware,
+            )
+            if not report.valid:
+                findings = [
+                    {"code": finding.code, "path": finding.path, "message": finding.message}
+                    for finding in report.findings
+                ]
+                if any(finding.code == "incompatible_firmware" for finding in report.findings):
+                    supported = [
+                        str(row) for row in (preset or {}).get("supported_firmware", [])
+                    ]
+                    raise self._fail(
+                        "conflict",
+                        f"preset firmware mismatch: device {firmware}, "
+                        f"preset {preset_id} supports {supported}",
+                        correlation,
+                        device_firmware=firmware,
+                        preset_firmware=supported,
+                    )
+                raise self._fail(
+                    "invalid_request",
+                    f"preset failed validation: {preset_id}",
+                    correlation,
+                    findings=findings,
+                )
+            settings = (preset or {}).get("settings")
+            if not isinstance(settings, dict):
+                raise self._fail(
+                    "invalid_request",
+                    f"preset settings are not an object: {preset_id}",
+                    correlation,
+                )
+            for name, value in settings.items():
+                self._stageable(str(name), value, correlation)
+            # Scoped: apply exactly the preset's settings through a transient
+            # batch — previously staged values are neither applied nor
+            # discarded (FOLD-A; I2c's reload guard treats the same condition
+            # as a guard, and so does this path).
+            batch = {str(name): value for name, value in settings.items()}
+            applied = await self._apply_batch(batch, correlation)
+            return {
+                "device_id": self._session.device_id,
+                "preset_id": preset_id,
+                "applied": applied,
+            }
+    # --- reload (I2c §4.2, SW-38 + Q11) --------------------------------------
+
+    def _reload_guards(self, correlation: str) -> None:
+        """The conflict guards every reload path runs: a staged value that
+        was never applied, and a capture in flight (no capture exists until
+        I3; the flag is the state I3's capture_start will hold)."""
+        if self._staged:
+            raise self._fail(
+                "conflict",
+                "a staged value is unapplied: apply or clear staging before "
+                "reloading",
+                correlation,
+            )
+        if self._capture_in_flight:
+            raise self._fail(
+                "conflict",
+                "a capture is in flight: stop it before reloading",
+                correlation,
+            )
+
+    async def reload_plugin(self, source: str, *, confirmed: bool = False) -> dict[str, Any]:
+        """Reload the loaded project: guards, re-import, re-validate; on a
+        load failure the PREVIOUS version stays loaded and the diagnostics
+        return. The Q11 branch: when the reload would change ADAPTER CODE
+        (the package's ``.py`` digest differs) and a session is connected
+        and the host is attended, the reload does not run — it PENDS, the
+        advisory rides the bus, and the operator confirms in the UI. In
+        unattended mode the same change proceeds (the PRD's benches with
+        no energy-sourcing instruments case).
+
+        Under the op mutex for the whole path: a reload must not begin
+        inside a device-mutating span (the serialization class).
+        """
+        async with self._op_mutex:
+            try:
+                return await self._reload_body(source, confirmed=confirmed)
+            except SeamError as exc:
+                # The reload family raises OUTSIDE seam.call, so its
+                # refusals publish 'refused' themselves (FOLD-E) — a
+                # watching page must see Q11's own conflict.
+                self.events.publish(
+                    "refused",
+                    {
+                        "operation": "plugin_reload",
+                        "code": exc.code,
+                        "message": exc.message,
+                    },
+                )
+                raise
+
+    async def confirm_reload(self, source: str) -> dict[str, Any]:
+        """The operator's UI confirmation of a pending Q11 reload: re-run
+        the full path (guards and validation included — the files may have
+        changed again) with the confirmation granted."""
+        async with self._op_mutex:
+            try:
+                if self._pending_reload is None:
+                    raise self._fail(
+                        "invalid_request", "no reload is waiting for confirmation", ""
+                    )
+                return await self._reload_body(source, confirmed=True)
+            except SeamError as exc:
+                self.events.publish(
+                    "refused",
+                    {
+                        "operation": "plugin_reload_confirm",
+                        "code": exc.code,
+                        "message": exc.message,
+                    },
+                )
+                raise
+
+    async def _reload_body(
+        self, source: str, *, confirmed: bool
+    ) -> dict[str, Any]:
+        from datetime import UTC, datetime
+
+        correlation = self._correlation(None)
+        self._reload_guards(correlation)
+        project_root = self._session.plugin.project_root
+        package = self._session.plugin.package
+        # Re-import the CURRENT bytes: the import cache is evicted first so
+        # the reload cannot hand back the previous adapter object.
+        evict_plugin_modules(package, src_root=project_root / "src")
+        try:
+            loaded = load_plugin_project(project_root)
+        except PluginLoadError as exc:
             raise self._fail(
                 "invalid_request",
-                f"preset failed validation: {preset_id}",
+                f"reload refused, the previous version stays loaded: {exc}",
                 correlation,
-                findings=findings,
+                diagnostic=str(exc),
+            ) from exc
+        next_adapter_sha256 = project_py_digest(loaded)
+        if confirmed:
+            pending = self._pending_reload or {}
+            if loaded.adapter_factory is None:
+                # The degraded-bind door (FOLD-B): the operator confirmed
+                # specific working bytes; a load that cannot import its
+                # adapter is not those bytes — refuse, keep the previous
+                # WORKING version loaded (the confirm never binds the
+                # host to broken code), and surface the diagnostic. The
+                # pend stays: the operator can fix the files and confirm
+                # the load that follows.
+                raise self._fail(
+                    "invalid_request",
+                    "the confirmed reload would not load: "
+                    f"{loaded.load_diagnostic}; the previous version stays "
+                    "loaded and the confirmation stands",
+                    correlation,
+                    diagnostic=loaded.load_diagnostic,
+                )
+            shown = str(pending.get("adapter_sha256_next", ""))
+            if shown and shown != next_adapter_sha256:
+                # The confirmation binds to the digests it showed (FOLD-B):
+                # the bytes changed after the pend, so the confirmation
+                # covers code that no longer exists — re-pend with the
+                # fresh digest instead of loading unconfirmed code.
+                at = datetime.now(UTC).isoformat()
+                message = (
+                    "the adapter code changed again since the confirmation "
+                    "was shown; a new confirmation is required"
+                )
+                self._pending_reload = {
+                    "at": at,
+                    "source": source,
+                    "adapter_sha256_previous": self._adapter_sha256,
+                    "adapter_sha256_next": next_adapter_sha256,
+                }
+                self.events.publish(
+                    "reload_confirmation_required",
+                    {"message": message, "source": source, "at": at},
+                )
+                return {
+                    "status": "confirmation_required",
+                    "message": message,
+                    "adapter_changed": True,
+                    "source": source,
+                }
+        adapter_changed = next_adapter_sha256 != self._adapter_sha256
+        if (
+            adapter_changed
+            and self._session.connected
+            and not self._unattended
+            and not confirmed
+        ):
+            at = datetime.now(UTC).isoformat()
+            message = (
+                "the reload changes adapter code while a device is "
+                "connected; confirm in the UI to proceed"
             )
-        settings = (preset or {}).get("settings")
-        if not isinstance(settings, dict):
-            raise self._fail(
-                "invalid_request",
-                f"preset settings are not an object: {preset_id}",
-                correlation,
+            self._pending_reload = {
+                "at": at,
+                "source": source,
+                "adapter_sha256_previous": self._adapter_sha256,
+                "adapter_sha256_next": next_adapter_sha256,
+            }
+            self.events.publish(
+                "reload_confirmation_required",
+                {"message": message, "source": source, "at": at},
             )
-        for name, value in settings.items():
-            self._stageable(str(name), value, correlation)
-        # Scoped: apply exactly the preset's settings through a transient
-        # batch — previously staged values are neither applied nor
-        # discarded (FOLD-A; I2c's reload guard treats the same condition
-        # as a guard, and so does this path).
-        batch = {str(name): value for name, value in settings.items()}
-        applied = await self._apply_batch(batch, correlation)
+            return {
+                "status": "confirmation_required",
+                "message": message,
+                "adapter_changed": True,
+                "source": source,
+            }
+        return await self._complete_reload(loaded, source)
+
+    async def _complete_reload(
+        self, loaded: Any, source: str
+    ) -> dict[str, Any]:
+        from datetime import UTC, datetime
+
+        correlation = self._correlation(None)
+        self._reload_guards(correlation)
+        effective = self._reload_wrapper(loaded) if self._reload_wrapper else loaded
+        was_connected = self._session.connected
+        # Quiet/disconnect, then the atomic swap: everything after this
+        # point serves the new plugin.
+        await self._session.reload_plugin(effective)
+        self._presentation = self._presentation.__class__(
+            package_dir=self._session.plugin.package_dir,
+            has_presentation=self._session.plugin.has_presentation,
+        )
+        self._preset_digests = self._pin_presets()
+        # The observation ring belongs to the PREVIOUS plugin version:
+        # samples from the old code would launder into the new version's
+        # plots, so the ring resets with the plugin.
+        self.observation_ring.clear()
+        self._adapter_sha256 = project_py_digest(self._session.plugin)
+        self._pending_reload = None
+        reconnected = False
+        refusal: dict[str, Any] | None = None
+        if was_connected:
+            try:
+                await self._session.connect()
+                reconnected = self._session.connected
+            except (RuntimeError, TimeoutError, ConnectionError) as exc:
+                refusal = {
+                    "code": "not_ready",
+                    "message": f"reload succeeded; reconnect refused: {exc}",
+                }
+        at = datetime.now(UTC).isoformat()
+        plugin = self._session.plugin
+        self.reload_state = {"at": at, "source": source}
+        self.events.publish(
+            "plugin_reloaded",
+            {
+                "package": plugin.package,
+                "version": plugin.plugin_version,
+                "descriptor_sha256": plugin.descriptor_sha256,
+                "source": source,
+                "at": at,
+                "reconnected": reconnected,
+            },
+        )
         return {
-            "device_id": self._session.device_id,
-            "preset_id": preset_id,
-            "applied": applied,
+            "status": "reloaded",
+            "package": plugin.package,
+            "version": plugin.plugin_version,
+            "descriptor_sha256": plugin.descriptor_sha256,
+            "reconnected": reconnected,
+            "reconnect_refusal": refusal,
+            "source": source,
+        }
+
+    # --- the event bus (I2c §4.2) -------------------------------------------
+
+    async def _op_events_get(
+        self, arguments: dict[str, Any], correlation: str
+    ) -> dict[str, Any]:
+        """Serve the bus after the caller's cursor. A read: publishes no
+        event of its own, or watching would generate traffic."""
+        cursor = int(arguments["after_id"])
+        return {
+            "events": self.events.after(cursor),
+            "last_id": self.events.last_id(),
         }
 
     # --- adapter envelope handling -----------------------------------------
