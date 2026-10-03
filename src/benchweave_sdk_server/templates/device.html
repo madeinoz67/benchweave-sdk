@@ -2,6 +2,11 @@
 {% block title %}{{ device_id }} — standalone{% endblock %}
 {% block content %}
 <h1>Device <code>{{ device_id }}</code></h1>
+{% if load_diagnostic %}
+<div class="notice notice-refused" role="alert">
+  <p><strong>Adapter not loaded</strong> — {{ load_diagnostic }}</p>
+</div>
+{% endif %}
 {% if action_error %}
 <div class="notice notice-refused" role="alert">
   <p><strong>Connect refused</strong> — {{ action_error.code }}: {{ action_error.message }}</p>
@@ -43,6 +48,9 @@
 {% endif %}
 <section class="panel">
   <h2>Readings</h2>
+  <p class="hint">Declared parameters:
+    {%- for parameter in parameters %} {{ parameter.name }}{% if parameter.unit %} ({{ parameter.unit }}){% endif %}{{ "," if not loop.last }}{% endfor %}
+  </p>
   <div id="readings"
        hx-get="/devices/{{ device_id }}/readings"
        hx-trigger="every 2s"

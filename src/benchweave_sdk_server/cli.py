@@ -161,6 +161,11 @@ def serve(
             err=True,
         )
     seam, selection = _build_seam(project, transport=transport, scenario=scenario)
+    if seam.session.plugin.load_diagnostic is not None:
+        # §4.5: the degraded load BINDS (exit 0) with its diagnostic on
+        # stderr — the author sees the UI and the reason before the adapter
+        # works.
+        click.echo(seam.session.plugin.load_diagnostic, err=True)
     policy = GuardPolicy.complete(
         bound_host=host,
         bound_port=port,

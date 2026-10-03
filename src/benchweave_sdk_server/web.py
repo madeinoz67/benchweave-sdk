@@ -25,7 +25,13 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.templating import Jinja2Templates
 
 from . import catalogue
-from .assets import ui_assets_root, verify_ui_assets
+from .assets import (
+    RENDERER_ASSETS,
+    renderer_assets_root,
+    ui_assets_root,
+    verify_renderer_assets,
+    verify_ui_assets,
+)
 from .errors import ERROR_HTTP_STATUS, SeamError
 from .mcp import build_mcp
 from .scenarios import SCENARIOS, ScenarioSelection
@@ -69,6 +75,9 @@ def build_app(
     operation (D-B1).
     """
     verify_ui_assets(ui_assets_root())
+    # The renderer's tokens/themes are verified by the INSTALLED package's
+    # own verifier — one verifier per byte set (§4.6).
+    verify_renderer_assets()
     mcp_server = build_mcp(seam, authoring=authoring)
     mcp_app = mcp_server.http_app(path="/mcp")
 
@@ -219,6 +228,7 @@ def _add_html_routes(
                 "readings_error": error,
                 "action_error": action_error,
                 "csrf_token": policy.csrf_token,
+                "load_diagnostic": plugin.load_diagnostic,
                 "scenarios": SCENARIOS if scenario is not None else None,
                 "scenario_current": scenario.current if scenario is not None else None,
             },
@@ -318,7 +328,10 @@ def _add_asset_routes(app: FastAPI) -> None:
             or ":" in candidate
         ):
             return Response(status_code=404)
-        root = ui_assets_root()
+        # The renderer's assets serve from the installed ui-html package
+        # (verified at construction); everything else serves from this
+        # host's own verified vendored tree.
+        root = renderer_assets_root() if candidate in RENDERER_ASSETS else ui_assets_root()
         target = root / candidate
         try:
             raw = target.read_bytes()

@@ -18,22 +18,20 @@ def test_committed_inventory_matches_the_bytes_on_disk() -> None:
     assert committed == build_inventory(ROOT)
 
 
-def test_vendored_tokens_are_the_canonical_bytes() -> None:
-    """tokens.css/themes.css are governed copies of the gateway UI corpus
-    (D5 carries the freshness gate; this pins the CURRENT digests so any
-    motion here is a visible same-commit diff)."""
-    import hashlib
-
-    committed = {row["path"]: row["sha256"] for row in
-                 json.loads((ROOT / "inventory.json").read_text())["assets"]}
-    for name in ("tokens.css", "themes.css"):
-        digest = hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
-        assert digest == committed[name]
+def test_the_inventory_lists_only_host_owned_files() -> None:
+    """tokens.css/themes.css serve from the installed ui-html package
+    (§4.6); this tree owns only the host shell assets."""
+    committed = json.loads((ROOT / "inventory.json").read_text())
+    assert {row["path"] for row in committed["assets"]} == {
+        "htmx.min.js",
+        "sse.js",
+        "standalone.css",
+    }
 
 
 def test_ui_assets_root_verifies_and_returns_the_root() -> None:
     root = ui_assets_root()
-    assert (root / "tokens.css").is_file()
+    assert (root / "htmx.min.js").is_file()
 
 
 def test_missing_asset_refuses_startup(tmp_path: Path) -> None:
@@ -72,7 +70,7 @@ def test_tampered_asset_refuses_startup() -> None:
     backup = package_root.parent / "ui_assets.backup"
     shutil.copytree(ROOT, backup)
     try:
-        (ROOT / "tokens.css").write_text("/* tampered */\n")
+        (ROOT / "htmx.min.js").write_text("/* tampered */\n")
         with pytest.raises(ValueError, match="standalone_ui_asset_tampered"):
             build_test_app(package_root)
     finally:

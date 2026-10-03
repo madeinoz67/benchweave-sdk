@@ -41,15 +41,22 @@ class PluginLoadError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class LoadedPlugin:
-    """A validated plugin project ready to serve."""
+    """A validated plugin project ready to serve.
+
+    ``adapter_factory`` is ``None`` on a DEGRADED load (§4.5): the project's
+    documents validated, but its adapter entry point failed to import or
+    resolve — ``load_diagnostic`` carries the prefixed reason, device
+    operations answer ``not_ready``, and the pages still render.
+    """
 
     project_root: Path
     package: str
     descriptor: dict[str, Any]
     descriptor_sha256: str
     plugin_version: str
-    adapter_factory: Any
-    has_presentation: bool
+    adapter_factory: Any | None = None
+    has_presentation: bool = False
+    load_diagnostic: str | None = None
 
     @property
     def device_id(self) -> str:
@@ -144,18 +151,24 @@ def load_plugin_project(project_root: Path) -> LoadedPlugin:
         descriptor.get("integration", {}).get("adapter", {}).get("entry_point", "")
     )
     module_name, _, factory_name = entry_point.partition(":")
+    adapter: Any | None = None
+    diagnostic: str | None = None
     if not module_name.startswith(f"{package}.") or not factory_name:
-        raise PluginLoadError(
+        # Adapter-failure class (§4.5): the entry point STRING is part of
+        # the adapter surface, not the documents — a malformed one degrades
+        # (layout renders, device ops not_ready) instead of refusing.
+        diagnostic = (
             f"standalone_plugin_entry_point: {entry_point} does not name a factory "
             f"inside the {package} package"
         )
-    if str(src) not in sys.path:
-        sys.path.insert(0, str(src))
-    try:
-        module = importlib.import_module(module_name)
-        adapter_factory = getattr(module, factory_name)
-    except (ImportError, AttributeError) as exc:
-        raise PluginLoadError(f"standalone_plugin_import: {entry_point}: {exc}") from exc
+    else:
+        if str(src) not in sys.path:
+            sys.path.insert(0, str(src))
+        try:
+            module = importlib.import_module(module_name)
+            adapter = getattr(module, factory_name)
+        except (ImportError, AttributeError) as exc:
+            diagnostic = f"standalone_plugin_import: {entry_point}: {exc}"
 
     presentation_path = package_dir / "presentation.json"
     has_presentation = presentation_path.is_file()
@@ -184,8 +197,9 @@ def load_plugin_project(project_root: Path) -> LoadedPlugin:
         descriptor=descriptor,
         descriptor_sha256=hashlib.sha256(raw).hexdigest(),
         plugin_version=plugin_version,
-        adapter_factory=adapter_factory,
+        adapter_factory=adapter,
         has_presentation=has_presentation,
+        load_diagnostic=diagnostic,
     )
 
 
@@ -279,6 +293,12 @@ class PluginSession:
         """
         if self.connected or self._adapter is not None:
             raise RuntimeError("standalone_session_connected")
+        if self._plugin.adapter_factory is None:
+            # The degraded load (§4.5): documents validated, the adapter
+            # did not — the diagnostic IS the refusal's reason.
+            raise RuntimeError(
+                self._plugin.load_diagnostic or "standalone_plugin_not_ready"
+            )
         adapter = self._plugin.adapter_factory()
         context = self._context(
             f"open-{uuid.uuid4().hex[:8]}", self._lifecycle_timeout_ms()
