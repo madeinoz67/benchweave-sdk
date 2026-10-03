@@ -310,7 +310,9 @@ changelog:
 # --------
 # : index - (default) separate homepage from the README / index source
 # : user_guide - the first user-guide page becomes the landing page
-# homepage: index
+# First-timer front door (issue #347 WS4): the docs site's landing page is the
+# runnable getting-started path, not the overview.
+homepage: user_guide
 
 # User Guide
 # ----------
@@ -339,6 +341,12 @@ changelog:
 # The explicit list resolves against the conventional user_guide/ directory at
 # the project root, so guide sources live in user_guide/, not docs/.
 user_guide:
+  - section: "Get started"
+    contents:
+      - getting-started.qmd
+      - which-checkout.qmd
+      - glossary.qmd
+      - troubleshooting.qmd
   - section: "Plugin development"
     contents:
       - plugin-sdk.qmd
