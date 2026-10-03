@@ -1,0 +1,32 @@
+name: ui-html-pin-freshness
+
+# Issue #294 slice 1 (design §2.2): the freshness half of the renderer pin
+# discipline. The pin's integrity is uv sync --locked + the package verifier;
+# nothing compared the pin to the published releases — this lane is that
+# signal. WARN on staleness, never fail (the pin advances deliberately per
+# train, PRD 12 Q5; the registry drift job's CON-12 posture) and RED only on
+# an inability to determine — a green run never means "unknown". Deliberately
+# NOT on pull_request (owner call F2): PR authors cannot fix staleness — the
+# state changes in the gateway, not the PR. Push-to-main records the state at
+# each train's landing; the weekly schedule watches the no-SDK-activity case.
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "23 4 * * 1" # weekly; staleness develops with no SDK activity
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  freshness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Compare the [server] extra's ui-html pin to PyPI
+        # stdlib only — no sync, no install: the pin is read from pyproject,
+        # the latest from the PyPI JSON API. Replays via --index-url are the
+        # design's proof arms (§7 Metric B), not a CI path.
+        run: python3 scripts/check_pin_freshness.py
