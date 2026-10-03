@@ -1,0 +1,55 @@
+---
+name: benchweave-capture
+description: Use when you capture device data without a gateway —
+  StandaloneCaptureWriter roots, formats, manifests and the checks the
+  writer applies before it publishes.
+---
+
+# Standalone capture
+
+`benchweave_sdk.capture.StandaloneCaptureWriter` writes captures to a local
+directory. It implements the three capture methods an adapter calls in gateway
+mode: `artifact_append`, `artifact_finalise` and `artifact_abort`.
+
+## Choose the capture root
+
+The writer takes the root in this order:
+
+1. the constructor argument,
+2. the environment variable `BENCHWEAVE_CAPTURE_DIR`,
+3. `captures/` under the current working directory.
+
+The writer refuses a root inside the installed package tree — a reinstall or
+upgrade deletes such a root. The writer also refuses an environment variable
+that is set but empty, and a root that exists but is not a directory.
+
+## Formats
+
+The constructor takes `formats=`. The declared set holds the two core formats
+by default: `waveform_f64le` and `raw_binary`. An empty set refuses every
+format. The format named at finalise must be in the declared set.
+
+## Before publish
+
+The writer refuses a capture that appended nothing; it does not publish an
+empty capture. The writer refuses a `waveform_f64le` capture whose byte length
+does not equal the sample count times eight. The manifest carries the hash and
+the byte length of the real published bytes. An abort deletes the staging tree
+and the in-flight primary file; a published capture survives it.
+
+## Standalone limits
+
+- Standalone does not apply the gateway admission checks for capture limits
+  and storage quota. A capture that publishes standalone can still be refused
+  by a gateway.
+- There is no automatic import of standalone captures into the gateway. Ingest
+  is a separate, deliberate step.
+
+## Read the docs
+
+The plugin SDK guide covers this in section "Capture without a gateway
+(standalone writer)".
+
+---
+Maintained by benchweave-sdk 0.6.0; `benchweave-sdk upgrade`
+refreshes this skill.
