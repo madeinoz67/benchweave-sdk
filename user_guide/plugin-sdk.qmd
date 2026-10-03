@@ -65,6 +65,8 @@ plugins/
         ├── README.md
         ├── AI-GUIDE.md
         ├── CLAUDE.md                   # Agent notes; root dev tooling
+        ├── AGENTS.md                   # SDK-managed agent guide; CLAUDE.md imports it
+        ├── .claude/skills/             # Five SDK-managed workflow skills
         ├── src/benchweave_acme_model100/
         │   ├── __init__.py
         │   ├── adapter.py
@@ -77,6 +79,8 @@ plugins/
         │       └── drive-device/SKILL.md
         └── tests/test_plugin.py
 ```
+
+The root also carries `AGENTS.md`, the SDK-managed agent guide: `CLAUDE.md` imports it, and `benchweave-sdk upgrade` refreshes it together with the five workflow skills under `.claude/skills/` (`benchweave-plugin-workflow`, `benchweave-descriptor`, `benchweave-plugin-ui`, `benchweave-adapter-testing`, `benchweave-capture`). They are repo-level dev tooling outside `src/<python_package>/`; they never enter the plugin wheel. The seeded package skills inside `src/<python_package>/skills/` are different content and do ship in the wheel. If you edit a managed file, the upgrade writes conflict markers; resolve both sides, then commit. A project made before these files existed adds the `@AGENTS.md` import line to its `CLAUDE.md` by hand.
 
 Generate the dependency lock and retain it. Add your chosen licence file. When you develop custom firmware, add `firmware/` with its own build and tests. The starter does not create these project-specific files. You can copy the manufacturer and name directory into its own external repository unchanged. It has no runtime dependency on BenchWeave core or the SDK. The SDK is a development dependency.
 
