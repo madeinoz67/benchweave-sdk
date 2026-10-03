@@ -300,6 +300,32 @@ def test_host_info_names_the_presentation_block(client: TestClient, policy) -> N
     assert schema is not None and "presentation" in schema["properties"]
 
 
+def test_host_info_validates_over_mcp_structured_output(starter_project) -> None:
+    """The schema pin extends with the block (CON-3): fastmcp validates the
+    structured output against the catalogue's result schema — a mismatch
+    between the seam's output and the pinned schema refuses here."""
+    import asyncio
+
+    from fastmcp import Client
+
+    from benchweave_sdk_server.mcp import build_mcp
+    from benchweave_sdk_server.session import load_plugin_project
+
+    plugin = load_plugin_project(starter_project)
+    seam = StandaloneSeam(
+        PluginSession(plugin, lambda: LoopingMockHost(mock_exchanges(plugin))),
+        transport_kind="mock",
+    )
+
+    async def run() -> None:
+        async with Client(build_mcp(seam)) as client:
+            result = await client.call_tool("bws_v1_host_info", {})
+        data = result.structured_content or {}
+        assert set(data["presentation"]) == {"features", "panels", "unavailable_pages"}
+
+    asyncio.run(run())
+
+
 def test_globals_css_serves_the_installed_package_bytes(client: TestClient) -> None:
     from benchweave_ui_html.assets import ASSETS_DIR
 
