@@ -19,6 +19,8 @@ in the quality slot — never a guess (ST-3's two-channels rule).
 
 from __future__ import annotations
 
+import math
+import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -26,11 +28,18 @@ from typing import TYPE_CHECKING, Any
 from benchweave_ui_html.data import (
     ModeBannerData,
     ModeEntry,
+    NumericInputData,
     ReadingData,
+    RotaryControlData,
     Severity,
 )
 from benchweave_ui_html.fixtures import MODES
-from benchweave_ui_html.partials import render_mode_banner, render_reading
+from benchweave_ui_html.partials import (
+    render_mode_banner,
+    render_numeric_input,
+    render_reading,
+    render_rotary_control,
+)
 from benchweave_ui_html.staleness import staleness
 
 from benchweave_sdk.fixtures import project_plot_views
@@ -98,6 +107,14 @@ SEVERITY_RANK: dict[Severity, int] = {
 #: package partial, and the component-parity arm must RED — proving the
 #: suite discriminates a hand-rolled tile from the partial's exact output.
 PARTIAL_TILES: bool = True
+
+#: A test-only discrimination hook (I2-S's no-optimistic-copy RED control):
+#: ``True`` renders the STAGED value into the reading tile — exactly what a
+#: renderer that launders intent into evidence would do. The stage arm of
+#: gate I2-S asserts the tile keeps the device value while a value is
+#: staged; with this hook on, that assertion must RED — proving the arm
+#: discriminates an optimistic renderer from the honest one (SW-23, §E.3).
+STAGED_ECHO_TILES: bool = False
 
 
 def compose_severity(parts: list[Severity]) -> Severity:
@@ -195,6 +212,13 @@ def reading_tile_html(
     )
     verdict = staleness(fresh, descriptor_max_age_ms(parameter))
     unit = (read or {}).get("unit") or parameter.get("unit") or ""
+    # The §E.3 set role: for a setpoint-role parameter the device read also
+    # supplies the set evidence — never a staged or requested value (the
+    # no-optimistic-copy rule; the role derives from the descriptor's own
+    # semantic declaration).
+    is_setpoint = str(parameter.get("semantic", "")) == "setpoint"
+    set_value = value_text((read or {}).get("value")) if is_setpoint else None
+    set_unit = str(unit) if is_setpoint and set_value is not None else None
     if PARTIAL_TILES:
         data = ReadingData(
             label=label,
@@ -204,6 +228,8 @@ def reading_tile_html(
             quality=quality or "unavailable",
             freshness=freshness_text(age_ms),
             stale_verdict=verdict,
+            set_value=set_value,
+            set_unit=set_unit,
         )
         return render_reading(data), severity
     # The I1-era hand-rolled row (the bypass-tile RED control's render).
@@ -213,6 +239,62 @@ def reading_tile_html(
         f"<td>{unit}</td><td>{quality}</td></tr>"
     )
     return hand, severity
+
+
+def staged_control_html(
+    parameter: Mapping[str, Any], *, staged: Any, device_value: Any
+) -> str:
+    """The §E.1 staging pair for one writable numeric parameter: a rotary
+    control and its precise numeric field, bounds from the descriptor's own
+    range. The input's value is the STAGED value when one exists (the only
+    place a staged value ever renders — §E.3), otherwise the device read.
+    The step is host-derived from the declared range (int: 1; float: a
+    hundredth of the range) — the descriptor carries no step vocabulary."""
+    bounds = parameter.get("range")
+    if isinstance(bounds, list) and len(bounds) == 2:
+        low, high = float(bounds[0]), float(bounds[1])
+    else:
+        low, high = 0.0, 0.0
+    kind = str(parameter.get("type", "float"))
+    step = 1.0 if kind == "int" else round((high - low) / 100.0, 10) or 0.1
+    if not math.isfinite(step):
+        # The declared span overflows the numeric format (FOLD-C(ii)): a
+        # host-derived granularity must stay finite — step="inf" is invalid
+        # HTML and the browser silently falls back to 1.
+        step = float(sys.maxsize)
+    label = str(parameter.get("name", ""))
+    unit = str(parameter.get("unit", "") or "")
+    shown = staged if staged is not None else device_value
+    numeric_shown = isinstance(shown, (int, float)) and not isinstance(shown, bool)
+    midpoint = (high + low) / 2.0
+    value = float(shown) if numeric_shown else (
+        midpoint if math.isfinite(midpoint) else high
+    )
+    # The package's data classes type the numeric fields as strings (they
+    # render into attributes); format with %g so 2.5 stays "2.5".
+    value_text_attr = f"{value:g}"
+    numeric = render_numeric_input(
+        NumericInputData(
+            label=label,
+            unit=unit,
+            value=value_text_attr,
+            minimum=f"{low:g}",
+            maximum=f"{high:g}",
+            step=f"{step:g}",
+            input_id=f"stage-{label}",
+            help_id=f"stage-{label}-help",
+        )
+    )
+    rotary = render_rotary_control(
+        RotaryControlData(
+            label=label,
+            now=value_text_attr,
+            minimum=f"{low:g}",
+            maximum=f"{high:g}",
+            unit=unit,
+        )
+    )
+    return rotary + numeric
 
 
 # --- the page model ------------------------------------------------------------

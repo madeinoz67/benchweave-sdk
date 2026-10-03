@@ -1,0 +1,27 @@
+{
+  "contract_version": "0.3.0",
+  "descriptor_sha256": "a91bd33ae7eb528b294bf845280c5d54511c34ecb4ada9a7c9c6932a387b1bef",
+  "targets": [
+    {
+      "id": "current_limit",
+      "kind": "observation",
+      "parameter_id": "current_limit",
+      "variables": [
+        {
+          "id": "time",
+          "type": "number",
+          "unit": "s",
+          "shape": "scalar",
+          "axis_role": "receipt_time"
+        },
+        {
+          "id": "value",
+          "type": "number",
+          "unit": "A",
+          "shape": "scalar",
+          "axis_role": "value"
+        }
+      ]
+    }
+  ]
+}

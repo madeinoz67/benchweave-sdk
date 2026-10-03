@@ -1,0 +1,23 @@
+{
+  "contract_version": "0.3.0",
+  "id": "steady",
+  "title": "Steady setpoint",
+  "revision": "1.0.0",
+  "plugin_id": "dev.example.setpoint-demo",
+  "profile_ids": [],
+  "supported_firmware": [
+    "1.0.0"
+  ],
+  "settings_schema": {
+    "id": "urn:dev.example:setpoint-demo:settings:1.0.0",
+    "sha256": "31d379e7bee8e590651f196ac85b99e72eebf8eba19b54b8524a49541b92cb48"
+  },
+  "settings": {
+    "current_limit": 2.5
+  },
+  "provenance": {
+    "author": "BenchWeave Labs",
+    "revision": "1.0.0",
+    "evidence": "synthetic"
+  }
+}

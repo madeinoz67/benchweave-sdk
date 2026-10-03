@@ -20,7 +20,8 @@ SW10_NAMES = [
 
 SERVED = [
     "host_info", "device_discover", "device_connect", "device_disconnect",
-    "device_get", "parameter_read",
+    "device_get", "parameter_read", "parameter_stage", "parameter_apply",
+    "preset_list", "preset_apply",
 ]
 
 
@@ -39,7 +40,7 @@ def test_served_and_deferred_partition_the_catalogue() -> None:
     assert catalogue.served_operations() == tuple(SERVED)
     deferred = [name for name in SW10_NAMES if name not in SERVED]
     assert catalogue.deferred_operations() == tuple(deferred)
-    assert len(catalogue.deferred_operations()) == 12
+    assert len(catalogue.deferred_operations()) == 8
 
 
 def test_implemented_rows_carry_schemas_and_the_closed_code_set() -> None:

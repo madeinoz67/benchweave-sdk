@@ -14,5 +14,30 @@
        hx-swap="innerHTML">
     {% include "page-readings.html" %}
   </div>
+  {% if controls %}
+  {# Staged changes are HOST state: the inputs render outside the poll
+     region (a poll must not wipe an operator's in-flight input), and a
+     staged value appears only here — never in a reading tile (§E.3). #}
+  <section class="panel bw-controls" aria-label="Staged changes">
+    <h2>Staged changes</h2>
+    {% if action_error %}
+    <div class="notice notice-refused" role="alert">
+      <p><strong>{{ action_label or "Apply refused" }}</strong> — {{ action_error.code }}: {{ action_error.message }}{% if action_error.adapter %} (device answered {{ action_error.adapter.code }} / {{ action_error.adapter.dispatch_state }}){% endif %}. Any staged values are retained.</p>
+    </div>
+    {% endif %}
+    <form method="post" action="/pages/{{ page.id }}/stage"
+          hx-post="/pages/{{ page.id }}/stage"
+          hx-headers='{"X-CSRF-Token": "{{ csrf_token }}"}'>
+      {%- for control in controls %}{{ control.input }}{% endfor %}
+      <button type="submit">Stage</button>
+    </form>
+    <form method="post" action="/pages/{{ page.id }}/apply"
+          hx-post="/pages/{{ page.id }}/apply"
+          hx-headers='{"X-CSRF-Token": "{{ csrf_token }}"}'>
+      <button type="submit">Apply staged values</button>
+      <p class="hint">Apply writes each staged value, then re-reads the parameter — the page shows the read-back. No lease or policy guards this write.</p>
+    </form>
+  </section>
+  {% endif %}
 </section>
 {% endblock %}
