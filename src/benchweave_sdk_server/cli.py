@@ -146,8 +146,28 @@ def mcp(project: Path, authoring: bool) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Entry point returning an exit code (the SDK CLI's shape)."""
-    return int(cli(args=argv, standalone_mode=False) or 0)
+    """Run the Click group and return a process-compatible exit code
+    (the SDK CLI's main shape: click's own errors — UsageError,
+    BadParameter — surface as usage text with their exit codes, never
+    as tracebacks out of the console script; fold F2).
+    """
+    try:
+        cli.main(
+            args=list(argv) if argv is not None else None,
+            prog_name="benchweave-sdk-server",
+            standalone_mode=False,
+        )
+    except click.ClickException as exc:
+        exc.show()
+        return exc.exit_code
+    except click.exceptions.Exit as exc:
+        return exc.exit_code
+    except click.exceptions.Abort:
+        # Ctrl-C at a prompt: match standalone mode's clean exit, not a
+        # traceback (the SDK CLI's wording and rationale, verbatim).
+        click.echo("Aborted!", err=True)
+        return 1
+    return 0
 
 
 if __name__ == "__main__":  # pragma: no cover

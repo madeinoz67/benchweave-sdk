@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from benchweave_sdk_server.cli import cli
+from benchweave_sdk_server.cli import cli, main
 
 
 def test_wildcard_listener_is_refused(starter_project: Path) -> None:
@@ -146,3 +146,27 @@ def test_help_works_without_the_server_extra(monkeypatch: pytest.MonkeyPatch) ->
     result = CliRunner().invoke(cli_module.cli, ["--help"])
     assert result.exit_code == 0
     assert "serve" in result.output
+
+
+# --- fold F2: main() returns click's exit codes, never a traceback --------
+
+
+def test_main_returns_the_usage_error_exit_code() -> None:
+    """`benchweave-sdk-server serve` (PROJECT missing) answers click's
+    usage error with exit 2 through main() — pre-fix this raised
+    UsageError out of the entry point (console script: traceback, exit 1).
+    Direct main() calls, not CliRunner: the runner swallows exceptions,
+    which is exactly how the defect hid from the CliRunner arms."""
+    assert main(["serve"]) == 2
+
+
+def test_main_returns_the_bad_path_exit_code() -> None:
+    """`serve /nonexistent` (BadParameter) — the refute lane's second
+    repro, same refusal shape."""
+    assert main(["serve", "/definitely/not/a/plugin"]) == 2
+
+
+def test_main_returns_zero_on_the_help_exit() -> None:
+    """--help raises click's Exit(0) under standalone_mode=False; main()
+    converts it to 0, the SDK CLI's shape."""
+    assert main(["--help"]) == 0
