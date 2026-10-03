@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from benchweave_ui_html.plot import ChannelHint, TraceSpec, compose_plot
+from markupsafe import escape
 
 from benchweave_sdk.preview_models import PlotView
 
@@ -153,11 +154,15 @@ def compose_page_plot(view: PlotView, ring: ObservationRing) -> PlotRender:
         if channel.color_role is not None or channel.visible is not None
     }
     if view.kind == "digital_lanes":
+        # The manifest title is PLUGIN data: it renders ESCAPED in every
+        # attribute slot (fold 2 — #363's lesson class; a hand-built
+        # skeleton is not a licence to bypass the escaped renderer).
+        title = str(escape(view.title))
         skeleton = (
-            f'<figure class="bw-plot" role="img" aria-label="{view.title}" data-bw-lanes '
-            f'data-bw-plot-title="{view.title}">\n'
+            f'<figure class="bw-plot" role="img" aria-label="{title}" data-bw-lanes '
+            f'data-bw-plot-title="{title}">\n'
             f'  <div class="bw-plot__canvas" data-bw-axes="{view.x.unit or X_UNIT}" '
-            f'data-bw-plot-title="{view.title}"></div>\n'
+            f'data-bw-plot-title="{title}"></div>\n'
             '  <p class="bw-plot__no-data" role="status">No lane data — captures begin at I3; '
             "this figure renders the declared lane structure only.</p>\n"
             "</figure>"

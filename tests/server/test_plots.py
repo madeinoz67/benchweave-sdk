@@ -307,3 +307,30 @@ def test_an_explicit_hide_hint_still_hides(starter_project) -> None:
     )
     render = compose_page_plot(hidden_view, ObservationRing())
     assert "data-hidden" in render.html
+
+
+# --- the lanes skeleton escapes the manifest title (fold 2) ---------------------
+
+
+def test_the_lanes_skeleton_escapes_the_manifest_title() -> None:
+    """A hostile page title must not land as a real attribute on the
+    hand-built skeleton (#363's lesson class: manifest data never bypasses
+    the escaped renderer)."""
+    from benchweave_sdk.preview_models import PlotAxis, PlotChannel, PlotView
+
+    view = PlotView(
+        page_id="readings",
+        kind="digital_lanes",
+        binding_id="capture",
+        title='Lane view" onmouseover="alert(1)',
+        x=PlotAxis(label="time", unit="s"),
+        channels=(PlotChannel(variable_id="sda", label="sda", unit=None),),
+        lane_groups=(),
+        decoder_lanes=(),
+    )
+    render = compose_page_plot(view, ObservationRing())
+    assert 'onmouseover="alert' not in render.html
+    assert render.html.count('onmouseover="') == 0, "no unescaped attribute slot remains"
+    # The title still renders, escaped, in the attribute slots.
+    assert "Lane view" in render.html
+    assert "&#34;" in render.html or "&quot;" in render.html
