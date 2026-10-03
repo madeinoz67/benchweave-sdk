@@ -208,6 +208,30 @@ The command suite uses Click for stable parsing and stable exit codes. It uses R
 
 Every preview carries the label `SIMULATED PRESENTATION DATA`. A control interaction creates only an in-memory simulated receipt. It never updates an observed reading optimistically.
 
+## The server extra
+
+Install the optional server extra to serve one plugin project without a gateway:
+
+```sh
+pip install 'benchweave-sdk[server]'
+```
+
+The extra installs FastAPI, FastMCP, Jinja2 and Uvicorn. It adds the command `benchweave-sdk-server`. One process serves a server-rendered HTMX UI, a JSON REST API and an MCP endpoint over one operations seam. `benchweave-sdk-server mcp <project>` runs the same MCP server over stdio, with no HTTP listener.
+
+```sh
+benchweave-sdk-server serve /path/to/plugin-project --transport mock --port 8477 --no-open
+```
+
+The transport is the scripted mock transport. It replays the exact exchanges that the plugin's `vectors.json` declares. This extra does not provide a real hardware transport.
+
+Every page carries the banner `STANDALONE — no gateway`. This process has no leases, policy, approvals, procedures or run records behind it.
+
+The startup output prints the URL and a bearer token for each launch. REST mutations and MCP-over-HTTP calls need this token.
+
+The listener rules are the same as for the local UI preview. The listener uses the loopback interface by default. The command rejects wildcard listeners. A non-loopback host needs `--allow-network`.
+
+A default installation does not include the extra. The `benchweave-sdk-server` command still exists in a default installation. The `serve` and `mcp` commands then stop before they do any work. They print `benchweave_sdk_server_extras_missing: install 'benchweave-sdk[server]' for the serve and mcp commands` and exit with code 2.
+
 ## Public surfaces
 
 - `interfaces`: structural async `Adapter`, `HostServices`, `OperationContext` and optional `CaptureServices` definitions. You do not need an SDK superclass.

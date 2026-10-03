@@ -23,11 +23,12 @@ import ipaddress
 import secrets
 from dataclasses import dataclass, replace
 
-#: Mirrors the SDK preview server's request cap (NFR-S6).
-from benchweave_sdk.preview_server import MAX_REQUEST_BYTES  # noqa: F401 - re-exported
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
+
+#: Mirrors the SDK preview server's request cap (NFR-S6).
+from benchweave_sdk.preview_server import MAX_REQUEST_BYTES  # noqa: F401 - re-exported
 
 CSP_POLICY = (
     "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'"

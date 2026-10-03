@@ -4,7 +4,9 @@
 The gateway repo's ``scripts/standards/count_version_literals.py`` is the
 definition's authority; this twin copies that definition VERBATIM (the AST
 walk, Pattern A + bare-semver, docstrings excluded) and scopes it to this
-repository's ``src/benchweave_sdk/`` with this repository's register rows.
+repository's ``src/benchweave_sdk/`` and ``src/benchweave_sdk_server/``
+trees (issue #309 slice A: the server host folded into this distribution)
+with this repository's register rows.
 The pairing is bound by the gateway's drift-and-obligations counter-sync
 row: a change to either copy's DEFINITION or register semantics re-syncs
 the other in the same work.
@@ -56,7 +58,9 @@ prepass sees module-level bindings; a function-local shadow is not seen
 4097 bounded out).
 
 DENOMINATOR BOUNDARY (G1's honest scope, fold row 13): this lane gates
-``src/benchweave_sdk/`` only. ``scripts/``, ``tests/`` and ``.github/`` of
+``src/benchweave_sdk/`` and ``src/benchweave_sdk_server/`` (the second
+root since issue #309 slice A; a root that is MISSING is a refusal, never
+a silent pass). ``scripts/``, ``tests/`` and ``.github/`` of
 this repository are OUTSIDE the gate; the gateway's lanes own the gateway,
 plugin and docs trees.
 
@@ -69,6 +73,12 @@ unchanged cardinality. A new literal inside a registered file fails the
 gate until the register row is edited — a visible editorial diff. The
 contracts.py row carries no value pin because the copies are digest-pinned
 whole (``tests/sdk/test_presentation_packaging.py``).
+
+The server tree carries NO register rows (issue #309 slice A): it is
+literal-free by construction — its only version, the SDK it rides, derives
+via ``importlib.metadata`` (``seam.sdk_version``, the I1 rule carried into
+the fold) — so any literal under ``src/benchweave_sdk_server/`` is a
+violation, never an exemption.
 
 Exit status: 0 when the count outside the register is 0 AND every register
 row's expectation holds, 1 otherwise (or on any parse failure — a count
@@ -433,7 +443,14 @@ REGISTER: dict[str, tuple[str, int, tuple[str, ...] | None]] = {
 }
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SOURCE_ROOT = REPO_ROOT / "src" / "benchweave_sdk"
+# Two source roots since issue #309 slice A: the sdk package and the folded
+# server host. A root that is missing is a count that cannot be computed —
+# count_sites refuses instead of scanning the survivor (main reports it as
+# version_literal_count_failed, never a silent pass).
+SOURCE_ROOTS: tuple[Path, ...] = (
+    REPO_ROOT / "src" / "benchweave_sdk",
+    REPO_ROOT / "src" / "benchweave_sdk_server",
+)
 
 
 class StandardSetDrift(Exception):
@@ -466,7 +483,11 @@ def count_sites() -> tuple[list[dict[str, Any]], int]:
     files carrying sites — the census is the shrinkage detector)."""
     sites: list[dict[str, Any]] = []
     scanned = 0
-    for path in sorted(SOURCE_ROOT.rglob("*.py")):
+    for source_root in SOURCE_ROOTS:
+        if not source_root.is_dir():
+            raise OSError(f"source root missing: {source_root}")
+    all_python = (py_file for root in SOURCE_ROOTS for py_file in root.rglob("*.py"))
+    for path in sorted(all_python):
         relative_parts = path.relative_to(REPO_ROOT).parts
         if not _outside_environment(REPO_ROOT, relative_parts):
             continue
@@ -553,6 +574,7 @@ def main(argv: list[str] | None = None) -> int:
                 {
                     "mode": "zero",
                     "ok": not violations,
+                    "roots": [root.relative_to(REPO_ROOT).as_posix() for root in SOURCE_ROOTS],
                     "scanned": scanned,
                     "count": len(sites),
                     "outside": len(outside),
@@ -565,9 +587,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if not violations else 1
 
     verdict = "ok" if not violations else "FAILED"
+    roots = " + ".join(root.relative_to(REPO_ROOT).as_posix() for root in SOURCE_ROOTS)
     print(
         f"sdk executable version literals: {len(outside)} outside register "
-        f"({len(sites)} sites, {scanned} files scanned, {verdict})"
+        f"({len(sites)} sites, {scanned} files scanned across {roots}, {verdict})"
     )
     for violation in violations:
         print(f"  {violation}")

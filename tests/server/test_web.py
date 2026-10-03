@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from benchweave_standalone.web import BANNER, build_app
+from benchweave_sdk_server.web import BANNER, build_app
 
 DEV = "example_device"
 SCRIPT_TAG = re.compile(r"<script\b([^>]*)>")
@@ -29,6 +29,23 @@ def test_home_carries_the_banner_and_plugin_identity(client) -> None:
     assert BANNER == "STANDALONE — no gateway"
     assert "example_plugin" in body
     assert f"/devices/{DEV}" in body
+
+
+def test_the_served_titles_name_the_server_host(app) -> None:
+    """Issue #309 slice A, fold F1: the FastAPI title carries the ruling's
+    name — the dead distribution's title string is gone from the app
+    object. The base template's <title> DEFAULT is renamed the same way;
+    the index/device pages override that block with mode words
+    ("Standalone host", the banner's vocabulary — kept, like SW-27).
+    """
+    assert app.title == "BenchWeave SDK server"
+    from pathlib import Path
+
+    templates = Path(__file__).resolve().parents[2] / "src" / "benchweave_sdk_server" / "templates"
+    base = (templates / "base.html").read_text(encoding="utf-8")
+    assert "BenchWeave SDK server" in base
+    for page in sorted(templates.glob("*.html")):
+        assert "BenchWeave standalone" not in page.read_text(encoding="utf-8"), page.name
 
 
 def test_home_banner_names_the_absent_guarantees(client) -> None:
@@ -57,9 +74,9 @@ def test_exhausted_transport_shows_the_refused_state(plugin, policy) -> None:
     """The D(i) page arm: cycles=1, the second poll renders the refusal."""
     import asyncio
 
-    from benchweave_standalone.seam import StandaloneSeam
-    from benchweave_standalone.session import PluginSession, mock_exchanges
-    from benchweave_standalone.transport import LoopingMockHost
+    from benchweave_sdk_server.seam import StandaloneSeam
+    from benchweave_sdk_server.session import PluginSession, mock_exchanges
+    from benchweave_sdk_server.transport import LoopingMockHost
 
     host = LoopingMockHost(mock_exchanges(plugin), cycles=1)
     seam = StandaloneSeam(PluginSession(plugin, lambda: host), transport_kind="mock")
@@ -84,7 +101,7 @@ def test_no_script_without_src_anywhere(client, policy) -> None:
     for page in pages:
         for attributes in SCRIPT_TAG.findall(client.get(page).text):
             assert "src=" in attributes, (page, attributes)
-    templates = Path(__file__).parent.parent / "src" / "benchweave_standalone" / "templates"
+    templates = Path(__file__).resolve().parents[2] / "src" / "benchweave_sdk_server" / "templates"
     for template in templates.glob("*.html"):
         for attributes in SCRIPT_TAG.findall(template.read_text()):
             assert "src=" in attributes, (template.name, attributes)
@@ -171,9 +188,9 @@ def test_failed_connect_renders_a_refusal_state(plugin, policy) -> None:
 
     from fastapi.testclient import TestClient
 
-    from benchweave_standalone.seam import StandaloneSeam
-    from benchweave_standalone.session import PluginSession, mock_exchanges
-    from benchweave_standalone.transport import LoopingMockHost
+    from benchweave_sdk_server.seam import StandaloneSeam
+    from benchweave_sdk_server.session import PluginSession, mock_exchanges
+    from benchweave_sdk_server.transport import LoopingMockHost
 
     script = mock_exchanges(plugin)
     # Script the establishment itself to fail: the connect-time identify

@@ -1,4 +1,4 @@
-"""The ``benchweave-standalone`` CLI: serve and the stdio MCP entry.
+"""The ``benchweave-sdk-server`` CLI: serve and the stdio MCP entry.
 
 ``serve`` validates the plugin's descriptor and presentation documents
 BEFORE binding any port (SW-05 — refusal text carries the SDK's diagnostics
@@ -8,18 +8,22 @@ non-loopback only with ``--allow-network`` plus a warning — NFR-S1), and
 constructs the COMPLETE guard set unconditionally. The per-launch bearer
 token is printed with the URL. ``mcp`` runs the same MCP server over stdio
 with no HTTP listener and no HTTP guard material (NFR-S4).
+
+On an install without the ``[server]`` extra, both commands refuse before
+any work with ``benchweave_sdk_server_extras_missing:`` and exit 2 (the
+R-9 shim pattern: Python extras cannot gate console scripts, so the
+default install's entry point degrades honestly instead of tracebacking).
 """
 
 from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import NoReturn
 
 import click
 
-from .mcp import build_mcp
 from .seam import StandaloneSeam
-from .security import GuardPolicy, new_token
 from .session import (
     LoadedPlugin,
     PluginLoadError,
@@ -28,6 +32,19 @@ from .session import (
     mock_exchanges,
 )
 from .transport import LoopingMockHost
+
+#: What a default (no-extra) install hears from serve/mcp: the prefixed
+#: error names the install command (the R-9 shim pattern, exit 2).
+_EXTRAS_MESSAGE = (
+    "benchweave_sdk_server_extras_missing: install 'benchweave-sdk[server]' "
+    "for the serve and mcp commands"
+)
+
+
+def _require_server_extra(exc: ImportError) -> NoReturn:
+    """Refuse on a missing extra: message, exit 2, never a traceback."""
+    click.echo(_EXTRAS_MESSAGE, err=True)
+    raise SystemExit(2) from exc
 
 
 def _load(project: Path) -> LoadedPlugin:
@@ -70,6 +87,19 @@ def serve(
     authoring: bool,
 ) -> None:
     """Serve UI, REST and MCP over one plugin project."""
+    try:
+        # All three ride the [server] extra: web and uvicorn directly, and
+        # security through starlette's middleware base -- the module-level
+        # import set must stay free of every name the extra owns, or the
+        # console script dies before click can even print --help (the A-E
+        # default-venv arm caught exactly that, through starlette).
+        import uvicorn
+
+        from .security import GuardPolicy, new_token
+        from .web import build_app
+    except ImportError as exc:
+        _require_server_extra(exc)
+
     from benchweave_sdk.preview_server import validate_listener
 
     try:
@@ -90,8 +120,6 @@ def serve(
         bearer_token=new_token(),
         csrf_token=new_token(),
     )
-    from .web import build_app
-
     app = build_app(seam, policy=policy, authoring=authoring)
     click.echo(f"Serving {seam.session.plugin.package} on http://{host}:{port}")
     click.echo(f"Bearer token (REST mutations and MCP over HTTP): {policy.bearer_token}")
@@ -99,8 +127,6 @@ def serve(
         import webbrowser
 
         webbrowser.open(f"http://{host}:{port}")
-    import uvicorn
-
     uvicorn.run(app, host=host, port=port, log_level="warning")
 
 
@@ -109,14 +135,39 @@ def serve(
 @click.option("--authoring", is_flag=True)
 def mcp(project: Path, authoring: bool) -> None:
     """Run the MCP server over stdio (no HTTP listener, no HTTP guards)."""
+    try:
+        from .mcp import build_mcp
+    except ImportError as exc:
+        _require_server_extra(exc)
+
     seam = _build_seam(project)
     server = build_mcp(seam, authoring=authoring)
     server.run()
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Entry point returning an exit code (the SDK CLI's shape)."""
-    return int(cli(args=argv, standalone_mode=False) or 0)
+    """Run the Click group and return a process-compatible exit code
+    (the SDK CLI's main shape: click's own errors — UsageError,
+    BadParameter — surface as usage text with their exit codes, never
+    as tracebacks out of the console script; fold F2).
+    """
+    try:
+        cli.main(
+            args=list(argv) if argv is not None else None,
+            prog_name="benchweave-sdk-server",
+            standalone_mode=False,
+        )
+    except click.ClickException as exc:
+        exc.show()
+        return exc.exit_code
+    except click.exceptions.Exit as exc:
+        return exc.exit_code
+    except click.exceptions.Abort:
+        # Ctrl-C at a prompt: match standalone mode's clean exit, not a
+        # traceback (the SDK CLI's wording and rationale, verbatim).
+        click.echo("Aborted!", err=True)
+        return 1
+    return 0
 
 
 if __name__ == "__main__":  # pragma: no cover

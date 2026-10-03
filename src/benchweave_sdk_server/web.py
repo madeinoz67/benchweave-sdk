@@ -6,7 +6,7 @@ included FIRST, FastMCP's ``http_app(path="/mcp")`` is mounted at ``/`` (so
 ``/mcp`` lands and ``/v1`` already won its routes), and the host lifespan
 enters the mounted app's lifespan — FastMCP's http_app lifespan MUST run on
 the host or initialize 500s. ``build_app`` takes an explicit
-:class:`~benchweave_standalone.security.GuardPolicy` so the acceptance RED
+:class:`~benchweave_sdk_server.security.GuardPolicy` so the acceptance RED
 arms can omit exactly one guard; the ``serve`` CLI always passes a complete
 one.
 """
@@ -73,7 +73,7 @@ def build_app(seam: StandaloneSeam, *, policy: GuardPolicy, authoring: bool = Fa
             finally:
                 await seam.session.close()
 
-    app = FastAPI(title="BenchWeave standalone", lifespan=_lifespan)
+    app = FastAPI(title="BenchWeave SDK server", lifespan=_lifespan)
     app.state.seam = seam
     app.state.policy = policy
 

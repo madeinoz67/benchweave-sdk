@@ -382,7 +382,9 @@ def test_wheel_force_include_places_the_lock_where_verify_installed_reads_it() -
 
     with (REPO / "pyproject.toml").open("rb") as handle:
         wheel = tomllib.load(handle)["tool"]["hatch"]["build"]["targets"]["wheel"]
-    assert wheel["packages"] == ["src/benchweave_sdk"]
+    # Two trees since issue #309 slice A: the sdk package and the folded
+    # server host (the lock's force-include target stays the sdk package).
+    assert wheel["packages"] == ["src/benchweave_sdk", "src/benchweave_sdk_server"]
     assert wheel["force-include"] == {LOCK_NAME: f"benchweave_sdk/{LOCK_NAME}"}
 
 

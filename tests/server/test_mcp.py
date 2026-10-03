@@ -5,11 +5,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 
 from fastmcp import Client
 
-from benchweave_standalone import catalogue
-from benchweave_standalone.mcp import (
+from benchweave_sdk_server import catalogue
+from benchweave_sdk_server.mcp import (
     build_mcp,
     operation_tool_schema,
     registered_tool_names,
@@ -25,6 +26,15 @@ def test_served_tool_names_are_the_catalogue_prefix_set(seam) -> None:
     assert registered_tool_names(mcp) == sorted(
         tool_name(name) for name in catalogue.served_operations()
     )
+
+
+def test_the_built_server_names_the_ruling_not_the_dead_distribution(seam) -> None:
+    """Issue #309 slice A, fold F1: serverInfo.name is wire-visible — the
+    dead distribution's name is gone from the tool surface, replaced by
+    the distribution the host rides (gate A-R's dash-token grep pins the
+    tree; this pins the built object)."""
+    mcp = build_mcp(seam)
+    assert mcp.name == "benchweave-sdk-server"
 
 
 def test_pinned_schemas_equal_the_catalogue_verbatim(seam) -> None:
@@ -146,10 +156,63 @@ def test_plugin_new_scaffolds_and_reports_the_inventory(seam, tmp_path) -> None:
                                   "package": "second_probe", "with_ui": True})
     )
     files = result["files"]
-    assert "src/second_probe/descriptor.json" in files
-    assert "src/second_probe/presentation.json" in files
-    assert "src/second_probe/ui/manifest.json" in files
+    # Normalize the comparison, not the data: the tool reports
+    # platform-native separators (authoring.py builds the inventory with
+    # str(relative_to), so Windows answers src\second_probe\...). The
+    # assertion's intent is that the scaffold carries these relative
+    # paths — asserted in posix form on every OS (CI-carried RED: PR #90's
+    # windows-latest run, this suite's first Windows exposure).
+    posix_files = {str(entry).replace(os.sep, "/") for entry in files}
+    assert "src/second_probe/descriptor.json" in posix_files
+    assert "src/second_probe/presentation.json" in posix_files
+    assert "src/second_probe/ui/manifest.json" in posix_files
     assert (destination / "src" / "second_probe" / "adapter.py").is_file()
+
+
+def test_plugin_new_inventory_is_posix_under_a_windows_flavour(monkeypatch) -> None:
+    """The cross-host-meaning rule on the wire: plugin_new's files list is
+    posix-form on EVERY host. The Windows flavour is simulated with a
+    PureWindowsPath-driven double — real relative_to/str/as_posix (the
+    platform behaviour PR #90's windows-latest leg proved), with discovery
+    and the scaffold calls stubbed — so this arm has local teeth: pre-fix
+    it fails on macOS exactly as CI failed on Windows, instead of waiting
+    for the Windows leg to catch a regression.
+    """
+    from pathlib import PureWindowsPath
+
+    from benchweave_sdk_server import authoring
+
+    class _WindowsFlavourDouble(PureWindowsPath):
+        # Discovery double: no filesystem exists under a Windows path on
+        # this host, so rglob serves the listing and expanduser/resolve
+        # stand still. str/relative_to/as_posix are the REAL Windows
+        # flavour — the part under test is untouched.
+        def expanduser(self):
+            return self
+
+        def resolve(self):
+            return self
+
+        def rglob(self, pattern):
+            return (
+                self / "src" / "second_probe" / "descriptor.json",
+                self / "src" / "second_probe" / "adapter.py",
+            )
+
+        def is_file(self):
+            return True
+
+    monkeypatch.setattr(authoring, "Path", _WindowsFlavourDouble)
+    monkeypatch.setattr(authoring, "create_project", lambda target, package: None)
+    monkeypatch.setattr(
+        "benchweave_sdk.presentation.create_ui_resources",
+        lambda target, package: None,
+    )
+    result = authoring._plugin_new("C:\\probe", "second_probe", True)
+    assert result["files"] == [
+        "src/second_probe/adapter.py",
+        "src/second_probe/descriptor.json",
+    ]
 
 
 def test_plugin_check_and_ui_check_return_clean(seam, starter_project) -> None:

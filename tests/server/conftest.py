@@ -9,15 +9,15 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from benchweave_sdk.presentation import create_ui_resources
-from benchweave_sdk.scaffold import create_project
 from fastapi.testclient import TestClient
 
-from benchweave_standalone.seam import StandaloneSeam
-from benchweave_standalone.security import GuardPolicy, new_token
-from benchweave_standalone.session import PluginSession, load_plugin_project, mock_exchanges
-from benchweave_standalone.transport import LoopingMockHost
-from benchweave_standalone.web import build_app
+from benchweave_sdk.presentation import create_ui_resources
+from benchweave_sdk.scaffold import create_project
+from benchweave_sdk_server.seam import StandaloneSeam
+from benchweave_sdk_server.security import GuardPolicy, new_token
+from benchweave_sdk_server.session import PluginSession, load_plugin_project, mock_exchanges
+from benchweave_sdk_server.transport import LoopingMockHost
+from benchweave_sdk_server.web import build_app
 
 TEST_PORT = 8477
 TEST_HOST = "127.0.0.1"
