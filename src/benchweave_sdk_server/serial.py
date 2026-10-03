@@ -14,13 +14,28 @@ bytes move.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
+import json
 import math
 import threading
 import time
-from typing import Protocol
+from datetime import UTC, datetime
+from typing import Any, Protocol
+
+from benchweave_sdk.capture import StandaloneCaptureWriter
 
 _TERMINATORS = {"lf": b"\n", "crlf": b"\r\n"}
+
+#: The section 8.1 stream transaction field sets, exactly as the guide's
+#: example validates them (and as the mock's scripted cells exercise them):
+#: strict field sets, unspecified fields refused.
+_RECEIVE = {"max_bytes", "termination", "exact_bytes"}
+_FIELDS = {
+    "stream_send": {"kind", "data"},
+    "stream_receive": {"kind"} | _RECEIVE,
+    "stream_exchange": {"kind", "data"} | _RECEIVE,
+}
 
 _READ_CHUNK = 4096
 _JOIN_TIMEOUT_S = 5.0
@@ -236,3 +251,185 @@ class SerialLink:
         self._thread.join(timeout=_JOIN_TIMEOUT_S)
         with contextlib.suppress(OSError):
             self._transport.close()
+
+
+class SerialCaptureServices:
+    """All eight CaptureServices members over one serial link.
+
+    Productises the guide's ``SerialStandaloneHost`` (whose docstring and
+    cells this class mirrors): the transport side validates the GENERIC
+    OTDP section 8.1 stream transactions exactly as the guide does — strict
+    field sets, only ``lf``/``crlf`` terminators on serial, ``eom`` refused,
+    ``exact_bytes`` precedence, the quiet-line ``{"data": b""}`` after the
+    quiet window, and unfinished receives staying buffered across
+    deadlines — through the link's reader-thread ring. The three capture
+    members delegate to a PER-CAPTURE :class:`StandaloneCaptureWriter`
+    (one capture in flight per writer instance; a finalised or aborted
+    capture retires its writer, so a long-lived host captures repeatedly)
+    with block-buffered appends: buffered bytes flush to the writer at
+    64 KiB, at finalise, and abort discards them, so a streaming adapter's
+    per-frame appends cannot explode the writer's one-file-per-chunk
+    staging; the manifest digest is computed by the writer over flushed
+    bytes only. ``record_evidence`` appends JSON lines, the host's own
+    ``at``/``operation_id`` fields winning over a caller's (the guide's
+    shape, unchanged). Real clocks throughout.
+    """
+
+    _BLOCK = 64 * 1024
+
+    def __init__(
+        self,
+        link: SerialLink,
+        *,
+        max_frame_bytes: int,
+        capture_root: Any = None,
+        evidence_path: Any = None,
+    ) -> None:
+        if (
+            not isinstance(max_frame_bytes, int)
+            or isinstance(max_frame_bytes, bool)
+            or max_frame_bytes < 1
+        ):
+            raise ValueError(
+                "standalone_serial_frame: max_frame_bytes must be a positive integer"
+            )
+        self._link = link
+        self._max_frame_bytes = max_frame_bytes
+        self._ceiling = min(link.transfer_ceiling, max_frame_bytes)
+        self._capture_root = capture_root
+        self._evidence_path = evidence_path
+        self._writers: dict[str, StandaloneCaptureWriter] = {}
+        self._buffers: dict[str, bytearray] = {}
+        self.evidence: list[dict[str, Any]] = []
+
+    @property
+    def link(self) -> SerialLink:
+        """The underlying link (the host's own close path uses it)."""
+        return self._link
+
+    # clocks
+    def monotonic(self) -> float:
+        """The real monotonic clock — deadlines must expire on live time."""
+        return time.monotonic()
+
+    def utc_now(self) -> str:
+        """The real UTC now, in the SDK stamp's ISO-8601 ``Z`` shape."""
+        return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+    # transport (OTDP section 8.1 stream transactions)
+    def _live(self, context: Any) -> None:
+        if context.is_cancelled() or self.monotonic() >= context.deadline_monotonic:
+            raise TimeoutError("operation cancelled or expired")
+
+    def _receive_bounds(self, t: dict[str, Any]) -> tuple[int, bytes, int]:
+        """The receive bounds with the A02 clamp: the per-receive ceiling is
+        ``min(transfer_ceiling, descriptor max_frame_bytes)`` — the plugin's
+        own declared bound governs."""
+        max_bytes = t["max_bytes"]
+        termination = t["termination"]
+        exact = t["exact_bytes"]
+        if (
+            not isinstance(max_bytes, int)
+            or isinstance(max_bytes, bool)
+            or not 1 <= max_bytes <= self._ceiling
+        ):
+            raise ValueError(f"max_bytes must be 1..{self._ceiling}")
+        if termination not in _TERMINATORS:  # serial has no "eom"
+            raise ValueError("termination must be 'lf' or 'crlf' on a serial port")
+        if exact is not None and (
+            not isinstance(exact, int)
+            or isinstance(exact, bool)
+            or not 0 <= exact <= max_bytes
+        ):
+            raise ValueError("exact_bytes must be None or 0..max_bytes")
+        return max_bytes, _TERMINATORS[termination], exact or 0
+
+    async def transfer(self, transaction: dict[str, Any], context: Any) -> dict[str, Any]:
+        """One bounded exchange over the link, the guide's §8.1 discipline:
+        grammar first (refused before any I/O), then the context liveness,
+        then the write (short counts refuse), then the receive through the
+        link's ring with the context's remaining deadline."""
+        kind = transaction.get("kind")
+        if kind not in _FIELDS or set(transaction) != _FIELDS[kind]:
+            raise ValueError(
+                f"not a section 8.1 stream transaction: {sorted(transaction)}"
+            )
+        max_bytes, terminator, exact = 0, b"", 0
+        if kind != "stream_send":
+            max_bytes, terminator, exact = self._receive_bounds(transaction)
+        if kind != "stream_receive" and not isinstance(transaction["data"], bytes):
+            raise ValueError("data must be bytes")
+        self._live(context)
+        if kind != "stream_receive":
+            data = transaction["data"]
+            try:
+                sent = await asyncio.to_thread(self._link.write, data)
+            except OSError as error:
+                raise ConnectionError(f"serial write failed: {error}") from error
+            if sent is not None and sent != len(data):
+                raise ConnectionError(f"serial write reported {sent} of {len(data)} bytes")
+            if kind == "stream_send":
+                return {}
+        received = await asyncio.to_thread(
+            self._link.take,
+            max_bytes=max_bytes,
+            terminator=terminator,
+            exact=exact,
+            deadline=context.deadline_monotonic,
+        )
+        return {"data": received}
+
+    async def close_transport(self, context: Any) -> None:
+        """Close the link; tolerant of repeated calls (Adapter.close rule)."""
+        self._link.close()
+
+    async def record_evidence(self, entry: dict[str, Any], context: Any) -> None:
+        """Append one evidence entry as a JSON line; the host's own ``at``
+        and ``operation_id`` fields win over a caller's (the guide's shape,
+        unchanged)."""
+        record = {**entry, "at": self.utc_now(), "operation_id": context.operation_id}
+        self.evidence.append(record)
+        if self._evidence_path is not None:
+            with self._evidence_path.open("a", encoding="utf-8") as stream:
+                stream.write(json.dumps(record, sort_keys=True) + "\n")
+
+    # capture: per-capture writers with block-buffered appends
+
+    def _writer_for(self, capture_id: str) -> StandaloneCaptureWriter:
+        writer = self._writers.get(capture_id)
+        if writer is None:
+            writer = StandaloneCaptureWriter(root=self._capture_root)
+            self._writers[capture_id] = writer
+        return writer
+
+    async def artifact_append(self, capture_id: str, data: bytes, context: Any) -> None:
+        """Buffer the append; flush to the per-capture writer at 64 KiB."""
+        buffer = self._buffers.get(capture_id)
+        if buffer is None:
+            buffer = self._buffers[capture_id] = bytearray()
+        buffer += bytes(data)
+        while len(buffer) >= self._BLOCK:
+            block = bytes(buffer[: self._BLOCK])
+            del buffer[: self._BLOCK]
+            await self._writer_for(capture_id).artifact_append(capture_id, block, context)
+
+    async def artifact_finalise(
+        self, capture_id: str, metadata: dict[str, Any], context: Any
+    ) -> dict[str, Any]:
+        """Flush the buffered tail, then publish through the per-capture
+        writer; the digest is computed by the writer over flushed bytes."""
+        writer = self._writers.pop(capture_id, None)
+        if writer is None:
+            writer = StandaloneCaptureWriter(root=self._capture_root)
+        buffer = self._buffers.pop(capture_id, None) or bytearray()
+        if buffer:
+            await writer.artifact_append(capture_id, bytes(buffer), context)
+        return await writer.artifact_finalise(capture_id, metadata, context)
+
+    async def artifact_abort(self, capture_id: str) -> None:
+        """Discard the buffer and the in-flight capture; publish nothing.
+        Unknown ids are a no-op (the writer protocol's abort rule)."""
+        self._buffers.pop(capture_id, None)
+        writer = self._writers.pop(capture_id, None)
+        if writer is not None:
+            await writer.artifact_abort(capture_id)
