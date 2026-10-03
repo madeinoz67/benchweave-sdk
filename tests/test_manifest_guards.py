@@ -385,7 +385,14 @@ def test_wheel_force_include_places_the_lock_where_verify_installed_reads_it() -
     # Two trees since issue #309 slice A: the sdk package and the folded
     # server host (the lock's force-include target stays the sdk package).
     assert wheel["packages"] == ["src/benchweave_sdk", "src/benchweave_sdk_server"]
-    assert wheel["force-include"] == {LOCK_NAME: f"benchweave_sdk/{LOCK_NAME}"}
+    assert wheel["force-include"] == {
+        LOCK_NAME: f"benchweave_sdk/{LOCK_NAME}",
+        # WS2: the copier template rides the same force-include mechanism —
+        # the repo root IS the template (copier.yml + template/), and an
+        # installed SDK renders `new` from the packaged copy.
+        "copier.yml": "benchweave_sdk/scaffold_template/copier.yml",
+        "template": "benchweave_sdk/scaffold_template/template",
+    }
 
 
 # --- An empty bundle has no rows to guard; the writer must not be the lane that

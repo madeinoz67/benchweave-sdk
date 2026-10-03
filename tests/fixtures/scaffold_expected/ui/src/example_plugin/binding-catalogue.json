@@ -1,0 +1,27 @@
+{
+  "contract_version": "0.3.0",
+  "descriptor_sha256": "9c4f80da496ba392d91483e49db4fcc3b878319640fe30773b7689162d8b8458",
+  "targets": [
+    {
+      "id": "voltage",
+      "kind": "observation",
+      "parameter_id": "voltage",
+      "variables": [
+        {
+          "id": "time",
+          "type": "number",
+          "unit": "s",
+          "shape": "scalar",
+          "axis_role": "receipt_time"
+        },
+        {
+          "id": "value",
+          "type": "number",
+          "unit": "V",
+          "shape": "scalar",
+          "axis_role": "value"
+        }
+      ]
+    }
+  ]
+}

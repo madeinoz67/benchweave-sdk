@@ -85,9 +85,9 @@ def test_registry_group_command_set_is_pinned_exactly() -> None:
         "unlist", "withdraw", "transfer",
     }
     # The top-level set is pinned too: the family arrived, nothing else moved
-    # (doctor, issue #347 WS1b, is the one addition since).
+    # (doctor, WS1b, then upgrade/adopt, issue #347 WS2, are the additions since).
     assert set(cli.commands) == {
-        "new", "check", "inventory", "check-ui", "check-preset",
+        "new", "upgrade", "adopt", "check", "inventory", "check-ui", "check-preset",
         "sync-standards", "package", "timestamp", "submit", "preview-ui",
         "registry", "doctor",
     }

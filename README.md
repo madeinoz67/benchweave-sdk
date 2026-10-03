@@ -29,6 +29,9 @@ Questions and discussion happen on the [BenchWeave Discord](https://discord.gg/Y
 Stable releases are on PyPI:
 
 ```sh
+# plugin authoring: `new` renders the copier template (issue #347 WS2)
+pip install 'benchweave-sdk[scaffold]'
+# scaffold-free install (check/conformance/preview only)
 pip install benchweave-sdk
 # or as an isolated CLI tool
 uv tool install benchweave-sdk
@@ -51,13 +54,15 @@ An installed SDK can check its vendored standards offline with `benchweave-sdk s
 > [!CAUTION]
 > A template is not qualified firmware or a real instrument driver.
 
-1. Install the SDK from PyPI with `uv pip install benchweave-sdk`. For more options, see [Installation](#installation).
+1. Install the SDK from PyPI with `uv pip install 'benchweave-sdk[scaffold]'` — the `[scaffold]` extra carries the copier dependency `new` renders through; without it, `new` refuses with `scaffold_extra_absent:` naming the install command. For more options, see [Installation](#installation).
 2. Run `benchweave-sdk new plugins/acme/model100 --package benchweave_acme_model100`. Replace `acme/model100` with your manufacturer and device name. The independent project contains `src/benchweave_acme_model100/` and `tests/`.
 3. Change into the generated project with `cd plugins/acme/model100`. Replace the explicitly synthetic protocol with verified device behaviour. Then update the descriptor of the generated plugin. The generated `AI-GUIDE.md` describes the design, build, test, review and release steps. `CLAUDE.md` at the root carries agent notes. The seeded skills under `src/benchweave_acme_model100/skills/` ship with the package. The skill `develop-plugin` is for plugin development. The skill `drive-device` is the demo driver to rewrite.
 4. Install the plugin with its test dependencies. Run the plugin tests. Run `benchweave-sdk check src/benchweave_acme_model100/descriptor.json`. Record all applicable S01–S18, C01–C12 and M01–M14 obligations and evidence. The basic SDK checks do not cover all of them.
 5. Build with `uv build`. Prepare the registry metadata and the reviewed evidence. Approve the release before publication or hardware qualification. `benchweave-sdk inventory` helps generate hashes, not a complete registry manifest.
 
 The generated runtime has no dependency on this SDK. The plugin test extra pins the SDK version from PyPI. Run `benchweave-sdk doctor` from the project to check that the pin matches the installed SDK. The command works offline. Generate a plugin dependency lock for the plugin. Retain it in the plugin repository.
+
+Scaffolded projects carry `.copier-answers.yml` (template provenance). `benchweave-sdk upgrade` moves a committed, clean git project to the installed SDK's released template tag — author-owned files are preserved; a file both sides changed comes back with conflict markers to resolve and commit. Pre-copier projects gain provenance with `benchweave-sdk adopt` (infers the base from the pyproject pin; refuses what it cannot provenance).
 
 ## Documentation
 

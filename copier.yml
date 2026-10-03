@@ -1,0 +1,24 @@
+# The BenchWeave SDK repository IS the copier template (issue #347 WS2):
+# `new` renders from the packaged copy of this tree; `copier update` clones
+# the tagged repository. No update scripts of any kind ship here: copier
+# gates template scripts behind --trust/--UNSAFE, and this scaffold never
+# requires them.
+package_name:
+  type: str
+  default: example_plugin
+with_ui:
+  type: bool
+  default: false
+sdk_version:
+  type: str
+otdp_version:
+  type: str
+_subdirectory: template
+# The globstars are load-bearing (spike-proven at update time): a single
+# `*` does NOT cross `/` in copier's update-time skip matching, so `src/*`
+# left src/<pkg>/adapter.py unprotected — the 3-way merge could push
+# template bytes over real device code. `src/**` and `tests/**` protect
+# the whole subtree; exact-name members (pyproject, README, CLAUDE.md)
+# match either way. Deleting this list makes owned-file preservation fail
+# (pinned by test_skip_list_is_load_bearing_on_update).
+_skip_if_exists: [pyproject.toml, README.md, CLAUDE.md, tests/**, src/**]

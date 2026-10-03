@@ -12,6 +12,14 @@ from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 LOCK_NAME = "standards-lock.json"
 VENDORED = "src/benchweave_sdk/standards"
 STAMP_NAME = "_GENERATED.txt"
+# The copier template members the wheel force-includes (issue #347 WS2):
+# the config, the provenance template (copier writes no answers file without
+# it) and the one managed file updates are measured against.
+SCAFFOLD_REQUIRED = (
+    "copier.yml",
+    "template/.copier-answers.yml.jinja",
+    "template/AI-GUIDE.md",
+)
 
 
 def _validate_preview_assets(package: Path) -> None:
@@ -154,12 +162,25 @@ def _validate_vendored_standards(root: Path) -> None:
         raise RuntimeError("Bundled standards lock is invalid") from exc
 
 
+def _validate_scaffold_template(root: Path) -> None:
+    """Refuse to package without the copier template root (issue #347 WS2).
+
+    The wheel force-includes ``copier.yml`` and ``template/`` into
+    ``benchweave_sdk/scaffold_template/``; a build that cannot see them ships
+    an SDK whose ``new`` renders nothing.
+    """
+    for member in SCAFFOLD_REQUIRED:
+        if not (root / member).is_file():
+            raise RuntimeError(f"Scaffold template member missing: {member}")
+
+
 class CustomBuildHook(BuildHookInterface):
     def initialize(self, version, build_data):
         root = Path(self.root)
         package = root / "src/benchweave_sdk"
         _validate_preview_assets(package)
         _validate_vendored_standards(root)
+        _validate_scaffold_template(root)
         _drop_vcs_exclusion_force_include(build_data)
 
 

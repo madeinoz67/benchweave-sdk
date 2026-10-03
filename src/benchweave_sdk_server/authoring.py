@@ -37,7 +37,7 @@ def _plugin_new(destination: str, package: str, with_ui: bool) -> dict[str, Any]
     from benchweave_sdk.presentation import create_ui_resources
 
     target = Path(destination).expanduser().resolve()
-    create_project(target, package)
+    create_project(target, package, with_ui=with_ui)
     if with_ui:
         create_ui_resources(target, package)
     files = sorted(

@@ -6,13 +6,16 @@ The SDK gives you a small starting point to develop a BenchWeave device plugin w
 
 The device is the hardware. The plugin is its Python integration and descriptor. Follow the [developer directory convention](https://github.com/madeinoz67/benchweave/blob/main/docs/device-developer-guide.md#repository-layout-for-device-plugins): `plugins/<manufacturer>/<name>/`, with `src/<python_package>/` inside that project. The name normally identifies the device model, such as `fnirsi/dps150`.
 
-The current SDK is `benchweave-sdk` 0.5.0 for Python 3.13+, OTDP 0.2.2 and adapter API 1.1, with registry 0.1.2 schemas. Its source lives in this repository. The [main BenchWeave repository](https://github.com/madeinoz67/benchweave) mounts it at `packages/sdk`. Build it separately from the gateway. It supplies structural typing interfaces, offline contract validation, a scripted mock host, bounded async conformance helpers, an external project generator and file-inventory helpers.
+The current SDK is `benchweave-sdk` 0.6.0 for Python 3.13+, OTDP 0.2.2 and adapter API 1.1, with registry 0.1.2 schemas. Its source lives in this repository. The [main BenchWeave repository](https://github.com/madeinoz67/benchweave) mounts it at `packages/sdk`. Build it separately from the gateway. It supplies structural typing interfaces, offline contract validation, a scripted mock host, bounded async conformance helpers, an external project generator and file-inventory helpers.
 
 ## 1. Install the SDK and generate your project
 
 Install the SDK from PyPI:
 
 ```sh
+# plugin authoring: `new` renders the copier template (issue #347 WS2)
+pip install 'benchweave-sdk[scaffold]'
+# scaffold-free install (check/conformance/preview only)
 pip install benchweave-sdk
 # or as an isolated CLI tool
 uv tool install benchweave-sdk
@@ -37,7 +40,7 @@ In your development directory, create an environment. Then install the built whe
 ```sh
 uv venv --python 3.13
 source .venv/bin/activate
-uv pip install dist/sdk/benchweave_sdk-0.5.0-py3-none-any.whl
+uv pip install 'dist/sdk/benchweave_sdk-0.5.0-py3-none-any.whl[scaffold]'
 benchweave-sdk new plugins/acme/model100 --package benchweave_acme_model100
 cd plugins/acme/model100
 uv pip install -e '.[test]'
@@ -47,6 +50,10 @@ pytest
 Keep the environment that contains the SDK wheel. If you create a new environment inside the project, install the wheel there too. For a repeatable `uv lock` against a locally built wheel, configure that wheel or your organisation's package source explicitly.
 
 Run `benchweave-sdk doctor` from the project to compare the pin with the installed SDK. The command names the recorded version, the installed version, and the reinstall command when they differ. The command works offline and does not fail the run. A stale SDK is a report, not an error.
+
+The generated project also carries `.copier-answers.yml` at its root: the durable provenance record of which SDK template version produced it (`new` pins the canonical repository and the matching `v<version>` template tag — template version == SDK version). The pyproject pin that `doctor` reads remains a mutable declaration the author may move; the answers file is the record.
+
+Moving a project to a newer template: `benchweave-sdk upgrade` (from the project root, on a committed and clean git tree) fetches the installed SDK's released template tag from the canonical repository and applies it — author-owned files (pyproject, README, CLAUDE.md, `src/<pkg>/**`, `tests/**`) are preserved byte-for-byte; the managed `AI-GUIDE.md` moves with the template, and a file you both changed gets conflict markers to resolve and commit. Released template tags only: a development install's version has no tag and the update refuses with `upgrade_tag_missing`. Projects scaffolded before the copier port gain provenance with `benchweave-sdk adopt` — it infers the package name and base version from the generated `pyproject.toml` (`--package` / `--scaffolded-at` override) and refuses a project whose provenance it cannot establish.
 
 Replace `acme/model100` with your manufacturer and device or plugin name. The destination controls the directory hierarchy. The `--package` option controls the Python import package. The SDK creates missing parent directories and refuses to overwrite an existing project. A destination that you reach through a symlinked directory is canonicalized before any write. On macOS, `/tmp/...` is such a symlink. Messages report the real path.
 

@@ -10,10 +10,13 @@ rubric's G5 gate is the obligation; this file is the detail behind it.
 1. **CLI-visible behavior** 🪝 (a command, flag, or output shape in `src/benchweave_sdk/cli.py`)
    → `user_guide/plugin-sdk.qmd` and the README's five-steps section.
 
-2. **Scaffold output changes** 🪝 (a generated project that looks different) → the scaffold's
-   generated docs, including the AI-GUIDE.md text carried in `scaffold.py`. Downstream
+2. **Scaffold output changes** 🪝 (a generated project that looks different) → the copier
+   template at the repository root (`copier.yml` + `template/`, packaged into the wheel at
+   `benchweave_sdk/scaffold_template/`), the committed R-2 fixture
+   (`tests/fixtures/scaffold_expected/`), and the scaffold's generated docs. Downstream
    plugin repositories diff generated output; treat the change as an interface change and
-   say so in the PR.
+   say so in the PR. The generated tree's provenance file `.copier-answers.yml` is part of
+   that interface (SRF-1).
 
 3. **Standards bundle/lock format changes** 🪝 → the compatibility notes in
    `standards-lock.json`; when the export format itself moves, the main repository's
@@ -60,7 +63,7 @@ rubric's G5 gate is the obligation; this file is the detail behind it.
 
 | Job | What it catches |
 |---|---|
-| `sdk` | ubuntu, macOS and Windows; deliberately NO submodules (the self-containment proof); `uv sync --locked --extra test`; `ruff check .`; `mypy src`; `pytest -q` (the behavioral suite); `sync-standards --check` (lock ↔ tree ↔ stamps on the committed state); `benchweave-sdk --version` entry-point smoke; a scaffold-and-check run; the publish workflow's installed-wheel smoke |
+| `sdk` | ubuntu, macOS and Windows; deliberately NO submodules (the self-containment proof); `uv sync --locked --extra test --extra scaffold` (the copier template lane, WS2); `ruff check .`; `mypy src`; `pytest -q` (the behavioral suite, including the R-2 byte-parity arms and the R-4 update lane in `tests/test_scaffold_update.py` — full checkout history via fetch-depth 0, offline against a throwaway tagged template repo); `sync-standards --check` (lock ↔ tree ↔ stamps on the committed state); `benchweave-sdk --version` entry-point smoke; a scaffold-and-check run; the publish workflow's installed-wheel smoke (installs `[scaffold]`) |
 | `docs` | this repository's `docs.yml`: the docs site builds from this repository's content |
 | `publish` | release integrity — tag, wheel, stamp verification |
 

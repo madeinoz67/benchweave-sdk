@@ -1,4 +1,13 @@
-"""Generate a standalone, read-only synthetic plugin; never contact hardware."""
+"""Generate a standalone, read-only synthetic plugin; never contact hardware.
+
+The project content lives in the copier template at the repository root
+(``copier.yml`` + ``template/``), packaged into the wheel at
+``benchweave_sdk/scaffold_template/`` (PKG-2 force-include). This module owns
+the render orchestration: guards, staging, the answers pin that records
+provenance, and the post-render descriptor validation. Byte parity between
+the template render and the committed fixture is pinned by
+``tests/test_scaffold_copier.py`` (R-2).
+"""
 
 from __future__ import annotations
 
@@ -7,7 +16,10 @@ import keyword
 import re
 import shutil
 import sys
+import tempfile
 import tomllib
+from importlib.resources import files
+from importlib.resources.abc import Traversable
 from pathlib import Path
 from typing import Any
 
@@ -21,598 +33,162 @@ RESERVED_PACKAGE_NAMES = frozenset({"benchweave", "benchweave_sdk"}) | frozenset
     sys.stdlib_module_names
 )
 
-ADAPTER = '''"""Read-only synthetic OTDP adapter; qualify a real device separately."""
-import math
-from .protocol import transaction, parse_identity, parse_voltage
+# The canonical copier template source (issue #347 WS2): the tagged SDK
+# repository itself. `new` renders from a packaged copy offline; this URL is
+# what the answers pin records so a scaffolded project can later update
+# against released template tags (template version == SDK version).
+CANONICAL_TEMPLATE_URL = "https://github.com/madeinoz67/benchweave-sdk"
 
 
-def create_plugin():
-    return Plugin()
+def _load_copier() -> Any:
+    """The copier entry point, or a refusal naming the install command.
+
+    Copier rides the optional ``[scaffold]`` extra (the signing-extra
+    precedent): the base install never gains the copier dependency tree, and
+    its absence refuses with a machine-matchable prefix instead of a traceback.
+    """
+    try:
+        from copier import run_copy
+    except ImportError as exc:  # covered by the extra-absent refusal test
+        raise ValueError(
+            "scaffold_extra_absent: project scaffolding needs the optional extra "
+            "(pip install benchweave-sdk[scaffold])"
+        ) from exc
+    return run_copy
 
 
-class Plugin:
-    def __init__(self):
-        self.services = None
-        self.closed = False
+def _sdk_checkout_root() -> Path | None:
+    """The SDK repository checkout containing this module, or None when installed.
 
-    async def open(self, descriptor, services, context):
-        if self.services is not None or self.closed:
-            raise RuntimeError("Use a fresh plugin instance")
-        self.services = services
+    Same twin-halves rule as ``cli._sdk_checkout_root`` (repo mode for
+    ``sync-standards``): the grandparent directory is a checkout whose
+    pyproject names this project AND this module runs from that checkout's
+    ``src`` tree. Duplicated here because cli imports this module; the sync
+    lane's copy is the reference.
+    """
+    from .validation import _project_name
 
-    async def execute(self, request, context):
-        verb = request.get("verb")
-        operation_id = request.get("operation_id")
-        dispatched = False
-
-        def failure(code, message, uncertain=False):
-            return {"operation_id": operation_id, "verb": verb,
-                    "status": "unknown" if uncertain else "error",
-                    "error": {"code": code, "message": message,
-                              "dispatch_state": "unknown" if uncertain else "not_dispatched"}}
-
-        def remaining():
-            deadline = context.deadline_monotonic
-            if (not math.isfinite(deadline) or context.is_cancelled()
-                    or self.services.monotonic() >= deadline):
-                raise TimeoutError("Cancelled or expired")
-
-        if self.services is None or self.closed:
-            return failure("INTERNAL_ERROR", "Plugin is not open")
-        if operation_id != context.operation_id:
-            return failure("INVALID_ARGUMENT", "Context identity mismatch")
-        if verb not in ("identify", "read"):
-            return failure("UNSUPPORTED", "Only identify and voltage read are supported")
-        if (set(request) != {"operation_id", "verb", "arguments"}
-                or not isinstance(operation_id, str) or not operation_id):
-            return failure("INVALID_ARGUMENT", "Invalid envelope")
-        expected = {} if verb == "identify" else {"parameter": "voltage"}
-        if request["arguments"] != expected:
-            return failure("INVALID_ARGUMENT", "Invalid arguments")
-        try:
-            remaining()
-            await context.mark_dispatch_started()
-            dispatched = True
-            response = await self.services.transfer(transaction(verb), context)
-            remaining()
-            if verb == "identify":
-                data = parse_identity(response["data"])
-            else:
-                data = {"parameter": "voltage", "value": parse_voltage(response["data"]),
-                        "unit": "V", "observed_at": self.services.utc_now(), "age_ms": 0,
-                        "quality": "valid", "source": "device"}
-            return {"operation_id": operation_id, "verb": verb, "status": "ok", "data": data}
-        except TimeoutError:
-            return failure("TIMEOUT", "Deadline or cancellation", dispatched)
-        except ConnectionError:
-            return failure("TRANSPORT_ERROR", "Connection lost", dispatched)
-        except (ValueError, KeyError, TypeError):
-            return failure("PROTOCOL_ERROR", "Invalid device response", dispatched)
-        except RuntimeError:
-            return failure("INTERNAL_ERROR", "Host resource or internal failure", dispatched)
-
-    async def next_event(self, subscription_id, context):
+    package_dir = Path(__file__).resolve().parent
+    candidate = package_dir.parents[1]
+    if _project_name(candidate) != "benchweave-sdk":
         return None
-
-    async def close(self, context):
-        if self.closed:
-            return
-        if self.services is not None:
-            await self.services.close_transport(context)
-        self.closed = True
-'''
-
-PROTOCOL = '''"""Synthetic exchanges only; this is not a commercial instrument driver."""
-import math
-
-
-def transaction(verb):
-    return {"kind": "stream_exchange", "data": b"ID?\\n" if verb == "identify" else b"V?\\n",
-            "max_bytes": 128, "termination": "lf", "exact_bytes": None}
-
-
-def parse_identity(raw):
-    if raw != b"SDK Example,demo,SIM001,1.0.0\\n":
-        raise ValueError("Unexpected identity")
-    return {"manufacturer": "SDK Example", "model": "demo", "serial": "SIM001",
-            "firmware": "1.0.0", "source": "device"}
-
-
-def parse_voltage(raw):
-    if not isinstance(raw, bytes) or len(raw) > 128 or not raw.endswith(b"\\n"):
-        raise ValueError("Incomplete frame")
-    value = float(raw.decode("ascii"))
-    if not math.isfinite(value):
-        raise ValueError("Nonfinite reading")
-    return value
-'''
-
-TEST = """import asyncio
-import json
-from importlib.resources import files
-from benchweave_sdk.testing import MockContext, MockHost
-from benchweave_sdk.validation import validate_descriptor, validate_result
-from __PLUGIN__.adapter import create_plugin
-from __PLUGIN__.protocol import transaction
-
-
-def test_identify_and_read():
-    async def run():
-        descriptor = json.loads(files("__PLUGIN__").joinpath("descriptor.json").read_text())
-        validate_descriptor(descriptor)
-        host = MockHost([(transaction("identify"), {"data": b"SDK Example,demo,SIM001,1.0.0\\n"}),
-                         (transaction("read"), {"data": b"3.3\\n"})])
-        plugin = create_plugin()
-        context = MockContext("op-1", deadline_monotonic=1.0)
-        await plugin.open(descriptor, host, context)
-        for verb, args in (("identify", {}), ("read", {"parameter": "voltage"})):
-            request = {"operation_id": "op-1", "verb": verb, "arguments": args}
-            result = await plugin.execute(request, context)
-            validate_result(result, request)
-            assert result["status"] == "ok"
-        host.assert_complete()
-        await plugin.close(context)
-        await plugin.close(context)
-    asyncio.run(run())
-
-
-def test_quiet_lifecycle():
-    from benchweave_sdk.conformance import check_lifecycle
-    descriptor = json.loads(files("__PLUGIN__").joinpath("descriptor.json").read_text())
-    asyncio.run(check_lifecycle(create_plugin, descriptor))
-
-
-def test_no_transmit_before_dispatch():
-    async def run():
-        for reason in ("cancelled", "expired", "bad_arguments", "wrong_context"):
-            host = MockHost([])
-            plugin = create_plugin()
-            context = MockContext("op", deadline_monotonic=1.0)
-            await plugin.open({}, host, context)
-            request = {"operation_id": "op", "verb": "read",
-                       "arguments": {"parameter": "voltage"}}
-            if reason == "cancelled":
-                context.cancel()
-            elif reason == "expired":
-                host.advance(1.0)
-            elif reason == "bad_arguments":
-                request["arguments"]["parameter"] = "unknown"
-            else:
-                context.operation_id = "other"
-            result = await plugin.execute(request, context)
-            validate_result(result, request)
-            assert result["status"] == "error"
-            assert result["error"]["dispatch_state"] == "not_dispatched"
-            assert not context.dispatched and not host.transfers
-            await plugin.close(MockContext("cleanup", deadline_monotonic=2.0))
-    asyncio.run(run())
-
-
-def test_uncertain_response_after_dispatch():
-    async def run():
-        responses = ({"data": b"nan\\n"}, {"data": b"3.3"}, {"data": b"\\xff\\n"},
-                     ConnectionError("lost"), TimeoutError("expired"), RuntimeError("host"))
-        for response in responses:
-            host = MockHost([(transaction("read"), response)])
-            plugin = create_plugin()
-            context = MockContext("op", deadline_monotonic=1.0)
-            await plugin.open({}, host, context)
-            request = {"operation_id": "op", "verb": "read",
-                       "arguments": {"parameter": "voltage"}}
-            result = await plugin.execute(request, context)
-            validate_result(result, request)
-            assert result["status"] == "unknown"
-            assert result["error"]["dispatch_state"] == "unknown"
-            assert context.dispatched
-            host.assert_complete()
-            await plugin.close(context)
-    asyncio.run(run())
-"""
-
-
-AI_GUIDE = """# Build a BenchWeave device plugin with AI
-
-Use one prompt at a time and review its result. This project is a synthetic
-read-only example. The hardware is the device; this Python package is its plugin.
-Use plugins/<manufacturer>/<name>/ as the project root in a plugin collection,
-with src/<package>/ inside. That project can become its own external repository.
-The SDK implementation lives separately in BenchWeave's packages/sdk/.
-
-## Project layout
-
-Run installation, pytest and uv build from the directory containing pyproject.toml.
-The generated project contains README.md, this AI-GUIDE.md, CLAUDE.md (agent
-notes for the repository root), tests/test_plugin.py, and src/<package>/ with
-__init__.py, adapter.py, protocol.py, descriptor.json, protocol.md, vectors.json
-and skills/ — the seeded agent skills (develop-plugin for the authoring
-workflow, drive-device as the synthetic demo driver to rewrite). The protocol
-and vectors files begin as synthetic evidence; the skills are distributable
-content inside the package.
-
-With --with-ui, the SDK also generates UI-GUIDE.md at the project root and
-presentation.json, binding-catalogue.json and ui/manifest.json inside src/<package>/.
-Add optional settings schemas under src/<package>/ui/settings/, complete presets
-under src/<package>/ui/presets/, and declared assets under src/<package>/ui/assets/.
-Those optional directories and configuration files are author-supplied. See
-UI-GUIDE.md when present. For configuration without UI, use src/<package>/config/
-with settings.schema.json and presets/. When UI presents those settings, keep one
-authoritative copy under ui/settings/ and ui/presets/ rather than duplicating it.
-
-Optional project-root docs/compatibility.md and docs/qualification.md describe
-supported models/firmware and supervised hardware evidence. firmware/README.md
-and firmware/release-notes/ can hold vendor source/checksum references and upgrade
-constraints. They do not enable SDK firmware discovery or flashing. Additional
-tests/test_configuration.py, tests/test_presentation.py and tests/fixtures/ can
-cover those features and firmware-specific protocol exchanges. These files are
-recommended author additions, not generated by the scaffold.
-
-Keep distributable resources inside src/<package>/ for inclusion in the wheel.
-Generate uv.lock for development dependencies; build outputs go in dist/.
-Keep credentials, deployment configuration and collected runtime data outside the
-plugin source package. A preset is configuration, not a retained measurement.
-
-## 1. Establish the facts
-
-> Inspect this project and my supplied device manual/protocol evidence. List
-> exact model/firmware support, intended operations, command sources, ranges,
-> transport bounds, side effects and unknowns. Map them to OTDP 0.2.2 and adapter
-> API 1.1. Do not invent commands. Propose a small implementation plan before
-> editing. Do not contact hardware, flash firmware, energise outputs or publish.
-
-## 2. Implement against mocks
-
-> Implement the agreed protocol in protocol.py and async adapter.py. Update the
-> descriptor and trace every command to evidence. Keep create_plugin no-argument,
-> construction/open free of device I/O, and transport behind supplied scoped
-> services — a device needing a non-scoped transport declares a pinned
-> transport-provider contract (see the vendored otdp-transport-provider schema;
-> benchweave-sdk check verifies the pin offline). Mark dispatch before transmit,
-> honour monotonic deadlines and cancellation, never retry silently, and
-> preserve uncertain outcomes. Keep imports relative within this package or
-> standard-library-only for the current gateway loader. Run the synthetic
-> identify/read example before replacing it.
-
-## 3. Demonstrate behaviour
-
-> Extend the exact-exchange tests for supported operations, wrong correlation,
-> invalid arguments, expiry/cancellation before and after dispatch, malformed or
-> truncated responses, transport loss and repeated/failed-open cleanup. Use SDK
-> validation and conformance helpers. Run the tests and show commands/results.
-> List applicable S/C/M requirements these helpers do not prove. Label synthetic
-> evidence separately from device captures. Do not claim hardware qualification.
-
-## 4. Review and qualify separately
-
-> Prepare this exact revision, descriptor, compatibility claims and evidence for
-> an independent review using BenchWeave's AI device integration reviewer role.
-> Report defects and missing evidence with closure tests. Draft a supervised
-> hardware qualification plan; do not execute it without separate authority.
-
-## 5. Prepare a release for owner review
-
-> Build the plugin wheel and source distribution. Prepare the registry manifest,
-> exact payload inventory/hashes, dependency locks, licence, provenance and
-> evidence status required by the registry contract; the seeded skills under
-> src/<package>/skills/ are catalogued with the skill role, while CLAUDE.md is
-> repository tooling - the wheel packages src/<package>/ only, so it reaches a
-> release payload solely by deliberate publisher inclusion (catalogued as
-> documentation). A Python wheel is not a registry admission bundle. Test the
-> installed plugin against the supported gateway version. Show me the artefacts
-> and remaining gaps before publishing.
-
-The SDK does not install a plugin into a live gateway. A Docker deployment needs
-an admitted bundle and gateway deployment configuration; an SDK development
-install changes only the development environment. Capture/profile operations,
-physical providers and complete OTDP conformance require additional work beyond
-this starter. Async test timeouts cannot stop blocking or hostile Python code;
-use an isolated process without bench access for candidate-code execution.
-"""
-
-
-CLAUDE_MD = """# Agent notes for this plugin project
-
-Project: synthetic BenchWeave device plugin (package `__PLUGIN__`). This
-file is developer tooling at the repository root: it never enters the wheel
-(`packages = ["src/__PLUGIN__"]`), and if a release ever ships it, the
-registry manifest catalogues it as `documentation`, not `skill`.
-
-## Commands
-
-- Run the tests: `pytest`
-- Validate the descriptor offline: `benchweave-sdk check src/__PLUGIN__/descriptor.json`
-- Build the wheel and sdist: `uv build`
-- Pin dependencies: `uv lock`
-
-## Where things are
-
-- `AI-GUIDE.md` — the five build-out prompts (facts, implementation,
-  demonstration, review, release)
-- `src/__PLUGIN__/skills/` — the seeded agent skills:
-  `develop-plugin/SKILL.md` (authoring workflow, elicitation questions,
-  release mechanics) and `drive-device/SKILL.md` (the synthetic demo
-  driver; rewrite it for the real device)
-- `src/__PLUGIN__/descriptor.json` — the OTDP descriptor under check
-
-## Safety rails
-
-This project is synthetic: do not contact hardware, flash firmware or
-energise outputs while authoring plugin code, and publish nothing without
-separate authority from the project owner.
-"""
-
-DEVELOP_SKILL = """---
-name: __PLUGIN_DASHED__-plugin-development
-description: Author, implement, check and release the __PLUGIN__ BenchWeave
-  device plugin - elicitation questions keyed to the real descriptor
-  surfaces, adapter discipline, standalone-MCP shape and release mechanics.
----
-
-# Developing the __PLUGIN__ plugin
-
-Work prompt-first: establish facts before editing, implement against mocks,
-then review and release. The descriptor is the contract; every command you
-wire must trace to evidence. Do not invent commands or capabilities.
-
-## 1. Elicitation - ask before generating
-
-Ask all of these before writing the descriptor, adapter or manifest. Each
-question names the real surface it fills.
-
-**Device identity** (`identity`): manufacturer and exact model? Which
-`strategy` - `scpi_idn`, `uart_identity`, `commissioned` or `adapter`?
-`firmware_policy` `listed` (then which `supported_firmware` versions?) or
-`commissioning_required`?
-
-**Transport** (`transport`, nine types): `serial`, `uart_scpi`,
-`uart_json`, `lan_scpi`, `usbtmc`, `can`, `i2c`, `spi` or `custom`? Which
-`connection_key`? Which settings - serial/uart: `baud`, `data_bits`,
-`parity`, `stop_bits`, `rtscts`, `max_frame_bytes` (uart_json also
-`framing`; uart_scpi also `max_response_bytes`, `read_termination`,
-`write_termination`); lan_scpi: `port`, `protocol`, `read_termination`,
-`write_termination`, `max_response_bytes`; usbtmc: `vid`, `pid`,
-`read_termination`, `write_termination`, `max_response_bytes`; can:
-`receive_id`, `fd`, `extended`, `payload_length`; i2c: `address`; spi:
-`mode`, `speed_hz`, `bits_per_word`; custom: `protocol_reference`?
-
-**Class and profiles** (`profiles`, `actions`): which of the twelve OTDP
-classes - `otdp.dc_psu/1.0.0`, `otdp.dmm/1.0.0`, `otdp.oscilloscope/1.0.0`,
-`otdp.logic_analyser/1.0.0`, `otdp.function_generator/1.0.0`,
-`otdp.electronic_load/1.0.0`, `otdp.smu/1.0.0`, `otdp.daq/1.0.0`,
-`otdp.embedded_controller/1.0.0`, `otdp.switch_matrix/1.0.0`,
-`otdp.spectrum_analyser/1.0.0`, `otdp.vna/1.0.0`? Which profile ids to
-declare, and which class action contracts to adopt?
-
-**Operations** (`capabilities` must equal `operations` keys - S01): which
-of the ten verbs - `identify`, `read`, `write`, `invoke`, `capture`,
-`reset`, `self_test`, `get_errors`, `stream_subscribe`,
-`stream_unsubscribe`? Per verb the operation policy: `timeout_ms`,
-`side_effect` (`none` or `state_change`), `retry` (`never` or
-`idempotent`), `cancellable`, `completion` (`dispatched`, `acknowledged`,
-`readback` or `physical`)?
-
-**Parameters** (`parameters`): per parameter the `name`, `type`
-(`float`, `int`, `bool`, `enum`, `string`), `access` (`ro`, `wo`, `rw`),
-`semantic` (`measurement`, `setpoint`, `state`, `configuration`), `unit`,
-`description`? A `range` or `enum_values`? `string_constraints`?
-`hazard_class` (`unknown`, `none`, `low`, `high`)? `read_policy`
-(`max_age_ms`, `destructive`) and `write_policy` (completion, effect,
-retry, tolerances, settling)? `binding` kind? Names unique (S01), bounds
-not reversed (S02)?
-
-**Channels, capture and streams** (the capture/decode case): `channels`
-entries - `id`, `label`, `role`, `quantities`, `parameter_names`? Which
-`capture_formats` and `capture_limits`? Which `stream_limits`?
-
-**Diagnostics** (`diagnostics`): self-test and error-reporting surface?
-Which of `self_test` / `get_errors` apply?
-
-**Adapter** (`integration.adapter`): `entry_point`, `api_version`,
-`version`, `dependencies`, `permissions` (for example
-`scoped_transport`)?
-
-**Evidence and provenance** (`provenance`): command sources
-(`sources[]` title/reference/revision)? `test_vectors` paths? Evidence
-level per report - `structural`, `simulated` or `hardware`?
-
-**Release**: package `kind` - `profile`, `descriptor` or
-`implementation`? (See section 5.)
-
-**Safety boundary**: what must never be done without separate authority?
-While authoring: do not contact hardware, flash firmware or energise
-outputs, and publish nothing without separate authority.
-
-## 2. Firmware development
-
-Keep vendor source and checksum references under `firmware/` and release
-notes under `firmware/release-notes/`; they document constraints only.
-Decide `listed` (exact supported versions) versus `commissioning_required`
-(no implied tested firmware) from real evidence. The SDK does no firmware
-discovery and no flashing - ever.
-
-## 3. Adapter creation
-
-Implement `protocol.py` and async `adapter.py` against the real adapter
-surface: `open(descriptor, services, context)`, `execute(request,
-context)`, `next_event`, `close`. Keep `create_plugin` no-argument and
-construction/open free of device I/O. Mark dispatch before transmit,
-honour monotonic deadlines and cancellation, never retry silently,
-preserve uncertain outcomes, and keep imports relative within this
-package or standard-library-only for the gateway loader. The SDK's
-`MockHost`/`MockContext` exchanges (see tests/test_plugin.py) are the
-reference pattern for exact-exchange tests.
-
-## 4. Standalone MCP server (workflow, not shipped machinery)
-
-The SDK ships no MCP server. To use this plugin standalone, write a
-project-local MCP server: construct the adapter via `create_plugin()`,
-implement the five-method host contract over a real transport (settings
-from the descriptor) - `transfer(transaction, context)`, `monotonic()`,
-`utc_now()`, `close_transport(context)`, `record_evidence(entry,
-context)` - and expose the descriptor's verbs as MCP tools, keeping the
-dispatch-before-transmit, deadline and uncertain-outcome disciplines.
-Keep it out of the distributed package unless the owner decides
-otherwise.
-
-## 5. Release
-
-Build the wheel and sdist, then prepare the registry manifest with the
-exact payload inventory and hashes (`benchweave-sdk inventory` emits the
-path/bytes/sha256 rows; the manifest assigns roles). File roles for this
-project's files: the skills under `src/__PLUGIN__/skills/` are `skill`;
-`descriptor.json` is `descriptor`; `protocol.md` and `vectors.json` are
-`test` evidence inputs per the registry specification's role list
-(`profile`, `descriptor`, `implementation`, `schema`, `test`,
-`documentation`, `licence`, `sbom`, `build_provenance`,
-`dependency_lock`, `skill`); the root `CLAUDE.md` is `documentation` if
-the publisher ships it at all - it is dev tooling by default. An
-`implementation`-kind payload must contain `implementation`, `sbom`,
-`build_provenance` and `dependency_lock` entries. Evidence reports carry
-their honest level - `structural`, `simulated` or `hardware`; synthetic
-results are never hardware qualification. Publication happens only with
-the owner's review: publish nothing without separate authority.
-"""
-
-DRIVE_SKILL = """---
-name: __PLUGIN_DASHED__-device-operation
-description: Drive the __PLUGIN__ synthetic demo device - identify and read
-  the voltage parameter over the mock exchanges; the template to rewrite
-  for the real instrument.
----
-
-# Driving the __PLUGIN__ device (synthetic demo)
-
-This skill drives the SEEDED SYNTHETIC PROTOCOL, not a real instrument:
-`ID?` + LF returns `SDK Example,demo,SIM001,1.0.0` + LF; `V?` + LF returns
-a finite ASCII voltage + LF. Supported verbs are `identify` and `read` of
-the `voltage` parameter (unit V, read-only measurement).
-
-Open the adapter via `create_plugin()`, `open(descriptor, services,
-context)`, then execute `identify` (no arguments) and `read`
-(`{"parameter": "voltage"}`). Expect `status: "ok"` with identity fields
-or a measurement value; the mock exchanges in `vectors.json` and
-`tests/test_plugin.py` are the exact reference.
-
-**Rewrite this skill for the real device.** It is the honesty placeholder
-the synthetic `adapter.py` and `protocol.py` already are: replace the
-exchanges, verbs, parameters, error handling and any capture/decode flow
-with the real instrument's evidenced behaviour, and keep every command
-traceable to the manual or captures.
-
-Safety: authoring and driving stay on mocks - do not contact hardware,
-flash firmware or energise outputs from plugin code, and publish nothing
-without separate authority.
-"""
-
-
-def descriptor_for(package: str) -> dict[str, Any]:
-    """Build the synthetic plugin descriptor for ``package``.
-
-    The descriptor advertises the synthetic identify/read protocol
-    (OTDP descriptor 0.2.2, adapter API 1.1) with
-    ``<package>.adapter:create_plugin`` as its entry point.
-
-    Parameters
-    ----------
-    package
-        Lowercase Python package name of the generated project.
-
-    Returns
-    -------
-    dict
-        A descriptor that passes ``validate_descriptor``.
-    """
-    policy = {
-        "timeout_ms": 1000,
-        "side_effect": "none",
-        "retry": "never",
-        "cancellable": True,
-        "completion": "acknowledged",
-    }
-    return {
-        # The lock's active OTDP version (issue #221, gateway slice 7): the
-        # same call validation.py::_resolve_otdp_pin makes for an unpinned
-        # descriptor — the scaffold generates what the SDK validates today,
-        # and the SDK's state choosing a version is code, not an author's
-        # declaration.
-        "otdp_version": active_version("otdp"),
-        # Authored example content (registered with the counter, gateway
-        # register row: the otdp descriptor schema PATTERNs
-        # descriptor_version rather than const-ing it, so nothing derives
-        # it).
-        "descriptor_version": "0.1.0",
-        "id": f"dev.example.{package.replace('_', '-')}",
-        "display_name": "SDK synthetic example",
-        "description": "Simulated read-only protocol; not hardware qualified.",
-        "identity": {
-            "strategy": "adapter",
-            "manufacturer": "SDK Example",
-            "model": "demo",
-            "firmware_policy": "listed",
-            "supported_firmware": ["1.0.0"],
-        },
-        "integration": {
-            "mode": "adapter",
-            "adapter": {
-                "entry_point": f"{package}.adapter:create_plugin",
-                "api_version": "1.1",
-                "version": "0.1.0",
-                "dependencies": [],
-                "permissions": ["scoped_transport"],
-            },
-        },
-        "transport": {
-            "type": "serial",
-            "connection_key": "example_device",
-            "settings": {
-                "baud": 115200,
-                "data_bits": 8,
-                "parity": "none",
-                "stop_bits": 1,
-                "rtscts": False,
-                "max_frame_bytes": 128,
-            },
-        },
-        "capabilities": ["identify", "read"],
-        "operations": {"identify": policy, "read": policy},
-        "parameters": [
-            {
-                "name": "voltage",
-                "description": "Synthetic voltage",
-                "type": "float",
-                "access": "ro",
-                "semantic": "measurement",
-                "unit": "V",
-                "binding": {"kind": "adapter", "key": "voltage"},
-                "read_policy": {"max_age_ms": 0, "destructive": False},
-            }
-        ],
-        "required_features": ["otdp.core/0.1.0", "otdp.adapter/0.1.0"],
-        "provenance": {
-            "sources": [
-                {"title": "SDK synthetic protocol", "reference": "protocol.md", "revision": "0.1.0"}
-            ],
-            "test_vectors": [
-                {
-                    "id": "example",
-                    "path": "vectors.json",
-                    "purpose": "Synthetic identify/read exchanges",
-                }
-            ],
-        },
-    }
-
-
-def _parameterize(template: str, package: str) -> str:
-    """Substitute the package tokens in a seeded skill template.
-
-    Frontmatter skill names hyphenate the package (``lumen_probe`` becomes
-    ``lumen-probe-...``), matching the generated ``pyproject.toml`` project
-    name and descriptor id practice — harness skill-name conventions refuse
-    underscores, and names must not collide across plugins.
-    """
-    return template.replace("__PLUGIN_DASHED__", package.replace("_", "-")).replace(
-        "__PLUGIN__", package
+    if package_dir != candidate / "src" / "benchweave_sdk":
+        return None
+    return candidate
+
+
+def _traversable_members(node: Traversable, prefix: str = "") -> list[tuple[str, bytes]]:
+    members: list[tuple[str, bytes]] = []
+    for child in node.iterdir():
+        if child.is_dir():
+            members.extend(_traversable_members(child, prefix + child.name + "/"))
+        else:
+            members.append((prefix + child.name, child.read_bytes()))
+    return members
+
+
+def _packaged_template_members() -> dict[str, bytes] | None:
+    """The wheel's force-included template (PKG-2), or None in a source checkout."""
+    base = files("benchweave_sdk") / "scaffold_template"
+    if not (base / "copier.yml").is_file():
+        return None
+    members: dict[str, bytes] = {"copier.yml": (base / "copier.yml").read_bytes()}
+    members.update(
+        ("template/" + relative, content)
+        for relative, content in _traversable_members(base / "template")
     )
+    return members
+
+
+def _repo_template_members() -> dict[str, bytes] | None:
+    """The checkout's working-tree template (dev/test mode), or None when installed."""
+    root = _sdk_checkout_root()
+    if root is None or not (root / "copier.yml").is_file() or not (root / "template").is_dir():
+        return None
+    members = {"copier.yml": (root / "copier.yml").read_bytes()}
+    for path in (root / "template").rglob("*"):
+        if path.is_file():
+            members["template/" + path.relative_to(root / "template").as_posix()] = (
+                path.read_bytes()
+            )
+    return members
+
+
+def _materialize_template(scratch: Path) -> Path:
+    """Write the template members into ``scratch``; return the template root.
+
+    copier is never pointed at this repository's checkout: a git-backed
+    ``src_path`` makes it clone HEAD, so uncommitted template bytes would
+    silently vanish from a repo-mode render. The materialized copy is also
+    the exact layout the wheel force-includes, so repo mode and installed
+    mode render from the same shape — and parity tests see working-tree
+    template bytes, not the last commit's.
+    """
+    members = _packaged_template_members()
+    if members is None:
+        members = _repo_template_members()
+    if members is None:
+        raise ValueError(
+            "scaffold_template_missing: the copier template is neither packaged with "
+            "this install nor present in a repository checkout; reinstall "
+            "benchweave-sdk[scaffold]"
+        )
+    root = scratch / "scaffold_template"
+    for relative, content in members.items():
+        member = root / relative
+        member.parent.mkdir(parents=True, exist_ok=True)
+        member.write_bytes(content)
+    return root
+
+
+def _enforce_lf(root: Path) -> None:
+    """Rewrite CRLF to LF across a rendered tree (PR #93's Windows lane).
+
+    The Windows CI lane observes CRLF bytes in rendered members (AI-GUIDE,
+    README, adapter, ...) even though the template checkout is LF and the
+    parity fixture is LF — whatever the exact stage introduces it, the
+    scaffold's output contract is LF on every platform, and this makes it
+    hold mechanically. Every template member is text, so any file whose
+    bytes carry \\r\\n is normalized in place; ``.git`` is never touched
+    (``upgrade`` runs this inside a live project repository).
+    """
+    for entry in root.rglob("*"):
+        if entry.is_file() and ".git" not in entry.relative_to(root).parts:
+            content = entry.read_bytes()
+            if b"\r\n" in content:
+                entry.write_bytes(content.replace(b"\r\n", b"\n"))
+
+
+def _pin_answers(project: Path, sdk_version: str) -> None:
+    """Rewrite the fresh answers file's provenance lines to durable values.
+
+    The render happened from a materialized copy of the packaged template —
+    an ephemeral directory — so copier records that path as ``_src_path`` and
+    (the copy is not a git repository) records no ``_commit`` at all. Both
+    lines are replaced here: the canonical repository URL and the template
+    tag that matches the running SDK version (template version == SDK
+    version). Line-level rewrites on a file whose shape the render just
+    produced — no YAML dependency, no silent substitution.
+    """
+    answers = project / ".copier-answers.yml"
+    if not answers.is_file():
+        # The template must ship .copier-answers.yml.jinja; without it copier
+        # writes no provenance at all and a scaffolded project can never update.
+        raise ValueError(
+            "scaffold_answers_missing: the template does not render .copier-answers.yml; "
+            "the answers-file template member is required"
+        )
+    rendered = answers.read_text(encoding="utf-8").splitlines(keepends=True)
+    kept = [line for line in rendered if not line.startswith(("_commit:", "_src_path:"))]
+    insert_at = 1 if kept and kept[0].startswith("#") else 0
+    kept[insert_at:insert_at] = [
+        f"_commit: v{sdk_version}\n",
+        f"_src_path: {CANONICAL_TEMPLATE_URL}\n",
+    ]
+    # Byte-exact write: Path.write_text opens text mode, and text mode
+    # translates \n to os.linesep — CRLF on Windows, which would break the
+    # R-2 byte-parity comparison against the LF fixture on that lane.
+    answers.write_bytes("".join(kept).encode())
 
 
 _PIN_RE = re.compile(
@@ -667,7 +243,8 @@ def recorded_sdk_version(project: Path) -> str | None:
     ``create_project`` writes ``benchweave-sdk==<version>`` into the
     generated ``[project.optional-dependencies]`` test extra. That line is
     the requirement ``new`` writes — a mutable declaration the author may
-    later edit, not an immutable provenance record (issue #347 WS1b).
+    later edit, not an immutable provenance record (issue #347 WS1b). The
+    durable provenance is ``.copier-answers.yml`` (WS2).
 
     Parameters
     ----------
@@ -711,14 +288,15 @@ def recorded_sdk_version(project: Path) -> str | None:
     return None
 
 
-def create_project(destination: Path, package: str) -> None:
+def create_project(destination: Path, package: str, *, with_ui: bool = False) -> None:
     """Write a complete synthetic plugin project under ``destination``.
 
-    Generates ``pyproject.toml``, a README, ``AI-GUIDE.md``, a working
-    read-only adapter with its synthetic protocol, a validated
-    ``descriptor.json``, synthetic protocol evidence, and a pytest suite
-    that exercises the adapter against SDK mocks. Nothing generated
-    contacts hardware or claims qualification.
+    Renders the copier template (``pyproject.toml``, a README, ``AI-GUIDE.md``,
+    a working read-only adapter with its synthetic protocol, a validated
+    ``descriptor.json``, synthetic protocol evidence, a pytest suite, and the
+    seeded skills), then pins ``.copier-answers.yml`` to the canonical
+    repository and this SDK's template tag so the project stays updatable.
+    Nothing generated contacts hardware or claims qualification.
 
     Parameters
     ----------
@@ -727,11 +305,18 @@ def create_project(destination: Path, package: str) -> None:
     package
         Lowercase package name (``[a-z][a-z0-9_]*``) that does not
         shadow the SDK or a stdlib module.
+    with_ui
+        Records the ``--with-ui`` intent in the answers file for provenance.
+        The UI resources themselves are derived from the descriptor's exact
+        bytes by ``presentation.create_ui_resources`` after the project lands
+        — SDK code, deliberately not template content.
 
     Raises
     ------
     ValueError
-        If the package name is invalid or reserved.
+        If the package name is invalid or reserved, the ``[scaffold]`` extra
+        is absent (``scaffold_extra_absent:``), or the template renders an
+        invalid descriptor.
     FileExistsError
         If the destination directory — or a leftover ``.partial`` staging
         sibling — already exists; a dangling symlink occupying either name
@@ -751,8 +336,6 @@ def create_project(destination: Path, package: str) -> None:
         raise ValueError(
             "Use a lowercase Python package name that does not shadow the SDK or the stdlib"
         )
-    descriptor = descriptor_for(package)
-    validate_descriptor(descriptor)
     # is_symlink() catches a dangling symlink occupying the name, which
     # exists() reports as absent but which would break the final rename.
     if destination.exists() or destination.is_symlink():
@@ -766,59 +349,40 @@ def create_project(destination: Path, package: str) -> None:
     staging = destination.with_name(destination.name + ".partial")
     if staging.exists() or staging.is_symlink():
         raise FileExistsError(f"Staging path already exists: {staging}; remove it and retry")
+    # Resolve the optional extra before the first write: a refused scaffold
+    # leaves neither the destination nor the staging sibling behind (a
+    # pre-existing parent directory is not undone — mkdir(parents=True) is
+    # idempotent and destroys nothing).
+    run_copy = _load_copier()
     staging.mkdir()
-    pyproject = f'''[build-system]
-requires = ["hatchling>=1.26"]
-build-backend = "hatchling.build"
-[project]
-name = "{package.replace("_", "-")}"
-version = "0.1.0"
-requires-python = ">=3.13"
-dependencies = []
-[project.optional-dependencies]
-test = ["benchweave-sdk=={__version__}", "pytest>=8.0"]
-[tool.hatch.build.targets.wheel]
-packages = ["src/{package}"]
-'''
-    root = f"src/{package}"
-    contents = {
-        "pyproject.toml": pyproject,
-        "README.md": (
-            "# Device plugin starter\n\nSynthetic only. Create a virtual environment, "
-            "install the matching SDK wheel and `uv pip install -e '.[test]'`. "
-            "Run `pytest`, then `uv build`. Pin dependencies with `uv lock`. "
-            "See AI-GUIDE.md. Choose a licence before distribution.\n"
-        ),
-        "AI-GUIDE.md": AI_GUIDE,
-        f"{root}/__init__.py": '"""Synthetic device plugin."""\n',
-        f"{root}/adapter.py": ADAPTER,
-        f"{root}/protocol.py": PROTOCOL,
-        f"{root}/descriptor.json": json.dumps(descriptor, indent=2) + "\n",
-        f"{root}/protocol.md": (
-            "# Synthetic protocol\n\nID? + LF returns SDK Example,demo,SIM001,1.0.0 + LF. "
-            "V? + LF returns finite ASCII volts + LF. No real device is claimed.\n"
-        ),
-        f"{root}/vectors.json": json.dumps(
-            {
-                "evidence": "synthetic",
-                "exchanges": [
-                    {"request": "ID?\n", "response": "SDK Example,demo,SIM001,1.0.0\n"},
-                    {"request": "V?\n", "response": "3.3\n"},
-                ],
-            },
-            indent=2,
-        )
-        + "\n",
-        "tests/test_plugin.py": TEST.replace("__PLUGIN__", package),
-        "CLAUDE.md": CLAUDE_MD.replace("__PLUGIN__", package),
-        f"{root}/skills/develop-plugin/SKILL.md": _parameterize(DEVELOP_SKILL, package),
-        f"{root}/skills/drive-device/SKILL.md": _parameterize(DRIVE_SKILL, package),
-    }
     try:
-        for relative, content in contents.items():
-            path = staging / relative
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(content, encoding="utf-8")
+        # tempfile resolves macOS's /tmp symlink; copier's own git plumbing
+        # compares canonical prefixes and refuses mixed spellings.
+        with tempfile.TemporaryDirectory() as scratch:
+            template_root = _materialize_template(Path(scratch).resolve())
+            run_copy(
+                str(template_root),
+                str(staging),
+                data={
+                    "package_name": package,
+                    "with_ui": with_ui,
+                    "sdk_version": __version__,
+                    "otdp_version": active_version("otdp"),
+                },
+                defaults=True,
+                quiet=True,
+            )
+        # PR #93's Windows lane: rendered members can carry CRLF even from
+        # an LF template checkout — the scaffold emits LF on every platform.
+        _enforce_lf(staging)
+        _pin_answers(staging, __version__)
+        # Generate-time validation contract (previously descriptor_for's
+        # dict-level check): a template edit that would render an invalid
+        # descriptor fails here, before the project lands.
+        rendered = json.loads(
+            (staging / "src" / package / "descriptor.json").read_text(encoding="utf-8")
+        )
+        validate_descriptor(rendered)
         staging.rename(destination)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
