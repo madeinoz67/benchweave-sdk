@@ -4,9 +4,21 @@
 
 Build an external device plugin without importing gateway internals. Python 3.13+, SDK 0.4.1, OTDP 0.2.2 and adapter API 1.1 are the baseline. This package is a separate wheel built alongside BenchWeave; published to PyPI as benchweave-sdk.
 
-## Sister repository
+## Which checkout do I use?
 
-This is the SDK. The BenchWeave gateway and the canonical architecture and contract standards live in the main repository: [madeinoz67/benchweave](https://github.com/madeinoz67/benchweave). This SDK is mounted there at `packages/sdk` as a git submodule and has its own CI and release cycle.
+**This repository (`madeinoz67/benchweave-sdk`) is the canonical SDK.** Install it, scaffold plugins with it, and develop SDK features here.
+
+The gateway repo (`madeinoz67/benchweave`) also contains `packages/sdk/` — a git-submodule mount of this repo used for gateway integration. That mount is **not** the canonical SDK and can lag this repo. If you are building a plugin, use this repository, not `packages/sdk/`.
+
+To see which SDK you have:
+
+```sh
+grep '^version' pyproject.toml   # the version this checkout declares
+git describe --tags              # the nearest release tag on this checkout
+benchweave-sdk --version         # the version of an installed SDK
+```
+
+The BenchWeave gateway and the canonical architecture and contract standards live in the main repository: [madeinoz67/benchweave](https://github.com/madeinoz67/benchweave). This SDK is mounted there at `packages/sdk` as a git submodule and has its own CI and release cycle.
 
 ## Community
 

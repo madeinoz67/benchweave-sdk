@@ -1,5 +1,9 @@
 @AGENTS.md
 
+## Using the SDK
+
+Building a plugin? Start with the [five-step workflow](README.md#five-steps) — install → `new` → `check` → `build` → `inventory`. Everything below is architecture and contributor doctrine.
+
 ## MANDATORY: Use Gortex MCP tools instead of Read/Grep/Glob
 
 A Gortex daemon is configured machine-wide. Whenever you operate on indexed source, you
