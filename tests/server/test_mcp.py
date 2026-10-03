@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 
 from fastmcp import Client
 
@@ -155,9 +156,16 @@ def test_plugin_new_scaffolds_and_reports_the_inventory(seam, tmp_path) -> None:
                                   "package": "second_probe", "with_ui": True})
     )
     files = result["files"]
-    assert "src/second_probe/descriptor.json" in files
-    assert "src/second_probe/presentation.json" in files
-    assert "src/second_probe/ui/manifest.json" in files
+    # Normalize the comparison, not the data: the tool reports
+    # platform-native separators (authoring.py builds the inventory with
+    # str(relative_to), so Windows answers src\second_probe\...). The
+    # assertion's intent is that the scaffold carries these relative
+    # paths — asserted in posix form on every OS (CI-carried RED: PR #90's
+    # windows-latest run, this suite's first Windows exposure).
+    posix_files = {str(entry).replace(os.sep, "/") for entry in files}
+    assert "src/second_probe/descriptor.json" in posix_files
+    assert "src/second_probe/presentation.json" in posix_files
+    assert "src/second_probe/ui/manifest.json" in posix_files
     assert (destination / "src" / "second_probe" / "adapter.py").is_file()
 
 
