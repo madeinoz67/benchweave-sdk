@@ -19,8 +19,8 @@ from benchweave_sdk_server.web import build_app
 DEV = "example_device"
 
 
-def _broken_entry_point(project: Path, entry_point: str) -> None:
-    descriptor = project / "src" / "example_plugin" / "descriptor.json"
+def _broken_entry_point(project: Path, entry_point: str, package: str = "example_plugin") -> None:
+    descriptor = project / "src" / package / "descriptor.json"
     document = json.loads(descriptor.read_text())
     document["integration"]["adapter"]["entry_point"] = entry_point
     descriptor.write_text(json.dumps(document))
@@ -317,3 +317,149 @@ def test_non_scenario_degraded_mode_still_shows_the_diagnostic(tmp_path: Path) -
         assert caught.value.details["load_diagnostic"].startswith("standalone_plugin_import:")
 
     asyncio.run(run())
+
+
+# --- FOLD-2 (refute lane-2 F2): the degrade taxonomy covers the real classes ---
+
+
+def _module_project(tmp_path: Path, module_source: str, module_name: str) -> Path:
+    """A scaffold whose entry point names a purpose-built module, under a
+    UNIQUE package: the suite imports many example_plugin projects, and a
+    cached package would resolve the submodule against an earlier
+    project's path (the SystemExit arm passed vacuously that way — a
+    ModuleNotFoundError is not the class under test)."""
+    from benchweave_sdk.scaffold import create_project
+
+    package = f"probe_{module_name}"
+    project = tmp_path / f"mod-{module_name}"
+    create_project(project, package)
+    (project / "src" / package / f"{module_name}.py").write_text(module_source)
+    _broken_entry_point(project, f"{package}.{module_name}:create_plugin", package)
+    return project
+
+
+def test_a_syntax_error_module_degrades(tmp_path: Path) -> None:
+    """Import-time class (the most common authoring failure): a module-level
+    SyntaxError currently escapes as a raw traceback (serve exit 1)."""
+    project = _module_project(tmp_path, "def create_plugin(:\n", "broken_syntax")
+    plugin = load_plugin_project(project)
+    assert plugin.adapter_factory is None
+    assert plugin.load_diagnostic is not None
+    assert plugin.load_diagnostic.startswith("standalone_plugin_import:")
+
+
+def test_a_system_exit_module_degrades(tmp_path: Path) -> None:
+    """Import-time class: a module calling sys.exit() at import currently
+    swallows serve into the plugin's own exit code."""
+    project = _module_project(
+        tmp_path,
+        "import sys\nsys.exit(7)\n\n\ndef create_plugin():\n    raise AssertionError\n",
+        "exits",
+    )
+    plugin = load_plugin_project(project)
+    assert plugin.adapter_factory is None
+    assert plugin.load_diagnostic is not None
+    assert plugin.load_diagnostic.startswith("standalone_plugin_import:")
+
+
+def _seam_over_project(project: Path) -> StandaloneSeam:
+    plugin = load_plugin_project(project)
+    from benchweave_sdk_server.session import mock_exchanges
+    from benchweave_sdk_server.transport import LoopingMockHost
+
+    return StandaloneSeam(
+        PluginSession(plugin, lambda: LoopingMockHost(mock_exchanges(plugin))),
+        transport_kind="mock",
+    )
+
+
+def _rest_connect(seam: StandaloneSeam):
+    from fastapi.testclient import TestClient
+
+    policy = _policy()
+    app = build_app(seam, policy=policy)
+    with TestClient(app, base_url="http://127.0.0.1:8477") as client:
+        return client.post(
+            "/v1/device_connect",
+            json={"device_id": DEV},
+            headers={"authorization": f"Bearer {policy.bearer_token}"},
+        )
+
+
+def test_a_factory_that_raises_answers_typed_not_ready(tmp_path: Path) -> None:
+    """Connect-time class: a factory raising on call currently surfaces as
+    a bare 500; it must answer not_ready carrying a prefixed diagnostic."""
+    project = _module_project(
+        tmp_path,
+        "def create_plugin():\n    raise ValueError('boom at factory')\n",
+        "bad_factory",
+    )
+    response = _rest_connect(_seam_over_project(project))
+    assert response.status_code == 409, response.text
+    body = response.json()
+    assert body["error"]["code"] == "not_ready"
+    assert "standalone_plugin_connect:" in body["error"]["message"]
+
+
+def test_a_factory_returning_none_answers_typed_not_ready(tmp_path: Path) -> None:
+    """Connect-time class: a factory returning a non-Adapter currently
+    AttributeErrors into a bare 500."""
+    project = _module_project(tmp_path, "def create_plugin():\n    return None\n", "none_factory")
+    response = _rest_connect(_seam_over_project(project))
+    assert response.status_code == 409, response.text
+    body = response.json()
+    assert body["error"]["code"] == "not_ready"
+    assert "standalone_plugin_connect:" in body["error"]["message"]
+
+
+def test_an_open_that_raises_answers_typed_not_ready(tmp_path: Path) -> None:
+    """Connect-time class: adapter.open() raising a non-RuntimeError
+    currently surfaces as a bare 500."""
+    project = _module_project(
+        tmp_path,
+        (
+            "class Plugin:\n"
+            "    async def open(self, descriptor, services, context):\n"
+            "        raise ValueError('boom at open')\n"
+            "    async def execute(self, request, context):\n"
+            "        raise AssertionError\n"
+            "    async def next_event(self, subscription_id, context):\n"
+            "        return None\n"
+            "    async def close(self, context):\n"
+            "        return None\n"
+            "\n"
+            "\n"
+            "def create_plugin():\n"
+            "    return Plugin()\n"
+        ),
+        "bad_open",
+    )
+    response = _rest_connect(_seam_over_project(project))
+    assert response.status_code == 409, response.text
+    body = response.json()
+    assert body["error"]["code"] == "not_ready"
+    assert "standalone_plugin_connect:" in body["error"]["message"]
+
+
+def test_an_underivable_scenario_script_answers_typed_not_ready(
+    starter_project: Path, tmp_path: Path
+) -> None:
+    """Lane-1 F4 rides the same path: an enum whose canonical value cannot
+    be represented in the ASCII line protocol (a comma) makes the script
+    build raise INSIDE the connect-time services factory — a typed refusal,
+    never a bare 500."""
+    from benchweave_sdk.scaffold import create_project
+
+    project = tmp_path / "comma-enum"
+    create_project(project, "example_plugin")
+    descriptor = project / "src" / "example_plugin" / "descriptor.json"
+    document = json.loads(descriptor.read_text())
+    document["parameters"][0]["type"] = "enum"
+    document["parameters"][0]["enum_values"] = ["a,b"]
+    descriptor.write_text(json.dumps(document))
+    seam, _ = _build_seam(project, scenario="normal")
+    response = _rest_connect(seam)
+    assert response.status_code == 409, response.text
+    body = response.json()
+    assert body["error"]["code"] == "not_ready"
+    assert "standalone_scenario_script" in body["error"]["message"]

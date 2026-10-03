@@ -167,7 +167,17 @@ def load_plugin_project(project_root: Path) -> LoadedPlugin:
         try:
             module = importlib.import_module(module_name)
             adapter = getattr(module, factory_name)
-        except (ImportError, AttributeError) as exc:
+        except (
+            ImportError,
+            AttributeError,
+            SyntaxError,
+            SystemExit,
+        ) as exc:
+            # Refute fold 2: SyntaxError (the most common authoring failure —
+            # it previously escaped as a raw traceback with serve exit 1)
+            # and SystemExit (a plugin calling sys.exit() at import
+            # previously swallowed serve into the plugin's own exit code)
+            # are import-time adapter failures — they degrade like the rest.
             diagnostic = f"standalone_plugin_import: {entry_point}: {exc}"
 
     presentation_path = package_dir / "presentation.json"
@@ -299,11 +309,34 @@ class PluginSession:
             raise RuntimeError(
                 self._plugin.load_diagnostic or "standalone_plugin_not_ready"
             )
-        adapter = self._plugin.adapter_factory()
-        context = self._context(
-            f"open-{uuid.uuid4().hex[:8]}", self._lifecycle_timeout_ms()
-        )
-        await adapter.open(self._plugin.descriptor, self._services_factory(), context)
+        import contextlib
+
+        try:
+            # Refute fold 2 (connect-time classes): a factory that raises
+            # when called, a factory returning a non-Adapter, and an
+            # open() that raises all previously surfaced as bare 500s —
+            # every connect-time failure is a typed not_ready carrying a
+            # prefixed diagnostic, never an unhandled exception.
+            adapter = self._plugin.adapter_factory()
+            if not callable(getattr(adapter, "open", None)) or not callable(
+                getattr(adapter, "execute", None)
+            ):
+                raise TypeError(
+                    f"adapter factory returned {type(adapter).__name__!r}, "
+                    "which is not an Adapter (no open/execute)"
+                )
+            context = self._context(
+                f"open-{uuid.uuid4().hex[:8]}", self._lifecycle_timeout_ms()
+            )
+            await adapter.open(self._plugin.descriptor, self._services_factory(), context)
+        except RuntimeError:
+            raise
+        except Exception as exc:
+            with contextlib.suppress(Exception):
+                await adapter.close(context)
+            raise RuntimeError(
+                f"standalone_plugin_connect: {type(exc).__name__}: {exc}"
+            ) from exc
         self._adapter = adapter
         self.connected = True
         try:
