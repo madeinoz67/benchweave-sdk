@@ -2,3 +2,10 @@
 # The vendored standards tree is verified byte-for-byte against standards-lock.json
 # (sync-standards --check, hatch_build.py); a CRLF checkout would fail every digest.
 * text=auto eol=lf
+# The copier template and its byte-parity fixtures (WS2 R-2): the render
+# is compared byte-for-byte against the fixture on EVERY OS, so both sides
+# must check out LF. The global rule above already implies it; these rows
+# pin it for the scaffold gates specifically, so a future relaxation of the
+# global line reddens here instead of on a Windows CI lane.
+template/** text eol=lf
+tests/fixtures/scaffold_expected/** text eol=lf

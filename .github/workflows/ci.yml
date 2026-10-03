@@ -108,8 +108,12 @@ jobs:
           BIN="$RUNNER_TEMP/sdk-smoke/bin"
           [ -d "$BIN" ] || BIN="$RUNNER_TEMP/sdk-smoke/Scripts"
           # [scaffold] rides the wheel install too: `new` from the installed
-          # wheel renders through the packaged copier template (WS2).
-          uv pip install --python "$RUNNER_TEMP/sdk-smoke" "smoke-dist/*.whl[scaffold]"
+          # wheel renders through the packaged copier template (WS2). The glob
+          # must expand BEFORE the extras suffix is appended: a quoted
+          # glob-plus-extras reaches uv as a literal and it refuses with
+          # "The wheel filename '*.whl' is invalid".
+          WHEEL="$(echo smoke-dist/*.whl)"
+          uv pip install --python "$RUNNER_TEMP/sdk-smoke" "${WHEEL}[scaffold]"
           "$BIN/benchweave-sdk" --version
           # PR #90 carry-forward row R1: the server console script exists on
           # every default install (extras cannot gate entry points) — smoke

@@ -133,7 +133,7 @@ def _pin_local_answers(project: Path, src: Path, commit: str) -> None:
     rendered = answers.read_text(encoding="utf-8").splitlines(keepends=True)
     kept = [line for line in rendered if not line.startswith(("_commit:", "_src_path:"))]
     kept[1:1] = [f"_commit: {commit}\n", f"_src_path: {src}\n"]
-    answers.write_text("".join(kept), encoding="utf-8")
+    answers.write_bytes("".join(kept).encode("utf-8"))
 
 
 def _build_tagged_template_repo(

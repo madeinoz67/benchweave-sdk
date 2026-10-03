@@ -38,7 +38,36 @@ from benchweave_sdk.presentation import create_ui_resources
 from benchweave_sdk.scaffold import create_project
 
 FIXTURES = Path(__file__).parent / "fixtures" / "scaffold_expected"
+REPO_ROOT = Path(__file__).resolve().parents[1]
 CANONICAL_TEMPLATE_URL = "https://github.com/madeinoz67/benchweave-sdk"
+
+
+def test_line_endings_are_pinned_lf_for_the_scaffold_surfaces() -> None:
+    """PR #93's Windows lane: the byte-parity surfaces must check out and
+    render LF on every OS. The template and the fixtures carry explicit
+    eol=lf rows so a future relaxation of the repository's global rule
+    reddens HERE, not on a Windows CI lane."""
+    attributes = (REPO_ROOT / ".gitattributes").read_text(encoding="utf-8")
+    rows = {
+        line.split()[0]: line
+        for line in attributes.splitlines()
+        if line and not line.startswith("#") and line.split()
+    }
+    for pinned in ("template/**", "tests/fixtures/scaffold_expected/**"):
+        assert pinned in rows, f"{pinned} must carry its own .gitattributes row"
+        assert "eol=lf" in rows[pinned], f"{pinned} must pin eol=lf"
+
+
+def test_rendered_answers_carry_no_carriage_returns(tmp_path: Path) -> None:
+    """The answers pin writes BYTES: Path.write_text opens text mode, and
+    text mode translates newlines to os.linesep — CRLF on Windows, which
+    broke the fixture comparison on that lane (PR #93). Byte writes cannot
+    translate, on any platform."""
+    destination = tmp_path / "example_plugin"
+    create_project(destination, "example_plugin")
+    raw = (destination / ".copier-answers.yml").read_bytes()
+    assert b"\r" not in raw
+    assert raw == (FIXTURES / "base" / ".copier-answers.yml").read_bytes()
 
 
 def _tree(root: Path) -> dict[str, bytes]:

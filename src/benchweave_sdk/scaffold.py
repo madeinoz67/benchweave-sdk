@@ -167,7 +167,10 @@ def _pin_answers(project: Path, sdk_version: str) -> None:
         f"_commit: v{sdk_version}\n",
         f"_src_path: {CANONICAL_TEMPLATE_URL}\n",
     ]
-    answers.write_text("".join(kept), encoding="utf-8")
+    # Byte-exact write: Path.write_text opens text mode, and text mode
+    # translates \n to os.linesep — CRLF on Windows, which would break the
+    # R-2 byte-parity comparison against the LF fixture on that lane.
+    answers.write_bytes("".join(kept).encode())
 
 
 _PIN_RE = re.compile(

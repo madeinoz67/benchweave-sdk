@@ -340,14 +340,17 @@ def adopt_project(
                 "with the SDK version that scaffolded this project"
             )
     with_ui = (project / "UI-GUIDE.md").is_file()
-    answers.write_text(
-        "# Changes here will be overwritten by Copier\n"
-        f"_commit: v{version}\n"
-        f"_src_path: {CANONICAL_TEMPLATE_URL}\n"
-        f"otdp_version: {active_version('otdp')}\n"
-        f"package_name: {name}\n"
-        f"sdk_version: {version}\n"
-        f"with_ui: {'true' if with_ui else 'false'}\n",
-        encoding="utf-8",
+    # Byte-exact write (Windows text mode would CRLF-ify and diverge from
+    # what `new` writes on every other platform).
+    answers.write_bytes(
+        (
+            "# Changes here will be overwritten by Copier\n"
+            f"_commit: v{version}\n"
+            f"_src_path: {CANONICAL_TEMPLATE_URL}\n"
+            f"otdp_version: {active_version('otdp')}\n"
+            f"package_name: {name}\n"
+            f"sdk_version: {version}\n"
+            f"with_ui: {'true' if with_ui else 'false'}\n"
+        ).encode()
     )
     return version
