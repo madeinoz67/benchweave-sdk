@@ -864,6 +864,51 @@ class StandaloneSeam:
                 diagnostic=str(exc),
             ) from exc
         next_adapter_sha256 = project_py_digest(loaded)
+        if confirmed:
+            pending = self._pending_reload or {}
+            if loaded.adapter_factory is None:
+                # The degraded-bind door (FOLD-B): the operator confirmed
+                # specific working bytes; a load that cannot import its
+                # adapter is not those bytes — refuse, keep the previous
+                # WORKING version loaded (the confirm never binds the
+                # host to broken code), and surface the diagnostic. The
+                # pend stays: the operator can fix the files and confirm
+                # the load that follows.
+                raise self._fail(
+                    "invalid_request",
+                    "the confirmed reload would not load: "
+                    f"{loaded.load_diagnostic}; the previous version stays "
+                    "loaded and the confirmation stands",
+                    correlation,
+                    diagnostic=loaded.load_diagnostic,
+                )
+            shown = str(pending.get("adapter_sha256_next", ""))
+            if shown and shown != next_adapter_sha256:
+                # The confirmation binds to the digests it showed (FOLD-B):
+                # the bytes changed after the pend, so the confirmation
+                # covers code that no longer exists — re-pend with the
+                # fresh digest instead of loading unconfirmed code.
+                at = datetime.now(UTC).isoformat()
+                message = (
+                    "the adapter code changed again since the confirmation "
+                    "was shown; a new confirmation is required"
+                )
+                self._pending_reload = {
+                    "at": at,
+                    "source": source,
+                    "adapter_sha256_previous": self._adapter_sha256,
+                    "adapter_sha256_next": next_adapter_sha256,
+                }
+                self.events.publish(
+                    "reload_confirmation_required",
+                    {"message": message, "source": source, "at": at},
+                )
+                return {
+                    "status": "confirmation_required",
+                    "message": message,
+                    "adapter_changed": True,
+                    "source": source,
+                }
         adapter_changed = next_adapter_sha256 != self._adapter_sha256
         if (
             adapter_changed

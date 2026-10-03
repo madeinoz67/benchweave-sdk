@@ -22,6 +22,7 @@ import hashlib
 import importlib
 import json
 import math
+import shutil
 import sys
 import time
 import uuid
@@ -76,6 +77,14 @@ def evict_plugin_modules(package: str, src_root: Path | None = None) -> None:
     importlib.invalidate_caches()
     if src_root is None:
         return
+    # The BYTECODE cache is the second staleness cache: a same-size edit
+    # within the same mtime second validates a stale .pyc and the
+    # re-import serves the OLD code anyway (observed with the lanes'
+    # MARK repro). A reload means "serve the current bytes" — the
+    # project's own __pycache__ directories go with the modules.
+    for cache_dir in src_root.rglob("__pycache__"):
+        if cache_dir.is_dir():
+            shutil.rmtree(cache_dir, ignore_errors=True)
     root = src_root.resolve()
     for name, module in list(sys.modules.items()):
         module_file = getattr(module, "__file__", None)
@@ -161,6 +170,25 @@ def mock_exchanges(
     return script
 
 
+def _evict_foreign_package(package: str, src: Path) -> None:
+    """Drop cached modules of ``package`` whose files live OUTSIDE this
+    project's src root, so a fresh load imports THIS project's bytes (the
+    import cache is keyed by name, not by path)."""
+    root = src.resolve()
+    prefix = f"{package}."
+    for name in list(sys.modules):
+        if name != package and not name.startswith(prefix):
+            continue
+        module_file = getattr(sys.modules.get(name), "__file__", None)
+        if not module_file:
+            continue
+        try:
+            if not Path(module_file).resolve().is_relative_to(root):
+                del sys.modules[name]
+        except OSError:
+            continue
+
+
 def load_plugin_project(project_root: Path) -> LoadedPlugin:
     """Load and validate one plugin project; refuse before any port binds.
 
@@ -213,15 +241,20 @@ def load_plugin_project(project_root: Path) -> LoadedPlugin:
     else:
         if str(src) not in sys.path:
             sys.path.insert(0, str(src))
+        # A same-named package cached from ANOTHER project's root would win
+        # the import by name and serve ITS bytes (invisible while every
+        # test project had identical content; a broken or edited sibling
+        # makes it load wrong code on a FRESH load). The reload path
+        # pre-evicts; a fresh load defends itself the same way.
+        _evict_foreign_package(package, src)
         try:
             module = importlib.import_module(module_name)
             adapter = getattr(module, factory_name)
-        except (
-            ImportError,
-            AttributeError,
-            SyntaxError,
-            SystemExit,
-        ) as exc:
+        except Exception as exc:  # noqa: BLE001 - import-time plugin code
+            # ANY exception raised while executing the plugin's adapter
+            # module at import time is an adapter import failure — the
+            # tuple form let a module-level NameError (the lanes' arm)
+            # escape as a raw traceback instead of the degraded load.
             # Refute fold 2: SyntaxError (the most common authoring failure —
             # it previously escaped as a raw traceback with serve exit 1)
             # and SystemExit (a plugin calling sys.exit() at import

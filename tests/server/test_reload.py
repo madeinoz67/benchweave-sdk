@@ -309,6 +309,59 @@ def test_ui_confirm_proceeds(tmp_path) -> None:
     assert seam.pending_reload is None
 
 
+def test_b_confirm_binds_to_the_digests_it_showed(tmp_path) -> None:
+    """A confirmation confirms BYTES, not an intent: when the adapter
+    changes again after the pend, confirming must NOT load different
+    bytes than the operator saw — it re-pends with the new digest."""
+    project = _project(tmp_path)
+    seam = _seam(project)
+    _call(seam, "device_connect", DEV)
+    _change_adapter_code(project)  # edit A
+    first = asyncio.run(seam.reload_plugin(source="mcp"))
+    assert first["status"] == "confirmation_required"
+    pending_digest = seam.pending_reload["adapter_sha256_next"]
+    _change_adapter_code(project)  # edit B — different bytes on disk now
+    second = asyncio.run(seam.confirm_reload(source="ui"))
+    assert second["status"] == "confirmation_required", (
+        "a confirm shown digest A must not load digest B"
+    )
+    assert seam.pending_reload is not None
+    assert seam.pending_reload["adapter_sha256_next"] != pending_digest
+    # And the previous version is still fully loaded and serving.
+    reading = _call(seam, "parameter_read", {**DEV, "parameter": "voltage"})
+    assert reading["value"] == 3.3
+    # The re-pended confirmation is honest: confirming NOW (bytes stable)
+    # proceeds and loads exactly what the second pend showed.
+    third = asyncio.run(seam.confirm_reload(source="ui"))
+    assert third["status"] == "reloaded"
+    assert seam.pending_reload is None
+
+
+def test_b7_a_broken_confirm_load_keeps_the_working_previous(tmp_path) -> None:
+    """The degraded-bind door: a confirm-time load failure (SyntaxError
+    introduced after the pend) must not swap the working previous
+    adapter for a degraded one — the reload refuses, the previous keeps
+    serving, the diagnostic surfaces."""
+    project = _project(tmp_path)
+    seam = _seam(project)
+    _call(seam, "device_connect", DEV)
+    _change_adapter_code(project)
+    first = asyncio.run(seam.reload_plugin(source="mcp"))
+    assert first["status"] == "confirmation_required"
+    adapter = project / "src" / "example_plugin" / "adapter.py"
+    adapter.write_text("this is not python\n")
+    with pytest.raises(SeamError) as caught:
+        asyncio.run(seam.confirm_reload(source="ui"))
+    assert caught.value.code == "invalid_request"
+    assert "standalone_plugin_import" in caught.value.message
+    # The previous WORKING adapter is still loaded and serving — the
+    # broken bytes never touched the host.
+    reading = _call(seam, "parameter_read", {**DEV, "parameter": "voltage"})
+    assert reading["value"] == 3.3
+    assert seam.session.plugin.adapter_factory is not None
+    assert "plugin_reloaded" not in _kinds(seam)
+
+
 def test_confirm_with_nothing_pending_refuses(tmp_path) -> None:
     seam = _seam(_project(tmp_path))
     with pytest.raises(SeamError) as caught:
