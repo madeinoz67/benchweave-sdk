@@ -70,7 +70,7 @@
         <p class="sub">Offline tools to author OTDP device plugins and to check their conformance. Scaffold an independent project. Hand your AI the generated guide and the evidence files. Then check descriptors, presentation resources and presets against the same contract bytes the gateway uses.</p>
         <div class="cta-row">
           <a class="btn btn-primary" href="#install" onclick="scrollToInstall(); return false;">Install the SDK</a>
-          <a class="btn btn-secondary" href="docs/user-guide/plugin-sdk.html">Read the plugin guide</a>
+          <a class="btn btn-secondary" href="docs/user-guide/plugin-sdk.html">Read the plugin SDK guide</a>
           <a class="btn btn-ghost" href="https://github.com/madeinoz67/benchweave-sdk" target="_blank" rel="noopener">View on GitHub →</a>
         </div>
       </div>
@@ -403,7 +403,7 @@
         <tr><td><code>new</code></td><td>Create a synthetic external plugin project. Add <code>--with-ui</code> for a presentation envelope, binding catalogue and readings page.</td><td><a href="docs/reference/cli/new.html">ref →</a></td></tr>
         <tr><td><code>check</code></td><td>Run offline descriptor schema and basic semantic checks.</td><td><a href="docs/reference/cli/check.html">ref →</a></td></tr>
         <tr><td><code>check-ui</code></td><td>Validate a presentation candidate offline.</td><td><a href="docs/reference/cli/check_ui.html">ref →</a></td></tr>
-        <tr><td><code>check-preset</code></td><td>Validate complete settings offline.</td><td><a href="docs/reference/cli/check_preset.html">ref →</a></td></tr>
+        <tr><td><code>check-preset</code></td><td>Validate complete configuration presets offline.</td><td><a href="docs/reference/cli/check_preset.html">ref →</a></td></tr>
         <tr><td><code>preview-ui</code></td><td>Preview simulated presentation states on a local renderer. Loopback only unless you pass <code>--allow-network</code>. Every preview carries a simulated label.</td><td><a href="docs/reference/cli/preview_ui.html">ref →</a></td></tr>
         <tr><td><code>inventory</code></td><td>Print hashes for a prepared bundle. This is not a release manifest.</td><td><a href="docs/reference/cli/inventory.html">ref →</a></td></tr>
         <tr><td><code>sync-standards</code></td><td>Import a standards bundle into the SDK's vendored tree and lock. <code>--check</code> verifies the committed lock alone.</td><td><a href="docs/reference/cli/sync_standards.html">ref →</a></td></tr>
@@ -424,7 +424,7 @@
       </div>
       <div class="sdk-card">
         <h2>Vendored contract sets</h2>
-        <p class="tagline">The sdist and wheel carry these standards so validation runs without the gateway checkout. <code>standards-lock.json</code> pins every file by hash. The release smoke compares installed bytes with the canonical copies.</p>
+        <p class="tagline">The source distribution and wheel carry these standards so validation runs without the gateway checkout. <code>standards-lock.json</code> pins every file by hash. The release smoke compares installed bytes with the canonical copies.</p>
         <div class="badge-row">
           <span class="badge badge-version">otdp 0.2.2</span>
           <span class="badge badge-version">registry 0.1.2</span>
@@ -433,7 +433,7 @@
           <span class="badge badge-version">plugin-ui 0.3.0</span>
           <span class="badge badge-version">plugin-ui-preview 0.2.0</span>
         </div>
-        <p class="tagline">Compatibility: SDK 0.4.1 against main project <code>&gt;=0.1.0</code>.</p>
+        <p class="tagline">Compatibility: SDK 0.4.1 against the main repository <code>&gt;=0.1.0</code>.</p>
         <div class="sdk-links">
           <a class="btn btn-primary" href="https://madeinoz67.github.io/benchweave/" target="_blank" rel="noopener">Gateway site and docs</a>
           <a class="btn btn-secondary" href="https://github.com/madeinoz67/benchweave" target="_blank" rel="noopener">BenchWeave on GitHub</a>

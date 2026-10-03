@@ -33,8 +33,8 @@ the credit to read. You can also say that you do not want credit.
 
 ## Scope
 
-**Supported version: the latest release.** The SDK is pre-1.0 and fixes are not
-backported to older tags.
+**Supported version: the latest release.** The SDK is pre-1.0. The project does not
+backport fixes to older tags.
 
 In scope: anything that lets a plugin or a crafted input exceed the boundary
 that the SDK is meant to enforce:
@@ -48,7 +48,7 @@ that the SDK is meant to enforce:
 
 Out of scope:
 
-- Anything that requires an attacker to already have filesystem or OS-level
+- Anything that requires an attacker to already have filesystem or operating-system
   access to the host. The SDK is local development tooling for single-operator
   use and does not defend against a compromised machine.
 - Missing TLS or hardening headers. The preview server binds to loopback
@@ -63,4 +63,4 @@ The SDK is pre-1.0 and has rough edges. The project already knows about some
 of them and tracks them as public issues. If you find something already
 tracked, a comment on that issue is more useful than a new report. If you
 think the issue is more severe than its rating says, say so privately.
-Re-rating severity beats defending it.
+Re-rate the severity rather than defend the rating.

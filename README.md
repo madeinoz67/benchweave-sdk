@@ -36,13 +36,16 @@ An installed SDK can check its vendored standards offline with `benchweave-sdk s
 
 ## Five steps
 
+> [!CAUTION]
+> A template is not qualified firmware or a real instrument driver.
+
 1. Install the SDK from PyPI with `uv pip install benchweave-sdk`. For more options, see [Installation](#installation).
 2. Run `benchweave-sdk new plugins/acme/model100 --package benchweave_acme_model100`. Replace `acme/model100` with your manufacturer and device name. The independent project contains `src/benchweave_acme_model100/` and `tests/`.
 3. Change into the generated project with `cd plugins/acme/model100`. Replace the explicitly synthetic protocol with verified device behaviour. Then update the protocol's descriptor. The generated `AI-GUIDE.md` describes the design, build, test, review and release steps. `CLAUDE.md` at the root carries agent notes. The seeded skills under `src/benchweave_acme_model100/skills/` ship with the package. The skill `develop-plugin` is for plugin development. The skill `drive-device` is the demo driver to rewrite.
 4. Install the plugin with its test dependencies. Run the plugin tests. Run `benchweave-sdk check src/benchweave_acme_model100/descriptor.json`. Record all applicable S01–S18, C01–C12 and M01–M14 obligations and evidence. The basic SDK checks do not cover all of them.
 5. Build with `uv build`. Prepare the registry metadata and the reviewed evidence. Approve the release before publication or hardware qualification. `benchweave-sdk inventory` helps generate hashes, not a complete registry manifest.
 
-The generated runtime has no dependency on this SDK. The plugin test extra pins the SDK version from PyPI. Generate a plugin dependency lock for the plugin. Retain it in the plugin repository. A template is not qualified firmware or a real instrument driver.
+The generated runtime has no dependency on this SDK. The plugin test extra pins the SDK version from PyPI. Generate a plugin dependency lock for the plugin. Retain it in the plugin repository.
 
 ## Documentation
 
@@ -77,7 +80,7 @@ benchweave-sdk new plugins/acme/model100 --package benchweave_acme_model100 --wi
 cd plugins/acme/model100
 ```
 
-The destination must not already exist. A destination that you reach through a symlinked directory is canonicalized before any write; on macOS, `/tmp/...` is such a symlink. Messages report the real path. Omit `--with-ui` for a plugin without presentation metadata.
+The destination must not already exist. A destination that you reach through a symlinked directory is canonicalized before any write. On macOS, `/tmp/...` is such a symlink. Messages report the real path. Omit `--with-ui` for a plugin without presentation metadata.
 
 ```text
 plugins/acme/model100/                 # independent plugin project
@@ -158,7 +161,11 @@ pytest
 uv build
 ```
 
-Here `--resources` points to the **package root**. The generated envelope's `resource_root: "ui"` selects its `ui/` subdirectory. Manifest asset paths such as `settings/settings.schema.json` and `presets/default.json` are relative to that UI root. Resource paths must stay inside the root. Resource paths must not traverse symlinks. Use canonical local paths. On macOS, use `/private/tmp/...` and not the `/tmp` symlink for temporary preview projects. After you edit resources, keep the descriptor, manifest and asset byte hashes current. Align the binding catalogue with the descriptor. The host verifies the catalogue during admission. A packaged candidate catalogue does not grant device capabilities.
+Here `--resources` points to the **package root**. The generated envelope's `resource_root: "ui"` selects its `ui/` subdirectory. Manifest asset paths such as `settings/settings.schema.json` and `presets/default.json` are relative to that UI root.
+
+Resource paths must stay inside the root. Resource paths must not traverse symlinks. Use canonical local paths. On macOS, use `/private/tmp/...` and not the `/tmp` symlink for temporary preview projects.
+
+After you edit resources, keep the descriptor, manifest and asset byte hashes current. Align the binding catalogue with the descriptor. The host verifies the catalogue during admission. A packaged candidate catalogue does not grant device capabilities.
 
 ## Optional plugin pages and presets
 
@@ -168,7 +175,12 @@ Use `benchweave-sdk check-ui` and `benchweave-sdk check-preset` for offline vali
 
 ### Local UI preview
 
-The SDK includes the version-matched React renderer and nine deterministic baseline scenarios. Preview author fixtures with this command. The preview does not import plugin Python. The preview does not open a device transport. The preview does not contact a gateway:
+The SDK includes the version-matched React renderer and nine deterministic baseline scenarios.
+
+> [!CAUTION]
+> Preview success is not admission, not hardware qualification and not permission to operate equipment.
+
+Preview author fixtures with this command. The preview does not import plugin Python. The preview does not open a device transport. The preview does not contact a gateway:
 
 ```sh
 benchweave-sdk preview-ui src/benchweave_acme_model100/presentation.json \
@@ -182,23 +194,27 @@ Use `--no-open` in CI or for a terminal-only readiness check. The default listen
 
 The command suite uses Click for stable parsing and stable exit codes. It uses Rich for readable non-interactive output. In an interactive terminal, `preview-ui` uses a Textual status screen. Press `o` to open the browser again. Press `q` to stop the preview. The commands deliberately bypass Textual for `--no-open` and non-terminal output. Thus CI, pipes and SDK tests stay deterministic.
 
-Every preview carries the label `SIMULATED PRESENTATION DATA`. A control interaction creates only an in-memory simulated receipt. It never updates an observed reading optimistically. Preview success is not admission, not hardware qualification and not permission to operate equipment.
+Every preview carries the label `SIMULATED PRESENTATION DATA`. A control interaction creates only an in-memory simulated receipt. It never updates an observed reading optimistically.
 
 ## Public surfaces
 
 - `interfaces`: structural async `Adapter`, `HostServices`, `OperationContext` and optional `CaptureServices` definitions. You do not need an SDK superclass.
 - `testing`: deterministic `MockContext` and `MockHost`, exact scripted transfers, dispatch markers, cancellation and a manually advanced clock. These are test doubles, not qualified host services.
 - `validation`: per-pin schema validation against the multi-version vendored standards tree. Every lookup resolves the descriptor's own pinned version. `standards-lock.json` pins the carried set and its mirror. The module does strict finite JSON checks, format validation, runtime correlation and basic descriptor checks for S01, S02 and S04. Unresolved schema references fail without network retrieval. Unserved pins refuse with `version_not_served:`. Yanked pins warn with the derived move-to. The warning says `downgrade` when no served version is newer.
-- `conformance`: reusable operation and quiet lifecycle checks, with configurable wall-clock timeouts for cooperative async calls. Authors must add device-specific failure, profile and measurement tests. Use process isolation for blocking code or code that suppresses cancellation.
+- `conformance`: reusable operation and quiet lifecycle checks, with configurable wall-clock timeouts for cooperative async calls. Authors must add device-specific failure, profile and measurement tests. Use process isolation for code that blocks, or for code that suppresses cancellation.
 - `presentation`: bounded offline validation of presentation resources and complete configuration presets, with the same validator bytes as the gateway.
 - `packaging`: inventory and integrity checks for a prepared bundle, including rejection of duplicates, unsafe paths and symlinks. It does not install, sign, publish or execute dependencies.
 - `capture`: `StandaloneCaptureWriter`, a local-filesystem implementation of the three capture methods of the eight-member `CaptureServices` protocol. It publishes capture events under `capture_root()` when no gateway is present. It does not apply the gateway's `capture_limits` or storage quota checks. Nothing imports its captures into a gateway.
 
 ## Compatibility and limits
 
-The gateway has an explicit OTDP bridge and loader for identify, scalar read, scalar write and single-channel capture. The capture uses staged appends and a host-computed manifest. That bridge does not implement profile actions or streaming. Package-relative and standard-library imports are supported. Arbitrary third-party runtime dependencies need more integration work. Existing simulator interfaces remain private. Release CI builds an SDK and an external plugin outside the checkout. Release CI exercises that plugin through the gateway bridge with mock transport. Unsupported operations must fail explicitly. This SDK supplies no live install endpoint, physical backend, container device permissions or hardware qualification.
+The gateway has an explicit OTDP bridge and loader for identify, scalar read, scalar write and single-channel capture. The capture uses staged appends and a host-computed manifest. That bridge does not implement profile actions or streaming.
 
-The SDK sdist and wheel include the canonical OTDP, registry and plugin presentation contract sets. Build from the repository with `uv build packages/sdk`. The build hook includes the contract resources. A wheel rebuilt from the sdist stays self-contained. The release smoke compares installed contract bytes with the canonical repository copies. SDK and gateway versions have independent names. Each release must record the exact tested pair before anyone expands compatibility claims.
+Package-relative and standard-library imports are supported. Arbitrary third-party runtime dependencies need more integration work. Existing simulator interfaces remain private.
+
+Release CI builds an SDK and an external plugin outside the checkout. Release CI exercises that plugin through the gateway bridge with mock transport. Unsupported operations must fail explicitly. This SDK supplies no live install endpoint, physical backend, container device permissions or hardware qualification.
+
+The SDK source distribution and wheel include the canonical OTDP, registry and plugin presentation contract sets. Build from the repository with `uv build packages/sdk`. The build hook includes the contract resources. A wheel rebuilt from the sdist stays self-contained. The release smoke compares installed contract bytes with the canonical repository copies. SDK and gateway versions have independent names. Each release must record the exact tested pair before anyone expands compatibility claims.
 
 Pure Python plugins still need declared dependencies and compatible runtimes. Native dependencies and physical transport mappings need a separately qualified gateway deployment. The SDK does not install dependencies into a running gateway.
 

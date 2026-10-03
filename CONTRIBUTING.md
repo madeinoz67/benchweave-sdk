@@ -11,7 +11,7 @@ from here. It has its own CI.
 ## Getting set up
 
 - Python 3.13+ with [uv](https://docs.astral.sh/uv/).
-- This repo keeps a non-dot `venv/`. Keep uv pointed at it so that uv does not
+- This repository keeps a non-dot `venv/`. Keep uv pointed at it so that uv does not
   create a stray `.venv/`:
 
   ```sh
