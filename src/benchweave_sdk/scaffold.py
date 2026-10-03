@@ -329,7 +329,9 @@ def create_project(destination: Path, package: str, *, with_ui: bool = False) ->
     if staging.exists() or staging.is_symlink():
         raise FileExistsError(f"Staging path already exists: {staging}; remove it and retry")
     # Resolve the optional extra before the first write: a refused scaffold
-    # must leave no trace at all.
+    # leaves neither the destination nor the staging sibling behind (a
+    # pre-existing parent directory is not undone — mkdir(parents=True) is
+    # idempotent and destroys nothing).
     run_copy = _load_copier()
     staging.mkdir()
     try:

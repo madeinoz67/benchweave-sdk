@@ -44,7 +44,8 @@ the invariants below anchor there.
   `provider_contract_invalid` — the last six are the 0.2.1 transport-provider lane;
   `scaffold_extra_absent`, `scaffold_template_missing`, `scaffold_answers_missing`
   and `upgrade_answers_missing`, `upgrade_requires_git`, `upgrade_dirty_tree`,
-  `adopt_answers_present`, `adopt_provenance_unknown` — the WS2 scaffold lane
+  `upgrade_tag_missing`, `adopt_answers_present`, `adopt_provenance_unknown` —
+  the WS2 scaffold lane
   (`scaffold.py`, `scaffold_update.py`, the copier render/update path); ordinary
   descriptor schema-shape failures keep the existing
   descriptor-validation error surface. Known wound, disclosed: the provider
@@ -78,7 +79,9 @@ the invariants below anchor there.
 - **[PKG-2]** The wheel packages `src/benchweave_sdk` only, plus the force-included copier
   template (root `copier.yml` + `template/` → `benchweave_sdk/scaffold_template/`, issue #347
   WS2 — the repository root IS the copier template, and an installed SDK renders `new` from
-  the packaged copy offline) alongside the root `standards-lock.json` placed at
+  the packaged copy offline. The template's own `CLAUDE.md.jinja`/`pyproject.toml.jinja`
+  members are generated-project content riding that carve-out — not this repository's
+  agent config or build config, which still never ship) alongside the root `standards-lock.json` placed at
   `benchweave_sdk/standards-lock.json` so an installed SDK can verify its vendored tree
   offline; the sdist include list is explicit (`src`, `pyproject.toml`, `README.md`,
   `hatch_build.py`, `standards-lock.json`, `copier.yml`, `template`); `.claude/`, `.mcp.json`,

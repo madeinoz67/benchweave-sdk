@@ -229,19 +229,20 @@ def test_update_keeps_the_update_promise(
     # A1 managed: byte-equal to the current template render.
     assert updated["AI-GUIDE.md"] == target["template/AI-GUIDE.md"]
 
-    # A2 owned: the author's three files plus every unchanged-seed owned
-    # file survive byte-identically.
+    # A2 owned: the author's three files plus every owned file whose seed
+    # the template did NOT change survive byte-identically; a skip-protected
+    # file whose seed DID change survives byte-identically TOO (skip-wins —
+    # pinned live by test_upgrade_moves_managed_state_and_preserves_author
+    # and test_skip_list_is_load_bearing_on_update; the adversary fold B-F2
+    # corrected this arm, which previously asserted merge markers for
+    # changed seeds — inverted against the shipped semantics).
     for relative in ("README.md", "CLAUDE.md", f"src/{PACKAGE}/adapter.py"):
-        if relative in changed:
-            # Mechanism-honest arm (no landing-push coverage; future pushes):
-            # author lines survive inside the conflict block, nothing lost.
-            assert AUTHOR_LINE in updated[relative].decode("utf-8")
-            assert "<<<<<<< before updating" in updated[relative].decode("utf-8")
-        else:
-            assert updated[relative] == author_state[relative], relative
+        assert updated[relative] == author_state[relative], relative
     for relative, content in author_state.items():
-        if relative in changed or relative == ".copier-answers.yml":
+        if relative == ".copier-answers.yml":
             continue
+        if relative in changed and relative == "AI-GUIDE.md":
+            continue  # the managed file rides the 3-way merge
         assert updated[relative] == content, relative
 
     # A3 provenance: the answers' _commit advanced to the target ref and the
@@ -461,7 +462,7 @@ def test_upgrade_moves_managed_state_and_preserves_author(tmp_path: Path) -> Non
     )
     author_state = _tree(project)
     _author_commit(project)
-    conflicted = upgrade_project(project, target_ref=TARGET_TAG)
+    conflicted, _restored = upgrade_project(project, target_ref=TARGET_TAG)
     # A1 managed: AI-GUIDE rides the 3-way merge; the author edited it too,
     # so it conflicts loudly (both sides intact) and is reported.
     assert conflicted == ["AI-GUIDE.md"]
@@ -508,7 +509,7 @@ def test_skip_list_is_load_bearing_on_update(tmp_path: Path) -> None:
     )
     readme.write_text(author_readme, encoding="utf-8")
     _author_commit(project)
-    upgrade_project(project, target_ref=TARGET_TAG)
+    _conflicted, _restored = upgrade_project(project, target_ref=TARGET_TAG)
     after = readme.read_text(encoding="utf-8")
     assert after != author_readme, "without the skip list A2 must fail"
     assert "<<<<<<< before updating" in after
@@ -532,7 +533,7 @@ def test_upgrade_keeps_author_bytes_when_seeds_are_unchanged(tmp_path: Path) -> 
         path.write_text(path.read_text(encoding="utf-8") + AUTHOR_LINE, encoding="utf-8")
     author_state = _tree(project)
     _author_commit(project)
-    conflicted = upgrade_project(project, target_ref=TARGET_TAG)
+    conflicted, _restored = upgrade_project(project, target_ref=TARGET_TAG)
     assert conflicted == []
     for relative, content in author_state.items():
         if relative == ".copier-answers.yml":
@@ -656,3 +657,162 @@ def test_cli_wires_the_upgrade_and_adopt_refusals(tmp_path: Path) -> None:
     project = tmp_path / "cli-adopt"
     create_project(project, PACKAGE)
     assert main(["adopt", str(project)]) == 1  # adopt_answers_present via click
+
+
+# --- adversary fold rows (issue #347 WS2 review) -----------------------------
+
+
+def test_upgrade_restores_skip_protected_files_the_template_dropped(tmp_path: Path) -> None:
+    """B-F1: copier's update deletes project files the template no longer
+    renders, skip patterns notwithstanding — skip protects CONTENT, not
+    EXISTENCE. The guard snapshots the skip-protected tree, restores what the
+    update deleted, and reports it by name: the author's file is never
+    silently gone."""
+    from benchweave_sdk.scaffold_update import upgrade_project
+
+    base = _base_members(tmp_path)
+    assert base is not None
+    target = dict(_repo_template_members() or {})
+    assert target
+    del target["template/tests/test_plugin.py.jinja"]
+    del target["template/src/{{ package_name }}/adapter.py"]
+    repo = _build_tagged_template_repo(tmp_path, base, target)
+    materialized = tmp_path / "materialized-dropped"
+    _write_tree(materialized, base)
+    project = tmp_path / "P-dropped"
+    _scaffold_offline(materialized, repo, project)
+    for relative in ("tests/test_plugin.py", f"src/{PACKAGE}/adapter.py"):
+        path = project / relative
+        path.write_text(path.read_text(encoding="utf-8") + "# AUTHOR EDIT\n", encoding="utf-8")
+    _author_commit(project)
+    conflicted, restored = upgrade_project(project, target_ref=TARGET_TAG)
+    assert conflicted == []
+    assert sorted(restored) == [f"src/{PACKAGE}/adapter.py", "tests/test_plugin.py"]
+    for relative in ("tests/test_plugin.py", f"src/{PACKAGE}/adapter.py"):
+        path = project / relative
+        assert path.is_file(), f"{relative} was silently deleted"
+        assert "# AUTHOR EDIT" in path.read_text(encoding="utf-8")
+
+
+def test_upgrade_refuses_a_missing_tag_with_the_typed_prefix(tmp_path: Path) -> None:
+    """A-F2: an unreleased/missing template tag refuses typed, naming the tag
+    and 'released templates only' — never copier's raw git pathspec noise."""
+    from benchweave_sdk.scaffold_update import upgrade_project
+
+    repo, materialized, _target = _upgrade_stage(tmp_path)
+    project = tmp_path / "P-tag"
+    _scaffold_offline(materialized, repo, project)
+    _author_commit(project)
+    with pytest.raises(ValueError, match=r"^upgrade_tag_missing: ") as refusal:
+        upgrade_project(project, target_ref="v0.0.0-nonexistent")
+    message = str(refusal.value)
+    assert "v0.0.0-nonexistent" in message
+    assert "released templates only" in message
+
+
+def test_adopted_project_first_upgrade_conflicts_honestly_on_managed_edits(
+    tmp_path: Path,
+) -> None:
+    """A-F1: adopting pins a base tag whose tree predates the template, so
+    the first upgrade cannot explain any project file. Unedited files ride
+    the parity back-check cleanly; an author-edited MANAGED file (AI-GUIDE,
+    matched by no skip pattern) comes back as a reported conflict with both
+    sides intact — data-safe, and the help text discloses exactly this."""
+    from benchweave_sdk.scaffold import create_project
+    from benchweave_sdk.scaffold_update import upgrade_project
+
+    base = _base_members(tmp_path)
+    assert base is not None
+    target = dict(_repo_template_members() or {})
+    assert target
+    repo = tmp_path / "template-repo-pre"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    (repo / "README.md").write_text("a pre-copier SDK repo: no copier.yml, no template\n",
+                                    encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "-c", "user.email=a@b", "-c", "user.name=a", "commit", "-qm", "pre-copier")
+    _git(repo, "tag", "v0.8.0")
+    _write_tree(repo, target)
+    _git(repo, "add", "-A")
+    _git(repo, "-c", "user.email=a@b", "-c", "user.name=a", "commit", "-qm", "target")
+    _git(repo, "tag", TARGET_TAG)
+
+    project = tmp_path / "P-adopted-first"
+    create_project(project, PACKAGE)
+    guide = project / "AI-GUIDE.md"
+    guide.write_text(
+        guide.read_text(encoding="utf-8").replace(
+            "# Build a BenchWeave device plugin with AI", "# AUTHOR-customised guide"
+        ),
+        encoding="utf-8",
+    )
+    answers = project / ".copier-answers.yml"
+    rendered = [
+        line
+        for line in answers.read_text(encoding="utf-8").splitlines(keepends=True)
+        if not line.startswith(("_commit:", "_src_path:"))
+    ]
+    rendered[1:1] = [
+        f"_commit: {_git_out(repo, 'rev-parse', 'v0.8.0')}\n",
+        f"_src_path: {repo}\n",
+    ]
+    answers.write_text("".join(rendered), encoding="utf-8")
+    _author_commit(project)
+    conflicted, restored = upgrade_project(project, target_ref=TARGET_TAG)
+    assert conflicted == ["AI-GUIDE.md"]
+    assert restored == []
+    text = guide.read_text(encoding="utf-8")
+    assert "<<<<<<< before updating" in text
+    assert "AUTHOR-customised guide" in text, "the author's line survives the add/add conflict"
+
+
+def test_upgrade_help_discloses_the_adopted_project_shape() -> None:
+    """A-F1: the help must not claim conflicts only happen where author and
+    template both changed a file — an adopted project's first upgrade
+    conflicts on any author-edited file the old base never rendered."""
+    from click.testing import CliRunner
+
+    from benchweave_sdk.cli import cli
+
+    result = CliRunner().invoke(cli, ["upgrade", "--help"])
+    assert result.exit_code == 0
+    assert "adopted" in result.output
+
+
+def test_upgrade_resolves_a_symlinked_project_path(tmp_path: Path) -> None:
+    """A-F4: the function resolves its target the way the CLI does — copier
+    compares canonical git prefixes and refuses mixed spellings."""
+    from benchweave_sdk.scaffold_update import upgrade_project
+
+    repo, materialized, _target = _upgrade_stage(tmp_path)
+    project = tmp_path / "P-resolve"
+    _scaffold_offline(materialized, repo, project)
+    _author_commit(project)
+    link = tmp_path / "P-resolve-link"
+    try:
+        link.symlink_to(project, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlinks unavailable (privilege or filesystem)")
+    conflicted, restored = upgrade_project(link, target_ref=TARGET_TAG)
+    assert conflicted == [] and restored == []
+
+
+def test_adopt_refuses_a_dangling_symlink_answers_file(tmp_path: Path) -> None:
+    """A-F3: a dangling symlink occupying the answers name counts as present
+    (the create_project destination-guard precedent) — writing through it
+    would materialise the link's target outside the project's intent."""
+    from benchweave_sdk.scaffold import create_project
+    from benchweave_sdk.scaffold_update import adopt_project
+
+    project = tmp_path / "P-adopt-link"
+    create_project(project, PACKAGE)
+    (project / ".copier-answers.yml").unlink()
+    try:
+        (project / ".copier-answers.yml").symlink_to(project / "nowhere.yml")
+    except OSError:
+        pytest.skip("symlinks unavailable (privilege or filesystem)")
+    with pytest.raises(ValueError, match=r"^adopt_answers_present: "):
+        adopt_project(project)
+    assert (project / ".copier-answers.yml").is_symlink(), "the link itself is left alone"
+    assert not (project / "nowhere.yml").exists(), "nothing was written through the link"

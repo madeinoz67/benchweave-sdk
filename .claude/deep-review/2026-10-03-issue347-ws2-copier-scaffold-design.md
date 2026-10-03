@@ -356,3 +356,37 @@ the path rules alone; the keyword lane adds nothing — recorded so the review r
    `upgrade_dirty_tree:` refuses; deeper support deferred (§3.5).
 
 No hard blocker found; the mechanism is spike-proven end to end. **BUILD.**
+
+---
+
+## CORRECTIONS — dated builder amendments (2026-10-03, review fold)
+
+Landed with the slice and its review fold; each corrects a line above against
+measured copier 9.18.2 behavior. The original text stands as the record of what
+was designed; these notes carry the shipped truth.
+
+1. **§1 spike table, glob row: FALSE at update time.** `_skip_if_exists` IS
+   honored on update for paths that match (the record's §1 row and §2.2
+   semantics were right), and a single `*` does NOT cross `/` in update-time
+   matching — the copy-time observation stands. Shipped list: `tests/**,
+   src/**`; the record's `src/*` left `src/<pkg>/*.py` unprotected (a template
+   seed delta could merge over real device code).
+2. **§2.1 template tree:** token-free members ship as raw files (adapter.py,
+   protocol.py, __init__.py, protocol.md, vectors.json, README.md,
+   AI-GUIDE.md), not `.jinja` — verbatim byte-copy, zero Jinja surface
+   (risk-1's parity rule chose the safer carrier).
+3. **§2.2 update semantics, completed:** skip protects CONTENT, not
+   EXISTENCE — copier deletes project files the template no longer renders
+   even when skip-matched; `upgrade` restores and reports them (fold B-F1).
+   An adopted project upgrading off a pre-copier base tag: unedited files
+   ride the R-2 parity cleanly; an author-edited file the base never
+   rendered conflicts add/add — data-safe, reported by name (fold A-F1).
+4. **§2.4:** run_update requires `overwrite=True` on copier 9.x; a
+   missing/unreleased target tag refuses `upgrade_tag_missing:` BEFORE
+   copier shells git (fold A-F2 — not in the original prefix list); upgrade
+   also passes sdk_version/otdp_version answers so the version-bearing
+   renders move with the update instead of re-rendering the old pin.
+5. **§7 keyword scan:** `subprocess` appears in tests/test_scaffold_update.py
+   (git plumbing; no in-process API — copier itself shells out to git) and
+   in the upgrade pre-checks; "subprocess 0" held only for the original
+   port's diff.

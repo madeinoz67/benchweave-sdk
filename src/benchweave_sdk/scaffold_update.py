@@ -10,6 +10,7 @@ commands refuse with STD-4 ``snake_case:`` prefixes.
 
 from __future__ import annotations
 
+import fnmatch
 import subprocess
 import tomllib
 from pathlib import Path
@@ -48,35 +49,128 @@ def _project_files(project: Path) -> list[Path]:
     ]
 
 
-def upgrade_project(project: Path, *, target_ref: str | None = None) -> list[str]:
+def _skip_patterns() -> list[str]:
+    """The shipped template's own skip list (adversary fold B-F1).
+
+    Parsed from our ``copier.yml`` member's single-line bracket list — the
+    format this repository ships — so the restore guard needs no YAML
+    dependency. Empty when the template cannot be located (the guard then
+    degrades to no-op; the render-time paths have their own refusals).
+    """
+    from .scaffold import _packaged_template_members, _repo_template_members
+
+    members = _packaged_template_members() or _repo_template_members() or {}
+    for line in members.get("copier.yml", b"").decode("utf-8").splitlines():
+        if line.startswith("_skip_if_exists:"):
+            body = line.split(":", 1)[1].strip()
+            if body.startswith("[") and body.endswith("]"):
+                body = body[1:-1]
+            return [item.strip() for item in body.split(",") if item.strip()]
+    return []
+
+
+def _protected_snapshot(project: Path) -> dict[str, bytes]:
+    """Skip-protected project bytes, taken before the update runs.
+
+    copier's update DELETES project files the template no longer renders —
+    skip patterns protect content, not existence — so the guard restores
+    what the update removed. Only files present on the clean pre-update
+    tree are snapshotted: an author's own committed deletion was never
+    here to restore.
+    """
+    patterns = _skip_patterns()
+    if not patterns:
+        return {}
+    snapshot: dict[str, bytes] = {}
+    for entry in _project_files(project):
+        relative = entry.relative_to(project).as_posix()
+        if any(fnmatch.fnmatch(relative, pattern) for pattern in patterns):
+            snapshot[relative] = entry.read_bytes()
+    return snapshot
+
+
+def _answers_src_path(project: Path) -> str | None:
+    for line in (project / ANSWERS_NAME).read_text(encoding="utf-8").splitlines():
+        if line.startswith("_src_path:"):
+            return line.split(":", 1)[1].strip()
+    return None
+
+
+def _require_target_ref(source: str, ref: str) -> None:
+    """Refuse an unresolvable target tag BEFORE copier shells git (fold A-F2).
+
+    A local template source is checked offline with rev-parse; a URL needs
+    the same network round-trip the update itself would make, so ls-remote
+    adds no new exposure.
+    """
+    if Path(source).is_dir():
+        check = subprocess.run(  # noqa: S603, S607 — git has no in-process API
+            ["git", "-C", source, "rev-parse", "--verify", ref],
+            capture_output=True,
+            text=True,
+        )
+        resolves = check.returncode == 0
+    else:
+        check = subprocess.run(  # noqa: S603, S607
+            ["git", "ls-remote", source, ref],
+            capture_output=True,
+            text=True,
+        )
+        resolves = check.returncode == 0 and bool(check.stdout.strip())
+    if not resolves:
+        raise ValueError(
+            f"upgrade_tag_missing: template tag {ref} does not resolve in {source}; "
+            "released templates only — a development install's version has no tag"
+        )
+
+
+def upgrade_project(project: Path, *, target_ref: str | None = None) -> tuple[list[str], list[str]]:
     """Update ``project`` to the installed SDK's template tag.
 
     The git pre-checks (repo present, tree clean) are ours so the refusals
     carry our guidance — copier refuses the same tree on its own, belt and
     braces. ``run_update`` needs ``overwrite=True`` on copier 9.x (the
     unconditional 9.18.2 guard) and both refs must be version tags the
-    template repository resolves. Returns the relative paths that ended in
-    conflict markers: the author resolves both sides and commits — an
-    update never fails on conflicts, and never resolves them silently.
+    template repository resolves (``upgrade_tag_missing:`` refuses an
+    unresolvable one BEFORE copier shells git — a development install's
+    version has no tag).
+
+    Two protections wrap the update (adversary fold):
+
+    - Skip-protected files the template DELETED are restored and reported —
+      copier's update removes project files the template no longer renders,
+      and skip patterns protect content, not existence.
+    - Files that ended in conflict markers are reported by name — the author
+      resolves both sides and commits; an update never fails on conflicts,
+      and never resolves them silently.
 
     Parameters
     ----------
     project
         The scaffolded project directory (its ``.copier-answers.yml`` names
-        the template source and base).
+        the template source and base). Resolved the way the CLI resolves it
+        — copier compares canonical git prefixes.
     target_ref
         The template ref to update to. The CLI default is ``v{__version__}``
         — the installed SDK's released template tag; the parameter exists so
         the offline test lane can point at a tagged throwaway repository.
+
+    Returns
+    -------
+    tuple[list[str], list[str]]
+        (conflicted, restored): relative paths that ended in conflict
+        markers, and skip-protected files the template dropped which were
+        restored to their pre-update bytes.
 
     Raises
     ------
     ValueError
         ``upgrade_answers_missing:`` (pre-copier project — adopt first),
         ``upgrade_requires_git:`` or ``upgrade_dirty_tree:`` (the 3-way
-        merge needs committed history), or ``scaffold_extra_absent:`` (the
-        copier extra is not installed).
+        merge needs committed history), ``upgrade_tag_missing:`` (the
+        target tag does not resolve), or ``scaffold_extra_absent:``.
     """
+    project = project.expanduser().resolve()
     if not (project / ANSWERS_NAME).is_file():
         raise ValueError(
             "upgrade_answers_missing: no .copier-answers.yml in this project; "
@@ -104,6 +198,11 @@ def upgrade_project(project: Path, *, target_ref: str | None = None) -> list[str
             "upgrade_dirty_tree: commit or stash your changes before upgrading "
             "(copier refuses the same tree): " + status.stdout.strip()[:200]
         )
+    source = _answers_src_path(project)
+    ref = target_ref or f"v{__version__}"
+    if source is not None:
+        _require_target_ref(source, ref)
+    protected = _protected_snapshot(project)
     run_update = _load_run_update()
     run_update(
         str(project),
@@ -114,15 +213,23 @@ def upgrade_project(project: Path, *, target_ref: str | None = None) -> list[str
             "otdp_version": active_version("otdp"),
         },
         defaults=True,
-        vcs_ref=target_ref or f"v{__version__}",
+        vcs_ref=ref,
         overwrite=True,
         quiet=True,
     )
-    return [
+    restored = []
+    for relative, content in sorted(protected.items()):
+        if not (project / relative).is_file():
+            # The update may have removed emptied parent directories too.
+            (project / relative).parent.mkdir(parents=True, exist_ok=True)
+            (project / relative).write_bytes(content)
+            restored.append(relative)
+    conflicted = [
         entry.relative_to(project).as_posix()
         for entry in _project_files(project)
         if _CONFLICT_MARKER in entry.read_bytes()
     ]
+    return conflicted, restored
 
 
 def _inferred_package(project: Path) -> str | None:
@@ -189,7 +296,10 @@ def adopt_project(
         derivable and not overridden).
     """
     answers = project / ANSWERS_NAME
-    if answers.exists():
+    # is_symlink() catches a dangling link occupying the name, which exists()
+    # reports as absent but through which a write would materialise the
+    # link's target (the create_project destination-guard precedent).
+    if answers.exists() or answers.is_symlink():
         raise ValueError(
             "adopt_answers_present: this project already carries "
             ".copier-answers.yml; adopt is for pre-copier projects only"

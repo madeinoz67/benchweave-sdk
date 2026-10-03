@@ -139,9 +139,13 @@ def upgrade_command(directory: str) -> None:
 
     Fetches the tagged template from the canonical SDK repository (network;
     released template tags only — a development install's version has no
-    tag and the update fails loudly). Author-owned files survive; where you
-    and the template both changed a file, the conflict is written as
-    markers to resolve and commit — never resolved silently.
+    tag and the update refuses with upgrade_tag_missing). Author-owned
+    files survive. Conflicts are written as markers to resolve and commit —
+    never resolved silently: typically where you and the template both
+    changed a file, and always on an adopted project's first upgrade for
+    any author-edited file its pre-copier base never rendered (the conflict
+    keeps both sides). Files the template no longer carries are kept:
+    skip-protected ones are restored to your bytes and reported.
     """
     from .scaffold_update import upgrade_project
 
@@ -152,12 +156,17 @@ def upgrade_command(directory: str) -> None:
         raise ValueError(f"project_directory_not_found: {project}")
     if not project.is_dir():
         raise ValueError(f"project_not_a_directory: {project}")
-    conflicted = upgrade_project(project)
+    conflicted, restored = upgrade_project(project)
     output = ConsoleOutput()
     output.message(
         f"Updated to template v{__version__} (answers advanced); review and commit.",
         style="green",
     )
+    for relative in restored:
+        output.message(
+            f"kept {relative}: the template no longer carries it; your copy was restored",
+            style="yellow",
+        )
     for relative in conflicted:
         output.message(
             f"conflict markers in {relative}: resolve both sides, then commit",
