@@ -39,6 +39,11 @@ from .session import PluginSession
 _ADAPTER_CODE_MAP: dict[str, str] = {
     "INVALID_ARGUMENT": "invalid_request",
     "UNSUPPORTED": "invalid_request",
+    # The device said no against its own state — a state-based refusal is
+    # a conflict on this interface, distinct from not_ready (the device
+    # cannot be reached) and from invalid_request (the ask was malformed);
+    # the adapter's own envelope still rides the details verbatim.
+    "DEVICE_REJECTED": "conflict",
     "TIMEOUT": "not_ready",
     "TRANSPORT_ERROR": "not_ready",
     "PROTOCOL_ERROR": "unavailable",
@@ -71,6 +76,16 @@ class StandaloneSeam:
 
     def _correlation(self, supplied: str | None) -> str:
         return supplied or f"bws-{uuid.uuid4().hex[:12]}"
+
+    def _refuse_degraded(self, correlation: str) -> None:
+        """Device operations answer ``not_ready`` on a degraded load (§4.5):
+        the documents validated, the adapter did not — the load diagnostic
+        rides the refusal so the author sees WHY on every surface."""
+        diagnostic = self._session.plugin.load_diagnostic
+        if diagnostic is not None:
+            raise self._fail(
+                "not_ready", diagnostic, correlation, load_diagnostic=diagnostic
+            )
 
     def _fail(
         self, code: str, message: str, correlation_id: str, **details: Any
@@ -169,6 +184,7 @@ class StandaloneSeam:
             raise self._fail(
                 "not_found", f"no such device: {arguments['device_id']}", correlation
             )
+        self._refuse_degraded(correlation)
         if self._session.connected:
             raise self._fail(
                 "conflict",
@@ -206,6 +222,7 @@ class StandaloneSeam:
             raise self._fail(
                 "not_found", f"no such device: {arguments['device_id']}", correlation
             )
+        self._refuse_degraded(correlation)
         if not self._session.connected:
             raise self._fail(
                 "not_ready", "device is not connected", correlation
@@ -223,6 +240,7 @@ class StandaloneSeam:
             raise self._fail(
                 "not_found", f"no such device: {arguments['device_id']}", correlation
             )
+        self._refuse_degraded(correlation)
         if not self._session.connected:
             raise self._fail("not_ready", "device is not connected", correlation)
         name = arguments["parameter"]

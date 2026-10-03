@@ -107,7 +107,12 @@ _IDENTITY_RESULT = _object(
 _READING_RESULT = _object(
     {
         "parameter": {"type": "string"},
-        "value": {"type": "number"},
+        # The value is whatever the descriptor's parameter type declares
+        # (float/int are number, bool is boolean, enum/string are string)
+        # or null when the device serves no value (the loading state) —
+        # fastmcp validates structured output against this schema, so it
+        # must admit what the pipeline can honestly serve.
+        "value": {"type": ["number", "string", "boolean", "null"]},
         "unit": {"type": ["string", "null"]},
         "observed_at": {"type": "string"},
         "age_ms": {"type": "integer"},

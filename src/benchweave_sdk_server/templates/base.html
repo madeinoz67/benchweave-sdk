@@ -15,6 +15,9 @@
   <header class="banner" title="Absent gateway guarantees: {{ absent | join(', ') }}">
     <span aria-hidden="true">&#x2B21;</span> {{ banner }}
   </header>
+  {% if simulated %}<header class="banner banner-simulated" data-transport="mock">
+    <span aria-hidden="true">&#x25CE;</span> SIMULATED — mock transport
+  </header>{% endif %}
   <main class="content">
     {% block content %}{% endblock %}
   </main>

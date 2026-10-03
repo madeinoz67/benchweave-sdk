@@ -216,13 +216,17 @@ Install the optional server extra to serve one plugin project without a gateway:
 pip install 'benchweave-sdk[server]'
 ```
 
-The extra installs FastAPI, FastMCP, Jinja2 and Uvicorn. It adds the command `benchweave-sdk-server`. One process serves a server-rendered HTMX UI, a JSON REST API and an MCP endpoint over one operations seam. `benchweave-sdk-server mcp <project>` runs the same MCP server over stdio, with no HTTP listener.
+The extra installs FastAPI, FastMCP, Jinja2, Uvicorn and the published `benchweave-ui-html` package. The page design tokens come from that package. The package is held at an exact version. A design change reaches this host through a new package release and a pin update in this repository. The extra adds the command `benchweave-sdk-server`. One process serves a server-rendered HTMX UI, a JSON REST API and an MCP endpoint over one operations seam. `benchweave-sdk-server mcp <project>` runs the same MCP server over stdio, with no HTTP listener.
 
 ```sh
 benchweave-sdk-server serve /path/to/plugin-project --transport mock --port 8477 --no-open
 ```
 
 The transport is the scripted mock transport. It replays the exact exchanges that the plugin's `vectors.json` declares. This extra does not provide a real hardware transport.
+
+Pages on the mock transport also carry the banner `SIMULATED — mock transport`.
+
+Serve one of the nine preview states with `--scenario <id>`. The ids are `normal`, `loading`, `stale`, `disconnected`, `warning`, `critical`, `trip`, `recovery` and `request-rejected`. Scenario mode uses the mock transport only. The device page shows a scenario selector. A switch applies to the next connection. A live connection keeps the transport it opened with. The readings and their quality strings come from the scripted transport. The plugin adapter does not run in scenario mode. A project with a broken adapter still serves its pages and all nine states. Device operations answer `not_ready` and show the load diagnostic.
 
 Every page carries the banner `STANDALONE — no gateway`. This process has no leases, policy, approvals, procedures or run records behind it.
 

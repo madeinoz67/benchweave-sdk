@@ -1,13 +1,18 @@
 """Vendored UI assets, digest-verified at construction (NFR-P3).
 
-Mirrors :func:`benchweave_sdk.preview_server.verify_bundled_assets` over this
-package's own ``ui_assets/`` tree: ``inventory.json`` lists every vendored
-file with its size and sha256, and :func:`verify_ui_assets` re-checks each
-one — same traversal refusals, prefixed ``standalone_ui_asset_*`` — so
-tampered or missing assets refuse startup instead of serving. ``tokens.css``
-and ``themes.css`` are governed copies of the canonical UI corpus (the
-cross-repo freshness gate is the design record's deferral D5); htmx and its
-SSE extension are vendored fixed bytes, never fetched at runtime.
+The host owns its shell assets (``htmx.min.js``, ``sse.js``,
+``standalone.css``): ``inventory.json`` lists every host-owned file with
+its size and sha256, and :func:`verify_ui_assets` re-checks each one —
+same traversal refusals, prefixed ``standalone_ui_asset_*`` — so tampered
+or missing assets refuse startup instead of serving.
+
+The renderer's design tokens (``tokens.css``, ``themes.css") come from
+the installed ``benchweave-ui-html`` package (PRD 12 Q5: freshness
+arrives by release and an exact pin bump in this repository, never by a
+copied template — the pin closes design record I1's deferral D5). Those
+bytes are verified by the PACKAGE's own verifier, which this module
+calls (:func:`verify_renderer_assets`) — one verifier per byte set, no
+second digest list for the same files here.
 """
 
 from __future__ import annotations
@@ -16,8 +21,36 @@ import hashlib
 import json
 from pathlib import Path, PurePosixPath
 
-#: The inventory's wire shape version (preview_assets compatibility: 1).
+#: The vendored asset root inside this package, verified on every call.
 INVENTORY_API_VERSION = 1
+
+#: The renderer-owned assets served from the installed ui-html package
+#: (never from this package's tree — Q5's release-plus-pin mechanism).
+RENDERER_ASSETS = frozenset({"tokens.css", "themes.css"})
+
+
+def renderer_assets_root() -> Path:
+    """The installed ``benchweave_ui_html`` assets directory."""
+    from benchweave_ui_html.assets import ASSETS_DIR
+
+    return Path(ASSETS_DIR)
+
+
+def verify_renderer_assets() -> None:
+    """Verify the renderer's assets with the PACKAGE's own verifier.
+
+    One verifier per byte set: the installed package carries its own
+    inventory and digest discipline, and this call defers to it — the
+    host never re-hashes bytes another package owns. Tampered or missing
+    bytes refuse startup (``standalone_ui_asset_renderer:``).
+    """
+    from benchweave_ui_html.assets import verify_vendored_assets
+
+    refusals = verify_vendored_assets()
+    if refusals:
+        raise ValueError(
+            f"standalone_ui_asset_renderer: {'; '.join(refusals)}"
+        )
 
 
 def ui_assets_root() -> Path:

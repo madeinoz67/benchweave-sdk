@@ -74,7 +74,7 @@ def test_mcp_command_builds_without_an_http_listener(starter_project: Path) -> N
     from benchweave_sdk_server.cli import _build_seam
     from benchweave_sdk_server.mcp import build_mcp, registered_tool_names
 
-    seam = _build_seam(starter_project)
+    seam, _ = _build_seam(starter_project)
     server = build_mcp(seam, authoring=True)
     names = set(registered_tool_names(server))
     assert "bws_v1_host_info" in names

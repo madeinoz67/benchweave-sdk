@@ -2,6 +2,11 @@
 {% block title %}{{ device_id }} — standalone{% endblock %}
 {% block content %}
 <h1>Device <code>{{ device_id }}</code></h1>
+{% if load_diagnostic %}
+<div class="notice notice-refused" role="alert">
+  <p><strong>Adapter not loaded</strong> — {{ load_diagnostic }}</p>
+</div>
+{% endif %}
 {% if action_error %}
 <div class="notice notice-refused" role="alert">
   <p><strong>Connect refused</strong> — {{ action_error.code }}: {{ action_error.message }}</p>
@@ -24,8 +29,28 @@
   </form>
   {% endif %}
 </div>
+{% if scenarios %}
+<section class="panel">
+  <h2>Scenario</h2>
+  <form method="post" action="/devices/{{ device_id }}/scenario"
+        hx-post="/devices/{{ device_id }}/scenario"
+        hx-headers='{"X-CSRF-Token": "{{ csrf_token }}"}'>
+    <label for="scenario-select">State</label>
+    <select id="scenario-select" name="scenario">
+      {%- for row in scenarios %}
+      <option value="{{ row.id }}"{% if row.id == scenario_current %} selected{% endif %}>{{ row.title }}</option>
+      {%- endfor %}
+    </select>
+    <button type="submit">Switch</button>
+  </form>
+  <p class="hint">The switch applies to the next connection — a live connection keeps its transport.</p>
+</section>
+{% endif %}
 <section class="panel">
   <h2>Readings</h2>
+  <p class="hint">Declared parameters:
+    {%- for parameter in parameters %} {{ parameter.name }}{% if parameter.unit %} ({{ parameter.unit }}){% endif %}{{ "," if not loop.last }}{% endfor %}
+  </p>
   <div id="readings"
        hx-get="/devices/{{ device_id }}/readings"
        hx-trigger="every 2s"

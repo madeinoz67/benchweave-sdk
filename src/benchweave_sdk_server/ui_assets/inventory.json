@@ -15,16 +15,6 @@
       "path": "standalone.css",
       "size": 3182,
       "sha256": "ee26a9a0c4a4123408998bcb26d41bcdd0c6becdb649e232a8a603389d37acee"
-    },
-    {
-      "path": "themes.css",
-      "size": 1410,
-      "sha256": "197eda5ad9d8bcf8c827599589afaa229928096508608862da249628623a317f"
-    },
-    {
-      "path": "tokens.css",
-      "size": 766,
-      "sha256": "76353723fd3e12653c154c6bf3d0cfd967545dbcd1ede49ab89b90f30747468a"
     }
   ]
 }
