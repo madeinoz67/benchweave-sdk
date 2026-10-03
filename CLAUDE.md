@@ -2,7 +2,7 @@
 
 ## Using the SDK
 
-Building a plugin? Start with the [five-step workflow](README.md#five-steps) — install → `new` → `check` → `build` → `inventory`. Everything below is architecture and contributor doctrine.
+Building a plugin? Start with the [five-step workflow](README.md#five-steps) — install (with the `[scaffold]` extra; `new` renders through copier) → `new` → `check` → `build` → `inventory`. Everything below is architecture and contributor doctrine.
 
 ## MANDATORY: Use Gortex MCP tools instead of Read/Grep/Glob
 

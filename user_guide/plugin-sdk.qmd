@@ -13,6 +13,9 @@ The current SDK is `benchweave-sdk` 0.5.0 for Python 3.13+, OTDP 0.2.2 and adapt
 Install the SDK from PyPI:
 
 ```sh
+# plugin authoring: `new` renders the copier template (issue #347 WS2)
+pip install 'benchweave-sdk[scaffold]'
+# scaffold-free install (check/conformance/preview only)
 pip install benchweave-sdk
 # or as an isolated CLI tool
 uv tool install benchweave-sdk
@@ -37,7 +40,7 @@ In your development directory, create an environment. Then install the built whe
 ```sh
 uv venv --python 3.13
 source .venv/bin/activate
-uv pip install dist/sdk/benchweave_sdk-0.5.0-py3-none-any.whl
+uv pip install 'dist/sdk/benchweave_sdk-0.5.0-py3-none-any.whl[scaffold]'
 benchweave-sdk new plugins/acme/model100 --package benchweave_acme_model100
 cd plugins/acme/model100
 uv pip install -e '.[test]'
@@ -47,6 +50,8 @@ pytest
 Keep the environment that contains the SDK wheel. If you create a new environment inside the project, install the wheel there too. For a repeatable `uv lock` against a locally built wheel, configure that wheel or your organisation's package source explicitly.
 
 Run `benchweave-sdk doctor` from the project to compare the pin with the installed SDK. The command names the recorded version, the installed version, and the reinstall command when they differ. The command works offline and does not fail the run. A stale SDK is a report, not an error.
+
+The generated project also carries `.copier-answers.yml` at its root: the durable provenance record of which SDK template version produced it (`new` pins the canonical repository and the matching `v<version>` template tag — template version == SDK version). The pyproject pin that `doctor` reads remains a mutable declaration the author may move; the answers file is the record. Moving an existing project to a newer template is the WS2 follow-up lane (issue #347).
 
 Replace `acme/model100` with your manufacturer and device or plugin name. The destination controls the directory hierarchy. The `--package` option controls the Python import package. The SDK creates missing parent directories and refuses to overwrite an existing project. A destination that you reach through a symlinked directory is canonicalized before any write. On macOS, `/tmp/...` is such a symlink. Messages report the real path.
 

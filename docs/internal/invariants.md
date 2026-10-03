@@ -42,7 +42,9 @@ the invariants below anchor there.
   `provider_feature_missing`, `provider_transport_undeclared`, `unknown_otdp_feature`,
   `provider_contract_missing`, `provider_contract_hash_mismatch`,
   `provider_contract_invalid` — the last six are the 0.2.1 transport-provider lane;
-  ordinary descriptor schema-shape failures keep the existing
+  `scaffold_extra_absent`, `scaffold_template_missing`, `scaffold_answers_missing` — the
+  WS2 scaffold lane (`scaffold.py`, the copier render path); ordinary descriptor
+  schema-shape failures keep the existing
   descriptor-validation error surface. Known wound, disclosed: the provider
   pin's read inherits the SDK-wide bounded-file cap
   (`presentation.INPUT_BYTE_LIMIT`), so a corpus-valid contract above the cap
@@ -71,15 +73,18 @@ the invariants below anchor there.
   repository's paths — `.github/workflows/ci.yml`. *The submodule mount makes parent paths
   exist on a developer machine and not in CI, so the breakage is invisible exactly where
   it matters most.*
-- **[PKG-2]** The wheel packages `src/benchweave_sdk` only, plus one force-included file:
-  the root `standards-lock.json`, placed at `benchweave_sdk/standards-lock.json` so an
-  installed SDK can verify its vendored tree offline; the sdist include list is
-  explicit (`src`, `pyproject.toml`, `README.md`, `hatch_build.py`,
-  `standards-lock.json`); `.claude/`, `.mcp.json`, `AGENTS.md` and `CLAUDE.md` must never
-  appear in either artifact; `hatch_build.py` validates the vendored standards and the
-  preview assets **before** packaging — `pyproject.toml` `[tool.hatch...]`, `hatch_build.py`
-  `CustomBuildHook.initialize`. *A wheel that ships agent config or an unverified tree is a
-  supply-chain event, not a packaging nit.*
+- **[PKG-2]** The wheel packages `src/benchweave_sdk` only, plus the force-included copier
+  template (root `copier.yml` + `template/` → `benchweave_sdk/scaffold_template/`, issue #347
+  WS2 — the repository root IS the copier template, and an installed SDK renders `new` from
+  the packaged copy offline) alongside the root `standards-lock.json` placed at
+  `benchweave_sdk/standards-lock.json` so an installed SDK can verify its vendored tree
+  offline; the sdist include list is explicit (`src`, `pyproject.toml`, `README.md`,
+  `hatch_build.py`, `standards-lock.json`, `copier.yml`, `template`); `.claude/`, `.mcp.json`,
+  `AGENTS.md` and `CLAUDE.md` must never appear in either artifact; `hatch_build.py` validates
+  the vendored standards, the preview assets and the scaffold template's presence **before**
+  packaging — `pyproject.toml` `[tool.hatch...]`, `hatch_build.py` `CustomBuildHook.initialize`.
+  *A wheel that ships agent config or an unverified tree is a supply-chain event, not a
+  packaging nit.*
 - **[PKG-3]** **Renderer freshness**: a fresh renderer build must leave the committed
   `src/benchweave_sdk/preview_assets/` unchanged — enforced main-side by the `ui` job's
   `git -C packages/sdk diff --exit-code -- src/benchweave_sdk/preview_assets`. *Source drift
@@ -91,9 +96,14 @@ the invariants below anchor there.
 - **[SRF-1]** Scaffold output is an interface: entry points, the generated `pyproject.toml`,
   the explicitly-synthetic protocol placeholder and its warnings, the AI-GUIDE text, and
   the test extra that pins the SDK version reproduce into every downstream plugin
-  repository — `scaffold.py`. The generated plugin runtime has **no dependency on this
-  SDK**. *A defect here multiplies across every plugin authored from the scaffold, and
-  downstream repos diff generated output, so shape changes are interface changes.*
+  repository — the carriers live in the copier template (`template/`), rendered by
+  `scaffold.create_project` and pinned byte-for-byte against the committed fixture
+  (`tests/fixtures/scaffold_expected/`, the R-2 gate). Since WS2 the generated tree gains
+  exactly one file, `.copier-answers.yml` at the project root (outside `src/<pkg>/`, never
+  in a plugin wheel), recording the canonical template source and the SDK version's
+  template tag. The generated plugin runtime has **no dependency on this SDK**. *A defect
+  here multiplies across every plugin authored from the scaffold, and downstream repos
+  diff generated output, so shape changes are interface changes.*
 - **[SRF-2]** **Preview ↔ check-ui agreement**: the preview renders plugin-ui surfaces
   against the vendored plugin-ui contracts and must accept exactly what `check-ui`
   accepts — a preview that happily renders what the conformance check rejects (or the
@@ -111,7 +121,12 @@ the invariants below anchor there.
   (pushed), then a pointer commit in the main repository; the main repository's
   `make sync-sdk-standards` refuses to run against a submodule HEAD that differs from the
   committed pointer — that refusal is the discipline working, not a bug to route around.
-  *An unpushed submodule commit is invisible to main CI, which checks out by SHA.*
+  WS2 pairing note: when the pointer advances past the copier-template port, the gateway's
+  scaffold-content pins (`tests/sdk/test_plugin_developer_skill_content.py`,
+  `tests/sdk/test_scaffold_skills.py`, `tests/sdk/test_presentation_cli.py`) must stay green
+  with exactly the answers file added to any full-tree expectations — they double as the
+  independent parity check. *An unpushed submodule commit is invisible to main CI, which
+  checks out by SHA.*
 
 ---
 
