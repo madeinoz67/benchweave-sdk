@@ -252,3 +252,59 @@ def test_failed_connect_renders_a_refusal_state(plugin, policy) -> None:
         body = response.text
         assert "Connect refused" in body
         assert "not_ready" in body
+
+
+# --- the poll region carries the live state (fold R-a) -------------------------
+
+
+def test_the_poll_partial_carries_the_severity_badge(client, policy) -> None:
+    """A polling browser swaps ONLY the partial's region: the severity
+    badge must live inside it or the badge freezes at the first render's
+    state while the tiles move on."""
+    _connect(client, policy)
+    partial = client.get("/pages/readings/readings")
+    assert partial.status_code == 200
+    assert 'data-bw-page-severity="neutral"' in partial.text
+
+
+def test_the_full_page_renders_the_plot_region_once(client, policy) -> None:
+    """The plots render inside the poll region (so live pages redraw); the
+    full page must not render them a second time outside it — a duplicate
+    figure hydrates twice and doubles the payload."""
+    _connect(client, policy)
+    body = client.get("/pages/readings").text
+    assert body.count("data-bw-plot-host") == 1, body.count("data-bw-plot-host")
+    assert body.count('aria-label="Traces"') == 1
+
+
+def test_a_scenario_switch_moves_the_badge_through_the_poll(
+    starter_project, policy
+) -> None:
+    """End to end: healthy page, switch the scenario selection, reconnect
+    (the switch arms the NEXT connection), poll — the badge the polling
+    browser receives carries the new severity without a full GET."""
+    from fastapi.testclient import TestClient
+
+    from benchweave_sdk_server.cli import _build_seam
+
+    seam, selection = _build_seam(starter_project, scenario="normal")
+    app = build_app(seam, policy=policy, scenario=selection)
+    with TestClient(app, base_url="http://127.0.0.1:8477") as poll_client:
+        _connect(poll_client, policy)
+        before = poll_client.get("/pages/readings/readings").text
+        assert 'data-bw-page-severity="neutral"' in before
+        switch = poll_client.post(
+            f"/devices/{DEV}/scenario",
+            data={"scenario": "critical"},
+            headers={"x-csrf-token": policy.csrf_token},
+            follow_redirects=False,
+        )
+        assert switch.status_code == 303, switch.status_code
+        poll_client.post(
+            f"/devices/{DEV}/disconnect",
+            headers={"x-csrf-token": policy.csrf_token},
+            follow_redirects=False,
+        )
+        _connect(poll_client, policy)
+        after = poll_client.get("/pages/readings/readings").text
+        assert 'data-bw-page-severity="critical"' in after
