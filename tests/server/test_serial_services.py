@@ -128,6 +128,10 @@ class ShortWritePort:
         self.reads += 1
         out = bytes(self.inbound[:size])
         del self.inbound[:size]
+        if not out:
+            # The port's own short timeout — without it a leaked reader
+            # thread hot-spins on an always-empty port.
+            time.sleep(0.001)
         return out
 
     def close(self) -> None:

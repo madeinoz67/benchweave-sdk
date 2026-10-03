@@ -223,13 +223,13 @@ Install the optional server extra to serve one plugin project without a gateway:
 pip install 'benchweave-sdk[server]'
 ```
 
-The extra installs FastAPI, FastMCP, Jinja2, Uvicorn and the published `benchweave-ui-html` package. The page design tokens come from that package. The package is held at an exact version. A design change reaches this host through a new package release and a pin update in this repository. The extra adds the command `benchweave-sdk-server`. One process serves a server-rendered HTMX UI, a JSON REST API and an MCP endpoint over one operations seam. `benchweave-sdk-server mcp <project>` runs the same MCP server over stdio, with no HTTP listener.
+The extra installs FastAPI, FastMCP, Jinja2, Uvicorn, the published `benchweave-ui-html` package and pyserial. The page design tokens come from that package. The package is held at an exact version. A design change reaches this host through a new package release and a pin update in this repository. The extra adds the command `benchweave-sdk-server`. One process serves a server-rendered HTMX UI, a JSON REST API and an MCP endpoint over one operations seam. `benchweave-sdk-server mcp <project>` runs the same MCP server over stdio, with no HTTP listener.
 
 ```sh
 benchweave-sdk-server serve /path/to/plugin-project --transport mock --port 8477 --no-open
 ```
 
-The transport is the scripted mock transport. It replays the exact exchanges that the plugin's `vectors.json` declares. This extra does not provide a real hardware transport.
+The default transport is the scripted mock transport. It replays the exact exchanges that the plugin's `vectors.json` declares. With `--transport serial --device <path>`, the host serves a real serial port with the descriptor's own declared settings. pyserial rides the server extra only; a default install never gains it. Discovery opens candidate ports and asks each for its identity, filtered by the descriptor's declared USB hint (`x-standalone-usb-vid`/`x-standalone-usb-pid` extension keys under `transport.settings`) where declared. Loading the page never transmits: the page serves the last scan's result, and scanning is an explicit button. A transport fault keeps the device refused until a reconnect mints a fresh link.
 
 A plugin with presentation documents renders its declared pages at `/pages/<page-id>`. Each readings page shows one reading tile per observation binding. Each tile shows the value, the unit and the device's own quality string. The page severity is composed from the readings. Plots render from the declared manifest. The plot data comes from the host's own bounded observation of the reads. The host decimates the data before it serves the page. The page shows how many samples it acquired and plotted. The host declares its supported features and panels through `host_info`. A manifest that needs a feature the host does not have refuses to load.
 
