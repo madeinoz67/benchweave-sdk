@@ -55,7 +55,7 @@ import pytest
 from benchweave_sdk import __version__
 from benchweave_sdk.cli import main as cli_main
 from benchweave_sdk.presentation import create_ui_resources
-from benchweave_sdk.scaffold import _repo_template_members  # noqa: PLC2701
+from benchweave_sdk.scaffold import _enforce_lf, _repo_template_members  # noqa: PLC2701
 from benchweave_sdk.served import active_version
 
 REPO = Path(__file__).resolve().parents[1]
@@ -186,6 +186,7 @@ def _scaffold(stage: tuple, project: Path, with_ui: bool) -> None:
         defaults=True,
         quiet=True,
     )
+    _enforce_lf(project)
     base_sha = _git_out(repo, "rev-parse", BASE_TAG)
     _pin_local_answers(project, repo, base_sha)
     if with_ui:
@@ -224,6 +225,7 @@ def test_update_keeps_the_update_promise(
     from copier import run_update
 
     run_update(str(project), defaults=True, vcs_ref=TARGET_TAG, overwrite=True, quiet=True)
+    _enforce_lf(project)
     updated = _tree(project)
 
     # A1 managed: byte-equal to the current template render.
@@ -297,6 +299,7 @@ def test_update_without_the_answers_pin_cannot_resolve_base(tmp_path: Path) -> N
         defaults=True,
         quiet=True,
     )
+    _enforce_lf(project)
     assert "_commit:" not in (project / ".copier-answers.yml").read_text(encoding="utf-8")
     _git(project, "init", "-q")
     _git(project, "add", "-A")
@@ -353,6 +356,7 @@ def test_wrong_base_provenance_never_silently_loses_author_bytes(tmp_path: Path)
         defaults=True,
         quiet=True,
     )
+    _enforce_lf(project)
     _pin_local_answers(project, repo, _git_out(repo, "rev-parse", "v0.8.0"))
     # The author's real lineage is the BASE guide, locally edited on the same
     # first line — all three states disagree there.
@@ -368,6 +372,7 @@ def test_wrong_base_provenance_never_silently_loses_author_bytes(tmp_path: Path)
     _git(project, "-c", "user.email=author@benchweave", "-c", "user.name=author",
          "commit", "-qm", "author state")
     run_update(str(project), defaults=True, vcs_ref=TARGET_TAG, overwrite=True, quiet=True)
+    _enforce_lf(project)
     text = guide.read_text(encoding="utf-8")
     assert "<<<<<<< before updating" in text
     assert "AUTHOR-localised guide" in text, "the author's line must survive the wrong-base merge"
@@ -421,6 +426,7 @@ def _scaffold_offline(
         defaults=True,
         quiet=True,
     )
+    _enforce_lf(project)
     _pin_local_answers(project, repo, _git_out(repo, "rev-parse", BASE_TAG))
 
 
