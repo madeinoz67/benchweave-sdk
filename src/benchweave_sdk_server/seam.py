@@ -528,6 +528,22 @@ class StandaloneSeam:
                 digests[path.stem] = hashlib.sha256(read_file(path)).hexdigest()
         return digests
 
+    def repin_preset(self, preset_id: str) -> str:
+        """Re-pin one preset's serving digest after the host's OWN authorized
+        write (the authoring ``preset_put``). The construction pin governs
+        bytes the host did not write; this moves the pin WITH the host's
+        write so the running host serves its authorized configuration
+        without a reload, and returns the new digest."""
+        path = (
+            self._session.plugin.package_dir
+            / "config"
+            / "presets"
+            / f"{preset_id}.json"
+        )
+        digest = hashlib.sha256(read_file(path)).hexdigest()
+        self._preset_digests[preset_id] = digest
+        return digest
+
     def _preset_rows(self, correlation: str) -> list[dict[str, Any]]:
         """The plugin's declared presets under ``config/presets/`` — the
         scaffold's documented configuration home — each row carrying the

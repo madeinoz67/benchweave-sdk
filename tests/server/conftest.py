@@ -52,6 +52,21 @@ def seam(plugin) -> StandaloneSeam:
 
 
 @pytest.fixture()
+def seam_from(starter_project):
+    """A seam factory over any project root: loads it fresh each call."""
+
+    def _build(project: Path, **kwargs) -> StandaloneSeam:
+        loaded = load_plugin_project(Path(project))
+        return StandaloneSeam(
+            PluginSession(loaded, lambda: LoopingMockHost(mock_exchanges(loaded))),
+            transport_kind="mock",
+            **kwargs,
+        )
+
+    return _build
+
+
+@pytest.fixture()
 def policy() -> GuardPolicy:
     return GuardPolicy.complete(
         bound_host=TEST_HOST,

@@ -206,7 +206,7 @@ def build_mcp(seam: StandaloneSeam, *, authoring: bool = False) -> FastMCP:
     if authoring:
         from .authoring import register_authoring_tools
 
-        register_authoring_tools(mcp)
+        register_authoring_tools(mcp, seam=seam)
     _pin_all(mcp)
     return mcp
 
