@@ -156,7 +156,8 @@ commit is the only version of this that works.
 
 ## Documentation register (ASD-STE100)
 
-Operator- and user-facing documentation — docs-site user guides, README instruction
+Operator-, user- and developer-facing published documentation — docs-site user guides,
+developer-facing published guides, README instruction
 sections, generated guide text, warnings, cautions, and safety notices — is written in
 ASD-STE100 Simplified Technical English. Dispatch the `document-writer` agent
 (`.claude/agents/document-writer.md`) for any documentation leg that authors or rewrites
