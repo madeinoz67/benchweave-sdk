@@ -25,6 +25,8 @@ from typing import Any
 
 from benchweave_ui_html.plot import ChannelHint, TraceSpec, compose_plot
 
+from benchweave_sdk.preview_models import PlotView
+
 #: Per-parameter sample cap — a presentation bound (the ring is host state
 #: for the live page, not a capture store; retained observations belong to
 #: the gateway). Deliberately not a commissioned envelope (A02 posture:
@@ -124,7 +126,7 @@ class PlotRender:
     json: str
 
 
-def compose_page_plot(view: Any, ring: ObservationRing) -> PlotRender:
+def compose_page_plot(view: PlotView, ring: ObservationRing) -> PlotRender:
     """Compose one ``PlotView`` into the rendered figure and its payload.
 
     The figure is the package's own ``render_plot(compose_plot(...))``
@@ -137,7 +139,15 @@ def compose_page_plot(view: Any, ring: ObservationRing) -> PlotRender:
 
     hints = {
         channel.variable_id: ChannelHint(
-            color_role=channel.color_role, visible=channel.visible
+            color_role=channel.color_role,
+            # An OMITTED manifest visibility key is not a hide request: the
+            # projected ``PlotChannel.visible`` is None for hints that only
+            # carry a colour role, and ``ChannelHint(visible=None)`` computes
+            # ``hidden = not None`` — hiding every hinted channel (fold 1:
+            # the unmodified scaffold rendered its one channel "hidden by
+            # presentation preference"). Default the omission to VISIBLE;
+            # an explicit ``visible: false`` keeps hiding.
+            visible=True if channel.visible is None else channel.visible,
         )
         for channel in view.channels
         if channel.color_role is not None or channel.visible is not None
@@ -189,7 +199,7 @@ def compose_page_plot(view: Any, ring: ObservationRing) -> PlotRender:
     return PlotRender(html=render_plot(composed), json=json.dumps(payload))
 
 
-def plot_host_html(view: Any, ring: ObservationRing) -> str:
+def plot_host_html(view: PlotView, ring: ObservationRing) -> str:
     """The wrapper the hydrator keys on: the figure plus its JSON block."""
     render = compose_page_plot(view, ring)
     slug = "".join(

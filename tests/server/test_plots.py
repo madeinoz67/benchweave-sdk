@@ -21,6 +21,7 @@ from fastapi.testclient import TestClient
 from benchweave_sdk_server.plots import (
     PLOT_COLUMNS,
     ObservationRing,
+    compose_page_plot,
     decimate_minmax,
 )
 from benchweave_sdk_server.seam import StandaloneSeam
@@ -257,3 +258,52 @@ def test_the_base_template_loads_the_plot_assets(client: TestClient) -> None:
 
 
 # --- helpers --------------------------------------------------------------------
+
+
+# --- the visibility default (fold 1: an omitted hint is not a hide request) ----
+
+
+def _scaffold_plot_view(starter_project):
+    from benchweave_sdk_server.presentation import load_host_presentation
+    from benchweave_sdk_server.session import load_plugin_project
+
+    plugin = load_plugin_project(starter_project)
+    views = load_host_presentation(plugin).plot_views
+    assert views, "the scaffold projects one example plot"
+    return views[0]
+
+
+def test_a_color_role_only_hint_renders_the_channel_visible(starter_project) -> None:
+    """The scaffold's own manifest hint carries ``color_role: muted`` and NO
+    ``visible`` key: the omitted flag must default VISIBLE. Passing None
+    through ``ChannelHint(visible=...)`` computes ``hidden = not None`` and
+    hides every scaffold channel — the legend row renders "hidden by
+    presentation preference", the acquisition disclosure never fires (hidden
+    traces draw nothing), and the axis filter empties ``data-bw-axes``."""
+    view = _scaffold_plot_view(starter_project)
+    ring = ObservationRing()
+    for index in range(5000):
+        ring.record("voltage", 10.0 * index, 3.3)
+    render = compose_page_plot(view, ring)
+    assert "data-hidden" not in render.html, "the channel renders hidden"
+    assert "hidden by presentation preference" not in render.html
+    assert "Acquired" in render.html, "a visible decimated trace discloses"
+    assert 'data-bw-axes="V"' in render.html, "the y-axis unit survives"
+
+
+def test_an_explicit_hide_hint_still_hides(starter_project) -> None:
+    """The fix's honest boundary: a manifest hint that SAYS visible=false
+    keeps hiding the channel (the omission default never overrides an
+    explicit request)."""
+    from dataclasses import replace as _replace
+
+    view = _scaffold_plot_view(starter_project)
+    channel = view.channels[0]
+    hidden_view = _replace(
+        view,
+        channels=(
+            _replace(channel, color_role=None, visible=False),
+        ),
+    )
+    render = compose_page_plot(hidden_view, ObservationRing())
+    assert "data-hidden" in render.html
