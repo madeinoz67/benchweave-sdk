@@ -122,3 +122,17 @@ the checklist is a matrix in `docs/internal`, and a skill walks it.
 | 7 | Contributor window `v0.3.1..HEAD` | empty — owner + dependabot[bot] + benchweave-changelog[bot] only; recorded result |
 | 8 | Gateway `uv.lock` SDK pin | recorded note — moves at the gateway's next lock run |
 | 9 | Served-set bump class | MINOR — digital_lanes plugin-ui 0.2.0→0.3.0 (declared-range change) + registry 0.1.2 active-row motion; `sdk_bump_class_invalid:` passed |
+
+## Result record — v0.6.0 (2026-10-03)
+
+| # | Surface | Result |
+|---|---------|--------|
+| 1 | README stamp | updated → SDK 0.6.0 — the stamped number was 0.5.0, the dev-window number that never shipped as a tag; OTDP 0.2.2 / adapter API 1.1 correct-as-is against the lock-derived constants |
+| 2 | Website hero status | updated — SDK 0.5.0 → 0.6.0 (the same never-shipped dev-window number); OTDP 0.2.2 / adapter API 1.1 correct-as-is against the lock's active otdp row and the vendored descriptor const (`__init__.py` lazy derivation) |
+| 3 | Docs selector | WALKED TWO-PHASE — phase 1 (this branch): no edit; the selector stays consistent with the current tag set (v0.4.1 latest). Phase 2 rides the tag commit, pushed with the tag in one action: v0.6.0 (latest) + v0.4.1 prior option on both surfaces. |
+| 4 | Compatibility tagline | updated — SDK 0.4.1 → 0.6.0 against main project `>=0.1.0` (lock floor unchanged; `compatibility.sdk` already 0.6.0 via the #359 re-anchor, the #189 pairing shape) |
+| 5 | Standards badges | correct-as-is — all six match the lock's ACTIVE rows (otdp 0.2.2, registry 0.1.2, execution 0.2.0, interface 0.1.0, plugin-ui 0.3.0, plugin-ui-preview 0.2.0) |
+| 6 | `great-docs.yml` versions | PHASE-2 PLAN — the tag commit registers v0.6.0 `latest: true` and demotes v0.4.1 (the ordering constraint: a tag missing itself fails the docs build) |
+| 7 | Contributor window `v0.4.1..HEAD` | empty — every author in the window is the owner (`sort -u` over `%an <%ae>` resolves to one entry); not even the changelog bot (the v0.4.1 changelog commit 714eab4 is owner-authored, not the app's). Recorded result. |
+| 8 | Gateway `uv.lock` SDK pin | recorded note — the gateway's pin and submodule pointer sit at the 0.4.1-era tree until its next pointer advance (its `packages/sdk/README.md` still stamps SDK 0.4.1); they move together per the AR-6 pairing |
+| 9 | Served-set bump class | n-a — no served-set motion in the window: carried rows (12), active rows and declared ranges are identical to v0.4.1's lock; only `compatibility.sdk` moved (the certified-version field). Neither stale pattern of this row can fire; the bump class is unconstrained by the sync. |
