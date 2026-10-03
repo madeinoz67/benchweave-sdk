@@ -3,8 +3,8 @@
   "assets": [
     {
       "path": "bw-plot.js",
-      "size": 5304,
-      "sha256": "c6087521a28a2de6fdc780b1854812413d8343fa2400c1ebb7217d3418f5d7d6"
+      "size": 5219,
+      "sha256": "6e7a8839f3148df903e11b38d6c1105925b5e1e4aa315e6e41ea73de3b7fdc30"
     },
     {
       "path": "htmx.min.js",

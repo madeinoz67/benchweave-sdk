@@ -224,11 +224,11 @@ benchweave-sdk-server serve /path/to/plugin-project --transport mock --port 8477
 
 The transport is the scripted mock transport. It replays the exact exchanges that the plugin's `vectors.json` declares. This extra does not provide a real hardware transport.
 
-Pages on the mock transport also carry the banner `SIMULATED — mock transport`.
+A plugin with presentation documents renders its declared pages at `/pages/<page-id>`. Each readings page shows one reading tile per observation binding. Each tile shows the value, the unit and the device's own quality string. The page severity is composed from the readings. Plots render from the declared manifest. The plot data comes from the host's own bounded observation of the reads. The host decimates the data before it serves the page. The page shows how many samples it acquired and plotted. The host declares its supported features and panels through `host_info`. A manifest that needs a feature the host does not have refuses to load.
+
+Every page carries the mode banner. The banner states `NO GATEWAY · LOCAL PRESENTATION ONLY`. The banner also states that no controller lease and no policy engine stand behind the process. On the mock transport, the banner additionally states `SIMULATED PRESENTATION DATA`. The process has no leases, policy, approvals, procedures or run records behind it.
 
 Serve one of the nine preview states with `--scenario <id>`. The ids are `normal`, `loading`, `stale`, `disconnected`, `warning`, `critical`, `trip`, `recovery` and `request-rejected`. Scenario mode uses the mock transport only. The device page shows a scenario selector. A switch applies to the next connection. A live connection keeps the transport it opened with. The readings and their quality strings come from the scripted transport. The plugin adapter does not run in scenario mode. A project with a broken adapter still serves its pages and all nine states. Device operations answer `not_ready` and show the load diagnostic.
-
-Every page carries the banner `STANDALONE — no gateway`. This process has no leases, policy, approvals, procedures or run records behind it.
 
 The startup output prints the URL and a bearer token for each launch. REST mutations and MCP-over-HTTP calls need this token.
 

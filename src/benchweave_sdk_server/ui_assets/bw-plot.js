@@ -59,14 +59,8 @@
       legend: { show: false },
       cursor: { drag: { x: true, y: true } },
     };
-    var plot = new window.uPlot(
-      options,
-      [channel.x, channel.y],
-      function (element) {
-        canvas.innerHTML = "";
-        canvas.appendChild(element);
-      }
-    );
+    canvas.textContent = "";
+    var plot = new window.uPlot(options, [channel.x, channel.y], canvas);
     host.dataset.bwHydrated = "true";
     host._bwPlot = plot;
   }
