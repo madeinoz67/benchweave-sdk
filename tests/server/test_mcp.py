@@ -203,7 +203,9 @@ def test_plugin_new_inventory_is_posix_under_a_windows_flavour(monkeypatch) -> N
             return True
 
     monkeypatch.setattr(authoring, "Path", _WindowsFlavourDouble)
-    monkeypatch.setattr(authoring, "create_project", lambda target, package: None)
+    monkeypatch.setattr(
+        authoring, "create_project", lambda target, package, with_ui=False: None
+    )
     monkeypatch.setattr(
         "benchweave_sdk.presentation.create_ui_resources",
         lambda target, package: None,
