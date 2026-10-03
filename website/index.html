@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>BenchWeave SDK — build device plugins for the test-bench gateway</title>
+<title>BenchWeave SDK: build device plugins for the test-bench gateway</title>
 <meta name="description" content="benchweave-sdk: offline authoring and conformance tools for BenchWeave OTDP device plugins. Scaffold an independent plugin project, hand your AI the generated guide and evidence files, and check the result against the vendored contracts before anything ships.">
 <link rel="icon" type="image/svg+xml" href="assets/logo.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -66,8 +66,8 @@
           <div class="status-line"><span class="status-dot"></span> SDK 0.4.1 · OTDP 0.2.2 · adapter API 1.1</div>
           <div class="status-line">Python 3.13+ · MIT</div>
         </div>
-        <h1>Build device plugins without importing the gateway</h1>
-        <p class="sub">Offline authoring and conformance tools for OTDP device plugins. Scaffold an independent project, hand your AI the generated guide and evidence files, then check descriptors, presentation resources and presets against the same contract bytes the gateway uses.</p>
+        <h1>Build device plugins. Do not import the gateway.</h1>
+        <p class="sub">Offline tools to author OTDP device plugins and to check their conformance. Scaffold an independent project. Hand your AI the generated guide and the evidence files. Then check descriptors, presentation resources and presets against the same contract bytes the gateway uses.</p>
         <div class="cta-row">
           <a class="btn btn-primary" href="#install" onclick="scrollToInstall(); return false;">Install the SDK</a>
           <a class="btn btn-secondary" href="docs/user-guide/plugin-sdk.html">Read the plugin guide</a>
@@ -245,7 +245,7 @@
         <text x="380" y="248" text-anchor="middle" fill="var(--text)" font-family="IBM Plex Mono" font-weight="600" font-size="10.5">device plugin</text>
         <text x="380" y="260" text-anchor="middle" fill="var(--text-muted)" font-family="IBM Plex Mono" font-size="9">descriptor · adapter · tests</text>
       </svg>
-      <div class="fig-caption">fig. 1 — prompt to plugin</div>
+      <div class="fig-caption">fig. 1: prompt to plugin</div>
       </div>
     </div>
 
@@ -253,7 +253,7 @@
     <div class="install" id="install">
       <div class="install-head">
         <h2>Install</h2>
-        <p>Stable releases are on PyPI. The generated plugin runtime has no dependency on the SDK; only its test extra pins the SDK version.</p>
+        <p>Stable releases are on PyPI. The generated plugin runtime has no dependency on the SDK. Only its test extra pins the SDK version.</p>
       </div>
       <div class="install-card">
         <div class="install-tabs" role="tablist" aria-label="Install method">
@@ -273,24 +273,24 @@
     <!-- five steps -->
     <div class="steps-section">
       <h2>Five steps</h2>
-      <p class="lede">Generate, implement, test, review, then prepare a release. The SDK covers the offline parts; hardware qualification and publication approval stay with you.</p>
+      <p class="lede">Generate, implement, test, review, then prepare a release. The SDK covers the offline parts. Hardware qualification and publication approval stay with you.</p>
       <ol class="step-list">
         <li><span class="step-n">1</span><div><strong>Install the SDK</strong><p>From PyPI, as an isolated CLI tool, or from Homebrew.</p></div></li>
         <li><span class="step-n">2</span><div><strong>Scaffold the project</strong><p><code>benchweave-sdk new plugins/&lt;manufacturer&gt;/&lt;device&gt; --package &lt;import_name&gt;</code>. The project contains <code>src/</code>, <code>tests/</code> and a generated <code>AI-GUIDE.md</code> that describes the design, build, test, review and release steps.</p></div></li>
-        <li><span class="step-n">3</span><div><strong>Replace the synthetic protocol</strong><p>Swap the explicitly synthetic <code>protocol.md</code> and <code>vectors.json</code> for verified device behaviour, then update the descriptor.</p></div></li>
-        <li><span class="step-n">4</span><div><strong>Run the checks</strong><p>Install with test dependencies, run <code>pytest</code>, then <code>benchweave-sdk check</code> against the descriptor. Record the applicable S01–S18, C01–C12 and M01–M14 obligations and evidence — the basic checks do not cover all of them.</p></div></li>
-        <li><span class="step-n">5</span><div><strong>Build and prepare the release</strong><p><code>uv build</code>, prepare registry metadata and reviewed evidence, then approve the release before publication or hardware qualification. <code>benchweave-sdk inventory</code> generates hashes, not a complete registry manifest.</p></div></li>
+        <li><span class="step-n">3</span><div><strong>Replace the synthetic protocol</strong><p>Swap the explicitly synthetic <code>protocol.md</code> and <code>vectors.json</code> for verified device behaviour. Then update the descriptor.</p></div></li>
+        <li><span class="step-n">4</span><div><strong>Run the checks</strong><p>Install the plugin with its test dependencies. Run <code>pytest</code>. Then run <code>benchweave-sdk check</code> against the descriptor. Record the applicable S01–S18, C01–C12 and M01–M14 obligations and evidence. The basic checks do not cover all of them.</p></div></li>
+        <li><span class="step-n">5</span><div><strong>Build and prepare the release</strong><p>Run <code>uv build</code>. Prepare the registry metadata and the reviewed evidence. Then approve the release before publication or hardware qualification. <code>benchweave-sdk inventory</code> generates hashes, not a complete registry manifest.</p></div></li>
       </ol>
     </div>
 
     <!-- public surfaces -->
     <div class="surfaces">
       <h2>Public surfaces</h2>
-      <p class="lede">Six modules. No SDK superclass is required — the interfaces are structural.</p>
+      <p class="lede">Six modules. You do not need an SDK superclass. The interfaces are structural.</p>
       <div class="spec-grid">
         <div class="spec-card">
           <div class="spec-head"><h4>interfaces</h4><span class="badge badge-version">async</span></div>
-          <p>Structural <code>Adapter</code>, <code>HostServices</code>, <code>OperationContext</code> and optional <code>CaptureServices</code> / <code>DatasetServices</code> capability definitions.</p>
+          <p>Structural <code>Adapter</code>, <code>HostServices</code>, <code>OperationContext</code> and optional <code>CaptureServices</code> and <code>DatasetServices</code> capability definitions.</p>
           <a class="spec-link" href="docs/reference/">API reference →</a>
         </div>
         <div class="spec-card">
@@ -299,7 +299,7 @@
         </div>
         <div class="spec-card">
           <div class="spec-head"><h4>validation</h4><span class="badge badge-version">offline</span></div>
-          <p>Pinned local schemas, strict finite JSON, format validation, runtime correlation and basic descriptor S01/S02/S04 checks. Unresolved references fail without network retrieval.</p>
+          <p>Pinned local schemas, strict finite JSON, format validation, runtime correlation and basic descriptor checks for S01, S02 and S04. Unresolved references fail without network retrieval.</p>
         </div>
         <div class="spec-card">
           <div class="spec-head"><h4>conformance</h4><span class="badge badge-version">reusable</span></div>
@@ -307,11 +307,11 @@
         </div>
         <div class="spec-card">
           <div class="spec-head"><h4>presentation</h4><span class="badge badge-version">same bytes</span></div>
-          <p>Bounded offline validation of presentation resources and complete configuration presets, using the same validator bytes as the gateway.</p>
+          <p>Bounded offline validation of presentation resources and complete configuration presets, with the same validator bytes as the gateway.</p>
         </div>
         <div class="spec-card">
           <div class="spec-head"><h4>packaging</h4><span class="badge badge-version">integrity</span></div>
-          <p>Inventory and integrity checks for a prepared bundle, including duplicate, path and symlink rejection. No installation, signing or publication.</p>
+          <p>Inventory and integrity checks for a prepared bundle, including duplicate, path and symlink rejection. It does not install, sign or publish anything.</p>
         </div>
       </div>
     </div>
@@ -319,7 +319,7 @@
     <div class="limits-callout">
       <div>
         <h2>Compatibility and limits</h2>
-        <p>The gateway bridge implements identify, scalar read and scalar write; profile actions, capture and streaming are not implemented by that bridge. The SDK supplies no live install endpoint, physical backend, container device permissions or hardware qualification. SDK and gateway versions are independently named — each release records the exact pair tested.</p>
+        <p>The gateway bridge implements identify, scalar read and scalar write. That bridge does not implement profile actions, capture or streaming. The SDK supplies no live install endpoint, physical backend, container device permissions or hardware qualification. SDK and gateway versions have independent names. Each release records the exact tested pair.</p>
       </div>
       <a class="btn btn-secondary" href="https://github.com/madeinoz67/benchweave-sdk#compatibility-and-limits" target="_blank" rel="noopener">Read the full list</a>
     </div>
@@ -327,7 +327,7 @@
     <div class="limits-callout">
       <div>
         <h2>Questions and discussion</h2>
-        <p>Stuck on a descriptor, or want to show what you are building? The BenchWeave Discord is open, and the invite is permanent.</p>
+        <p>Are you stuck on a descriptor? Do you want to show your work? The BenchWeave Discord is open, and the invite is permanent.</p>
       </div>
       <a class="btn btn-secondary" href="https://discord.gg/Y5XPTWQQXr" target="_blank" rel="noopener">Join the Discord →</a>
     </div>
@@ -351,7 +351,7 @@
           <option value="docs/v/dev/">dev</option>
         </select>
       </div>
-      <p>Versioned docs built with Great Docs. The root tracks the latest release; every page carries a version selector that switches between released versions and the current <code>main</code> build.</p>
+      <p>Versioned docs built with Great Docs. The root tracks the latest release. Every page carries a version selector that switches between released versions and the current <code>main</code> build.</p>
     </div>
 
     <div class="docs-grid">
@@ -370,7 +370,7 @@
         <div class="sb-title">reference</div>
         <a class="doc-card" href="docs/reference/cli/">
           <h3>CLI reference</h3>
-          <p><code>new</code>, <code>check</code>, <code>check-ui</code>, <code>check-preset</code>, <code>preview-ui</code>, <code>inventory</code>, <code>sync-standards</code>, and the <code>registry</code> family — eight management commands: <code>queue</code>, <code>status</code>, <code>publish-status</code>, <code>yank</code>, <code>advise</code>, <code>unlist</code>, <code>withdraw</code>, <code>transfer</code> — generated from <code>--help</code>.</p>
+          <p><code>new</code>, <code>check</code>, <code>check-ui</code>, <code>check-preset</code>, <code>preview-ui</code>, <code>inventory</code>, <code>sync-standards</code>, and the <code>registry</code> family. The family has eight management commands: <code>queue</code>, <code>status</code>, <code>publish-status</code>, <code>yank</code>, <code>advise</code>, <code>unlist</code>, <code>withdraw</code>, <code>transfer</code>. The reference is generated from <code>--help</code>.</p>
         </a>
         <a class="doc-card" href="docs/reference/">
           <h3>API reference</h3>
@@ -380,13 +380,13 @@
       <div class="docs-group">
         <div class="sb-title">project</div>
         <a class="doc-card" href="docs/changelog.html"><h3>Changelog</h3><p>Release history, generated by git-cliff.</p></a>
-        <a class="doc-card" href="docs/security.html"><h3>Security</h3><p>Reporting a vulnerability.</p></a>
+        <a class="doc-card" href="docs/security.html"><h3>Security</h3><p>How to report a vulnerability.</p></a>
         <a class="doc-card" href="docs/contributing.html"><h3>Contributing</h3><p>Development setup and pull-request expectations.</p></a>
       </div>
       <div class="docs-group">
         <div class="sb-title">for agents</div>
-        <a class="doc-card" href="docs/skills.html"><h3>Agent skill</h3><p>The <code>benchweave-sdk</code> skill under <code>.well-known/</code>, for coding agents that author plugins.</p></a>
-        <a class="doc-card" href="docs/llms.txt"><h3>llms.txt</h3><p>Index of the docs in plain text; <code>llms-full.txt</code> carries every page.</p></a>
+        <a class="doc-card" href="docs/skills.html"><h3>Agent skill</h3><p>The <code>benchweave-sdk</code> skill under <code>.well-known/</code>, for AI agents that author plugins.</p></a>
+        <a class="doc-card" href="docs/llms.txt"><h3>llms.txt</h3><p>Index of the docs in plain text. <code>llms-full.txt</code> carries every page.</p></a>
       </div>
     </div>
   </section>
@@ -395,7 +395,7 @@
   <section class="panel" id="panel-cli">
     <div class="page-head">
       <h1>CLI</h1>
-      <p>One console script, <code>benchweave-sdk</code>, built on Click with Rich output. Every command works offline; none of them admits a plugin, approves settings, or qualifies hardware.</p>
+      <p>One console script, <code>benchweave-sdk</code>, built on Click with Rich output. Every command works offline. No command admits a plugin, approves settings or qualifies hardware.</p>
     </div>
     <table class="cli-table">
       <thead><tr><th>Command</th><th>What it does</th><th></th></tr></thead>
@@ -404,15 +404,15 @@
         <tr><td><code>check</code></td><td>Run offline descriptor schema and basic semantic checks.</td><td><a href="docs/reference/cli/check.html">ref →</a></td></tr>
         <tr><td><code>check-ui</code></td><td>Validate a presentation candidate offline.</td><td><a href="docs/reference/cli/check_ui.html">ref →</a></td></tr>
         <tr><td><code>check-preset</code></td><td>Validate complete settings offline.</td><td><a href="docs/reference/cli/check_preset.html">ref →</a></td></tr>
-        <tr><td><code>preview-ui</code></td><td>Preview simulated presentation states on a local renderer. Loopback only unless <code>--allow-network</code>; every preview is labelled simulated.</td><td><a href="docs/reference/cli/preview_ui.html">ref →</a></td></tr>
-        <tr><td><code>inventory</code></td><td>Print hashes for a prepared bundle; not a release manifest.</td><td><a href="docs/reference/cli/inventory.html">ref →</a></td></tr>
+        <tr><td><code>preview-ui</code></td><td>Preview simulated presentation states on a local renderer. Loopback only unless you pass <code>--allow-network</code>. Every preview carries a simulated label.</td><td><a href="docs/reference/cli/preview_ui.html">ref →</a></td></tr>
+        <tr><td><code>inventory</code></td><td>Print hashes for a prepared bundle. This is not a release manifest.</td><td><a href="docs/reference/cli/inventory.html">ref →</a></td></tr>
         <tr><td><code>sync-standards</code></td><td>Import a standards bundle into the SDK's vendored tree and lock. <code>--check</code> verifies the committed lock alone.</td><td><a href="docs/reference/cli/sync_standards.html">ref →</a></td></tr>
       </tbody>
     </table>
 
     <h2 class="h2-sub">Validate from the plugin project root</h2>
     <div class="code-block code-block--wide"><span class="muted"># after installing the plugin's development dependencies</span><br>benchweave-sdk check src/benchweave_acme_model100/descriptor.json<br>benchweave-sdk check-ui src/benchweave_acme_model100/presentation.json \<br>&nbsp;&nbsp;--descriptor src/benchweave_acme_model100/descriptor.json \<br>&nbsp;&nbsp;--resources src/benchweave_acme_model100 \<br>&nbsp;&nbsp;--catalogue src/benchweave_acme_model100/binding-catalogue.json \<br>&nbsp;&nbsp;--firmware 1.0.0<br>pytest<br>uv build</div>
-    <p class="note"><code>--resources</code> points at the package root; the envelope's <code>resource_root: "ui"</code> selects its <code>ui/</code> subdirectory. Resource paths must stay inside the root and cannot traverse symlinks.</p>
+    <p class="note"><code>--resources</code> points at the package root. The envelope's <code>resource_root: "ui"</code> selects its <code>ui/</code> subdirectory. Resource paths must stay inside the root and cannot traverse symlinks.</p>
   </section>
 
   <!-- ================= GATEWAY ================= -->
@@ -420,11 +420,11 @@
     <div class="sdk-wrap">
       <div class="page-head">
         <h1>Gateway</h1>
-        <p>This is the SDK. The BenchWeave gateway, the canonical architecture and the contract standards live in the main repository; this package is mounted there at <code>packages/sdk</code> as a git submodule with its own CI and release cycle.</p>
+        <p>This is the SDK. The BenchWeave gateway, the canonical architecture and the contract standards live in the main repository. The main repository mounts this package at <code>packages/sdk</code> as a git submodule. The package has its own CI and release cycle.</p>
       </div>
       <div class="sdk-card">
         <h2>Vendored contract sets</h2>
-        <p class="tagline">The sdist and wheel carry these standards so validation runs without the gateway checkout. <code>standards-lock.json</code> pins every file by hash; the release smoke compares installed bytes with the canonical copies.</p>
+        <p class="tagline">The sdist and wheel carry these standards so validation runs without the gateway checkout. <code>standards-lock.json</code> pins every file by hash. The release smoke compares installed bytes with the canonical copies.</p>
         <div class="badge-row">
           <span class="badge badge-version">otdp 0.2.2</span>
           <span class="badge badge-version">registry 0.1.2</span>
