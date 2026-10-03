@@ -161,7 +161,10 @@ def _pin_all(mcp: FastMCP) -> None:
 def build_mcp(seam: StandaloneSeam, *, authoring: bool = False) -> FastMCP:
     """Build the MCP server over the seam; authoring tools only on request."""
     mcp = FastMCP(
-        "benchweave-standalone",
+        # Issue #309 slice A, fold F1: serverInfo.name is wire-visible —
+        # the distribution the host rides, not the dead sibling's name
+        # (the A-R dash-token grep pins the tree; test_mcp pins the object).
+        "benchweave-sdk-server",
         instructions=(
             "Standalone BenchWeave host. No gateway: no leases, policy, "
             "approvals, procedures or run records (host_info states the same "

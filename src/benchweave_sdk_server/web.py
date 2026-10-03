@@ -73,7 +73,7 @@ def build_app(seam: StandaloneSeam, *, policy: GuardPolicy, authoring: bool = Fa
             finally:
                 await seam.session.close()
 
-    app = FastAPI(title="BenchWeave standalone", lifespan=_lifespan)
+    app = FastAPI(title="BenchWeave SDK server", lifespan=_lifespan)
     app.state.seam = seam
     app.state.policy = policy
 

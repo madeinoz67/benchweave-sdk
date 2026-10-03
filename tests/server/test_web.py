@@ -31,6 +31,23 @@ def test_home_carries_the_banner_and_plugin_identity(client) -> None:
     assert f"/devices/{DEV}" in body
 
 
+def test_the_served_titles_name_the_server_host(app) -> None:
+    """Issue #309 slice A, fold F1: the FastAPI title carries the ruling's
+    name — the dead distribution's title string is gone from the app
+    object. The base template's <title> DEFAULT is renamed the same way;
+    the index/device pages override that block with mode words
+    ("Standalone host", the banner's vocabulary — kept, like SW-27).
+    """
+    assert app.title == "BenchWeave SDK server"
+    from pathlib import Path
+
+    templates = Path(__file__).resolve().parents[2] / "src" / "benchweave_sdk_server" / "templates"
+    base = (templates / "base.html").read_text(encoding="utf-8")
+    assert "BenchWeave SDK server" in base
+    for page in sorted(templates.glob("*.html")):
+        assert "BenchWeave standalone" not in page.read_text(encoding="utf-8"), page.name
+
+
 def test_home_banner_names_the_absent_guarantees(client) -> None:
     body = client.get("/").text
     for guarantee in ("leases", "policy", "approvals", "procedures", "runs"):

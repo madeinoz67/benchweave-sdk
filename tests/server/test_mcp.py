@@ -27,6 +27,15 @@ def test_served_tool_names_are_the_catalogue_prefix_set(seam) -> None:
     )
 
 
+def test_the_built_server_names_the_ruling_not_the_dead_distribution(seam) -> None:
+    """Issue #309 slice A, fold F1: serverInfo.name is wire-visible — the
+    dead distribution's name is gone from the tool surface, replaced by
+    the distribution the host rides (gate A-R's dash-token grep pins the
+    tree; this pins the built object)."""
+    mcp = build_mcp(seam)
+    assert mcp.name == "benchweave-sdk-server"
+
+
 def test_pinned_schemas_equal_the_catalogue_verbatim(seam) -> None:
     """Gate F: parameters and output_schema are the catalogue's, exactly."""
     mcp = build_mcp(seam)
