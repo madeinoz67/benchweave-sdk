@@ -559,7 +559,7 @@ def _write_preview_examples(
     for filename, severity in (("normal", "neutral"), ("warning", "warning")):
         document = _preview_fixture(targets[0], suffix=filename, severity=severity)
         fixture = fixtures / f"{filename}.json"
-        fixture.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+        fixture.write_bytes((json.dumps(document, indent=2) + "\n").encode("utf-8"))
     lines = [
         '"""Generated offline presentation-preview conformance smoke test."""',
         "",
@@ -597,7 +597,7 @@ def _write_preview_examples(
         "",
     ]
     test_path = destination / "tests" / "test_presentation_preview.py"
-    test_path.write_text("\n".join(lines), encoding="utf-8")
+    test_path.write_bytes(("\n".join(lines)).encode("utf-8"))
 
 
 def _ui_targets(descriptor: dict[str, Any]) -> list[dict[str, Any]]:
@@ -717,7 +717,7 @@ def create_ui_resources(destination: Path, package: str) -> None:
     (root / "ui").mkdir()
     (root / "ui/manifest.json").write_bytes(manifest_raw)
     for name, document in (("presentation.json", envelope), ("binding-catalogue.json", catalogue)):
-        (root / name).write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+        (root / name).write_bytes((json.dumps(document, indent=2) + "\n").encode("utf-8"))
     _write_preview_examples(destination, package, targets, with_plot=plot_index is not None)
     (destination / "UI-GUIDE.md").write_text(
         "# Optional plugin presentation\n\n"
@@ -754,4 +754,5 @@ def create_ui_resources(destination: Path, package: str) -> None:
         "Preset selection performs no I/O. Applying settings requires a separately\n"
         "approved procedure. Acquisition and retained observations belong to the gateway.\n",
         encoding="utf-8",
+        newline="\n",
     )
