@@ -30,8 +30,12 @@ def _digest(path: Path) -> str:
 
 def _project_files(project: Path) -> dict[str, str]:
     package = project / "src"
+    # Posix-form keys on EVERY host (#90's class, caught by #101's
+    # Windows lane): str(relative_to) is flavour-dependent, and the
+    # lookups below key forward-slash literals — as_posix() is a no-op on
+    # posix hosts and corrective on Windows.
     return {
-        str(path.relative_to(project)): _digest(path)
+        path.relative_to(project).as_posix(): _digest(path)
         for path in sorted(package.rglob("*.json"))
     }
 
