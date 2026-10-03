@@ -39,6 +39,11 @@ from .session import PluginSession
 _ADAPTER_CODE_MAP: dict[str, str] = {
     "INVALID_ARGUMENT": "invalid_request",
     "UNSUPPORTED": "invalid_request",
+    # The device said no against its own state — a state-based refusal is
+    # a conflict on this interface, distinct from not_ready (the device
+    # cannot be reached) and from invalid_request (the ask was malformed);
+    # the adapter's own envelope still rides the details verbatim.
+    "DEVICE_REJECTED": "conflict",
     "TIMEOUT": "not_ready",
     "TRANSPORT_ERROR": "not_ready",
     "PROTOCOL_ERROR": "unavailable",

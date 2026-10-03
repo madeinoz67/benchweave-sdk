@@ -201,7 +201,11 @@ def _add_html_routes(
                     }
                 )
             except SeamError as exc:
-                return readings, {"code": exc.code, "message": exc.message}
+                return readings, {
+                    "code": exc.code,
+                    "message": exc.message,
+                    "adapter": exc.details.get("adapter"),
+                }
         return readings, None
 
     async def _render_device(

@@ -1,6 +1,6 @@
 {% if readings_error %}
 <div class="notice notice-refused" role="alert">
-  <p><strong>Readings refused</strong> — {{ readings_error.code }}: {{ readings_error.message }}</p>
+  <p><strong>Readings refused</strong> — {{ readings_error.code }}: {{ readings_error.message }}{% if readings_error.adapter %} (device answered {{ readings_error.adapter.code }} / {{ readings_error.adapter.dispatch_state }}){% endif %}</p>
 </div>
 {% elif readings %}
 <table class="readings">
