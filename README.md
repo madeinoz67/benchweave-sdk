@@ -57,7 +57,7 @@ An installed SDK can check its vendored standards offline with `benchweave-sdk s
 4. Install the plugin with its test dependencies. Run the plugin tests. Run `benchweave-sdk check src/benchweave_acme_model100/descriptor.json`. Record all applicable S01–S18, C01–C12 and M01–M14 obligations and evidence. The basic SDK checks do not cover all of them.
 5. Build with `uv build`. Prepare the registry metadata and the reviewed evidence. Approve the release before publication or hardware qualification. `benchweave-sdk inventory` helps generate hashes, not a complete registry manifest.
 
-The generated runtime has no dependency on this SDK. The plugin test extra pins the SDK version from PyPI. Generate a plugin dependency lock for the plugin. Retain it in the plugin repository.
+The generated runtime has no dependency on this SDK. The plugin test extra pins the SDK version from PyPI. Run `benchweave-sdk doctor` from the project to check that the pin matches the installed SDK. The command works offline. Generate a plugin dependency lock for the plugin. Retain it in the plugin repository.
 
 ## Documentation
 
