@@ -220,7 +220,7 @@ Every preview carries the label `SIMULATED PRESENTATION DATA`. A control interac
 
 ## Compatibility and limits
 
-The gateway has an explicit OTDP bridge and loader for identify, scalar read, scalar write and single-channel capture. The capture uses staged appends and a host-computed manifest. Profile actions and streaming are not implemented by that bridge.
+The gateway has an explicit OTDP bridge and loader for async adapter API 1.1 plugins. The bridge mediates the OTDP verbs `identify`, `read`, `write`, `capture`, `stream_subscribe`, `stream_unsubscribe` and `invoke`: scalar read, scalar write, single-channel capture, streaming subscriptions and pinned-contract invoke. The capture uses staged appends and a host-computed manifest. The OTDP loader path also serves dataset publishing and payload services. The bridge does not mediate the `self_test`, `get_errors` and `reset` verbs. Profile scheduling needs a native asynchronous host. The bridge does not supply it.
 
 Package-relative and standard-library imports are supported. Arbitrary third-party runtime dependencies need more integration work. Existing simulator interfaces remain private.
 

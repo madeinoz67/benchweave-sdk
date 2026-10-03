@@ -1,0 +1,21 @@
+{
+  "$comment": "Structured source of record for the bridge facts in the compatibility statement (issue #359 row 1). The verb vocabulary and ids derive from the vendored OTDP corpus: otdp-runtime.schema.json, $defs/operationRequest, property verb, enum, resolved at the active vendored version. The supported flags record the gateway OTDPBridge dispatch table and module docstring (src/benchweave/host/otdp_bridge.py in the main benchweave repository). tests/test_capture_writer.py checks this file against the corpus vocabulary and checks the prose surfaces (README.md, user_guide/plugin-sdk.qmd, website/index.html) against this file at fact level. When the bridge capability set changes, update this file and those surfaces together. The stream verbs share one prose phrase: the callout-level check cannot tell them apart, only the corpus-vocabulary check can.",
+  "adapter_api": "1.1",
+  "updated_against": "benchweave main 46410da (src/benchweave/host/otdp_bridge.py dispatch table and module docstring)",
+  "verbs": [
+    {"id": "identify", "phrase": "identify", "supported": true},
+    {"id": "read", "phrase": "scalar read", "supported": true},
+    {"id": "write", "phrase": "scalar write", "supported": true},
+    {"id": "capture", "phrase": "single-channel capture", "supported": true},
+    {"id": "stream_subscribe", "phrase": "streaming subscriptions", "supported": true},
+    {"id": "stream_unsubscribe", "phrase": "streaming subscriptions", "supported": true},
+    {"id": "invoke", "phrase": "pinned-contract invoke", "supported": true},
+    {"id": "self_test", "phrase": "self_test", "supported": false},
+    {"id": "get_errors", "phrase": "get_errors", "supported": false},
+    {"id": "reset", "phrase": "reset", "supported": false}
+  ],
+  "beyond_verbs": [
+    {"id": "dataset-payload-services", "phrase": "dataset publishing", "supported": true},
+    {"id": "profile-scheduling", "phrase": "profile scheduling", "supported": false}
+  ]
+}
