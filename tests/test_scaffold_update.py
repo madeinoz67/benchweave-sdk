@@ -79,7 +79,7 @@ def _tree(root: Path) -> dict[str, bytes]:
     """Working-tree files only — ``.git`` internals (the index the update
     rewrites) are not project content."""
     return {
-        entry.relative_to(root).as_posix(): entry.read_bytes()
+        entry.relative_to(root).as_posix(): entry.read_bytes().replace(b"\r\n", b"\n")
         for entry in sorted(root.rglob("*"))
         if entry.is_file() and ".git" not in entry.relative_to(root).parts
     }

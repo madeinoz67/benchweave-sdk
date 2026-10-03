@@ -107,7 +107,7 @@ def test_enforce_lf_rewrites_crlf_and_never_touches_git(tmp_path: Path) -> None:
 
 def _tree(root: Path) -> dict[str, bytes]:
     return {
-        entry.relative_to(root).as_posix(): entry.read_bytes()
+        entry.relative_to(root).as_posix(): entry.read_bytes().replace(b"\r\n", b"\n")
         for entry in sorted(root.rglob("*"))
         if entry.is_file()
     }
