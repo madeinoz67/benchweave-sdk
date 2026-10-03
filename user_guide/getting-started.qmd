@@ -1,0 +1,214 @@
+---
+title: "Get started"
+---
+
+This page takes you from an empty directory to a plugin project that passes its first `benchweave-sdk check`. Each step gives the command to run, the output you should see, and a link for the output you did not see. The commands work on Linux, macOS and Windows.
+
+You need Python 3.13 or later and the `uv` package tool. You do not need a BenchWeave gateway. You do not need hardware. All commands run offline after the installs.
+
+## Step 0. Prepare an environment
+
+Install `uv` first. The [uv installation guide](https://docs.astral.sh/uv/getting-started/installation/) explains the options. The usual commands are:
+
+```text
+# macOS and Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
+# Windows PowerShell
+powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+Make a project directory and create a virtual environment in it:
+
+```sh
+mkdir first-plugin
+cd first-plugin
+uv venv
+```
+
+You should see a line that ends with `Activate with: source .venv/bin/activate`.
+
+Activate the environment. Run the line for your operating system:
+
+```sh
+# macOS and Linux
+source .venv/bin/activate
+# Windows PowerShell
+.venv\Scripts\Activate.ps1
+# Windows cmd
+.venv\Scripts\activate.bat
+```
+
+If the activation line does not appear, see [Troubleshooting](troubleshooting.qmd).
+
+## Step 1. Install the SDK
+
+Install the SDK with the scaffold extra. The `new` command in Step 2 needs this extra:
+
+```sh
+uv pip install 'benchweave-sdk[scaffold]'
+```
+
+You should see `Installed` lines, and one of them names `benchweave-sdk`.
+
+Verify the install:
+
+```sh
+benchweave-sdk --version
+```
+
+You should see the tool name and a version number, with no error.
+
+If the install stops with a no-virtual-environment error, see [Troubleshooting](troubleshooting.qmd).
+
+## Step 2. Generate a plugin project
+
+> [!CAUTION]
+> A generated project is not qualified firmware and not a real instrument driver. The protocol and the test data are synthetic placeholders.
+
+Generate a synthetic plugin project:
+
+```sh
+benchweave-sdk new plugins/acme/model100 --package benchweave_acme_model100
+```
+
+You should see this message over two lines:
+
+```text
+Created synthetic plugin at <your-path>/plugins/acme/model100;
+review before hardware or publication.
+```
+
+The path in the message is the real path of your directory. On macOS, a path that you reach through `/tmp` is reported as `/private/tmp`. See [Troubleshooting](troubleshooting.qmd) for this behavior.
+
+The project contains these files, and the steps below use each of them:
+
+```text
+plugins/acme/model100/
+├── pyproject.toml                     # build configuration and test dependencies
+├── AI-GUIDE.md                        # the development workflow
+├── CLAUDE.md                          # agent notes; imports the SDK-managed guide
+├── AGENTS.md                          # SDK-managed agent guide
+├── .claude/skills/                    # SDK-managed workflow skills
+├── src/benchweave_acme_model100/      # the import package
+│   ├── adapter.py                     # the SDK-facing adapter
+│   ├── protocol.py                    # the synthetic device protocol
+│   └── descriptor.json                # the device and operation contract
+└── tests/                             # the generated tests
+```
+
+The generated tree holds more files than this diagram. The [plugin developer guide](plugin-sdk.qmd) lists the complete tree.
+
+## Step 3. Install the project and run its tests
+
+Change into the project. Install it with its test dependencies. Run the tests:
+
+```sh
+cd plugins/acme/model100
+uv pip install -e '.[test]'
+pytest
+```
+
+The last summary line contains the word `passed`. The number of tests grows when the scaffold grows, so this page does not state a number.
+
+If `pytest` reports `ModuleNotFoundError` for a package, see [Troubleshooting](troubleshooting.qmd).
+
+## Step 4. Run the descriptor check
+
+Run the offline descriptor check:
+
+```sh
+benchweave-sdk check src/benchweave_acme_model100/descriptor.json
+```
+
+You should see this message over two lines:
+
+```text
+Descriptor schema and basic S01/S02/S04 checks passed; full conformance and
+hardware evidence remain separate.
+```
+
+This message is the first check-pass. A pass exits with code 0. A failure exits with a nonzero code and an error message.
+
+A pass means the descriptor matches the vendored schema and the basic checks. It does not mean that the plugin is conformant, admitted to a gateway, or qualified for hardware. The [plugin developer guide](plugin-sdk.qmd) explains the full scope. You do not need the S01–S18, C01–C12 and M01–M14 obligations to reach this pass. The [Glossary](glossary.qmd) explains these families.
+
+If the check fails, the message names the file and the reason. Correct the descriptor, then run the command again.
+
+## Step 5. Build and inventory
+
+Build the project:
+
+```sh
+uv build
+```
+
+You should see two `Successfully built` lines. The `dist/` directory now holds a wheel and a source archive.
+
+Print the inventory of the prepared bundle:
+
+```sh
+benchweave-sdk inventory dist/
+```
+
+You should see JSON output. Each row carries the keys `path`, `bytes` and `sha256`. There is one row for each file under `dist/`.
+
+If inventory reports a missing argument, see [Troubleshooting](troubleshooting.qmd).
+
+## Step 6. Check the scaffold pin
+
+Check that the project's pinned SDK version matches the installed SDK:
+
+```sh
+benchweave-sdk doctor
+```
+
+You should see a line that starts with `Scaffold version matches the installed SDK:`. The line ends with the installed SDK version.
+
+If doctor reports a mismatch, the project's pinned SDK version and the installed one differ. Align the pin with the SDK you use, then run the command again.
+
+## Step 7. Where next
+
+- Replace the synthetic protocol with verified device behavior. Start with prompt 2 in `AI-GUIDE.md`.
+- A user interface is optional. The section below generates a second project with a UI and checks it.
+- Two copies of the SDK exist. [Which checkout](which-checkout.qmd) tells you which one to use.
+- Terms with one fixed meaning live in the [Glossary](glossary.qmd).
+- The full depth lives in the [plugin developer guide](plugin-sdk.qmd).
+- The release commands are `benchweave-sdk package` and `benchweave-sdk submit`. The registry documentation owns their walkthrough. You do not need them to reach the first check-pass.
+- Record the applicable S01–S18, C01–C12 and M01–M14 obligations before a release. None of them block the first check-pass.
+
+## Optional. Check a project with a UI
+
+Generate a second project with presentation resources. Return to the `first-plugin` directory first:
+
+```sh
+cd ../..
+benchweave-sdk new plugins/acme/model200 --package benchweave_acme_model200 --with-ui
+cd plugins/acme/model200
+benchweave-sdk check-ui src/benchweave_acme_model200/presentation.json \
+  --descriptor src/benchweave_acme_model200/descriptor.json \
+  --resources src/benchweave_acme_model200 \
+  --catalogue src/benchweave_acme_model200/binding-catalogue.json \
+  --firmware 1.0.0
+```
+
+You should see this message:
+
+```text
+Offline presentation checks passed; not admission or approval to apply settings.
+```
+
+The `--firmware` value comes from the generated project. The descriptor's `identity.supported_firmware` list declares it. When you write your own descriptor, use a value from your own list.
+
+> [!CAUTION]
+> A preview pass is not admission, not approval to apply settings, and not hardware qualification.
+
+Preview the pages in a browser. The preview does not import plugin Python and does not open a device transport:
+
+```text
+benchweave-sdk preview-ui src/benchweave_acme_model200/presentation.json \
+  --descriptor src/benchweave_acme_model200/descriptor.json \
+  --resources src/benchweave_acme_model200 \
+  --catalogue src/benchweave_acme_model200/binding-catalogue.json \
+  --no-open
+```
+
+The preview serves until you stop it. Press `Ctrl+C` to stop the server. With `--no-open`, open the printed URL in a browser yourself. See [Troubleshooting](troubleshooting.qmd) for the stop behavior.

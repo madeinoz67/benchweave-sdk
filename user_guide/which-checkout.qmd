@@ -1,0 +1,44 @@
+---
+title: "Which checkout do I use?"
+---
+
+Two copies of the BenchWeave plugin SDK exist. One copy is canonical. The other copy is an integration mount inside the gateway repository. This page tells you which copy to use and how to check the version of each.
+
+| Checkout | Location | Role | Use it for |
+| --- | --- | --- | --- |
+| The SDK repository | `madeinoz67/benchweave-sdk` | The canonical SDK | Plugin authoring, SDK installs, SDK development |
+| The gateway mount | `madeinoz67/benchweave` at `packages/sdk/` | A git-submodule mount for gateway integration | Reading how the gateway consumes the SDK |
+
+The gateway mount is the same source, mounted by git. The mount can lag behind the SDK repository, because the pointer moves in its own commit. Do not build a plugin from the mount. Do not report a mount defect against the SDK version it carries. Check the version first.
+
+## Check which SDK you have
+
+Each command answers a different question:
+
+```sh
+grep '^version' pyproject.toml   # the version this checkout declares
+git describe --tags              # the nearest release tag on this checkout
+benchweave-sdk --version         # the version of an installed SDK
+```
+
+Run `grep '^version' pyproject.toml` inside an SDK checkout. Run `git describe --tags` inside a git checkout. Run `benchweave-sdk --version` in any environment with the SDK installed.
+
+## Upgrade a tool install
+
+A tool installed with `uv tool install` does not update by itself. An old tool install can miss a new command. For example, `doctor` reports `No such command 'doctor'` on an install from before that command existed.
+
+Upgrade the installed tool:
+
+```sh
+uv tool upgrade benchweave-sdk
+```
+
+Then verify the new version:
+
+```sh
+benchweave-sdk --version
+```
+
+## Where each copy is documented
+
+The SDK has its own documentation site and its own release cycle. The gateway, the canonical standards and the device-level integration guides live in the main repository. The [Get started](getting-started.qmd) page works from the SDK repository alone. The [plugin developer guide](plugin-sdk.qmd) covers the same repository in depth.
