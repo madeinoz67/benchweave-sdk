@@ -32,6 +32,7 @@ from benchweave_sdk.testing import ConformanceError
 
 from . import catalogue
 from .errors import SeamError
+from .presentation import SUPPORTED_FEATURES, SUPPORTED_PANELS, HostPresentation
 from .session import PluginSession
 
 #: Adapter envelope error codes → interface codes (SW-12 distinctness kept:
@@ -65,6 +66,12 @@ class StandaloneSeam:
     def __init__(self, session: PluginSession, *, transport_kind: str) -> None:
         self._session = session
         self._transport_kind = transport_kind
+        # The presentation model is host state owned by the seam (the PRD
+        # §6 diagram's named component): built once, read by every surface.
+        self._presentation = HostPresentation(
+            package_dir=session.plugin.package_dir,
+            has_presentation=session.plugin.has_presentation,
+        )
 
     @property
     def session(self) -> PluginSession:
@@ -73,6 +80,11 @@ class StandaloneSeam:
     @property
     def transport_kind(self) -> str:
         return self._transport_kind
+
+    @property
+    def presentation(self) -> HostPresentation:
+        """The host presentation model (built once, seam-owned)."""
+        return self._presentation
 
     def _correlation(self, supplied: str | None) -> str:
         return supplied or f"bws-{uuid.uuid4().hex[:12]}"
@@ -157,6 +169,11 @@ class StandaloneSeam:
             },
             "transport": self._transport_kind,
             "sdk_version": sdk_version(),
+            "presentation": {
+                "features": sorted(SUPPORTED_FEATURES),
+                "panels": sorted(SUPPORTED_PANELS),
+                "unavailable_pages": list(self._presentation.unavailable_pages),
+            },
         }
 
     async def _op_device_discover(

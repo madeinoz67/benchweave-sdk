@@ -26,7 +26,9 @@ INVENTORY_API_VERSION = 1
 
 #: The renderer-owned assets served from the installed ui-html package
 #: (never from this package's tree — Q5's release-plus-pin mechanism).
-RENDERER_ASSETS = frozenset({"tokens.css", "themes.css"})
+#: ``globals.css`` joins at I2a (D-B3, SW-22): the partials' component
+#: classes are meaningless without the package's own global rules.
+RENDERER_ASSETS = frozenset({"tokens.css", "themes.css", "globals.css"})
 
 
 def renderer_assets_root() -> Path:

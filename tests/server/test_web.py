@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from benchweave_sdk_server.web import BANNER, build_app
+from benchweave_sdk_server.web import build_app
 
 DEV = "example_device"
 SCRIPT_TAG = re.compile(r"<script\b([^>]*)>")
@@ -23,10 +23,10 @@ def test_home_carries_the_banner_and_plugin_identity(client) -> None:
     response = client.get("/")
     assert response.status_code == 200
     body = response.text
-    # The literal, not the constant: SW-27 pins these exact words on every
-    # page, distinct from the preview server's SIMULATED PRESENTATION DATA.
-    assert "STANDALONE — no gateway" in body
-    assert BANNER == "STANDALONE — no gateway"
+    # The §D.1 component's own literal (SW-27): the I1 hand banner is
+    # retired; the standalone truths ride the contract mode banner.
+    assert "data-bw-mode-banner" in body
+    assert "NO GATEWAY · LOCAL PRESENTATION ONLY" in body
     assert "example_plugin" in body
     assert f"/devices/{DEV}" in body
 
@@ -55,17 +55,55 @@ def test_home_banner_names_the_absent_guarantees(client) -> None:
 
 
 def test_device_page_shows_the_reading_after_connect(client, policy) -> None:
+    """A presentation-bearing plugin: the reading renders on the manifest
+    page (the device page links it — I2a's retirement of the I1 table)."""
     _connect(client, policy)
-    body = client.get(f"/devices/{DEV}").text
+    body = client.get("/pages/readings").text
     assert "voltage" in body
     assert "3.3" in body
     assert "V" in body
+    device = client.get(f"/devices/{DEV}").text
+    assert 'href="/pages/readings"' in device
+
+
+def test_a_plugin_without_presentation_keeps_the_i1_readings_table(
+    starter_project, tmp_path, policy
+) -> None:
+    """The degraded path: no presentation documents, so the device page
+    remains the readings surface (the honest fallback, never a blank)."""
+    import shutil
+
+    from fastapi.testclient import TestClient
+
+    from benchweave_sdk_server.seam import StandaloneSeam
+    from benchweave_sdk_server.session import PluginSession, load_plugin_project, mock_exchanges
+    from benchweave_sdk_server.transport import LoopingMockHost
+
+    plain = tmp_path / "no-ui"
+    shutil.copytree(starter_project, plain)
+
+    package = plain / "src" / "example_plugin"
+    for name in ("presentation.json", "binding-catalogue.json"):
+        (package / name).unlink()
+    shutil.rmtree(package / "ui")
+    plugin = load_plugin_project(plain)
+    assert not plugin.has_presentation
+    seam = StandaloneSeam(
+        PluginSession(plugin, lambda: LoopingMockHost(mock_exchanges(plugin))),
+        transport_kind="mock",
+    )
+    with TestClient(build_app(seam, policy=policy), base_url="http://127.0.0.1:8477") as client:
+        _connect(client, policy)
+        body = client.get(f"/devices/{DEV}").text
+        assert "3.3" in body
+        partial = client.get(f"/devices/{DEV}/readings")
+        assert "3.3" in partial.text
 
 
 def test_ten_polls_all_serve_the_reading(client, policy) -> None:
     _connect(client, policy)
     for _ in range(10):
-        response = client.get(f"/devices/{DEV}/readings")
+        response = client.get("/pages/readings/readings")
         assert response.status_code == 200
         assert "3.3" in response.text
 
@@ -85,9 +123,9 @@ def test_exhausted_transport_shows_the_refused_state(plugin, policy) -> None:
 
     with TestClient(app, base_url="http://127.0.0.1:8477") as client:
         asyncio.run(seam.call("device_connect", {"device_id": DEV}))
-        first = client.get(f"/devices/{DEV}/readings")
+        first = client.get("/pages/readings/readings")
         assert "3.3" in first.text
-        second = client.get(f"/devices/{DEV}/readings")
+        second = client.get("/pages/readings/readings")
         assert "Readings refused" in second.text
         assert "unavailable" in second.text
 
@@ -97,7 +135,7 @@ def test_no_script_without_src_anywhere(client, policy) -> None:
     from pathlib import Path
 
     _connect(client, policy)
-    pages = ["/", f"/devices/{DEV}", f"/devices/{DEV}/readings"]
+    pages = ["/", f"/devices/{DEV}", "/pages/readings", "/pages/readings/readings"]
     for page in pages:
         for attributes in SCRIPT_TAG.findall(client.get(page).text):
             assert "src=" in attributes, (page, attributes)

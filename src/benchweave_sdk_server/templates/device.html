@@ -46,6 +46,17 @@
   <p class="hint">The switch applies to the next connection — a live connection keeps its transport.</p>
 </section>
 {% endif %}
+{% if has_presentation %}
+<section class="panel">
+  <h2>Presentation pages</h2>
+  <p class="hint">The plugin's declared manifest renders at its own pages; this page keeps the session controls.</p>
+  <ul class="page-links">
+    {%- for page in pages %}
+    <li><a href="/pages/{{ page.id }}">{{ page.title }}</a></li>
+    {%- endfor %}
+  </ul>
+</section>
+{% else %}
 <section class="panel">
   <h2>Readings</h2>
   <p class="hint">Declared parameters:
@@ -58,4 +69,5 @@
     {% include "readings.html" %}
   </div>
 </section>
+{% endif %}
 {% endblock %}

@@ -1,0 +1,24 @@
+{% if panel_refusal %}
+<div class="notice notice-refused" role="alert">
+  <p><strong>panel_unavailable</strong> — this host does not provide the panel
+    <code>{{ panel_refusal.panel_id }}</code> this page declares. The page's own
+    bindings render below; the panel content is the panel author's.</p>
+</div>
+{% endif %}
+{% if refusal %}
+<div class="notice notice-refused" role="alert">
+  <p><strong>Readings refused</strong> — {{ refusal.code }}: {{ refusal.message }}{% if refusal.adapter %} (device answered {{ refusal.adapter.code }} / {{ refusal.adapter.dispatch_state }}){% endif %}</p>
+</div>
+{% endif %}
+{% if tiles %}
+<div class="bw-tiles">
+  {%- for tile in tiles %}{{ tile }}{% endfor %}
+</div>
+{% elif not refusal and not panel_refusal %}
+<div class="notice">
+  <p>No readings yet. Connect the device to read the page's declared observations.</p>
+</div>
+{% endif %}
+{% for binding in no_data %}
+<p class="no-data" data-bw-binding="{{ binding.id }}">No data — {{ binding.kind }} binding: this host build serves observation readings only.</p>
+{% endfor %}

@@ -23,6 +23,7 @@ from uuid import uuid4
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
+from markupsafe import Markup
 
 from . import catalogue
 from .assets import (
@@ -34,13 +35,17 @@ from .assets import (
 )
 from .errors import ERROR_HTTP_STATUS, SeamError
 from .mcp import build_mcp
+from .presentation import (
+    SUPPORTED_PANELS,
+    HostPresentation,
+    compose_severity,
+    mode_banner_html,
+    reading_tile_html,
+    refusal_severity,
+)
 from .scenarios import SCENARIOS, ScenarioSelection
 from .seam import StandaloneSeam
 from .security import GuardPolicy, install_guards
-
-#: The persistent banner every page carries (SW-27) — distinct from the
-#: preview server's SIMULATED PRESENTATION DATA labelling.
-BANNER = "STANDALONE — no gateway"
 
 _TEMPLATES = Jinja2Templates(directory=str(Path(__file__).with_name("templates")))
 
@@ -75,9 +80,13 @@ def build_app(
     operation (D-B1).
     """
     verify_ui_assets(ui_assets_root())
-    # The renderer's tokens/themes are verified by the INSTALLED package's
-    # own verifier — one verifier per byte set (§4.6).
+    # The renderer's tokens/themes/globals are verified by the INSTALLED
+    # package's own verifier — one verifier per byte set (§4.6).
     verify_renderer_assets()
+    # The presentation model is the SEAM's (built once at seam
+    # construction, SW-41): this host's declared feature/panel sets drove
+    # its validation, and the unavailable-page disclosures ride it.
+    presentation = seam.presentation
     mcp_server = build_mcp(seam, authoring=authoring)
     mcp_app = mcp_server.http_app(path="/mcp")
 
@@ -97,7 +106,7 @@ def build_app(
     app.state.policy = policy
 
     _add_rest_routes(app, seam)
-    _add_html_routes(app, seam, policy, scenario=scenario)
+    _add_html_routes(app, seam, policy, scenario=scenario, presentation=presentation)
     _add_asset_routes(app)
     # REST routes are included BEFORE the "/" mount: a mount at "/" swallows
     # every route included after it, so /v1 must land first (app.py:1040-1048).
@@ -155,8 +164,22 @@ def _add_html_routes(
     policy: GuardPolicy,
     *,
     scenario: ScenarioSelection | None = None,
+    presentation: HostPresentation,
 ) -> None:
-    """Server-rendered pages plus the HTMX readings partial (SW-20/SW-27)."""
+    """Server-rendered pages plus the HTMX poll partials (SW-20/SW-27)."""
+
+    simulated = seam.transport_kind == "mock"
+    mode_banner = Markup(mode_banner_html(simulated=simulated))
+
+    def shared(**extra: Any) -> dict[str, Any]:
+        context: dict[str, Any] = {
+            "mode_banner": mode_banner,
+            "absent": catalogue.ABSENT_GUARANTEES,
+            "plugin": seam.session.plugin,
+            "csrf_token": policy.csrf_token,
+        }
+        context.update(extra)
+        return context
 
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request) -> Response:
@@ -164,15 +187,12 @@ def _add_html_routes(
         return _TEMPLATES.TemplateResponse(
             request=request,
             name="index.html",
-            context={
-                "banner": BANNER,
-                "simulated": seam.transport_kind == "mock",
-                "absent": catalogue.ABSENT_GUARANTEES,
-                "plugin": seam.session.plugin,
-                "devices": devices,
-                "connected": seam.session.connected,
-                "csrf_token": policy.csrf_token,
-            },
+            context=shared(
+                devices=devices,
+                connected=seam.session.connected,
+                pages=presentation.pages,
+                has_presentation=presentation.available,
+            ),
         )
 
     async def _gather_readings(
@@ -215,27 +235,26 @@ def _add_html_routes(
     ) -> Response:
         plugin = seam.session.plugin
         readings, error = (
-            await _gather_readings(device_id) if seam.session.connected else ([], None)
+            await _gather_readings(device_id)
+            if seam.session.connected and not presentation.available
+            else ([], None)
         )
         return _TEMPLATES.TemplateResponse(
             request=request,
             name="device.html",
-            context={
-                "banner": BANNER,
-                "simulated": seam.transport_kind == "mock",
-                "absent": catalogue.ABSENT_GUARANTEES,
-                "plugin": plugin,
-                "device_id": device_id,
-                "parameters": plugin.readable_parameters,
-                "connected": seam.session.connected,
-                "readings": readings,
-                "readings_error": error,
-                "action_error": action_error,
-                "csrf_token": policy.csrf_token,
-                "load_diagnostic": plugin.load_diagnostic,
-                "scenarios": SCENARIOS if scenario is not None else None,
-                "scenario_current": scenario.current if scenario is not None else None,
-            },
+            context=shared(
+                device_id=device_id,
+                parameters=plugin.readable_parameters,
+                connected=seam.session.connected,
+                readings=readings,
+                readings_error=error,
+                action_error=action_error,
+                load_diagnostic=plugin.load_diagnostic,
+                scenarios=SCENARIOS if scenario is not None else None,
+                scenario_current=scenario.current if scenario is not None else None,
+                pages=presentation.pages,
+                has_presentation=presentation.available,
+            ),
         )
 
     @app.get("/devices/{device_id}", response_class=HTMLResponse)
@@ -246,24 +265,139 @@ def _add_html_routes(
 
     @app.get("/devices/{device_id}/readings", response_class=HTMLResponse)
     async def readings_partial(request: Request, device_id: str) -> Response:
-        """The polled partial: every readable parameter, or the refused state."""
+        """The I1 polled partial (the no-presentation degraded path): every
+        readable parameter, or the refused state."""
         if device_id != seam.session.device_id:
             return HTMLResponse("not found", status_code=404)
         readings, error = await _gather_readings(device_id)
         return _TEMPLATES.TemplateResponse(
             request=request,
             name="readings.html",
-            context={
-                "banner": BANNER,
-                "simulated": seam.transport_kind == "mock",
-                "absent": catalogue.ABSENT_GUARANTEES,
-                "plugin": seam.session.plugin,
-                "device_id": device_id,
-                "readings": readings,
-                "readings_error": error,
-                "connected": seam.session.connected,
-                "csrf_token": policy.csrf_token,
-            },
+            context=shared(
+                device_id=device_id,
+                readings=readings,
+                readings_error=error,
+                connected=seam.session.connected,
+            ),
+        )
+
+    # --- the manifest pages (I2a §3.2) --------------------------------
+
+    async def _page_reading_state(
+        device_id: str, page: Any
+    ) -> tuple[list[str], list[Any], dict[str, Any] | None]:
+        """Gather one page's reading tiles (read-only, NFR-O3).
+
+        Stops at the first refused read — the refused state renders as the
+        page's refused notice, never a silent blank (the I1 partial's
+        honest-negative policy carried onto pages). Non-observation
+        bindings render the no-data disclosure: the degradation
+        ``generate_baselines`` already discloses for non-observation
+        targets — their declared plots still project, the renderer owes
+        the no-data line.
+        """
+        plugin = seam.session.plugin
+        parameters = {
+            str(row.get("name")): row for row in plugin.descriptor.get("parameters", [])
+        }
+        tiles: list[str] = []
+        severities: list[Any] = []
+        no_data: list[Any] = []
+        for binding in page.bindings:
+            if binding.kind != "observation" or binding.parameter_id is None:
+                no_data.append(binding)
+                continue
+            parameter = parameters.get(binding.parameter_id, {})
+            try:
+                data = await seam.call(
+                    "parameter_read",
+                    {"device_id": device_id, "parameter": binding.parameter_id},
+                )
+            except SeamError as exc:
+                adapter = exc.details.get("adapter")
+                refusal = {
+                    "code": exc.code,
+                    "message": exc.message,
+                    "adapter": adapter,
+                }
+                return tiles, severities, refusal
+            html, severity = reading_tile_html(data, parameter, label=binding.target_id)
+            tiles.append(html)
+            severities.append(severity)
+        return tiles, severities, None
+
+    def _page_context(
+        page: Any,
+        severity: Any,
+        tiles: list[str],
+        refusal: Any,
+        no_data: list[Any],
+    ) -> dict[str, Any]:
+        panel_refusal = (
+            {"panel_id": page.panel_id}
+            if page.panel_id is not None and page.panel_id not in SUPPORTED_PANELS
+            else None
+        )
+        return {
+            "page": page,
+            "severity": severity,
+            "tiles": [Markup(tile) for tile in tiles],
+            "refusal": refusal,
+            "no_data": no_data,
+            "panel_refusal": panel_refusal,
+        }
+
+    @app.get("/pages/{page_id}", response_class=HTMLResponse)
+    async def page_route(request: Request, page_id: str) -> Response:
+        page = presentation.page(page_id)
+        if page is None:
+            return HTMLResponse("not found", status_code=404)
+        severity = "neutral"
+        tiles: list[str] = []
+        refusal = None
+        no_data: list[Any] = []
+        if page.panel_id is None:
+            if page.kind == "readings" and seam.session.connected:
+                tiles, severities, refusal = await _page_reading_state(
+                    seam.session.device_id, page
+                )
+                if refusal is not None:
+                    severities.append(
+                        refusal_severity(
+                            refusal["code"], refusal.get("adapter")
+                        )
+                    )
+                severity = compose_severity(severities)
+            else:
+                no_data = [binding for binding in page.bindings if binding.kind != "observation"]
+        return _TEMPLATES.TemplateResponse(
+            request=request,
+            name="page.html",
+            context=shared(**_page_context(page, severity, tiles, refusal, no_data)),
+        )
+
+    @app.get("/pages/{page_id}/readings", response_class=HTMLResponse)
+    async def page_partial(request: Request, page_id: str) -> Response:
+        """The polled partial: the severity header, the tiles, the refused
+        state (I1's poll mechanism — SW-26's degenerate coalescing-by-poll,
+        disclosed as D-I2a until the event bus lands at I2c)."""
+        page = presentation.page(page_id)
+        if page is None:
+            return HTMLResponse("not found", status_code=404)
+        severity = "neutral"
+        tiles: list[str] = []
+        refusal = None
+        if page.panel_id is None and page.kind == "readings" and seam.session.connected:
+            tiles, severities, refusal = await _page_reading_state(
+                seam.session.device_id, page
+            )
+            if refusal is not None:
+                severities.append(refusal_severity(refusal["code"], refusal.get("adapter")))
+            severity = compose_severity(severities)
+        return _TEMPLATES.TemplateResponse(
+            request=request,
+            name="page-readings.html",
+            context=shared(**_page_context(page, severity, tiles, refusal, [])),
         )
 
     def _redirect(device_id: str) -> RedirectResponse:

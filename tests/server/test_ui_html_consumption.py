@@ -89,12 +89,13 @@ def test_the_http_app_bears_the_server_identity(starter_project) -> None:
 
 
 def test_the_standalone_names_that_name_the_mode_stay() -> None:
-    """The residual ruling: standalone_plugin_* prefixes, standalone.css
-    and the STANDALONE banner word NAME THE MODE, not the package — they
-    stay."""
-    from benchweave_sdk_server.web import BANNER
+    """The residual ruling: standalone_plugin_* prefixes and standalone.css
+    NAME THE MODE, not the package — they stay. The I1 banner literal is
+    retired (I2a §3.2): the §D.1 component carries SW-27's intent now."""
+    from benchweave_sdk_server.presentation import mode_banner_entries
 
-    assert BANNER == "STANDALONE — no gateway"
+    entries = {entry.key: entry.wording for entry in mode_banner_entries(simulated=False).modes}
+    assert entries["no-gateway"] == "NO GATEWAY · LOCAL PRESENTATION ONLY"
     assert (HOST_ASSETS / "standalone.css").is_file()
 
 
