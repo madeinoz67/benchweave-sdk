@@ -36,6 +36,7 @@ from benchweave_sdk.testing import ConformanceError
 
 from . import catalogue
 from .errors import SeamError
+from .events import EventBus
 from .session import PluginSession
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -50,7 +51,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     from .plots import ObservationRing
     from .presentation import HostPresentation
 
-#: Adapter envelope error codes → interface codes (SW-12 distinctness kept:
+#: The adapter envelope error codes → interface codes (SW-12 distinctness kept:
 #: the adapter's own code and dispatch_state ride in ``details`` verbatim).
 _ADAPTER_CODE_MAP: dict[str, str] = {
     "INVALID_ARGUMENT": "invalid_request",
@@ -65,6 +66,20 @@ _ADAPTER_CODE_MAP: dict[str, str] = {
     "PROTOCOL_ERROR": "unavailable",
     "INTERNAL_ERROR": "internal_error",
 }
+
+#: The operations whose success is a state change (I2c §4.2): exactly these
+#: publish an event. Reads (``host_info``, discovery, ``device_get``,
+#: ``parameter_read``, ``events_get`` itself) mutate nothing and publish
+#: nothing — a watcher must not generate traffic by watching.
+_STATE_EVENT_OPS: frozenset[str] = frozenset(
+    {
+        "device_connect",
+        "device_disconnect",
+        "parameter_stage",
+        "parameter_apply",
+        "preset_apply",
+    }
+)
 
 
 def sdk_version() -> str:
@@ -107,6 +122,10 @@ class StandaloneSeam:
         # refuses. A file added after construction is not served — the
         # running host serves the configuration it started with.
         self._preset_digests: dict[str, str] = self._pin_presets()
+        # The seam event bus (I2c §4.2): one append-only order for REST,
+        # the browser stream and MCP. The seam is the only mutation path,
+        # so it is the only publisher.
+        self.events = EventBus()
 
     @property
     def session(self) -> PluginSession:
@@ -170,8 +189,34 @@ class StandaloneSeam:
             )
         self._validate(row.name, arguments or {}, correlation)
         handler = getattr(self, f"_op_{row.name}")
-        result = await handler(arguments or {}, correlation)
+        try:
+            result = await handler(arguments or {}, correlation)
+        except SeamError as exc:
+            # A refusal is a state-change class of its own (I2c §4.2): the
+            # operation name and the interface code ride the bus so an
+            # open page can say what was refused and why.
+            self.events.publish(
+                "refused",
+                {"operation": row.name, "code": exc.code, "message": exc.message},
+            )
+            raise
+        if row.name in _STATE_EVENT_OPS:
+            self.events.publish(row.name, self._event_data(row.name, result))
         return cast(dict[str, Any], result)
+
+    def _event_data(self, operation: str, result: dict[str, Any]) -> dict[str, Any]:
+        """The event payload for one state change: small, derived from the
+        operation's own result — never a second source of truth."""
+        data: dict[str, Any] = {"device_id": result.get("device_id")}
+        if operation == "parameter_stage":
+            data["parameter"] = result.get("parameter")
+            data["staged"] = list(result.get("staged", []))
+        elif operation == "parameter_apply":
+            data["applied_count"] = len(result.get("applied", []))
+        elif operation == "preset_apply":
+            data["preset_id"] = result.get("preset_id")
+            data["applied_count"] = len(result.get("applied", []))
+        return data
 
     def _validate(self, name: str, arguments: dict[str, Any], correlation: str) -> None:
         from jsonschema import Draft202012Validator
@@ -672,6 +717,19 @@ class StandaloneSeam:
             "device_id": self._session.device_id,
             "preset_id": preset_id,
             "applied": applied,
+        }
+
+    # --- the event bus (I2c §4.2) -------------------------------------------
+
+    async def _op_events_get(
+        self, arguments: dict[str, Any], correlation: str
+    ) -> dict[str, Any]:
+        """Serve the bus after the caller's cursor. A read: publishes no
+        event of its own, or watching would generate traffic."""
+        cursor = int(arguments["after_id"])
+        return {
+            "events": self.events.after(cursor),
+            "last_id": self.events.last_id(),
         }
 
     # --- adapter envelope handling -----------------------------------------

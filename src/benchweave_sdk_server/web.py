@@ -13,7 +13,9 @@ one.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
+import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -21,7 +23,14 @@ from typing import Any
 from uuid import uuid4
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import (
+    HTMLResponse,
+    JSONResponse,
+    PlainTextResponse,
+    RedirectResponse,
+    Response,
+    StreamingResponse,
+)
 from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
 
@@ -109,6 +118,7 @@ def build_app(
 
     _add_rest_routes(app, seam)
     _add_html_routes(app, seam, policy, scenario=scenario, presentation=presentation)
+    _add_events_route(app, seam)
     _add_asset_routes(app)
     # REST routes are included BEFORE the "/" mount: a mount at "/" swallows
     # every route included after it, so /v1 must land first (app.py:1040-1048).
@@ -725,6 +735,50 @@ def _add_html_routes(
                     action_error={"code": "invalid_request", "message": str(exc)},
                 )
             return _redirect()
+
+
+def _add_events_route(app: FastAPI, seam: StandaloneSeam) -> None:
+    """The SSE stream over the SAME sequence ``events_get`` serves (I2c
+    §4.2): the browser, REST watchers and MCP see one order. Reconnecting
+    clients resume from ``Last-Event-ID`` (the htmx SSE extension sends
+    it) or the ``after_id`` query parameter."""
+
+    @app.get("/events")
+    async def events(request: Request) -> Response:
+        header = request.headers.get("last-event-id")
+        raw = request.query_params.get("after_id", header or "")
+        try:
+            cursor = max(0, int(raw)) if raw else 0
+        except ValueError:
+            return PlainTextResponse("invalid event cursor", status_code=400)
+
+        async def stream() -> AsyncIterator[str]:
+            # The comment frame flips the response to streaming immediately;
+            # the backlog follows, then the poll loop carries new rows.
+            # Disconnect detection is CANCELLATION, not is_disconnected():
+            # reading the receive channel inside a streaming body under
+            # BaseHTTPMiddleware (every guard here is one) consumes body
+            # messages and deadlocks the stream — the server cancels the
+            # response task on disconnect, which ends this generator.
+            yield ": connected\n\n"
+            last = cursor
+            while True:
+                rows = seam.events.after(last)
+                for row in rows:
+                    payload = json.dumps(
+                        {"id": row["id"], "kind": row["kind"], "data": row["data"]},
+                        separators=(",", ":"),
+                    )
+                    yield f"id: {row['id']}\nevent: {row['kind']}\ndata: {payload}\n\n"
+                    last = row["id"]
+                if not rows:
+                    await asyncio.sleep(0.2)
+
+        return StreamingResponse(
+            stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache"},
+        )
 
 
 def _add_asset_routes(app: FastAPI) -> None:
