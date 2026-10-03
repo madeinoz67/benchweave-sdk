@@ -145,6 +145,76 @@ _READING_RESULT = _object(
 )
 
 
+# The staged value carries whatever the descriptor's parameter type
+# declares (float/int are number, bool is boolean, enum/string are string).
+_STAGE_VALUE = {"type": ["number", "string", "boolean"]}
+
+_STAGE_RESULT = _object(
+    {
+        "device_id": _IDENT,
+        "parameter": {"type": "string", "minLength": 1},
+        "value": _STAGE_VALUE,
+        "staged": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Every staged parameter name, in staging order",
+        },
+    },
+    ["device_id", "parameter", "value", "staged"],
+)
+
+_APPLIED_ROW = _object(
+    {
+        "parameter": {"type": "string"},
+        "value": {"type": ["number", "string", "boolean", "null"]},
+        "unit": {"type": ["string", "null"]},
+        "observed_at": {"type": "string"},
+        "age_ms": {"type": "integer"},
+        "quality": {"type": "string"},
+        "source": {"type": "string"},
+    },
+    ["parameter", "value", "unit", "observed_at", "age_ms", "quality", "source"],
+)
+
+_APPLY_RESULT = _object(
+    {
+        "device_id": _IDENT,
+        "applied": {
+            "type": "array",
+            "items": _APPLIED_ROW,
+            "description": "One row per applied parameter, from the read-back",
+        },
+    },
+    ["device_id", "applied"],
+)
+
+_PRESET_ROW = _object(
+    {
+        "id": {"type": "string", "minLength": 1},
+        "title": {"type": "string"},
+        "sha256": {"type": "string", "minLength": 64, "maxLength": 64},
+    },
+    ["id", "title", "sha256"],
+)
+
+_PRESET_LIST_RESULT = _object(
+    {"presets": {"type": "array", "items": _PRESET_ROW}}, ["presets"]
+)
+
+_PRESET_APPLY_RESULT = _object(
+    {
+        "device_id": _IDENT,
+        "preset_id": {"type": "string", "minLength": 1},
+        "applied": {
+            "type": "array",
+            "items": _APPLIED_ROW,
+            "description": "One row per preset setting, from the read-back",
+        },
+    },
+    ["device_id", "preset_id", "applied"],
+)
+
+
 def _spec(
     name: str,
     description: str,
@@ -226,10 +296,53 @@ CATALOGUE: tuple[OperationSpec, ...] = (
         ),
         _READING_RESULT,
     ),
-    _deferred("parameter_stage", "Stage a parameter value (I2: staged/apply, SW-23)."),
-    _deferred("parameter_apply", "Apply staged values (I2: staged/apply, SW-23)."),
-    _deferred("preset_list", "List declared configuration presets (I2: presets, SW-43)."),
-    _deferred("preset_apply", "Apply a configuration preset (I2: presets, SW-43)."),
+    _spec(
+        "parameter_stage",
+        (
+            "Stage one parameter value as host state, validated against the "
+            "descriptor's declared access, type and range. Staging performs "
+            "no device I/O (SW-23)."
+        ),
+        _object(
+            {"device_id": _IDENT, "parameter": {"type": "string", "minLength": 1},
+             "value": _STAGE_VALUE},
+            ["device_id", "parameter", "value"],
+        ),
+        _STAGE_RESULT,
+    ),
+    _spec(
+        "parameter_apply",
+        (
+            "Apply every staged value in staging order: one write per "
+            "parameter under the descriptor's declared write timeout, then "
+            "a read-back — the results come only from the read-back (SW-23)."
+        ),
+        _object({"device_id": _IDENT}, ["device_id"]),
+        _APPLY_RESULT,
+    ),
+    _spec(
+        "preset_list",
+        (
+            "List the plugin's declared configuration presets with their "
+            "content digests. Reads local plugin files only; no device I/O "
+            "(SW-43)."
+        ),
+        _object({}, []),
+        _PRESET_LIST_RESULT,
+    ),
+    _spec(
+        "preset_apply",
+        (
+            "Apply one configuration preset: validated offline, firmware-gated "
+            "against the established device identity before any write, then "
+            "staged and applied through the same write/read-back path (SW-43)."
+        ),
+        _object(
+            {"device_id": _IDENT, "preset_id": {"type": "string", "minLength": 1}},
+            ["device_id", "preset_id"],
+        ),
+        _PRESET_APPLY_RESULT,
+    ),
     _deferred("capture_start", "Start a bounded capture (I3: capture, SW-50)."),
     _deferred("capture_stop", "Stop a running capture (I3: capture, SW-51)."),
     _deferred("capture_list", "List stored captures (I3: capture, SW-49)."),

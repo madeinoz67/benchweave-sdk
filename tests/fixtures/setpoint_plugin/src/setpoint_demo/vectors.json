@@ -1,0 +1,17 @@
+{
+  "evidence": "synthetic",
+  "exchanges": [
+    {
+      "request": "ID?\n",
+      "response": "BenchWeave Labs,setpoint-demo,SIM-SP1,1.0.0\n"
+    },
+    {
+      "request": "LIM?\n",
+      "response": "2.0\n"
+    },
+    {
+      "request": "LIM 2.5\n",
+      "response": "OK\n"
+    }
+  ]
+}

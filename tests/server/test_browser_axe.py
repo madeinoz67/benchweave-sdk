@@ -35,6 +35,9 @@ DEV = "example_device"
 #: The page templates: index, device page, the manifest readings page.
 PAGES = ("/", f"/devices/{DEV}", "/pages/readings")
 THEMES = ("light", "dark")
+#: The I2b setpoint fixture (staging controls + preset form).
+SETPOINT_FIXTURE = Path(__file__).resolve().parent.parent / "fixtures" / "setpoint_plugin"
+SETPOINT_DEV = "setpoint_dev"
 
 
 def _scaffold(destination: Path) -> Path:
@@ -107,6 +110,19 @@ class _Server:
 @pytest.fixture(scope="module")
 def server_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
     with _Server(_scaffold(tmp_path_factory.mktemp("browser") / "starter")) as url:
+        yield url
+
+
+@pytest.fixture(scope="module")
+def setpoint_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
+    """The I2b proof fixture (one rw setpoint parameter, one preset): the
+    scaffold starter has no writable parameter, so the staging controls
+    and the preset form render only here."""
+    import shutil
+
+    project = tmp_path_factory.mktemp("setpoint") / "setpoint_plugin"
+    shutil.copytree(SETPOINT_FIXTURE, project)
+    with _Server(project) as url:
         yield url
 
 
@@ -237,6 +253,22 @@ def test_the_readings_page_is_axe_clean_connected(
         page.evaluate("theme => { document.documentElement.dataset.theme = theme; }", theme)
         results = _axe(page)
         assert results.violations_count == 0, results.generate_snapshot()
+
+
+@pytest.mark.parametrize("theme", THEMES)
+@pytest.mark.parametrize("path", ("/pages/readings", f"/devices/{SETPOINT_DEV}"))
+def test_the_staged_control_surface_is_axe_clean_in_both_themes(
+    page: Page, setpoint_url: str, theme: str, path: str
+) -> None:
+    """I2b's new markup — the staging inputs with their Stage/Apply forms
+    and the device page's preset form — checked in both themes (the
+    starter declares no writable parameter, so this fixture is the only
+    page set where the controls render)."""
+    page.goto(setpoint_url + path)
+    page.wait_for_selector(".bw-controls" if path.endswith("readings") else "select")
+    page.evaluate("theme => { document.documentElement.dataset.theme = theme; }", theme)
+    results = _axe(page)
+    assert results.violations_count == 0, results.generate_snapshot()
 
 
 def test_the_doctored_template_control_must_red(page: Page, doctored_url: str) -> None:

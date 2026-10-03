@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:dev.example:setpoint-demo:settings:1.0.0",
+  "title": "Setpoint demo settings",
+  "type": "object",
+  "properties": {
+    "current_limit": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 5.0
+    }
+  },
+  "required": [
+    "current_limit"
+  ],
+  "additionalProperties": false
+}

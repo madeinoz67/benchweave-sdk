@@ -24,11 +24,14 @@ adapter directly. The seam owns the closed refusal model —
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import time
 import uuid
 from importlib import metadata
 from typing import TYPE_CHECKING, Any, cast
 
+from benchweave_sdk.presentation import read_file, validate_preset
 from benchweave_sdk.testing import ConformanceError
 
 from . import catalogue
@@ -93,6 +96,17 @@ class StandaloneSeam:
         # The bounded observation ring (§3.3): fed by every successful
         # parameter read — host-observed samples, nothing fabricated.
         self.observation_ring: ObservationRing = ObservationRing()
+        # The staging map (I2b §4.1): HOST state, never device state (the
+        # per-connection services precedent). Insertion order is the
+        # staging order ``parameter_apply`` honors; staging performs no I/O
+        # and a refused apply retains every staged value.
+        self._staged: dict[str, Any] = {}
+        # The preset digests, pinned once at construction (CON-1's posture
+        # at host scale): listing and apply verify the bytes on disk
+        # against this pin, so a preset tampered while the host runs
+        # refuses. A file added after construction is not served — the
+        # running host serves the configuration it started with.
+        self._preset_digests: dict[str, str] = self._pin_presets()
 
     @property
     def session(self) -> PluginSession:
@@ -106,6 +120,11 @@ class StandaloneSeam:
     def presentation(self) -> HostPresentation:
         """The host presentation model (built once, seam-owned)."""
         return self._presentation
+
+    @property
+    def staged(self) -> dict[str, Any]:
+        """The staging map (host state): parameter name → staged value."""
+        return self._staged
 
     def _correlation(self, supplied: str | None) -> str:
         return supplied or f"bws-{uuid.uuid4().hex[:12]}"
@@ -299,6 +318,338 @@ class StandaloneSeam:
             name, time.monotonic() * 1000.0, data.get("value")
         )
         return data
+
+    # --- staged/apply and presets (I2b §4.1) ---------------------------------
+
+    def _parameters(self) -> dict[str, dict[str, Any]]:
+        return {
+            str(row.get("name")): row
+            for row in self._session.plugin.descriptor.get("parameters", [])
+            if isinstance(row.get("name"), str)
+        }
+
+    def _stageable(self, name: str, value: Any, correlation: str) -> dict[str, Any]:
+        """Validate one staged value against the descriptor's OWN declaration
+        (A02: access, declared type, declared range) — refuse ``invalid_request``
+        naming the parameter. Only ``rw`` parameters stage: a write-only
+        parameter could never produce the read-back SW-23 requires."""
+        row = self._parameters().get(name)
+        if row is None:
+            raise self._fail(
+                "invalid_request", f"no such writable parameter: {name}", correlation
+            )
+        access = str(row.get("access", ""))
+        if access != "rw":
+            raise self._fail(
+                "invalid_request",
+                f"parameter is not writable: {name} (access={access})",
+                correlation,
+            )
+        declared = str(row.get("type", ""))
+        valid_type = (
+            (declared == "float" and isinstance(value, (int, float))
+             and not isinstance(value, bool))
+            or (declared == "int" and isinstance(value, int)
+                and not isinstance(value, bool))
+            or (declared == "bool" and isinstance(value, bool))
+            or (declared == "string" and isinstance(value, str))
+            or (declared == "enum" and isinstance(value, str)
+                and value in [str(v) for v in row.get("enum_values", [])])
+        )
+        if not valid_type:
+            raise self._fail(
+                "invalid_request",
+                f"staged value does not match declared type {declared}: {name}",
+                correlation,
+            )
+        bounds = row.get("range")
+        if (
+            declared in ("float", "int")
+            and isinstance(bounds, list)
+            and len(bounds) == 2
+        ):
+            low, high = float(bounds[0]), float(bounds[1])
+            if not low <= float(value) <= high:
+                raise self._fail(
+                    "invalid_request",
+                    f"staged value outside declared range [{low:g}, {high:g}]: {name}",
+                    correlation,
+                )
+        return row
+
+    async def _op_parameter_stage(
+        self, arguments: dict[str, Any], correlation: str
+    ) -> dict[str, Any]:
+        if arguments["device_id"] != self._session.device_id:
+            raise self._fail(
+                "not_found", f"no such device: {arguments['device_id']}", correlation
+            )
+        self._refuse_degraded(correlation)
+        name = arguments["parameter"]
+        value = arguments["value"]
+        self._stageable(name, value, correlation)
+        self._staged[name] = value
+        return {
+            "device_id": self._session.device_id,
+            "parameter": name,
+            "value": value,
+            "staged": list(self._staged),
+        }
+
+    async def _apply_staged(self, correlation: str) -> list[dict[str, Any]]:
+        """Write every staged value in staging order under the descriptor's
+        own ``operations.write.timeout_ms`` bound, then re-read each written
+        parameter: the rows this returns come ONLY from the read-back
+        (SW-23). Any failure stops the apply and retains the staging map —
+        a device rejection is never a silent discard."""
+        if not self._staged:
+            raise self._fail(
+                "invalid_request", "nothing is staged to apply", correlation
+            )
+        self._refuse_degraded(correlation)
+        if not self._session.connected:
+            raise self._fail("not_ready", "device is not connected", correlation)
+        try:
+            self._session.verb_timeout_ms("write")
+        except KeyError as exc:
+            raise self._fail(
+                "unavailable",
+                f"{exc}: the descriptor declares no write operation policy",
+                correlation,
+            ) from exc
+        names = list(self._staged)
+        for name in names:
+            await self._execute(
+                "write",
+                {"parameter": name, "value": self._staged[name]},
+                correlation,
+            )
+        rows: list[dict[str, Any]] = []
+        for name in names:
+            data = await self._execute("read", {"parameter": name}, correlation)
+            self.observation_ring.record(
+                name, time.monotonic() * 1000.0, data.get("value")
+            )
+            rows.append(
+                {
+                    "parameter": name,
+                    "value": data.get("value"),
+                    "unit": data.get("unit"),
+                    "observed_at": str(data.get("observed_at", "")),
+                    "age_ms": int(data.get("age_ms", 0)),
+                    "quality": str(data.get("quality", "")),
+                    "source": str(data.get("source", "")),
+                }
+            )
+        self._staged.clear()
+        return rows
+
+    async def _op_parameter_apply(
+        self, arguments: dict[str, Any], correlation: str
+    ) -> dict[str, Any]:
+        if arguments["device_id"] != self._session.device_id:
+            raise self._fail(
+                "not_found", f"no such device: {arguments['device_id']}", correlation
+            )
+        applied = await self._apply_staged(correlation)
+        return {"device_id": self._session.device_id, "applied": applied}
+
+    def _pin_presets(self) -> dict[str, str]:
+        """Digest every declared preset once, at construction."""
+        digests: dict[str, str] = {}
+        presets_dir = self._session.plugin.package_dir / "config" / "presets"
+        if presets_dir.is_dir():
+            for path in sorted(presets_dir.glob("*.json")):
+                digests[path.stem] = hashlib.sha256(read_file(path)).hexdigest()
+        return digests
+
+    def _preset_rows(self, correlation: str) -> list[dict[str, Any]]:
+        """The plugin's declared presets under ``config/presets/`` — the
+        scaffold's documented configuration home — each row carrying the
+        CONSTRUCTION-pinned digest, verified against the bytes on disk
+        before listing (CON-1's posture at host scale). Local files only;
+        no device I/O."""
+        rows: list[dict[str, Any]] = []
+        for preset_id, digest in self._preset_digests.items():
+            path = (
+                self._session.plugin.package_dir
+                / "config"
+                / "presets"
+                / f"{preset_id}.json"
+            )
+            try:
+                raw = read_file(path)
+            except (OSError, ValueError) as exc:
+                raise self._fail(
+                    "invalid_request",
+                    f"unreadable preset document: {preset_id}: {exc}",
+                    correlation,
+                ) from exc
+            if hashlib.sha256(raw).hexdigest() != digest:
+                raise self._fail(
+                    "invalid_request",
+                    f"preset bytes drifted since startup: {preset_id}",
+                    correlation,
+                    preset_id=preset_id,
+                    finding="digest_mismatch",
+                )
+            try:
+                document = json.loads(raw)
+            except ValueError as exc:
+                raise self._fail(
+                    "invalid_request",
+                    f"malformed preset document: {preset_id}: {exc}",
+                    correlation,
+                ) from exc
+            if not isinstance(document, dict):
+                raise self._fail(
+                    "invalid_request",
+                    f"preset document is not an object: {preset_id}",
+                    correlation,
+                )
+            rows.append(
+                {
+                    "id": preset_id,
+                    "title": str(document.get("title", preset_id)),
+                    "sha256": digest,
+                }
+            )
+        return rows
+
+    def _preset_bytes(self, preset_id: str, correlation: str) -> bytes:
+        digest = self._preset_digests.get(preset_id)
+        if digest is None:
+            raise self._fail(
+                "not_found", f"no such preset: {preset_id}", correlation
+            )
+        path = (
+            self._session.plugin.package_dir
+            / "config"
+            / "presets"
+            / f"{preset_id}.json"
+        )
+        try:
+            raw = read_file(path)
+        except (OSError, ValueError) as exc:
+            raise self._fail(
+                "invalid_request",
+                f"unreadable preset document: {preset_id}: {exc}",
+                correlation,
+            ) from exc
+        if hashlib.sha256(raw).hexdigest() != digest:
+            raise self._fail(
+                "invalid_request",
+                f"preset bytes drifted since startup: {preset_id}",
+                correlation,
+                preset_id=preset_id,
+                finding="digest_mismatch",
+            )
+        return raw
+
+    async def _op_preset_list(
+        self, arguments: dict[str, Any], correlation: str
+    ) -> dict[str, Any]:
+        return {"presets": self._preset_rows(correlation)}
+
+    async def _op_preset_apply(
+        self, arguments: dict[str, Any], correlation: str
+    ) -> dict[str, Any]:
+        if arguments["device_id"] != self._session.device_id:
+            raise self._fail(
+                "not_found", f"no such device: {arguments['device_id']}", correlation
+            )
+        self._refuse_degraded(correlation)
+        if not self._session.connected:
+            raise self._fail("not_ready", "device is not connected", correlation)
+        identity = self._session.identity
+        if identity is None:
+            raise self._fail(
+                "not_ready",
+                "device identity not established: the firmware gate cannot run",
+                correlation,
+            )
+        firmware = str(identity.get("firmware", ""))
+        if not firmware:
+            raise self._fail(
+                "not_ready",
+                "device identity carries no firmware: the firmware gate cannot run",
+                correlation,
+            )
+        preset_id = arguments["preset_id"]
+        raw = self._preset_bytes(preset_id, correlation)
+        try:
+            preset = json.loads(raw)
+        except ValueError as exc:
+            raise self._fail(
+                "invalid_request",
+                f"malformed preset document: {preset_id}: {exc}",
+                correlation,
+            ) from exc
+        plugin = self._session.plugin
+        try:
+            descriptor_raw = read_file(plugin.package_dir / "descriptor.json")
+            settings_raw = read_file(
+                plugin.package_dir / "config" / "settings.schema.json"
+            )
+        except (OSError, ValueError) as exc:
+            raise self._fail(
+                "invalid_request",
+                f"unreadable configuration documents: {exc}",
+                correlation,
+            ) from exc
+        if hashlib.sha256(descriptor_raw).hexdigest() != plugin.descriptor_sha256:
+            raise self._fail(
+                "invalid_request",
+                "descriptor bytes drifted since load",
+                correlation,
+                finding="digest_mismatch",
+            )
+        report = validate_preset(
+            raw,
+            descriptor_raw=descriptor_raw,
+            settings_schema_raw=settings_raw,
+            firmware=firmware,
+        )
+        if not report.valid:
+            findings = [
+                {"code": finding.code, "path": finding.path, "message": finding.message}
+                for finding in report.findings
+            ]
+            if any(finding.code == "incompatible_firmware" for finding in report.findings):
+                supported = [
+                    str(row) for row in (preset or {}).get("supported_firmware", [])
+                ]
+                raise self._fail(
+                    "conflict",
+                    f"preset firmware mismatch: device {firmware}, "
+                    f"preset {preset_id} supports {supported}",
+                    correlation,
+                    device_firmware=firmware,
+                    preset_firmware=supported,
+                )
+            raise self._fail(
+                "invalid_request",
+                f"preset failed validation: {preset_id}",
+                correlation,
+                findings=findings,
+            )
+        settings = (preset or {}).get("settings")
+        if not isinstance(settings, dict):
+            raise self._fail(
+                "invalid_request",
+                f"preset settings are not an object: {preset_id}",
+                correlation,
+            )
+        for name, value in settings.items():
+            self._stageable(str(name), value, correlation)
+        for name, value in settings.items():
+            self._staged[str(name)] = value
+        applied = await self._apply_staged(correlation)
+        return {
+            "device_id": self._session.device_id,
+            "preset_id": preset_id,
+            "applied": applied,
+        }
 
     # --- adapter envelope handling -----------------------------------------
 

@@ -1,0 +1,39 @@
+{
+  "contract_version": "0.3.0",
+  "plugin_id": "dev.example.setpoint-demo",
+  "descriptor_sha256": "a91bd33ae7eb528b294bf845280c5d54511c34ecb4ada9a7c9c6932a387b1bef",
+  "bindings": [
+    {
+      "id": "current_limit",
+      "kind": "observation",
+      "target_id": "current_limit"
+    }
+  ],
+  "pages": [
+    {
+      "id": "readings",
+      "title": "Readings",
+      "kind": "readings",
+      "bindings": [
+        "current_limit"
+      ],
+      "required": true,
+      "plots": [
+        {
+          "kind": "time_series",
+          "binding_id": "current_limit",
+          "x": "time",
+          "y": [
+            "value"
+          ],
+          "channel_hints": [
+            {
+              "variable_id": "value",
+              "color_role": "muted"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

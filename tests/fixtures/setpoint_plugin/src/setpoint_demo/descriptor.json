@@ -1,0 +1,118 @@
+{
+  "otdp_version": "0.2.2",
+  "descriptor_version": "0.1.0",
+  "id": "dev.example.setpoint-demo",
+  "display_name": "Setpoint demo plugin",
+  "description": "Simulated setpoint protocol; not hardware qualified.",
+  "identity": {
+    "strategy": "adapter",
+    "manufacturer": "BenchWeave Labs",
+    "model": "setpoint-demo",
+    "firmware_policy": "listed",
+    "supported_firmware": [
+      "1.0.0"
+    ]
+  },
+  "integration": {
+    "mode": "adapter",
+    "adapter": {
+      "entry_point": "setpoint_demo.adapter:create_plugin",
+      "api_version": "1.1",
+      "version": "0.1.0",
+      "dependencies": [],
+      "permissions": [
+        "scoped_transport"
+      ]
+    }
+  },
+  "transport": {
+    "type": "serial",
+    "connection_key": "setpoint_dev",
+    "settings": {
+      "baud": 115200,
+      "data_bits": 8,
+      "parity": "none",
+      "stop_bits": 1,
+      "rtscts": false,
+      "max_frame_bytes": 128
+    }
+  },
+  "capabilities": [
+    "identify",
+    "read",
+    "write"
+  ],
+  "operations": {
+    "identify": {
+      "timeout_ms": 1000,
+      "side_effect": "none",
+      "retry": "never",
+      "cancellable": true,
+      "completion": "acknowledged"
+    },
+    "read": {
+      "timeout_ms": 1000,
+      "side_effect": "none",
+      "retry": "never",
+      "cancellable": true,
+      "completion": "acknowledged"
+    },
+    "write": {
+      "timeout_ms": 1000,
+      "side_effect": "state_change",
+      "retry": "never",
+      "cancellable": true,
+      "completion": "readback"
+    }
+  },
+  "parameters": [
+    {
+      "name": "current_limit",
+      "description": "Synthetic current-limit setpoint",
+      "type": "float",
+      "access": "rw",
+      "semantic": "setpoint",
+      "unit": "A",
+      "range": [
+        0.0,
+        5.0
+      ],
+      "hazard_class": "unknown",
+      "binding": {
+        "kind": "adapter",
+        "key": "current_limit"
+      },
+      "read_policy": {
+        "max_age_ms": 2000,
+        "destructive": false
+      },
+      "write_policy": {
+        "effect": "setting",
+        "completion": "readback",
+        "retry": "never",
+        "verification_parameter": "current_limit",
+        "settling_timeout_ms": 100
+      }
+    }
+  ],
+  "required_features": [
+    "otdp.core/0.1.0",
+    "otdp.adapter/0.1.0"
+  ],
+  "provenance": {
+    "sources": [
+      {
+        "title": "SDK synthetic setpoint protocol",
+        "reference": "protocol.md",
+        "revision": "0.1.0"
+      }
+    ],
+    "test_vectors": [
+      {
+        "id": "example",
+        "path": "vectors.json",
+        "purpose": "Synthetic identify/read/write exchanges"
+      }
+    ]
+  }
+}

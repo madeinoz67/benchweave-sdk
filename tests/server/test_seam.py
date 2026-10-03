@@ -38,7 +38,8 @@ def test_host_info_discloses_the_standalone_truth(seam) -> None:
     ]
     assert info["served_operations"] == [
         "host_info", "device_discover", "device_connect", "device_disconnect",
-        "device_get", "parameter_read",
+        "device_get", "parameter_read", "parameter_stage", "parameter_apply",
+        "preset_list", "preset_apply",
     ]
     assert "capture_start" in info["deferred_operations"]
     assert info["plugin"]["package"] == "example_plugin"
@@ -64,7 +65,7 @@ def test_unknown_operation_is_invalid_request(seam) -> None:
 
 
 def test_deferred_operations_refuse_with_the_deferral_reason(seam) -> None:
-    for name in ("parameter_stage", "capture_start", "events_get", "preset_apply"):
+    for name in ("capture_start", "events_get", "artifact_read"):
         with pytest.raises(SeamError) as caught:
             call(seam, name, {})
         assert caught.value.code == "unavailable"

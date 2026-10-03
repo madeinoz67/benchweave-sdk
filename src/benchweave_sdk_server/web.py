@@ -26,6 +26,7 @@ from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
 
 from . import catalogue
+from . import presentation as presentation_module
 from .assets import (
     RENDERER_ASSETS,
     renderer_assets_root,
@@ -42,6 +43,7 @@ from .presentation import (
     mode_banner_html,
     reading_tile_html,
     refusal_severity,
+    staged_control_html,
 )
 from .scenarios import SCENARIOS, ScenarioSelection
 from .seam import StandaloneSeam
@@ -232,6 +234,8 @@ def _add_html_routes(
         request: Request,
         device_id: str,
         action_error: dict[str, Any] | None = None,
+        *,
+        action_label: str | None = None,
     ) -> Response:
         plugin = seam.session.plugin
         readings, error = (
@@ -239,6 +243,10 @@ def _add_html_routes(
             if seam.session.connected and not presentation.available
             else ([], None)
         )
+        try:
+            presets = (await seam.call("preset_list"))["presets"]
+        except SeamError:
+            presets = None
         return _TEMPLATES.TemplateResponse(
             request=request,
             name="device.html",
@@ -249,11 +257,13 @@ def _add_html_routes(
                 readings=readings,
                 readings_error=error,
                 action_error=action_error,
+                action_label=action_label,
                 load_diagnostic=plugin.load_diagnostic,
                 scenarios=SCENARIOS if scenario is not None else None,
                 scenario_current=scenario.current if scenario is not None else None,
                 pages=presentation.pages,
                 has_presentation=presentation.available,
+                presets=presets,
             ),
         )
 
@@ -285,7 +295,7 @@ def _add_html_routes(
 
     async def _page_reading_state(
         device_id: str, page: Any
-    ) -> tuple[list[str], list[Any], list[Any], dict[str, Any] | None]:
+    ) -> tuple[list[str], list[Any], list[Any], dict[str, Any] | None, dict[str, Any]]:
         """Gather one page's reading tiles (read-only, NFR-O3).
 
         Stops at the first refused read — the refused state renders as the
@@ -294,7 +304,8 @@ def _add_html_routes(
         bindings render the no-data disclosure: the degradation
         ``generate_baselines`` already discloses for non-observation
         targets — their declared plots still project, the renderer owes
-        the no-data line.
+        the no-data line. The fifth element is the raw read data per
+        parameter name — the staging inputs' device-value defaults.
         """
         plugin = seam.session.plugin
         parameters = {
@@ -303,6 +314,7 @@ def _add_html_routes(
         tiles: list[str] = []
         severities: list[Any] = []
         no_data: list[Any] = []
+        reads: dict[str, Any] = {}
         for binding in page.bindings:
             if binding.kind != "observation" or binding.parameter_id is None:
                 no_data.append(binding)
@@ -320,11 +332,58 @@ def _add_html_routes(
                     "message": exc.message,
                     "adapter": adapter,
                 }
-                return tiles, severities, no_data, refusal
+                return tiles, severities, no_data, refusal, reads
+            if (
+                presentation_module.STAGED_ECHO_TILES
+                and binding.parameter_id in seam.staged
+            ):
+                # The I2-S RED control's render (never the default): an
+                # optimistic host laundering the staged value into the tile.
+                data = {**data, "value": seam.staged[binding.parameter_id]}
+            reads[binding.parameter_id] = data
             html, severity = reading_tile_html(data, parameter, label=binding.target_id)
             tiles.append(html)
             severities.append(severity)
-        return tiles, severities, no_data, None
+        return tiles, severities, no_data, None, reads
+
+    def _page_controls(page: Any, reads: dict[str, Any]) -> list[dict[str, Any]]:
+        """The staging inputs for one page's WRITABLE numeric parameters
+        (I2b §4.1): bounds from the descriptor's own range, the staged
+        value shown only in the input (§E.3). Host state, no I/O."""
+        plugin = seam.session.plugin
+        controls: list[dict[str, Any]] = []
+        for binding in page.bindings:
+            if binding.kind != "observation" or binding.parameter_id is None:
+                continue
+            parameter = next(
+                (
+                    row
+                    for row in plugin.descriptor.get("parameters", [])
+                    if str(row.get("name", "")) == binding.parameter_id
+                ),
+                None,
+            )
+            if (
+                parameter is None
+                or str(parameter.get("access", "")) != "rw"
+                or str(parameter.get("type", "")) not in ("float", "int")
+            ):
+                continue
+            controls.append(
+                {
+                    "name": binding.parameter_id,
+                    "input": Markup(
+                        staged_control_html(
+                            parameter,
+                            staged=seam.staged.get(binding.parameter_id),
+                            device_value=(reads.get(binding.parameter_id) or {}).get(
+                                "value"
+                            ),
+                        )
+                    ),
+                }
+            )
+        return controls
 
     def _page_context(
         page: Any,
@@ -368,6 +427,7 @@ def _add_html_routes(
         tiles: list[str] = []
         refusal = None
         no_data: list[Any] = []
+        reads: dict[str, Any] = {}
         connected = seam.session.connected
         if page.panel_id is None:
             if page.kind == "readings":
@@ -379,8 +439,8 @@ def _add_html_routes(
                     # Connected: the page probes its bindings; a refused
                     # read renders the refused state (the request-rejected
                     # baseline's own shape — never a silent blank).
-                    tiles, severities, no_data, refusal = await _page_reading_state(
-                        seam.session.device_id, page
+                    tiles, severities, no_data, refusal, reads = (
+                        await _page_reading_state(seam.session.device_id, page)
                     )
                     if refusal is not None:
                         severities.append(
@@ -406,6 +466,8 @@ def _add_html_routes(
                             **_page_context(page, severity, tiles, refusal, no_data),
                             show_prompt=show_prompt,
                             plots=_page_plots(page.id),
+                            controls=_page_controls(page, reads),
+                            action_error=None,
                         ),
                     )
             else:
@@ -417,6 +479,8 @@ def _add_html_routes(
                 **_page_context(page, severity, tiles, refusal, no_data),
                 show_prompt=False,
                 plots=_page_plots(page.id),
+                controls=_page_controls(page, reads),
+                action_error=None,
             ),
         )
 
@@ -438,8 +502,8 @@ def _add_html_routes(
         show_prompt = False
         if page.panel_id is None and page.kind == "readings":
             if seam.session.connected:
-                tiles, severities, no_data, refusal = await _page_reading_state(
-                    seam.session.device_id, page
+                tiles, severities, no_data, refusal, _reads = (
+                    await _page_reading_state(seam.session.device_id, page)
                 )
                 if refusal is not None:
                     severities.append(refusal_severity(refusal["code"], refusal.get("adapter")))
@@ -489,6 +553,137 @@ def _add_html_routes(
             return HTMLResponse("not found", status_code=404)
         with contextlib.suppress(SeamError):
             await seam.call("device_disconnect", {"device_id": device_id})
+        return _redirect(device_id)
+
+    def _page_action_error(exc: SeamError) -> dict[str, Any]:
+        return {
+            "code": exc.code,
+            "message": exc.message,
+            "adapter": exc.details.get("adapter"),
+        }
+
+    async def _render_page(
+        request: Request,
+        page: Any,
+        action_error: dict[str, Any] | None,
+    ) -> Response:
+        """Re-render one page with an action outcome (the refused apply
+        renders its refusal — SW-12's pass-through, never a silent drop)."""
+        severity = "neutral"
+        tiles: list[str] = []
+        refusal = None
+        no_data: list[Any] = []
+        reads: dict[str, Any] = {}
+        if page.panel_id is None and page.kind == "readings" and seam.session.connected:
+            tiles, severities, no_data, refusal, reads = await _page_reading_state(
+                seam.session.device_id, page
+            )
+            if refusal is not None:
+                severities.append(refusal_severity(refusal["code"], refusal.get("adapter")))
+            severity = compose_severity(severities)
+        return _TEMPLATES.TemplateResponse(
+            request=request,
+            name="page.html",
+            context=shared(
+                **_page_context(page, severity, tiles, refusal, no_data),
+                show_prompt=False,
+                plots=_page_plots(page.id),
+                controls=_page_controls(page, reads),
+                action_error=action_error,
+            ),
+        )
+
+    def _parse_form_value(raw: str, parameter: dict[str, Any]) -> Any:
+        """Parse one form field against the parameter's declared type."""
+        kind = str(parameter.get("type", ""))
+        if kind == "bool":
+            if raw in ("true", "false"):
+                return raw == "true"
+            raise ValueError(f"not a boolean: {raw}")
+        if kind in ("float", "int"):
+            value = float(raw) if kind == "float" else int(raw)
+            if kind == "float" and value.is_integer() and "." not in raw and "e" not in raw.lower():
+                return value
+            return value
+        return raw
+
+    @app.post("/pages/{page_id}/stage")
+    async def stage_page(request: Request, page_id: str) -> Response:
+        """Stage the page's inputs (host state, no device I/O): the first
+        of the two deliberate actions — Stage, then Apply."""
+        page = presentation.page(page_id)
+        if page is None:
+            return HTMLResponse("not found", status_code=404)
+        form = await request.form()
+        plugin = seam.session.plugin
+        for control in _page_controls(page, {}):
+            name = str(control["name"])
+            raw = form.get(name)
+            if raw is None or str(raw) == "":
+                continue
+            parameter = next(
+                row
+                for row in plugin.descriptor.get("parameters", [])
+                if str(row.get("name", "")) == name
+            )
+            try:
+                value = _parse_form_value(str(raw), parameter)
+            except ValueError as exc:
+                return await _render_page(
+                    request,
+                    page,
+                    {
+                        "code": "invalid_request",
+                        "message": f"invalid staged input for {name}: {exc}",
+                    },
+                )
+            try:
+                await seam.call(
+                    "parameter_stage",
+                    {
+                        "device_id": seam.session.device_id,
+                        "parameter": name,
+                        "value": value,
+                    },
+                )
+            except SeamError as exc:
+                return await _render_page(request, page, _page_action_error(exc))
+        return RedirectResponse(url=f"/pages/{page_id}", status_code=303)
+
+    @app.post("/pages/{page_id}/apply")
+    async def apply_page(request: Request, page_id: str) -> Response:
+        """Apply every staged value (write, then read-back — SW-23)."""
+        page = presentation.page(page_id)
+        if page is None:
+            return HTMLResponse("not found", status_code=404)
+        try:
+            await seam.call(
+                "parameter_apply", {"device_id": seam.session.device_id}
+            )
+        except SeamError as exc:
+            return await _render_page(request, page, _page_action_error(exc))
+        return RedirectResponse(url=f"/pages/{page_id}", status_code=303)
+
+    @app.post("/devices/{device_id}/preset-apply")
+    async def apply_preset(request: Request, device_id: str) -> Response:
+        """Apply one preset through the same write/read-back path; the
+        firmware gate runs before any write."""
+        if device_id != seam.session.device_id:
+            return HTMLResponse("not found", status_code=404)
+        form = await request.form()
+        preset_id = str(form.get("preset_id", ""))
+        try:
+            await seam.call(
+                "preset_apply",
+                {"device_id": device_id, "preset_id": preset_id},
+            )
+        except SeamError as exc:
+            return await _render_device(
+                request,
+                device_id,
+                action_error=_page_action_error(exc),
+                action_label="Preset apply refused",
+            )
         return _redirect(device_id)
 
     if scenario is not None:

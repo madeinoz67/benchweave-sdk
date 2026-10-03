@@ -9,7 +9,7 @@
 {% endif %}
 {% if action_error %}
 <div class="notice notice-refused" role="alert">
-  <p><strong>Connect refused</strong> — {{ action_error.code }}: {{ action_error.message }}</p>
+  <p><strong>{{ action_label or "Connect refused" }}</strong> — {{ action_error.code }}: {{ action_error.message }}{% if action_error.adapter %} (device answered {{ action_error.adapter.code }} / {{ action_error.adapter.dispatch_state }}){% endif %}</p>
 </div>
 {% endif %}
 <div class="actions">
@@ -44,6 +44,24 @@
     <button type="submit">Switch</button>
   </form>
   <p class="hint">The switch applies to the next connection — a live connection keeps its transport.</p>
+</section>
+{% endif %}
+{% if presets %}
+<section class="panel">
+  <h2>Presets</h2>
+  {# Selection performs no device I/O; the apply form is the write action. #}
+  <form method="post" action="/devices/{{ device_id }}/preset-apply"
+        hx-post="/devices/{{ device_id }}/preset-apply"
+        hx-headers='{"X-CSRF-Token": "{{ csrf_token }}"}'>
+    <label for="preset-select">Preset</label>
+    <select id="preset-select" name="preset_id">
+      {%- for row in presets %}
+      <option value="{{ row.id }}">{{ row.title }}</option>
+      {%- endfor %}
+    </select>
+    <button type="submit">Apply preset</button>
+  </form>
+  <p class="hint">Applying validates the preset, checks the device firmware before any write, then writes and re-reads each setting.</p>
 </section>
 {% endif %}
 {% if has_presentation %}

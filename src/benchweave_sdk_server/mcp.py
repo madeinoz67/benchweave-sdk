@@ -69,6 +69,26 @@ def _tool_handlers(seam: StandaloneSeam) -> dict[str, Callable[..., Any]]:
             seam, "parameter_read", {"device_id": device_id, "parameter": parameter}
         )
 
+    async def parameter_stage(
+        device_id: str, parameter: str, value: float | str | bool
+    ) -> Any:
+        return await _dispatch(
+            seam,
+            "parameter_stage",
+            {"device_id": device_id, "parameter": parameter, "value": value},
+        )
+
+    async def parameter_apply(device_id: str) -> Any:
+        return await _dispatch(seam, "parameter_apply", {"device_id": device_id})
+
+    async def preset_list() -> Any:
+        return await _dispatch(seam, "preset_list", {})
+
+    async def preset_apply(device_id: str, preset_id: str) -> Any:
+        return await _dispatch(
+            seam, "preset_apply", {"device_id": device_id, "preset_id": preset_id}
+        )
+
     handlers: dict[str, Callable[..., Any]] = {
         "host_info": host_info,
         "device_discover": device_discover,
@@ -76,6 +96,10 @@ def _tool_handlers(seam: StandaloneSeam) -> dict[str, Callable[..., Any]]:
         "device_disconnect": device_disconnect,
         "device_get": device_get,
         "parameter_read": parameter_read,
+        "parameter_stage": parameter_stage,
+        "parameter_apply": parameter_apply,
+        "preset_list": preset_list,
+        "preset_apply": preset_apply,
     }
     missing = set(catalogue.served_operations()) - set(handlers)
     extra = set(handlers) - set(catalogue.served_operations())
