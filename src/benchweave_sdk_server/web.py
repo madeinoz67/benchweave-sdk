@@ -736,7 +736,7 @@ def _add_html_routes(
                 f"{exc.code}: {exc.message}",
                 status_code=ERROR_HTTP_STATUS[exc.code],
             )
-        return _redirect(seam.session.device_id)
+        return _redirect()
 
     if scenario is not None:
 
