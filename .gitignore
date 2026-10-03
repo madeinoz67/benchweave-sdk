@@ -42,3 +42,8 @@ _great_docs_build/
 # during the swap (standards_sync._staging_paths). Outside src/ on purpose, so
 # a crash can never leave debris where packaging looks; swept by the next sync.
 /.standards-sync/
+
+# slice-B gate scratch (B-U fresh-venv run, build outputs)
+.bu-venv/
+.bu-scratch/
+dist/

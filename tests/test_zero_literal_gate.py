@@ -146,10 +146,11 @@ class TestTwinCounter:
 
     def test_twin_census_is_pinned(self) -> None:
         """Fold wave row 1's observability half: the scanned-file census is
-        pinned (20 sdk files + 12 server files at the current head) — a
-        scope change is a visible diff, never a silent denominator move.
-        The server half is issue #309 slice A's scope extension: deleting
-        the tree or narrowing the roots reds here."""
+        pinned (20 sdk files + 13 server files at the current head — slice
+        B's scenarios.py is the 33rd file) — a scope change is a visible
+        diff, never a silent denominator move. The server half is issue
+        #309 slice A's scope extension: deleting the tree or narrowing
+        the roots reds here."""
         result = subprocess.run(
             [sys.executable, str(COUNTER), "--json"],
             capture_output=True,
@@ -157,7 +158,7 @@ class TestTwinCounter:
             check=False,
         )
         assert result.returncode == 0, result.stdout + result.stderr
-        assert json.loads(result.stdout)["scanned"] == 32, (
+        assert json.loads(result.stdout)["scanned"] == 33, (
             "the scanned-file census moved — update this pin in the "
             "same commit as the tree change (the ratchet discipline)"
         )
