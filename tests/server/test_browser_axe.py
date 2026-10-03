@@ -208,6 +208,23 @@ def test_every_page_template_is_axe_clean_in_both_themes(
     assert results.violations_count == 0, results.generate_snapshot()
 
 
+def test_the_two_theme_arms_really_differ(page: Page, server_url: str) -> None:
+    """Fold R-e's machine check: forcing data-theme must actually switch
+    the computed tokens — if both arms computed the same --bw-canvas the
+    'both themes' claim would be one theme checked twice (theme collapse).
+    """
+    page.goto(server_url + "/")
+    canvases = {}
+    for theme in THEMES:
+        page.evaluate("theme => { document.documentElement.dataset.theme = theme; }", theme)
+        canvases[theme] = page.evaluate(
+            "() => getComputedStyle(document.documentElement)"
+            ".getPropertyValue('--bw-canvas').trim()"
+        )
+    assert canvases["light"] and canvases["dark"], canvases
+    assert canvases["light"] != canvases["dark"], canvases
+
+
 def test_the_readings_page_is_axe_clean_connected(
     page: Page, server_url: str
 ) -> None:
