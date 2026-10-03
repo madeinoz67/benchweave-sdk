@@ -66,13 +66,32 @@ TARGET_TAG = "v0.9.1"
 
 
 def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    # Pin LF: the repo contract is LF everywhere, but on Windows author edits
+    # and copier writes can be CRLF. autocrlf=input normalizes CRLF→LF at add
+    # time, so the index is LF and `git status` reads owned files as unmodified
+    # after _enforce_lf renormalizes the working tree.
     return subprocess.run(
-        ["git", "-C", str(cwd), *args], capture_output=True, text=True, check=True
+        ["git", "-c", "core.autocrlf=input", "-C", str(cwd), *args],
+        capture_output=True, text=True, check=True,
     )
 
 
 def _git_out(cwd: Path, *args: str) -> str:
     return _git(cwd, *args).stdout.strip()
+
+
+def _git_init(cwd: Path) -> None:
+    """git init with the harness's line-ending contract pinned (PR #93).
+
+    core.autocrlf=input commits CRLF working bytes as LF and never
+    converts on checkout; core.eol=lf keeps checkouts LF. Windows
+    text-mode writes (CRLF bytes) then commit as LF, and _enforce_lf's
+    normalization leaves git status clean instead of reporting every
+    author-edited file as modified.
+    """
+    _git(cwd, "init", "-q")
+    _git(cwd, "config", "core.autocrlf", "input")
+    _git(cwd, "config", "core.eol", "lf")
 
 
 def _tree(root: Path) -> dict[str, bytes]:
@@ -141,7 +160,7 @@ def _build_tagged_template_repo(
 ) -> Path:
     repo = tmp / "template-repo"
     repo.mkdir()
-    _git(repo, "init", "-q")
+    _git_init(repo)
     _write_tree(repo, base)
     _git(repo, "add", "-A")
     _git(repo, "-c", "user.email=r4@benchweave", "-c", "user.name=r4", "commit", "-qm", "base")
@@ -205,8 +224,8 @@ def test_update_keeps_the_update_promise(
     # CLAUDE.md and the adapter seed — then commits.
     for relative in ("README.md", "CLAUDE.md", f"src/{PACKAGE}/adapter.py"):
         path = project / relative
-        path.write_text(path.read_text(encoding="utf-8") + AUTHOR_LINE, encoding="utf-8")
-    _git(project, "init", "-q")
+        path.write_bytes(path.read_bytes() + AUTHOR_LINE.encode())
+    _git_init(project)
     _git(project, "add", "-A")
     _git(project, "-c", "user.email=author@benchweave", "-c", "user.name=author",
          "commit", "-qm", "author state")
@@ -301,7 +320,7 @@ def test_update_without_the_answers_pin_cannot_resolve_base(tmp_path: Path) -> N
     )
     _enforce_lf(project)
     assert "_commit:" not in (project / ".copier-answers.yml").read_text(encoding="utf-8")
-    _git(project, "init", "-q")
+    _git_init(project)
     _git(project, "add", "-A")
     _git(project, "-c", "user.email=author@benchweave", "-c", "user.name=author",
          "commit", "-qm", "author state")
@@ -331,7 +350,7 @@ def test_wrong_base_provenance_never_silently_loses_author_bytes(tmp_path: Path)
     )
     repo = tmp_path / "template-repo-a0"
     repo.mkdir()
-    _git(repo, "init", "-q")
+    _git_init(repo)
     _write_tree(repo, a0)
     _git(repo, "add", "-A")
     _git(repo, "-c", "user.email=r4@benchweave", "-c", "user.name=r4", "commit", "-qm", "a0")
@@ -361,13 +380,12 @@ def test_wrong_base_provenance_never_silently_loses_author_bytes(tmp_path: Path)
     # The author's real lineage is the BASE guide, locally edited on the same
     # first line — all three states disagree there.
     guide = project / "AI-GUIDE.md"
-    guide.write_text(
-        base["template/AI-GUIDE.md"]
-        .decode("utf-8")
-        .replace("# Build a BenchWeave device plugin with AI", "# AUTHOR-localised guide"),
-        encoding="utf-8",
+    guide.write_bytes(
+        base["template/AI-GUIDE.md"].replace(
+            b"# Build a BenchWeave device plugin with AI", b"# AUTHOR-localised guide"
+        )
     )
-    _git(project, "init", "-q")
+    _git_init(project)
     _git(project, "add", "-A")
     _git(project, "-c", "user.email=author@benchweave", "-c", "user.name=author",
          "commit", "-qm", "author state")
@@ -431,7 +449,7 @@ def _scaffold_offline(
 
 
 def _author_commit(project: Path) -> None:
-    _git(project, "init", "-q")
+    _git_init(project)
     _git(project, "add", "-A")
     _git(project, "-c", "user.email=author@benchweave", "-c", "user.name=author",
          "commit", "-qm", "author state")
@@ -445,26 +463,21 @@ def test_upgrade_moves_managed_state_and_preserves_author(tmp_path: Path) -> Non
     _scaffold_offline(materialized, repo, project)
     # The author diverges on the same lines the template moved.
     readme = project / "README.md"
-    readme.write_text(
-        readme.read_text(encoding="utf-8").replace(
-            "# Device plugin starter", "# AUTHOR plugin"
-        ),
-        encoding="utf-8",
+    readme.write_bytes(
+        readme.read_bytes().replace(b"# Device plugin starter", b"# AUTHOR plugin")
     )
     adapter = project / "src" / PACKAGE / "adapter.py"
-    adapter.write_text(
-        adapter.read_text(encoding="utf-8").replace(
-            "def create_plugin():", "def create_plugin_author():"
-        ),
-        encoding="utf-8",
+    adapter.write_bytes(
+        adapter.read_bytes().replace(
+            b"def create_plugin():", b"def create_plugin_author():"
+        )
     )
     guide = project / "AI-GUIDE.md"
-    guide.write_text(
-        guide.read_text(encoding="utf-8").replace(
-            "# Build a BenchWeave device plugin with AI",
-            "# AUTHOR-localised guide",
-        ),
-        encoding="utf-8",
+    guide.write_bytes(
+        guide.read_bytes().replace(
+            b"# Build a BenchWeave device plugin with AI",
+            b"# AUTHOR-localised guide",
+        )
     )
     author_state = _tree(project)
     _author_commit(project)
@@ -510,10 +523,10 @@ def test_skip_list_is_load_bearing_on_update(tmp_path: Path) -> None:
     project = tmp_path / "P-noskip"
     _scaffold_offline(materialized, repo, project)
     readme = project / "README.md"
-    author_readme = readme.read_text(encoding="utf-8").replace(
-        "# Device plugin starter", "# AUTHOR plugin"
+    author_readme = readme.read_bytes().replace(
+        b"# Device plugin starter", b"# AUTHOR plugin"
     )
-    readme.write_text(author_readme, encoding="utf-8")
+    readme.write_bytes(author_readme)
     _author_commit(project)
     _conflicted, _restored = upgrade_project(project, target_ref=TARGET_TAG)
     after = readme.read_text(encoding="utf-8")
@@ -536,7 +549,7 @@ def test_upgrade_keeps_author_bytes_when_seeds_are_unchanged(tmp_path: Path) -> 
     _scaffold_offline(materialized, repo, project)
     for relative in ("README.md", "CLAUDE.md", f"src/{PACKAGE}/adapter.py"):
         path = project / relative
-        path.write_text(path.read_text(encoding="utf-8") + AUTHOR_LINE, encoding="utf-8")
+        path.write_bytes(path.read_bytes() + AUTHOR_LINE.encode())
     author_state = _tree(project)
     _author_commit(project)
     conflicted, _restored = upgrade_project(project, target_ref=TARGET_TAG)
@@ -552,7 +565,7 @@ def test_upgrade_refuses_without_answers_pointing_at_adopt(tmp_path: Path) -> No
 
     project = tmp_path / "P-no-answers"
     project.mkdir()
-    (project / "README.md").write_text("not scaffolded here\n", encoding="utf-8")
+    (project / "README.md").write_bytes(b"not scaffolded here\n")
     with pytest.raises(ValueError, match=r"^upgrade_answers_missing: ") as refusal:
         upgrade_project(project)
     assert "adopt" in str(refusal.value)
@@ -576,7 +589,7 @@ def test_upgrade_refuses_a_dirty_tree(tmp_path: Path) -> None:
     project = tmp_path / "P-dirty"
     _scaffold_offline(materialized, repo, project)
     _author_commit(project)
-    (project / "README.md").write_text("uncommitted edit\n", encoding="utf-8")
+    (project / "README.md").write_bytes(b"uncommitted edit\n")
     with pytest.raises(ValueError, match=r"^upgrade_dirty_tree: ") as refusal:
         upgrade_project(project, target_ref=TARGET_TAG)
     assert "commit" in str(refusal.value).lower()
@@ -628,12 +641,11 @@ def test_adopt_refuses_provenance_it_cannot_establish(tmp_path: Path) -> None:
     (project / ".copier-answers.yml").unlink()
     # No pin to infer from and no override: an unknown base is never claimed.
     pyproject = project / "pyproject.toml"
-    pyproject.write_text(
-        pyproject.read_text(encoding="utf-8").replace(
-            f'test = ["benchweave-sdk=={__version__}", "pytest>=8.0"]',
-            'test = ["pytest>=8.0"]',
-        ),
-        encoding="utf-8",
+    pyproject.write_bytes(
+        pyproject.read_bytes().replace(
+            f'test = ["benchweave-sdk=={__version__}", "pytest>=8.0"]'.encode(),
+            b'test = ["pytest>=8.0"]',
+        )
     )
     with pytest.raises(ValueError, match=r"^adopt_provenance_unknown: ") as refusal:
         adopt_project(project)
@@ -643,11 +655,10 @@ def test_adopt_refuses_provenance_it_cannot_establish(tmp_path: Path) -> None:
     create_project(other, PACKAGE)
     (other / ".copier-answers.yml").unlink()
     bad = other / "pyproject.toml"
-    bad.write_text(
-        bad.read_text(encoding="utf-8").replace(
-            f'packages = ["src/{PACKAGE}"]', "packages = []"
-        ),
-        encoding="utf-8",
+    bad.write_bytes(
+        bad.read_bytes().replace(
+            f'packages = ["src/{PACKAGE}"]'.encode(), b"packages = []"
+        )
     )
     with pytest.raises(ValueError, match=r"^adopt_provenance_unknown: "):
         adopt_project(other)
@@ -689,7 +700,7 @@ def test_upgrade_restores_skip_protected_files_the_template_dropped(tmp_path: Pa
     _scaffold_offline(materialized, repo, project)
     for relative in ("tests/test_plugin.py", f"src/{PACKAGE}/adapter.py"):
         path = project / relative
-        path.write_text(path.read_text(encoding="utf-8") + "# AUTHOR EDIT\n", encoding="utf-8")
+        path.write_bytes(path.read_bytes() + b"# AUTHOR EDIT\n")
     _author_commit(project)
     conflicted, restored = upgrade_project(project, target_ref=TARGET_TAG)
     assert conflicted == []
@@ -732,7 +743,7 @@ def test_upgrade_refuses_a_wrong_base_tag_with_the_typed_prefix(tmp_path: Path) 
         if not line.startswith("_commit:")
     ]
     rendered[1:1] = ["_commit: v0.0.0-wrong-base\n"]
-    answers.write_text("".join(rendered), encoding="utf-8")
+    answers.write_bytes("".join(rendered).encode())
     _author_commit(project)
     with pytest.raises(ValueError, match=r"^upgrade_tag_missing: ") as refusal:
         upgrade_project(project, target_ref=TARGET_TAG)
@@ -758,9 +769,10 @@ def test_adopted_project_first_upgrade_conflicts_honestly_on_managed_edits(
     assert target
     repo = tmp_path / "template-repo-pre"
     repo.mkdir()
-    _git(repo, "init", "-q")
-    (repo / "README.md").write_text("a pre-copier SDK repo: no copier.yml, no template\n",
-                                    encoding="utf-8")
+    _git_init(repo)
+    (repo / "README.md").write_bytes(
+        b"a pre-copier SDK repo: no copier.yml, no template\n"
+    )
     _git(repo, "add", "-A")
     _git(repo, "-c", "user.email=a@b", "-c", "user.name=a", "commit", "-qm", "pre-copier")
     _git(repo, "tag", "v0.8.0")
@@ -772,11 +784,10 @@ def test_adopted_project_first_upgrade_conflicts_honestly_on_managed_edits(
     project = tmp_path / "P-adopted-first"
     create_project(project, PACKAGE)
     guide = project / "AI-GUIDE.md"
-    guide.write_text(
-        guide.read_text(encoding="utf-8").replace(
-            "# Build a BenchWeave device plugin with AI", "# AUTHOR-customised guide"
-        ),
-        encoding="utf-8",
+    guide.write_bytes(
+        guide.read_bytes().replace(
+            b"# Build a BenchWeave device plugin with AI", b"# AUTHOR-customised guide"
+        )
     )
     answers = project / ".copier-answers.yml"
     rendered = [
@@ -788,7 +799,7 @@ def test_adopted_project_first_upgrade_conflicts_honestly_on_managed_edits(
         f"_commit: {_git_out(repo, 'rev-parse', 'v0.8.0')}\n",
         f"_src_path: {repo}\n",
     ]
-    answers.write_text("".join(rendered), encoding="utf-8")
+    answers.write_bytes("".join(rendered).encode())
     _author_commit(project)
     conflicted, restored = upgrade_project(project, target_ref=TARGET_TAG)
     assert conflicted == ["AI-GUIDE.md"]

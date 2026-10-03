@@ -167,7 +167,6 @@ class TestTwinCounter:
             "the scanned-file census moved — update this pin in the "
             "same commit as the tree change (the ratchet discipline)"
         )
-        )
 
     def test_twin_is_reproducible_twice_byte_identical(self) -> None:
         first = subprocess.run(
