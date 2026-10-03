@@ -152,6 +152,14 @@ class StandaloneSeam:
         self._pending_reload: dict[str, Any] | None = None
         self._capture_in_flight = False
         self.reload_state: dict[str, Any] | None = None
+        # The op-vs-reload mutex (the refute lanes' serialization class):
+        # a device-mutating sequence (an apply's write→read-back span, a
+        # staging write against the map an apply is flushing) must not
+        # interleave with a reload's quiet-close→swap or with each other —
+        # every await point inside those spans is an interleaving window.
+        # The lock is loop-level (single event loop); it serializes async
+        # interleavings, which is exactly the class the lanes reproduced.
+        self._op_mutex = asyncio.Lock()
 
     @property
     def session(self) -> PluginSession:
@@ -471,21 +479,26 @@ class StandaloneSeam:
     async def _op_parameter_stage(
         self, arguments: dict[str, Any], correlation: str
     ) -> dict[str, Any]:
-        if arguments["device_id"] != self._session.device_id:
-            raise self._fail(
-                "not_found", f"no such device: {arguments['device_id']}", correlation
-            )
-        self._refuse_degraded(correlation)
-        name = arguments["parameter"]
-        value = arguments["value"]
-        self._stageable(name, value, correlation)
-        self._staged[name] = value
-        return {
-            "device_id": self._session.device_id,
-            "parameter": name,
-            "value": value,
-            "staged": list(self._staged),
-        }
+        # Under the op mutex: a stage must not land between an in-flight
+        # apply's last write and its staging-map clear — the apply flushes
+        # exactly the batch it fixed, and a value staged mid-flight is the
+        # NEXT apply's business, not something the clear may eat.
+        async with self._op_mutex:
+            if arguments["device_id"] != self._session.device_id:
+                raise self._fail(
+                    "not_found", f"no such device: {arguments['device_id']}", correlation
+                )
+            self._refuse_degraded(correlation)
+            name = arguments["parameter"]
+            value = arguments["value"]
+            self._stageable(name, value, correlation)
+            self._staged[name] = value
+            return {
+                "device_id": self._session.device_id,
+                "parameter": name,
+                "value": value,
+                "staged": list(self._staged),
+            }
 
     async def _apply_batch(
         self, batch: dict[str, Any], correlation: str
@@ -543,17 +556,22 @@ class StandaloneSeam:
     async def _op_parameter_apply(
         self, arguments: dict[str, Any], correlation: str
     ) -> dict[str, Any]:
-        if arguments["device_id"] != self._session.device_id:
-            raise self._fail(
-                "not_found", f"no such device: {arguments['device_id']}", correlation
-            )
-        if not self._staged:
-            raise self._fail(
-                "invalid_request", "nothing is staged to apply", correlation
-            )
-        applied = await self._apply_batch(self._staged, correlation)
-        self._staged.clear()
-        return {"device_id": self._session.device_id, "applied": applied}
+        # Under the op mutex for the WHOLE span (empty-check, batch,
+        # clear): the write→read-back sequence and the staging-map flush
+        # are one operation — a reload or stage interleaving inside it is
+        # a cross-adapter chimera or a vanished stage respectively.
+        async with self._op_mutex:
+            if arguments["device_id"] != self._session.device_id:
+                raise self._fail(
+                    "not_found", f"no such device: {arguments['device_id']}", correlation
+                )
+            if not self._staged:
+                raise self._fail(
+                    "invalid_request", "nothing is staged to apply", correlation
+                )
+            applied = await self._apply_batch(self._staged, correlation)
+            self._staged.clear()
+            return {"device_id": self._session.device_id, "applied": applied}
 
     def _pin_presets(self) -> dict[str, str]:
         """Digest every declared preset once, at construction."""
@@ -671,106 +689,112 @@ class StandaloneSeam:
     async def _op_preset_apply(
         self, arguments: dict[str, Any], correlation: str
     ) -> dict[str, Any]:
-        if arguments["device_id"] != self._session.device_id:
-            raise self._fail(
-                "not_found", f"no such device: {arguments['device_id']}", correlation
-            )
-        self._refuse_degraded(correlation)
-        if not self._session.connected:
-            raise self._fail("not_ready", "device is not connected", correlation)
-        identity = self._session.identity
-        if identity is None:
-            raise self._fail(
-                "not_ready",
-                "device identity not established: the firmware gate cannot run",
-                correlation,
-            )
-        firmware = str(identity.get("firmware", ""))
-        if not firmware:
-            raise self._fail(
-                "not_ready",
-                "device identity carries no firmware: the firmware gate cannot run",
-                correlation,
-            )
-        preset_id = arguments["preset_id"]
-        raw = self._preset_bytes(preset_id, correlation)
-        try:
-            preset = json.loads(raw)
-        except ValueError as exc:
-            raise self._fail(
-                "invalid_request",
-                f"malformed preset document: {preset_id}: {exc}",
-                correlation,
-            ) from exc
-        plugin = self._session.plugin
-        try:
-            descriptor_raw = read_file(plugin.package_dir / "descriptor.json")
-            settings_raw = read_file(
-                plugin.package_dir / "config" / "settings.schema.json"
-            )
-        except (OSError, ValueError) as exc:
-            raise self._fail(
-                "invalid_request",
-                f"unreadable configuration documents: {exc}",
-                correlation,
-            ) from exc
-        if hashlib.sha256(descriptor_raw).hexdigest() != plugin.descriptor_sha256:
-            raise self._fail(
-                "invalid_request",
-                "descriptor bytes drifted since load",
-                correlation,
-                finding="digest_mismatch",
-            )
-        report = validate_preset(
-            raw,
-            descriptor_raw=descriptor_raw,
-            settings_schema_raw=settings_raw,
-            firmware=firmware,
-        )
-        if not report.valid:
-            findings = [
-                {"code": finding.code, "path": finding.path, "message": finding.message}
-                for finding in report.findings
-            ]
-            if any(finding.code == "incompatible_firmware" for finding in report.findings):
-                supported = [
-                    str(row) for row in (preset or {}).get("supported_firmware", [])
-                ]
+        # Under the op mutex for the WHOLE span (firmware gate,
+        # validation, the transient batch's write→read-back): the
+        # batch never enters _staged, so without the mutex a reload
+        # landing inside the span serves the write on the old adapter
+        # and the read-back on the new one — a cross-adapter chimera
+        # reported SUCCESS (SW-23's read-back rule broken).
+        async with self._op_mutex:
+            if arguments["device_id"] != self._session.device_id:
                 raise self._fail(
-                    "conflict",
-                    f"preset firmware mismatch: device {firmware}, "
-                    f"preset {preset_id} supports {supported}",
-                    correlation,
-                    device_firmware=firmware,
-                    preset_firmware=supported,
+                    "not_found", f"no such device: {arguments['device_id']}", correlation
                 )
-            raise self._fail(
-                "invalid_request",
-                f"preset failed validation: {preset_id}",
-                correlation,
-                findings=findings,
+            self._refuse_degraded(correlation)
+            if not self._session.connected:
+                raise self._fail("not_ready", "device is not connected", correlation)
+            identity = self._session.identity
+            if identity is None:
+                raise self._fail(
+                    "not_ready",
+                    "device identity not established: the firmware gate cannot run",
+                    correlation,
+                )
+            firmware = str(identity.get("firmware", ""))
+            if not firmware:
+                raise self._fail(
+                    "not_ready",
+                    "device identity carries no firmware: the firmware gate cannot run",
+                    correlation,
+                )
+            preset_id = arguments["preset_id"]
+            raw = self._preset_bytes(preset_id, correlation)
+            try:
+                preset = json.loads(raw)
+            except ValueError as exc:
+                raise self._fail(
+                    "invalid_request",
+                    f"malformed preset document: {preset_id}: {exc}",
+                    correlation,
+                ) from exc
+            plugin = self._session.plugin
+            try:
+                descriptor_raw = read_file(plugin.package_dir / "descriptor.json")
+                settings_raw = read_file(
+                    plugin.package_dir / "config" / "settings.schema.json"
+                )
+            except (OSError, ValueError) as exc:
+                raise self._fail(
+                    "invalid_request",
+                    f"unreadable configuration documents: {exc}",
+                    correlation,
+                ) from exc
+            if hashlib.sha256(descriptor_raw).hexdigest() != plugin.descriptor_sha256:
+                raise self._fail(
+                    "invalid_request",
+                    "descriptor bytes drifted since load",
+                    correlation,
+                    finding="digest_mismatch",
+                )
+            report = validate_preset(
+                raw,
+                descriptor_raw=descriptor_raw,
+                settings_schema_raw=settings_raw,
+                firmware=firmware,
             )
-        settings = (preset or {}).get("settings")
-        if not isinstance(settings, dict):
-            raise self._fail(
-                "invalid_request",
-                f"preset settings are not an object: {preset_id}",
-                correlation,
-            )
-        for name, value in settings.items():
-            self._stageable(str(name), value, correlation)
-        # Scoped: apply exactly the preset's settings through a transient
-        # batch — previously staged values are neither applied nor
-        # discarded (FOLD-A; I2c's reload guard treats the same condition
-        # as a guard, and so does this path).
-        batch = {str(name): value for name, value in settings.items()}
-        applied = await self._apply_batch(batch, correlation)
-        return {
-            "device_id": self._session.device_id,
-            "preset_id": preset_id,
-            "applied": applied,
-        }
-
+            if not report.valid:
+                findings = [
+                    {"code": finding.code, "path": finding.path, "message": finding.message}
+                    for finding in report.findings
+                ]
+                if any(finding.code == "incompatible_firmware" for finding in report.findings):
+                    supported = [
+                        str(row) for row in (preset or {}).get("supported_firmware", [])
+                    ]
+                    raise self._fail(
+                        "conflict",
+                        f"preset firmware mismatch: device {firmware}, "
+                        f"preset {preset_id} supports {supported}",
+                        correlation,
+                        device_firmware=firmware,
+                        preset_firmware=supported,
+                    )
+                raise self._fail(
+                    "invalid_request",
+                    f"preset failed validation: {preset_id}",
+                    correlation,
+                    findings=findings,
+                )
+            settings = (preset or {}).get("settings")
+            if not isinstance(settings, dict):
+                raise self._fail(
+                    "invalid_request",
+                    f"preset settings are not an object: {preset_id}",
+                    correlation,
+                )
+            for name, value in settings.items():
+                self._stageable(str(name), value, correlation)
+            # Scoped: apply exactly the preset's settings through a transient
+            # batch — previously staged values are neither applied nor
+            # discarded (FOLD-A; I2c's reload guard treats the same condition
+            # as a guard, and so does this path).
+            batch = {str(name): value for name, value in settings.items()}
+            applied = await self._apply_batch(batch, correlation)
+            return {
+                "device_id": self._session.device_id,
+                "preset_id": preset_id,
+                "applied": applied,
+            }
     # --- reload (I2c §4.2, SW-38 + Q11) --------------------------------------
 
     def _reload_guards(self, correlation: str) -> None:
@@ -799,7 +823,28 @@ class StandaloneSeam:
         and the host is attended, the reload does not run — it PENDS, the
         advisory rides the bus, and the operator confirms in the UI. In
         unattended mode the same change proceeds (the PRD's benches with
-        no energy-sourcing instruments case)."""
+        no energy-sourcing instruments case).
+
+        Under the op mutex for the whole path: a reload must not begin
+        inside a device-mutating span (the serialization class).
+        """
+        async with self._op_mutex:
+            return await self._reload_body(source, confirmed=confirmed)
+
+    async def confirm_reload(self, source: str) -> dict[str, Any]:
+        """The operator's UI confirmation of a pending Q11 reload: re-run
+        the full path (guards and validation included — the files may have
+        changed again) with the confirmation granted."""
+        async with self._op_mutex:
+            if self._pending_reload is None:
+                raise self._fail(
+                    "invalid_request", "no reload is waiting for confirmation", ""
+                )
+            return await self._reload_body(source, confirmed=True)
+
+    async def _reload_body(
+        self, source: str, *, confirmed: bool
+    ) -> dict[str, Any]:
         from datetime import UTC, datetime
 
         correlation = self._correlation(None)
@@ -848,16 +893,6 @@ class StandaloneSeam:
                 "source": source,
             }
         return await self._complete_reload(loaded, source)
-
-    async def confirm_reload(self, source: str) -> dict[str, Any]:
-        """The operator's UI confirmation of a pending Q11 reload: re-run
-        the full path (guards and validation included — the files may have
-        changed again) with the confirmation granted."""
-        if self._pending_reload is None:
-            raise self._fail(
-                "invalid_request", "no reload is waiting for confirmation", ""
-            )
-        return await self.reload_plugin(source, confirmed=True)
 
     async def _complete_reload(
         self, loaded: Any, source: str
