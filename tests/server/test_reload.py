@@ -227,12 +227,26 @@ def test_ui_confirm_proceeds(tmp_path) -> None:
     assert result["status"] == "confirmation_required"
     policy = _policy()
     with _client(seam, policy) as client:
-        response = client.post(
+        # The #98 untrusted-redirection class, extended to the authoring
+        # route: /reload/confirm carries NO path parameter (nothing to
+        # echo), and its redirect target derives from the SEAM's own
+        # device id exactly — never any request-supplied string.
+        confirmed = client.post(
             "/reload/confirm",
             headers={"x-csrf-token": policy.csrf_token},
             follow_redirects=False,
         )
-        assert response.status_code == 303
+        assert confirmed.status_code == 303
+        assert confirmed.headers["location"] == f"/devices/{seam.session.device_id}"
+        # A confirm with nothing pending is a 409 answer, never a
+        # redirect — an unfounded confirm cannot bounce the operator.
+        again = client.post(
+            "/reload/confirm",
+            headers={"x-csrf-token": policy.csrf_token},
+            follow_redirects=False,
+        )
+        assert again.status_code == 409
+        assert "location" not in again.headers
     # An adapter-only edit cannot move the descriptor digest; the honest
     # probe is the reloaded adapter itself (re-imported, new object) plus
     # the reload event and the cleared pending state.
