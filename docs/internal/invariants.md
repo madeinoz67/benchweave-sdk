@@ -80,12 +80,16 @@ the invariants below anchor there.
   template (root `copier.yml` + `template/` → `benchweave_sdk/scaffold_template/`, issue #347
   WS2 — the repository root IS the copier template, and an installed SDK renders `new` from
   the packaged copy offline. The template's own `CLAUDE.md.jinja`/`pyproject.toml.jinja`
-  members are generated-project content riding that carve-out — not this repository's
-  agent config or build config, which still never ship) alongside the root `standards-lock.json` placed at
+  members — and, since WS3, `template/AGENTS.md.jinja` and
+  `template/.claude/skills/**` — are generated-project content riding that carve-out:
+  template-borne scaffold content is PRODUCT content inside the force-included template,
+  not this repository's agent config or build config, which still never ship) alongside the root `standards-lock.json` placed at
   `benchweave_sdk/standards-lock.json` so an installed SDK can verify its vendored tree
   offline; the sdist include list is explicit (`src`, `pyproject.toml`, `README.md`,
-  `hatch_build.py`, `standards-lock.json`, `copier.yml`, `template`); `.claude/`, `.mcp.json`,
-  `AGENTS.md` and `CLAUDE.md` must never appear in either artifact; `hatch_build.py` validates
+  `hatch_build.py`, `standards-lock.json`, `copier.yml`, `template`); this repository's
+  OWN `.claude/`, `.mcp.json`, `AGENTS.md` and `CLAUDE.md` at their repo-root locations
+  must never appear in either artifact — the template-borne copies under `template/` are
+  the carve-out above (WS3); `hatch_build.py` validates
   the vendored standards, the preview assets and the scaffold template's presence **before**
   packaging — `pyproject.toml` `[tool.hatch...]`, `hatch_build.py` `CustomBuildHook.initialize`.
   *A wheel that ships agent config or an unverified tree is a supply-chain event, not a
@@ -106,7 +110,13 @@ the invariants below anchor there.
   (`tests/fixtures/scaffold_expected/`, the R-2 gate). Since WS2 the generated tree gains
   exactly one file, `.copier-answers.yml` at the project root (outside `src/<pkg>/`, never
   in a plugin wheel), recording the canonical template source and the SDK version's
-  template tag. The generated plugin runtime has **no dependency on this SDK**. *A defect
+  template tag. Since WS3 it also gains the six managed agent-asset files —
+root `AGENTS.md` plus `.claude/skills/benchweave-*/SKILL.md` — all outside
+`src/<pkg>/` and never in a plugin wheel: refreshed by `upgrade` (with the
+installed SDK's stamp, R-5d), conflict-marked when author-edited, and their
+factual claims (cited refusal codes, subcommands, guide headings) reconciled
+against SDK source and the user guide by `tests/test_agent_assets.py` (R-5b,
+with permanent planted-violation arms R-5c). The generated plugin runtime has **no dependency on this SDK**. *A defect
   here multiplies across every plugin authored from the scaffold, and downstream repos
   diff generated output, so shape changes are interface changes.*
 - **[SRF-2]** **Preview ↔ check-ui agreement**: the preview renders plugin-ui surfaces

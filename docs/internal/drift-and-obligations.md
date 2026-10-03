@@ -13,7 +13,11 @@ rubric's G5 gate is the obligation; this file is the detail behind it.
 2. **Scaffold output changes** 🪝 (a generated project that looks different) → the copier
    template at the repository root (`copier.yml` + `template/`, packaged into the wheel at
    `benchweave_sdk/scaffold_template/`), the committed R-2 fixture
-   (`tests/fixtures/scaffold_expected/`), and the scaffold's generated docs. Downstream
+   (`tests/fixtures/scaffold_expected/`), the scaffold's generated docs, and — for the
+   managed agent assets (`template/AGENTS.md.jinja`, `template/.claude/skills/**`) — the
+   R-5b drift check in `tests/test_agent_assets.py` (every cited code, subcommand and
+   guide heading must still triangulate; the fixture's agent-asset set is pinned there
+   too). Downstream
    plugin repositories diff generated output; treat the change as an interface change and
    say so in the PR. The generated tree's provenance file `.copier-answers.yml` is part of
    that interface (SRF-1).
@@ -59,11 +63,20 @@ rubric's G5 gate is the obligation; this file is the detail behind it.
    main-side counterpart (corpus change, renderer rebuild, pointer) must say which
    main-side change pairs with it.
 
+9. **Agent-asset factual claims** (issue #347 WS3) → every refusal code, subcommand and
+   guide heading cited by the managed agent assets (`template/AGENTS.md.jinja`,
+   `template/.claude/skills/**`) must triangulate against the SDK source, the click group
+   as imported and `user_guide/plugin-sdk.qmd` — `tests/test_agent_assets.py` (R-5b) IS
+   the obligation's mechanism, and its planted-violation arms (R-5c) prove the check
+   bites on every push. The check does not verify the STE100 register or gloss accuracy
+   (design §3 residual) — those stay review's job; the prose-refusal surfaces are pinned
+   code-free by `CODE_FREE_SKILLS` in the same module.
+
 ## CI map
 
 | Job | What it catches |
 |---|---|
-| `sdk` | ubuntu, macOS and Windows; deliberately NO submodules (the self-containment proof); `uv sync --locked --extra test --extra scaffold` (the copier template lane, WS2); `ruff check .`; `mypy src`; `pytest -q` (the behavioral suite, including the R-2 byte-parity arms and the R-4 update lane in `tests/test_scaffold_update.py` — full checkout history via fetch-depth 0, offline against a throwaway tagged template repo); `sync-standards --check` (lock ↔ tree ↔ stamps on the committed state); `benchweave-sdk --version` entry-point smoke; a scaffold-and-check run; the publish workflow's installed-wheel smoke (installs `[scaffold]`) |
+| `sdk` | ubuntu, macOS and Windows; deliberately NO submodules (the self-containment proof); `uv sync --locked --extra test --extra server --extra scaffold` (the copier template lane, WS2; the folded server host, #309); `ruff check .`; `mypy src`; `pytest -q` (the behavioral suite, including the R-2 byte-parity arms, the R-4/R-5d update lane in `tests/test_scaffold_update.py` — full checkout history via fetch-depth 0, offline against a throwaway tagged template repo — and the R-5b/R-5c agent-asset drift module `tests/test_agent_assets.py`); `sync-standards --check` (lock ↔ tree ↔ stamps on the committed state); `benchweave-sdk --version` entry-point smoke; a scaffold-and-check run; the publish workflow's installed-wheel smoke (installs `[scaffold]`) |
 | `docs` | this repository's `docs.yml`: the docs site builds from this repository's content |
 | `publish` | release integrity — tag, wheel, stamp verification |
 

@@ -1,0 +1,64 @@
+---
+name: benchweave-descriptor
+description: Use when you author or edit the OTDP descriptor — schema
+  fields, per-pin standards validation, capabilities and operations, and
+  transport-provider pins.
+---
+
+# Descriptor authoring
+
+The descriptor is the contract. The file is
+`src/{{ package_name }}/descriptor.json`. Every command must trace to evidence.
+Do not invent commands or capabilities.
+
+## Validate
+
+- `benchweave-sdk check src/{{ package_name }}/descriptor.json` — the offline
+  check for schema and basic semantics.
+
+## Per-pin validation
+
+The SDK does not validate against one OTDP schema. It validates each
+descriptor against the version in the descriptor's own `otdp_version` field. A
+descriptor pinned to an older version validates against that version's own
+schemas. The SDK never reinterprets a pin through the active version.
+
+## Structural rules
+
+- `capabilities` must equal the keys of `operations` (S01).
+- Parameter names must be unique (S01). Parameter bounds must not be reversed
+  (S02).
+- The offline check is partial. It covers S01, S02 and S04. Record the full
+  S01–S18, C01–C12 and M01–M14 obligations and their evidence separately.
+
+## Refusal codes
+
+The check and validation surface refuse with machine-matchable codes:
+
+- `version_not_served:` — this SDK does not carry the pinned version.
+- `retired_identifier:` — the pin names a retired version.
+- `provider_feature_missing:` — the provider `feature_id` is not in
+  `required_features`.
+- `provider_transport_undeclared:` — an `otdp.transport.*` feature is required
+  but no provider on the custom transport declares it.
+- `unknown_otdp_feature:` — an `otdp.*` feature id is neither corpus-known nor
+  declared through a provider.
+- `provider_contract_missing:` — the provider pin does not resolve to a
+  contained regular file.
+- `provider_contract_hash_mismatch:` — the pinned bytes do not hash to the
+  pinned value.
+- `provider_contract_invalid:` — the pinned contract document fails a contract
+  check.
+
+A yanked pin stays conforming and validates against its own bytes. A
+deprecation warning names the move-to version.
+
+## Read the docs
+
+The plugin SDK guide covers this in section "3. Run the checks", section
+"Standards versions: per-pin validation and the served set" and section
+"Transport providers (custom transports)".
+
+---
+Maintained by benchweave-sdk {{ sdk_version }}; `benchweave-sdk upgrade`
+refreshes this skill.

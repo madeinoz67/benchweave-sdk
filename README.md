@@ -56,7 +56,7 @@ An installed SDK can check its vendored standards offline with `benchweave-sdk s
 
 1. Install the SDK from PyPI with `uv pip install 'benchweave-sdk[scaffold]'` — the `[scaffold]` extra carries the copier dependency `new` renders through; without it, `new` refuses with `scaffold_extra_absent:` naming the install command. For more options, see [Installation](#installation).
 2. Run `benchweave-sdk new plugins/acme/model100 --package benchweave_acme_model100`. Replace `acme/model100` with your manufacturer and device name. The independent project contains `src/benchweave_acme_model100/` and `tests/`.
-3. Change into the generated project with `cd plugins/acme/model100`. Replace the explicitly synthetic protocol with verified device behaviour. Then update the descriptor of the generated plugin. The generated `AI-GUIDE.md` describes the design, build, test, review and release steps. `CLAUDE.md` at the root carries agent notes. The seeded skills under `src/benchweave_acme_model100/skills/` ship with the package. The skill `develop-plugin` is for plugin development. The skill `drive-device` is the demo driver to rewrite.
+3. Change into the generated project with `cd plugins/acme/model100`. Replace the explicitly synthetic protocol with verified device behaviour. Then update the descriptor of the generated plugin. The generated `AI-GUIDE.md` describes the design, build, test, review and release steps. `CLAUDE.md` at the root carries agent notes and imports `AGENTS.md`, the SDK-managed agent guide; `.claude/skills/` at the root holds the five SDK-managed workflow skills (`benchweave-plugin-workflow`, `benchweave-descriptor`, `benchweave-plugin-ui`, `benchweave-adapter-testing`, `benchweave-capture`) — `benchweave-sdk upgrade` refreshes them, and editing them gives conflict markers, never silent loss. The seeded skills under `src/benchweave_acme_model100/skills/` are different content and ship with the package. The skill `develop-plugin` is for plugin development. The skill `drive-device` is the demo driver to rewrite.
 4. Install the plugin with its test dependencies. Run the plugin tests. Run `benchweave-sdk check src/benchweave_acme_model100/descriptor.json`. Record all applicable S01–S18, C01–C12 and M01–M14 obligations and evidence. The basic SDK checks do not cover all of them.
 5. Build with `uv build`. Prepare the registry metadata and the reviewed evidence. Approve the release before publication or hardware qualification. `benchweave-sdk inventory` helps generate hashes, not a complete registry manifest.
 
@@ -105,6 +105,8 @@ plugins/acme/model100/                 # independent plugin project
 ├── README.md
 ├── AI-GUIDE.md                        # generated development workflow
 ├── CLAUDE.md                          # generated agent notes; root dev tooling
+├── AGENTS.md                          # SDK-managed agent guide; CLAUDE.md imports it
+├── .claude/skills/                    # five SDK-managed workflow skills
 ├── UI-GUIDE.md                        # generated only with --with-ui
 ├── docs/                              # author-supplied device documentation
 │   ├── compatibility.md               # supported models/firmware and limitations

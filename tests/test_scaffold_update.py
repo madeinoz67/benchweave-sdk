@@ -59,6 +59,7 @@ from benchweave_sdk.scaffold import _enforce_lf, _repo_template_members  # noqa:
 from benchweave_sdk.served import active_version
 
 REPO = Path(__file__).resolve().parents[1]
+FIXTURES = Path(__file__).parent / "fixtures" / "scaffold_expected"
 PACKAGE = "example_plugin"
 AUTHOR_LINE = "AUTHOR NOTE: my device-specific line\n"
 BASE_TAG = "v0.9.0"
@@ -236,7 +237,15 @@ def test_update_keeps_the_update_promise(
     # copier.yml is template CONFIG, never a rendered member — a config-only
     # delta touches nothing in the project.
     changed = sorted(
-        relative.removeprefix("template/")
+        # Project-relative paths (the .jinja suffix is template-side only):
+        # this set is compared against project file names in A2/A5 below.
+        # WS3 fold: the suffix mismatch was masked in WS2 — every member its
+        # tests mutated was .jinja-less, and a clean checkout's delta set is
+        # empty — but any .jinja-bearing template delta (the skills, the
+        # answers template) made `changed` name paths that never exist in
+        # the project, so the A2 carve-out and the A5 footprint both went
+        # blind for exactly those files.
+        relative.removeprefix("template/").removesuffix(".jinja")
         for relative in set(base) | set(target)
         if relative.startswith("template/") and base.get(relative) != target.get(relative)
     )
@@ -250,6 +259,23 @@ def test_update_keeps_the_update_promise(
     # A1 managed: byte-equal to the current template render.
     assert updated["AI-GUIDE.md"] == target["template/AI-GUIDE.md"]
 
+    # A1 extension (WS3 R-5d): the managed agent assets ride the same
+    # byte-exactness — the update renders them exactly as `new` renders
+    # them, version stamps included. The fixture is that render, pinned by
+    # R-2; the set is derived from the template members (never a second
+    # list to go stale), so every managed asset the target carries is
+    # checked and template growth lands here automatically.
+    managed_assets = sorted(
+        member.removeprefix("template/").removesuffix(".jinja")
+        for member in target
+        if member == "template/AGENTS.md.jinja" or member.startswith("template/.claude/")
+    )
+    assert managed_assets, "the template must carry the managed agent assets"
+    for relative in managed_assets:
+        assert updated[relative] == (
+            FIXTURES / ("ui" if with_ui else "base") / relative
+        ).read_bytes(), relative
+
     # A2 owned: the author's three files plus every owned file whose seed
     # the template did NOT change survive byte-identically; a skip-protected
     # file whose seed DID change survives byte-identically TOO (skip-wins —
@@ -262,8 +288,8 @@ def test_update_keeps_the_update_promise(
     for relative, content in author_state.items():
         if relative == ".copier-answers.yml":
             continue
-        if relative in changed and relative == "AI-GUIDE.md":
-            continue  # the managed file rides the 3-way merge
+        if relative in changed and (relative == "AI-GUIDE.md" or relative in managed_assets):
+            continue  # managed files ride the 3-way merge when the template moves them
         assert updated[relative] == content, relative
 
     # A3 provenance: the answers' _commit advanced to the target ref and the
@@ -495,6 +521,103 @@ def test_upgrade_moves_managed_state_and_preserves_author(tmp_path: Path) -> Non
     # A3 provenance advanced to the target ref.
     answers = (project / ".copier-answers.yml").read_text(encoding="utf-8")
     assert f"_commit: {TARGET_TAG}" in answers
+
+
+def test_upgrade_conflicts_loudly_on_an_author_edited_managed_skill(tmp_path: Path) -> None:
+    """R-5d live RED (WS3 design §4): author-edit a MANAGED skill, then
+    upgrade past a template that moves the same lines. The conflict path
+    fires — markers with both sides intact, the path reported — never a
+    silent clobber back to template bytes. (A weak form that only asserts
+    equality with the template render would pass under clobber; the
+    survival assertions are the teeth.)"""
+    from benchweave_sdk.scaffold_update import upgrade_project
+
+    base = dict(_repo_template_members() or {})
+    assert base
+    skill_member = "template/.claude/skills/benchweave-descriptor/SKILL.md.jinja"
+    assert skill_member in base, "the template must carry the managed skill"
+    target = dict(base)
+    target[skill_member] = base[skill_member].replace(
+        b"# Descriptor authoring", b"# Descriptor authoring (template moved)"
+    )
+    repo = _build_tagged_template_repo(tmp_path, base, target)
+    materialized = tmp_path / "materialized-skill"
+    _write_tree(materialized, base)
+    project = tmp_path / "P-skill-conflict"
+    _scaffold_offline(materialized, repo, project)
+    skill = project / ".claude" / "skills" / "benchweave-descriptor" / "SKILL.md"
+    skill.write_bytes(
+        skill.read_bytes().replace(b"# Descriptor authoring", b"# AUTHOR-tuned skill")
+    )
+    _author_commit(project)
+    conflicted, restored = upgrade_project(project, target_ref=TARGET_TAG)
+    assert restored == []
+    assert conflicted == [".claude/skills/benchweave-descriptor/SKILL.md"]
+    text = skill.read_text(encoding="utf-8")
+    assert "<<<<<<< before updating" in text
+    assert "AUTHOR-tuned skill" in text, "the author's edit must survive"
+    assert "(template moved)" in text, "the template's edit must survive too"
+
+
+def test_upgrade_renders_managed_assets_with_the_installed_stamp(tmp_path: Path) -> None:
+    """R-5d's production promise on the ``upgrade_project`` lane, aged BYTES
+    edition (adversary fold B-F1): a project rendered at an OLD SDK version
+    — managed bytes AND answers both carrying the old stamp — upgrades to
+    the installed SDK and every managed asset re-stamps to the INSTALLED
+    version. The ``data`` override in ``upgrade_project`` is the mechanism:
+    a raw ``run_update`` takes its render context from the stored answers,
+    so without the override the aged stamp simply stays (measured: the
+    template's content moves, the stamp does not). Aging only the answers
+    is NOT enough — the project bytes then disagree with the old render and
+    the 3-way merge preserves them as author edits, keeping the test green
+    with the guard deleted. The bytes must age too. WS2 could not pin any
+    of this (its only managed file, AI-GUIDE, carried no version token)."""
+    from copier import run_copy
+
+    from benchweave_sdk.scaffold_update import upgrade_project
+
+    old = "0.0.1-old"
+    base = dict(_repo_template_members() or {})
+    assert base
+    # No template delta beyond the tag: the only moving bytes are the version
+    # stamps, which is exactly what this test isolates.
+    repo = _build_tagged_template_repo(tmp_path, base, base)
+    materialized = tmp_path / "materialized-aged"
+    _write_tree(materialized, base)
+    project = tmp_path / "P-aged"
+    run_copy(
+        str(materialized),
+        str(project),
+        data={
+            "package_name": PACKAGE,
+            "with_ui": False,
+            "sdk_version": old,
+            "otdp_version": active_version("otdp"),
+        },
+        defaults=True,
+        quiet=True,
+    )
+    _enforce_lf(project)
+    _pin_local_answers(project, repo, _git_out(repo, "rev-parse", BASE_TAG))
+    # The project is genuinely aged: bytes and answers both carry the old
+    # stamp, and the answers record it.
+    assert f"benchweave-sdk {old}".encode() in (project / "AGENTS.md").read_bytes()
+    assert f"sdk_version: {old}" in (project / ".copier-answers.yml").read_text(
+        encoding="utf-8"
+    )
+    _author_commit(project)
+    conflicted, restored = upgrade_project(project, target_ref=TARGET_TAG)
+    assert conflicted == [] and restored == []
+    managed = sorted(
+        member.removeprefix("template/").removesuffix(".jinja")
+        for member in base
+        if member == "template/AGENTS.md.jinja" or member.startswith("template/.claude/")
+    )
+    assert len(managed) == 6, managed
+    for relative in managed:
+        assert (project / relative).read_bytes() == (
+            FIXTURES / "base" / relative
+        ).read_bytes(), f"{relative} must re-stamp to the installed SDK's version"
 
 
 def test_skip_list_is_load_bearing_on_update(tmp_path: Path) -> None:
