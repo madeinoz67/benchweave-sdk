@@ -512,3 +512,125 @@ def test_preset_selection_in_the_ui_performs_no_io(
     page = client.get(f"/devices/{DEV}").text
     assert "steady" in page, "the preset form did not list the preset"
     assert recorder.verbs == before
+
+
+# --- the refute folds (RED-first; rulings from the review battery) ----------
+
+SECOND_PARAMETER = {
+    "name": "drive_level",
+    "description": "Synthetic drive-level setpoint (second writable surface)",
+    "type": "float",
+    "access": "rw",
+    "semantic": "setpoint",
+    "unit": "V",
+    "range": [0.0, 1.0],
+    "hazard_class": "unknown",
+    "binding": {"kind": "adapter", "key": "drive_level"},
+    "read_policy": {"max_age_ms": 2000, "destructive": False},
+    "write_policy": {
+        "effect": "setting",
+        "completion": "readback",
+        "retry": "never",
+        "verification_parameter": "drive_level",
+        "settling_timeout_ms": 100,
+    },
+}
+
+
+def test_preset_apply_scopes_to_its_own_settings(tmp_path: Path) -> None:
+    """FOLD-A (the converged ruling): preset_apply writes exactly the
+    preset's settings. An abandoned staged write is RETAINED, never flushed
+    under the preset action — the catalogue's one-row-per-setting promise
+    stays true, and the same condition that guards I2c's reload is a guard
+    here, not a silent flush."""
+    import asyncio
+
+    project = tmp_path / "twoparam"
+    shutil.copytree(FIXTURE, project)
+    descriptor_path = project / "src" / "setpoint_demo" / "descriptor.json"
+    document = json.loads(descriptor_path.read_text())
+    document["parameters"].append(SECOND_PARAMETER)
+    descriptor_path.write_text(json.dumps(document))
+    _repin_presentation(project)
+
+    seam, recorder = _recorder_seam(project)
+    asyncio.run(seam.call("device_connect", {"device_id": DEV}))
+    _stage(seam, 0.5, parameter="drive_level")
+    before = list(recorder.verbs)
+    result = asyncio.run(
+        seam.call("preset_apply", {"device_id": DEV, "preset_id": "steady"})
+    )
+    assert recorder.verbs[len(before):] == ["write", "read"], recorder.verbs
+    assert [row["parameter"] for row in result["applied"]] == [PARAM]
+    assert seam.staged == {"drive_level": 0.5}, "prior staging was disturbed"
+
+
+def test_apply_guards_the_read_verb_before_any_write(tmp_path: Path) -> None:
+    """FOLD-B: a descriptor-only project (no presentation documents — the
+    reachability key) with an rw parameter and no read operation must
+    refuse ``standalone_verb_unbounded`` BEFORE any frame; today the write
+    lands and the read's KeyError launders as internal_error."""
+    import asyncio
+
+    project = tmp_path / "no-read"
+    shutil.copytree(FIXTURE, project)
+    pkg = project / "src" / "setpoint_demo"
+    for document_name in ("presentation.json", "binding-catalogue.json"):
+        (pkg / document_name).unlink()
+    shutil.rmtree(pkg / "ui")
+    descriptor_path = pkg / "descriptor.json"
+    document = json.loads(descriptor_path.read_text())
+    document["capabilities"].remove("read")
+    del document["operations"]["read"]
+    descriptor_path.write_text(json.dumps(document))
+
+    seam, recorder = _recorder_seam(project)
+    asyncio.run(seam.call("device_connect", {"device_id": DEV}))
+    _stage(seam, 2.5)
+    before = list(recorder.verbs)
+    with pytest.raises(Exception) as caught:
+        asyncio.run(seam.call("parameter_apply", {"device_id": DEV}))
+    assert caught.value.code == "unavailable"
+    assert "standalone_verb_unbounded" in caught.value.message
+    assert "read" in caught.value.message
+    assert recorder.verbs == before, "a write landed before the read guard"
+
+
+def test_staging_an_unrepresentable_number_refuses_typed(connected) -> None:
+    """FOLD-C(i): a value outside the numeric format is a typed
+    invalid_request, never a bare 500 from the float conversion."""
+    _client, seam, _recorder, _policy = connected
+    with pytest.raises(Exception) as caught:
+        _stage(seam, int("9" * 400))
+    assert caught.value.code == "invalid_request"
+    assert PARAM in caught.value.message
+
+
+def test_the_control_step_stays_finite_on_extreme_ranges() -> None:
+    """FOLD-C(ii): a declared span that overflows the numeric format must
+    not render step="inf" (invalid HTML; the browser silently falls back)."""
+    from benchweave_sdk_server.presentation import staged_control_html
+
+    wide = {
+        "name": "wide",
+        "type": "float",
+        "unit": None,
+        "range": [-1.7e308, 1.7e308],
+    }
+    html = staged_control_html(wide, staged=None, device_value=None)
+    assert 'step="inf"' not in html
+    assert "inf" not in html, html[:200]
+
+
+def test_a_refused_stage_renders_the_true_label(connected) -> None:
+    """FOLD-D: the refused-action notice names the action that was
+    refused — a refused STAGE is not an 'Apply refused'."""
+    client, _seam, _recorder, policy = connected
+    response = client.post(
+        "/pages/readings/stage",
+        headers={"x-csrf-token": policy.csrf_token},
+        data={PARAM: "5.5"},
+    )
+    assert response.status_code == 200
+    assert "Stage refused" in response.text
+    assert "Apply refused" not in response.text

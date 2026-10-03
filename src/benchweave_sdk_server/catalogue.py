@@ -335,7 +335,9 @@ CATALOGUE: tuple[OperationSpec, ...] = (
         (
             "Apply one configuration preset: validated offline, firmware-gated "
             "against the established device identity before any write, then "
-            "staged and applied through the same write/read-back path (SW-43)."
+            "applied through the write/read-back path — exactly the preset's "
+            "own settings; previously staged values are neither applied nor "
+            "discarded (SW-43)."
         ),
         _object(
             {"device_id": _IDENT, "preset_id": {"type": "string", "minLength": 1}},

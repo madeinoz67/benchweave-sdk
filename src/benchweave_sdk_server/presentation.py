@@ -19,6 +19,8 @@ in the quality slot — never a guess (ST-3's two-channels rule).
 
 from __future__ import annotations
 
+import math
+import sys
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -255,11 +257,19 @@ def staged_control_html(
         low, high = 0.0, 0.0
     kind = str(parameter.get("type", "float"))
     step = 1.0 if kind == "int" else round((high - low) / 100.0, 10) or 0.1
+    if not math.isfinite(step):
+        # The declared span overflows the numeric format (FOLD-C(ii)): a
+        # host-derived granularity must stay finite — step="inf" is invalid
+        # HTML and the browser silently falls back to 1.
+        step = float(sys.maxsize)
     label = str(parameter.get("name", ""))
     unit = str(parameter.get("unit", "") or "")
     shown = staged if staged is not None else device_value
     numeric_shown = isinstance(shown, (int, float)) and not isinstance(shown, bool)
-    value = float(shown) if numeric_shown else (high + low) / 2.0
+    midpoint = (high + low) / 2.0
+    value = float(shown) if numeric_shown else (
+        midpoint if math.isfinite(midpoint) else high
+    )
     # The package's data classes type the numeric fields as strings (they
     # render into attributes); format with %g so 2.5 stays "2.5".
     value_text_attr = f"{value:g}"

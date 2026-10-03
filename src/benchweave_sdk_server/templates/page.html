@@ -22,7 +22,7 @@
     <h2>Staged changes</h2>
     {% if action_error %}
     <div class="notice notice-refused" role="alert">
-      <p><strong>Apply refused</strong> — {{ action_error.code }}: {{ action_error.message }}{% if action_error.adapter %} (device answered {{ action_error.adapter.code }} / {{ action_error.adapter.dispatch_state }}){% endif %}. The staged values are retained.</p>
+      <p><strong>{{ action_label or "Apply refused" }}</strong> — {{ action_error.code }}: {{ action_error.message }}{% if action_error.adapter %} (device answered {{ action_error.adapter.code }} / {{ action_error.adapter.dispatch_state }}){% endif %}. Any staged values are retained.</p>
     </div>
     {% endif %}
     <form method="post" action="/pages/{{ page.id }}/stage"

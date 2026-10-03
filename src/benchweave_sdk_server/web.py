@@ -566,6 +566,8 @@ def _add_html_routes(
         request: Request,
         page: Any,
         action_error: dict[str, Any] | None,
+        *,
+        action_label: str | None = None,
     ) -> Response:
         """Re-render one page with an action outcome (the refused apply
         renders its refusal — SW-12's pass-through, never a silent drop)."""
@@ -590,6 +592,7 @@ def _add_html_routes(
                 plots=_page_plots(page.id),
                 controls=_page_controls(page, reads),
                 action_error=action_error,
+                action_label=action_label,
             ),
         )
 
@@ -636,6 +639,7 @@ def _add_html_routes(
                         "code": "invalid_request",
                         "message": f"invalid staged input for {name}: {exc}",
                     },
+                    action_label="Stage refused",
                 )
             try:
                 await seam.call(
@@ -647,7 +651,12 @@ def _add_html_routes(
                     },
                 )
             except SeamError as exc:
-                return await _render_page(request, page, _page_action_error(exc))
+                return await _render_page(
+                    request,
+                    page,
+                    _page_action_error(exc),
+                    action_label="Stage refused",
+                )
         return RedirectResponse(url=f"/pages/{page_id}", status_code=303)
 
     @app.post("/pages/{page_id}/apply")

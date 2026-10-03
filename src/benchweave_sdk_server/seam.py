@@ -369,7 +369,17 @@ class StandaloneSeam:
             and len(bounds) == 2
         ):
             low, high = float(bounds[0]), float(bounds[1])
-            if not low <= float(value) <= high:
+            try:
+                numeric = float(value)
+            except (OverflowError, ValueError) as exc:
+                # A JSON integer can exceed the numeric format; the closed
+                # refusal model answers typed, never a bare 500.
+                raise self._fail(
+                    "invalid_request",
+                    f"staged value is not representable: {name}",
+                    correlation,
+                ) from exc
+            if not low <= numeric <= high:
                 raise self._fail(
                     "invalid_request",
                     f"staged value outside declared range [{low:g}, {high:g}]: {name}",
@@ -396,32 +406,38 @@ class StandaloneSeam:
             "staged": list(self._staged),
         }
 
-    async def _apply_staged(self, correlation: str) -> list[dict[str, Any]]:
-        """Write every staged value in staging order under the descriptor's
-        own ``operations.write.timeout_ms`` bound, then re-read each written
-        parameter: the rows this returns come ONLY from the read-back
-        (SW-23). Any failure stops the apply and retains the staging map —
-        a device rejection is never a silent discard."""
-        if not self._staged:
-            raise self._fail(
-                "invalid_request", "nothing is staged to apply", correlation
-            )
+    async def _apply_batch(
+        self, batch: dict[str, Any], correlation: str
+    ) -> list[dict[str, Any]]:
+        """Write exactly ``batch`` (in its own order) under the descriptor's
+        declared operation policies, then re-read each written parameter:
+        the rows this returns come ONLY from the read-back (SW-23). The
+        batch is SCOPED — the caller's staging map is neither read nor
+        written here: ``parameter_apply`` flushes its own map on success,
+        ``preset_apply`` applies exactly the preset's settings and leaves
+        prior staging untouched (FOLD-A: an abandoned staged write never
+        lands under a preset action). Both verbs are guarded BEFORE any
+        frame (FOLD-B: a missing read policy refuses like a missing write
+        policy — never a landed write followed by a laundered error). Any
+        failure stops the apply and retains the caller's staging map — a
+        device rejection is never a silent discard."""
         self._refuse_degraded(correlation)
         if not self._session.connected:
             raise self._fail("not_ready", "device is not connected", correlation)
-        try:
-            self._session.verb_timeout_ms("write")
-        except KeyError as exc:
-            raise self._fail(
-                "unavailable",
-                f"{exc}: the descriptor declares no write operation policy",
-                correlation,
-            ) from exc
-        names = list(self._staged)
+        for verb in ("write", "read"):
+            try:
+                self._session.verb_timeout_ms(verb)
+            except KeyError as exc:
+                raise self._fail(
+                    "unavailable",
+                    f"{exc}: the descriptor declares no {verb} operation policy",
+                    correlation,
+                ) from exc
+        names = list(batch)
         for name in names:
             await self._execute(
                 "write",
-                {"parameter": name, "value": self._staged[name]},
+                {"parameter": name, "value": batch[name]},
                 correlation,
             )
         rows: list[dict[str, Any]] = []
@@ -441,7 +457,6 @@ class StandaloneSeam:
                     "source": str(data.get("source", "")),
                 }
             )
-        self._staged.clear()
         return rows
 
     async def _op_parameter_apply(
@@ -451,7 +466,12 @@ class StandaloneSeam:
             raise self._fail(
                 "not_found", f"no such device: {arguments['device_id']}", correlation
             )
-        applied = await self._apply_staged(correlation)
+        if not self._staged:
+            raise self._fail(
+                "invalid_request", "nothing is staged to apply", correlation
+            )
+        applied = await self._apply_batch(self._staged, correlation)
+        self._staged.clear()
         return {"device_id": self._session.device_id, "applied": applied}
 
     def _pin_presets(self) -> dict[str, str]:
@@ -642,9 +662,12 @@ class StandaloneSeam:
             )
         for name, value in settings.items():
             self._stageable(str(name), value, correlation)
-        for name, value in settings.items():
-            self._staged[str(name)] = value
-        applied = await self._apply_staged(correlation)
+        # Scoped: apply exactly the preset's settings through a transient
+        # batch — previously staged values are neither applied nor
+        # discarded (FOLD-A; I2c's reload guard treats the same condition
+        # as a guard, and so does this path).
+        batch = {str(name): value for name, value in settings.items()}
+        applied = await self._apply_batch(batch, correlation)
         return {
             "device_id": self._session.device_id,
             "preset_id": preset_id,
