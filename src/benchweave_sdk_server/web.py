@@ -157,6 +157,7 @@ def _add_html_routes(
             name="index.html",
             context={
                 "banner": BANNER,
+                "simulated": seam.transport_kind == "mock",
                 "absent": catalogue.ABSENT_GUARANTEES,
                 "plugin": seam.session.plugin,
                 "devices": devices,
@@ -208,6 +209,7 @@ def _add_html_routes(
             name="device.html",
             context={
                 "banner": BANNER,
+                "simulated": seam.transport_kind == "mock",
                 "absent": catalogue.ABSENT_GUARANTEES,
                 "plugin": plugin,
                 "device_id": device_id,
@@ -239,6 +241,7 @@ def _add_html_routes(
             name="readings.html",
             context={
                 "banner": BANNER,
+                "simulated": seam.transport_kind == "mock",
                 "absent": catalogue.ABSENT_GUARANTEES,
                 "plugin": seam.session.plugin,
                 "device_id": device_id,
