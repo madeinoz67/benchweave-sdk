@@ -41,7 +41,12 @@ def _plugin_new(destination: str, package: str, with_ui: bool) -> dict[str, Any]
     if with_ui:
         create_ui_resources(target, package)
     files = sorted(
-        str(path.relative_to(target)) for path in target.rglob("*") if path.is_file()
+        # Posix-form relative paths on EVERY host (the cross-host-meaning
+        # rule): str(relative_to) is flavour-dependent — the wire list is
+        # platform-invariant or the same tool means different things on
+        # different hosts (PR #90's windows-latest leg). as_posix() is a
+        # no-op on posix hosts and corrective on Windows.
+        path.relative_to(target).as_posix() for path in target.rglob("*") if path.is_file()
     )
     return {"created": str(target), "package": package, "files": files}
 

@@ -169,6 +169,52 @@ def test_plugin_new_scaffolds_and_reports_the_inventory(seam, tmp_path) -> None:
     assert (destination / "src" / "second_probe" / "adapter.py").is_file()
 
 
+def test_plugin_new_inventory_is_posix_under_a_windows_flavour(monkeypatch) -> None:
+    """The cross-host-meaning rule on the wire: plugin_new's files list is
+    posix-form on EVERY host. The Windows flavour is simulated with a
+    PureWindowsPath-driven double — real relative_to/str/as_posix (the
+    platform behaviour PR #90's windows-latest leg proved), with discovery
+    and the scaffold calls stubbed — so this arm has local teeth: pre-fix
+    it fails on macOS exactly as CI failed on Windows, instead of waiting
+    for the Windows leg to catch a regression.
+    """
+    from pathlib import PureWindowsPath
+
+    from benchweave_sdk_server import authoring
+
+    class _WindowsFlavourDouble(PureWindowsPath):
+        # Discovery double: no filesystem exists under a Windows path on
+        # this host, so rglob serves the listing and expanduser/resolve
+        # stand still. str/relative_to/as_posix are the REAL Windows
+        # flavour — the part under test is untouched.
+        def expanduser(self):
+            return self
+
+        def resolve(self):
+            return self
+
+        def rglob(self, pattern):
+            return (
+                self / "src" / "second_probe" / "descriptor.json",
+                self / "src" / "second_probe" / "adapter.py",
+            )
+
+        def is_file(self):
+            return True
+
+    monkeypatch.setattr(authoring, "Path", _WindowsFlavourDouble)
+    monkeypatch.setattr(authoring, "create_project", lambda target, package: None)
+    monkeypatch.setattr(
+        "benchweave_sdk.presentation.create_ui_resources",
+        lambda target, package: None,
+    )
+    result = authoring._plugin_new("C:\\probe", "second_probe", True)
+    assert result["files"] == [
+        "src/second_probe/adapter.py",
+        "src/second_probe/descriptor.json",
+    ]
+
+
 def test_plugin_check_and_ui_check_return_clean(seam, starter_project) -> None:
     mcp = build_mcp(seam, authoring=True)
     descriptor = starter_project / "src" / "example_plugin" / "descriptor.json"
