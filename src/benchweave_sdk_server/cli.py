@@ -23,6 +23,8 @@ from typing import TYPE_CHECKING, NoReturn
 
 import click
 
+from benchweave_sdk import __version__
+
 from .seam import StandaloneSeam
 from .session import (
     LoadedPlugin,
@@ -104,7 +106,14 @@ def _build_seam(
 
 
 @click.group()
-@click.version_option()
+# PR #90 carry-forward row R4: the explicit derived version follows the
+# core precedent (benchweave_sdk.cli) — bare version_option() infers the
+# distribution name from the module, and benchweave_sdk_server is never a
+# distribution (the host rides benchweave-sdk), so --version crashed with
+# RuntimeError on every install shape. Derived, never a literal (the
+# zero-literal gate's register discipline); a source checkout answers
+# "0.0.0+source" instead of crashing.
+@click.version_option(__version__)
 def cli() -> None:
     """Standalone BenchWeave host: one process, no gateway."""
 

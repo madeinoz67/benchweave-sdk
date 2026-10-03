@@ -74,6 +74,10 @@ jobs:
           # bash does resolve the suffix-less entry points used below.
           uv pip install --python "$RUNNER_TEMP/sdk-smoke" dist/*.whl
           "$BIN/benchweave-sdk" --version | grep -F "version ${TAG#v}"
+          # PR #90 carry-forward row R1: the server console script on the
+          # default install, smoked at release time too (same version pin
+          # as the SDK command above it).
+          "$BIN/benchweave-sdk-server" --version | grep -F "version ${TAG#v}"
           "$BIN/benchweave-sdk" new "$RUNNER_TEMP/example" --with-ui
           "$BIN/benchweave-sdk" check "$RUNNER_TEMP/example/src/example_plugin/descriptor.json"
           # Installed-mode standards verification: proves the packaged lock

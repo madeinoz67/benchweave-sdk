@@ -481,12 +481,28 @@ def count_sites() -> tuple[list[dict[str, Any]], int]:
     """Every executable literal site, sorted for reproducibility, plus the
     FILES-PARSED census (fold row 5: every scanned file counts, not only
     files carrying sites — the census is the shrinkage detector)."""
+    import os
+
+    def _refuse_unreadable(error: OSError) -> None:
+        # PR #90 carry-forward row R5: pathlib's glob/rglob SWALLOWS
+        # PermissionError, so an unreadable root (or subtree) scanned
+        # zero files and exited 0 — the denominator narrowed silently.
+        # The walk refuses instead: a count that cannot be computed is a
+        # refusal, never a guess (the same direction as the missing-root
+        # rule above).
+        raise OSError(f"source tree unreadable: {error.filename or error}") from error
+
     sites: list[dict[str, Any]] = []
     scanned = 0
     for source_root in SOURCE_ROOTS:
         if not source_root.is_dir():
             raise OSError(f"source root missing: {source_root}")
-    all_python = (py_file for root in SOURCE_ROOTS for py_file in root.rglob("*.py"))
+    all_python: list[Path] = []
+    for source_root in SOURCE_ROOTS:
+        for dirpath, _dirnames, filenames in os.walk(source_root, onerror=_refuse_unreadable):
+            all_python.extend(
+                Path(dirpath) / name for name in filenames if name.endswith(".py")
+            )
     for path in sorted(all_python):
         relative_parts = path.relative_to(REPO_ROOT).parts
         if not _outside_environment(REPO_ROOT, relative_parts):
