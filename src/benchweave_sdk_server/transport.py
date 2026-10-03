@@ -64,12 +64,26 @@ class LoopingMockHost(MockHost):
         exchanges: list[tuple[dict[str, Any], dict[str, Any] | Exception]],
         *,
         cycles: int | None = None,
+        establishment: int = 1,
     ) -> None:
         super().__init__(exchanges)
         if cycles is not None and cycles < 1:
             raise ValueError("standalone_transport_cycles: cycles must be >= 1 or None")
+        if establishment < 0 or establishment > len(exchanges):
+            raise ValueError(
+                "standalone_transport_establishment: must index into the script"
+            )
         original = list(self._script)
-        self._cycle = deque(original[1:]) if len(original) > 1 else deque(original)
+        # The poll cycle is the script AFTER its establishment head — the
+        # default 1 is the identify-first conversation mock_exchanges
+        # scripts; 0 serves a script with no establishment exchange at all
+        # (scenario mode for a plugin that does not declare identify). A
+        # script no longer than its own establishment head has no distinct
+        # cycle: the whole script is the cycle (the single-exchange rule).
+        if len(original) > establishment:
+            self._cycle = deque(original[establishment:])
+        else:
+            self._cycle = deque(original)
         self._cycles = cycles
         self._plays = 1
 
