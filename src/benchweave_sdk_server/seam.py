@@ -24,6 +24,7 @@ adapter directly. The seam owns the closed refusal model —
 from __future__ import annotations
 
 import asyncio
+import time
 import uuid
 from importlib import metadata
 from typing import Any, cast
@@ -32,6 +33,7 @@ from benchweave_sdk.testing import ConformanceError
 
 from . import catalogue
 from .errors import SeamError
+from .plots import ObservationRing
 from .presentation import SUPPORTED_FEATURES, SUPPORTED_PANELS, HostPresentation
 from .session import PluginSession
 
@@ -72,6 +74,9 @@ class StandaloneSeam:
             package_dir=session.plugin.package_dir,
             has_presentation=session.plugin.has_presentation,
         )
+        # The bounded observation ring (§3.3): fed by every successful
+        # parameter read — host-observed samples, nothing fabricated.
+        self.observation_ring = ObservationRing()
 
     @property
     def session(self) -> PluginSession:
@@ -271,7 +276,11 @@ class StandaloneSeam:
                 f"no such readable parameter: {name}",
                 correlation,
             )
-        return await self._execute("read", {"parameter": name}, correlation)
+        data = await self._execute("read", {"parameter": name}, correlation)
+        self.observation_ring.record(
+            name, time.monotonic() * 1000.0, data.get("value")
+        )
+        return data
 
     # --- adapter envelope handling -----------------------------------------
 

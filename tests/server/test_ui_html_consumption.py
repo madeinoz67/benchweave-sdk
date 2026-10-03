@@ -38,7 +38,16 @@ def test_the_host_no_longer_carries_copies_of_the_renderer_assets() -> None:
         assert not (HOST_ASSETS / name).exists(), name
     inventory = json.loads((HOST_ASSETS / "inventory.json").read_text())
     listed = {row["path"] for row in inventory["assets"]}
-    assert listed == {"htmx.min.js", "sse.js", "standalone.css"}
+    assert listed == {
+        "htmx.min.js",
+        "sse.js",
+        "standalone.css",
+        "uplot.min.js",
+        "uplot.css",
+        "uplot-LICENCE",
+        "uplot-SOURCES.md",
+        "bw-plot.js",
+    }
 
 
 def test_the_assets_route_serves_the_installed_package_bytes(starter_project) -> None:

@@ -138,10 +138,16 @@ def test_no_script_without_src_anywhere(client, policy) -> None:
     pages = ["/", f"/devices/{DEV}", "/pages/readings", "/pages/readings/readings"]
     for page in pages:
         for attributes in SCRIPT_TAG.findall(client.get(page).text):
+            # The plot columns ride in a non-executing application/json
+            # data block (CSP-safe by construction — never script code).
+            if 'type="application/json"' in attributes:
+                continue
             assert "src=" in attributes, (page, attributes)
     templates = Path(__file__).resolve().parents[2] / "src" / "benchweave_sdk_server" / "templates"
     for template in templates.glob("*.html"):
         for attributes in SCRIPT_TAG.findall(template.read_text()):
+            if 'type="application/json"' in attributes:
+                continue
             assert "src=" in attributes, (template.name, attributes)
 
 

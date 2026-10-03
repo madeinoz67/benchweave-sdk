@@ -347,6 +347,18 @@ def _add_html_routes(
             "panel_refusal": panel_refusal,
         }
 
+    def _page_plots(page_id: str) -> str:
+        """The page's declared plots, composed through the package's plot
+        machinery over the session's observation ring (§3.3)."""
+        from .plots import plot_host_html
+
+        parts = [
+            plot_host_html(view, seam.observation_ring)
+            for view in presentation.plot_views
+            if view.page_id == page_id
+        ]
+        return Markup("".join(parts))
+
     @app.get("/pages/{page_id}", response_class=HTMLResponse)
     async def page_route(request: Request, page_id: str) -> Response:
         page = presentation.page(page_id)
@@ -373,7 +385,10 @@ def _add_html_routes(
         return _TEMPLATES.TemplateResponse(
             request=request,
             name="page.html",
-            context=shared(**_page_context(page, severity, tiles, refusal, no_data)),
+            context=shared(
+                **_page_context(page, severity, tiles, refusal, no_data),
+                plots=_page_plots(page.id),
+            ),
         )
 
     @app.get("/pages/{page_id}/readings", response_class=HTMLResponse)
@@ -397,7 +412,10 @@ def _add_html_routes(
         return _TEMPLATES.TemplateResponse(
             request=request,
             name="page-readings.html",
-            context=shared(**_page_context(page, severity, tiles, refusal, [])),
+            context=shared(
+                **_page_context(page, severity, tiles, refusal, []),
+                plots=_page_plots(page.id),
+            ),
         )
 
     def _redirect(device_id: str) -> RedirectResponse:
