@@ -634,3 +634,38 @@ def test_a_refused_stage_renders_the_true_label(connected) -> None:
     assert response.status_code == 200
     assert "Stage refused" in response.text
     assert "Apply refused" not in response.text
+
+
+def test_redirect_targets_come_from_validated_server_side_objects(connected) -> None:
+    """#98's untrusted-redirection class: every redirect target derives
+    from the VALIDATED server-side object (the seam's device id, the
+    resolved page's own id), never the echoed path parameter — Location
+    equals the canonical target exactly, and a hostile parameter never
+    produces a redirect at all."""
+    client, _seam, _recorder, policy = connected
+    headers = {"x-csrf-token": policy.csrf_token}
+    staged = client.post(
+        "/pages/readings/stage",
+        headers=headers,
+        data={PARAM: "2.5"},
+        follow_redirects=False,
+    )
+    assert staged.status_code == 303
+    assert staged.headers["location"] == "/pages/readings"
+    applied = client.post(
+        "/pages/readings/apply", headers=headers, follow_redirects=False
+    )
+    assert applied.status_code == 303
+    assert applied.headers["location"] == "/pages/readings"
+    for hostile_path in (
+        "/pages/..%2F..%2Fetc/stage",
+        "/pages/..%2F..%2Fetc/apply",
+    ):
+        refused = client.post(hostile_path, headers=headers, follow_redirects=False)
+        assert refused.status_code == 404, hostile_path
+        assert "location" not in refused.headers, hostile_path
+    hostile_connect = client.post(
+        "/devices/..%2F..%2Fdev/connect", headers=headers, follow_redirects=False
+    )
+    assert hostile_connect.status_code == 404
+    assert "location" not in hostile_connect.headers

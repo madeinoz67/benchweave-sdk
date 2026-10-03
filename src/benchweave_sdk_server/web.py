@@ -530,8 +530,15 @@ def _add_html_routes(
             ),
         )
 
-    def _redirect(device_id: str) -> RedirectResponse:
-        return RedirectResponse(url=f"/devices/{device_id}", status_code=303)
+    def _redirect() -> RedirectResponse:
+        """The device page redirect. The target derives from the SEAM's
+        own device id — the validated server-side object — never the
+        request's echoed path parameter (#98's untrusted-redirection
+        class: every caller has already validated equality, and the rule
+        has nothing left to see)."""
+        return RedirectResponse(
+            url=f"/devices/{seam.session.device_id}", status_code=303
+        )
 
     @app.post("/devices/{device_id}/connect")
     async def connect_device(request: Request, device_id: str) -> Response:
@@ -545,7 +552,7 @@ def _add_html_routes(
             return await _render_device(
                 request, device_id, action_error={"code": exc.code, "message": exc.message}
             )
-        return _redirect(device_id)
+        return _redirect()
 
     @app.post("/devices/{device_id}/disconnect")
     async def disconnect_device(device_id: str) -> Response:
@@ -553,7 +560,7 @@ def _add_html_routes(
             return HTMLResponse("not found", status_code=404)
         with contextlib.suppress(SeamError):
             await seam.call("device_disconnect", {"device_id": device_id})
-        return _redirect(device_id)
+        return _redirect()
 
     def _page_action_error(exc: SeamError) -> dict[str, Any]:
         return {
@@ -657,7 +664,7 @@ def _add_html_routes(
                     _page_action_error(exc),
                     action_label="Stage refused",
                 )
-        return RedirectResponse(url=f"/pages/{page_id}", status_code=303)
+        return RedirectResponse(url=f"/pages/{page.id}", status_code=303)
 
     @app.post("/pages/{page_id}/apply")
     async def apply_page(request: Request, page_id: str) -> Response:
@@ -671,7 +678,7 @@ def _add_html_routes(
             )
         except SeamError as exc:
             return await _render_page(request, page, _page_action_error(exc))
-        return RedirectResponse(url=f"/pages/{page_id}", status_code=303)
+        return RedirectResponse(url=f"/pages/{page.id}", status_code=303)
 
     @app.post("/devices/{device_id}/preset-apply")
     async def apply_preset(request: Request, device_id: str) -> Response:
@@ -693,7 +700,7 @@ def _add_html_routes(
                 action_error=_page_action_error(exc),
                 action_label="Preset apply refused",
             )
-        return _redirect(device_id)
+        return _redirect()
 
     if scenario is not None:
 
@@ -717,7 +724,7 @@ def _add_html_routes(
                     device_id,
                     action_error={"code": "invalid_request", "message": str(exc)},
                 )
-            return _redirect(device_id)
+            return _redirect()
 
 
 def _add_asset_routes(app: FastAPI) -> None:
