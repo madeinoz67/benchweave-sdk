@@ -23,7 +23,9 @@ Derivations (from primary sources, not the plan's restatement):
 from __future__ import annotations
 
 import asyncio
+import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -644,25 +646,98 @@ def test_capture_services_docstring_names_the_writer_and_its_true_size() -> None
     assert "Nothing in this SDK or in the gateway implements" not in doc
 
 
-def test_user_guide_compatibility_sentence_covers_capture() -> None:
-    """S-F3: BOTH compatibility surfaces (user_guide/plugin-sdk.qmd §4 and
-    README.md's 'Compatibility and limits') must not claim capture is
-    unsupported once the capture slice lands; streaming and profile
-    actions stay unsupported. The guard sweeps the whole README too, so a
-    regressed sentence ANYWHERE in either file fails the pin."""
+def _capability_source() -> dict[str, Any]:
+    """docs/bridge-capabilities.json, shape-validated: the structured fact
+    source for the compatibility statement (issue #359 row 1 — the facts
+    live in a machine-checkable source; prose stays human and is checked
+    at fact level)."""
+    raw = (
+        Path(__file__).resolve().parents[1] / "docs" / "bridge-capabilities.json"
+    ).read_text(encoding="utf-8")
+    source: dict[str, Any] = json.loads(raw)
+    entries: list[dict[str, Any]] = [*source["verbs"], *source["beyond_verbs"]]
+    assert entries, "empty capability source"
+    ids = [str(entry["id"]) for entry in entries]
+    assert len(ids) == len(set(ids)), ids  # one verdict per capability, ever
+    phrase_verdict: dict[str, bool] = {}
+    for entry in entries:
+        supported = entry["supported"]
+        assert isinstance(supported, bool), entry
+        phrase = str(entry["phrase"])
+        assert phrase, entry
+        prior = phrase_verdict.setdefault(phrase, supported)
+        assert prior == supported, f"phrase under two verdicts: {phrase}"
+    verbs: list[dict[str, Any]] = source["verbs"]
+    assert any(entry["supported"] for entry in verbs), "no supported verb"
+    assert any(not entry["supported"] for entry in verbs), "no unsupported verb"
+    return source
+
+
+def test_capability_source_classifies_the_corpus_verb_vocabulary() -> None:
+    """The verb ids derive from the vendored corpus, not from prose: every
+    verb the active OTDP runtime schema enumerates is classified exactly
+    once, so a corpus vocabulary change or a dropped row fails here before
+    any prose check runs."""
+    from benchweave_sdk.served import active_version
+    from benchweave_sdk.validation import contract_documents
+
+    active = active_version("otdp")
+    matches = [
+        key
+        for key in contract_documents()
+        if key.startswith(f"otdp/{active}/") and key.endswith("/otdp-runtime.schema.json")
+    ]
+    assert len(matches) == 1, matches
+    enum = contract_documents()[matches[0]]["$defs"]["operationRequest"]["properties"][
+        "verb"
+    ]["enum"]
+    classified = [str(entry["id"]) for entry in _capability_source()["verbs"]]
+    assert sorted(classified) == sorted(str(value) for value in enum)
+
+
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
+_NEGATION = re.compile(r"\b(not|needs?|unsupported|without|never)\b", re.IGNORECASE)
+_HTML_TAG = re.compile(r"<[^>]+>")
+
+
+def _visible_text(text: str) -> str:
+    """HTML is checked on its visible prose, not its markup: tags would
+    otherwise glue unrelated elements into one unsplittable "sentence"."""
+    return re.sub(r"\s+", " ", _HTML_TAG.sub(" ", text))
+
+
+def test_compatibility_surfaces_state_the_structured_bridge_facts() -> None:
+    """Fact-level prose check: README.md and the plugin-sdk guide name every
+    capability the structured source declares; each unsupported capability
+    is named inside a sentence that says so, and no supported capability
+    appears inside a negated sentence. The website's limits callout is a
+    summary: every capability it names is placed the same way, but it need
+    not name them all. No sentence is pinned — any honest wording that
+    carries the facts passes; wording that contradicts the source fails."""
     repo = Path(__file__).resolve().parents[1]
-    guide = (repo / "user_guide" / "plugin-sdk.qmd").read_text(encoding="utf-8")
-    readme = (repo / "README.md").read_text(encoding="utf-8")
-    for surface, text in (("guide", guide), ("readme", readme)):
-        assert "capture and streaming remain unsupported" not in text, surface
-        assert "capture and streaming are not implemented" not in text, surface
-        assert "single-channel capture" in text, surface
-        # Streaming stays named as not implemented (each surface's own
-        # wording: the guide says "remain unsupported", the README says
-        # "not implemented").
-        assert "streaming" in text, surface
-    assert "streaming remain unsupported" in guide
-    assert "streaming are not implemented" in readme
+    surfaces = {
+        "readme": (repo / "README.md").read_text(encoding="utf-8"),
+        "guide": (repo / "user_guide" / "plugin-sdk.qmd").read_text(encoding="utf-8"),
+        "website": _visible_text(
+            (repo / "website" / "index.html").read_text(encoding="utf-8")
+        ),
+    }
+    source = _capability_source()
+    entries: list[dict[str, Any]] = [*source["verbs"], *source["beyond_verbs"]]
+    for entry in entries:
+        phrase = str(entry["phrase"])
+        for surface, text in surfaces.items():
+            sentences = [
+                s for s in _SENTENCE_SPLIT.split(text) if phrase.lower() in s.lower()
+            ]
+            if surface == "website" and not sentences:
+                continue  # the callout summarises; it must not contradict
+            assert sentences, (surface, phrase)
+            negated = [s for s in sentences if _NEGATION.search(s)]
+            if entry["supported"]:
+                assert not negated, (surface, phrase, negated[0])
+            else:
+                assert negated, (surface, phrase)
 
 
 
