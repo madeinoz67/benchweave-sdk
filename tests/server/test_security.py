@@ -6,9 +6,9 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from benchweave_standalone import security
-from benchweave_standalone.security import GuardPolicy
-from benchweave_standalone.web import build_app
+from benchweave_sdk_server import security
+from benchweave_sdk_server.security import GuardPolicy
+from benchweave_sdk_server.web import build_app
 
 DEV = "example_device"
 EVIL_HOST = {"host": "evil.example:8477"}

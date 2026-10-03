@@ -5,10 +5,10 @@ from __future__ import annotations
 import json
 
 import pytest
-from benchweave_sdk.served import vendored_root, verify_vendored_digests
 
-from benchweave_standalone import catalogue
-from benchweave_standalone.errors import ERROR_CODES, ERROR_HTTP_STATUS
+from benchweave_sdk.served import vendored_root, verify_vendored_digests
+from benchweave_sdk_server import catalogue
+from benchweave_sdk_server.errors import ERROR_CODES, ERROR_HTTP_STATUS
 
 SW10_NAMES = [
     "host_info", "device_discover", "device_connect", "device_disconnect",

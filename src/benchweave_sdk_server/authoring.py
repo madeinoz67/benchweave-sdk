@@ -17,10 +17,11 @@ import warnings
 from pathlib import Path
 from typing import Any
 
-from benchweave_sdk.scaffold import create_project
-from benchweave_sdk.validation import YankedPinWarning, validate_descriptor
 from fastmcp import FastMCP
 from fastmcp.tools import ToolResult
+
+from benchweave_sdk.scaffold import create_project
+from benchweave_sdk.validation import YankedPinWarning, validate_descriptor
 
 
 def _error(message: str, **details: Any) -> ToolResult:

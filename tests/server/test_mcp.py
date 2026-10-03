@@ -8,8 +8,8 @@ import json
 
 from fastmcp import Client
 
-from benchweave_standalone import catalogue
-from benchweave_standalone.mcp import (
+from benchweave_sdk_server import catalogue
+from benchweave_sdk_server.mcp import (
     build_mcp,
     operation_tool_schema,
     registered_tool_names,

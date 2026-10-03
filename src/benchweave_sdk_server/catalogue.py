@@ -26,7 +26,7 @@ class OperationSpec:
     """One catalogue row: name, implementation state, and wire schemas.
 
     ``error_codes`` is the closed interface-0.1.0 vocabulary
-    (:data:`benchweave_standalone.errors.ERROR_CODES`), uniform across
+    (:data:`benchweave_sdk_server.errors.ERROR_CODES`), uniform across
     operations: the refusal model is the seam's, not per-operation.
     """
 

@@ -8,7 +8,7 @@ from pathlib import Path
 
 from click.testing import CliRunner
 
-from benchweave_standalone.cli import cli
+from benchweave_sdk_server.cli import cli
 
 
 def test_wildcard_listener_is_refused(starter_project: Path) -> None:
@@ -69,8 +69,8 @@ def test_corrupt_descriptor_refuses_with_the_sdk_diagnostics(
 def test_mcp_command_builds_without_an_http_listener(starter_project: Path) -> None:
     """The stdio entry constructs the full server; it never binds a port
     (NFR-S4 posture — asserted by building everything short of run())."""
-    from benchweave_standalone.cli import _build_seam
-    from benchweave_standalone.mcp import build_mcp, registered_tool_names
+    from benchweave_sdk_server.cli import _build_seam
+    from benchweave_sdk_server.mcp import build_mcp, registered_tool_names
 
     seam = _build_seam(starter_project)
     server = build_mcp(seam, authoring=True)

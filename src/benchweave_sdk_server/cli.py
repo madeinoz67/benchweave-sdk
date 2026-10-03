@@ -1,4 +1,4 @@
-"""The ``benchweave-standalone`` CLI: serve and the stdio MCP entry.
+"""The ``benchweave-sdk-server`` CLI: serve and the stdio MCP entry.
 
 ``serve`` validates the plugin's descriptor and presentation documents
 BEFORE binding any port (SW-05 — refusal text carries the SDK's diagnostics

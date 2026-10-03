@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from benchweave_standalone.session import (
+from benchweave_sdk_server.session import (
     HostOperationContext,
     PluginLoadError,
     PluginSession,

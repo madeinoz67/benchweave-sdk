@@ -8,9 +8,9 @@ from pathlib import Path
 
 import pytest
 
-from benchweave_standalone.assets import build_inventory, ui_assets_root, verify_ui_assets
+from benchweave_sdk_server.assets import build_inventory, ui_assets_root, verify_ui_assets
 
-ROOT = Path(__file__).parent.parent / "src" / "benchweave_standalone" / "ui_assets"
+ROOT = Path(__file__).resolve().parents[2] / "src" / "benchweave_sdk_server" / "ui_assets"
 
 
 def test_committed_inventory_matches_the_bytes_on_disk() -> None:
@@ -81,8 +81,8 @@ def test_tampered_asset_refuses_startup() -> None:
 
 
 def build_test_app(package_root):
-    from benchweave_standalone import web
-    from benchweave_standalone.seam import StandaloneSeam
+    from benchweave_sdk_server import web
+    from benchweave_sdk_server.seam import StandaloneSeam
 
     class _NullSeam(StandaloneSeam):
         def __init__(self) -> None:
@@ -92,7 +92,7 @@ def build_test_app(package_root):
 
 
 def _test_policy():
-    from benchweave_standalone.security import GuardPolicy
+    from benchweave_sdk_server.security import GuardPolicy
 
     return GuardPolicy.complete(
         bound_host="127.0.0.1", bound_port=8477, bearer_token="t", csrf_token="t"

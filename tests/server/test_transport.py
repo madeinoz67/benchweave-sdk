@@ -7,10 +7,10 @@ import time
 from datetime import datetime
 
 import pytest
-from benchweave_sdk.testing import ConformanceError
 
-from benchweave_standalone.session import HostOperationContext
-from benchweave_standalone.transport import LoopingMockHost
+from benchweave_sdk.testing import ConformanceError
+from benchweave_sdk_server.session import HostOperationContext
+from benchweave_sdk_server.transport import LoopingMockHost
 
 IDENTIFY = (
     {

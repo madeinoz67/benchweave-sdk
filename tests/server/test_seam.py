@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import pytest
 
-from benchweave_standalone.errors import SeamError
-from benchweave_standalone.seam import StandaloneSeam, sdk_version
-from benchweave_standalone.session import PluginSession
-from benchweave_standalone.transport import LoopingMockHost
+from benchweave_sdk_server.errors import SeamError
+from benchweave_sdk_server.seam import StandaloneSeam, sdk_version
+from benchweave_sdk_server.session import PluginSession
+from benchweave_sdk_server.transport import LoopingMockHost
 
 DEV = {"device_id": "example_device"}
 
@@ -197,7 +197,7 @@ def test_adapter_transport_loss_maps_to_not_ready(plugin) -> None:
 def test_reconnect_after_disconnect_lives(plugin) -> None:
     """M1 RED arm: a disconnect must not kill the session for the process
     lifetime — reconnect re-establishes and reads keep working."""
-    from benchweave_standalone.session import mock_exchanges
+    from benchweave_sdk_server.session import mock_exchanges
 
     script = mock_exchanges(plugin)
     # The production shape: the factory mints a fresh scripted transport

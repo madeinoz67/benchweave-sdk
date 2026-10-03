@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from benchweave_standalone.web import BANNER, build_app
+from benchweave_sdk_server.web import BANNER, build_app
 
 DEV = "example_device"
 SCRIPT_TAG = re.compile(r"<script\b([^>]*)>")
@@ -57,9 +57,9 @@ def test_exhausted_transport_shows_the_refused_state(plugin, policy) -> None:
     """The D(i) page arm: cycles=1, the second poll renders the refusal."""
     import asyncio
 
-    from benchweave_standalone.seam import StandaloneSeam
-    from benchweave_standalone.session import PluginSession, mock_exchanges
-    from benchweave_standalone.transport import LoopingMockHost
+    from benchweave_sdk_server.seam import StandaloneSeam
+    from benchweave_sdk_server.session import PluginSession, mock_exchanges
+    from benchweave_sdk_server.transport import LoopingMockHost
 
     host = LoopingMockHost(mock_exchanges(plugin), cycles=1)
     seam = StandaloneSeam(PluginSession(plugin, lambda: host), transport_kind="mock")
@@ -84,7 +84,7 @@ def test_no_script_without_src_anywhere(client, policy) -> None:
     for page in pages:
         for attributes in SCRIPT_TAG.findall(client.get(page).text):
             assert "src=" in attributes, (page, attributes)
-    templates = Path(__file__).parent.parent / "src" / "benchweave_standalone" / "templates"
+    templates = Path(__file__).resolve().parents[2] / "src" / "benchweave_sdk_server" / "templates"
     for template in templates.glob("*.html"):
         for attributes in SCRIPT_TAG.findall(template.read_text()):
             assert "src=" in attributes, (template.name, attributes)
@@ -171,9 +171,9 @@ def test_failed_connect_renders_a_refusal_state(plugin, policy) -> None:
 
     from fastapi.testclient import TestClient
 
-    from benchweave_standalone.seam import StandaloneSeam
-    from benchweave_standalone.session import PluginSession, mock_exchanges
-    from benchweave_standalone.transport import LoopingMockHost
+    from benchweave_sdk_server.seam import StandaloneSeam
+    from benchweave_sdk_server.session import PluginSession, mock_exchanges
+    from benchweave_sdk_server.transport import LoopingMockHost
 
     script = mock_exchanges(plugin)
     # Script the establishment itself to fail: the connect-time identify

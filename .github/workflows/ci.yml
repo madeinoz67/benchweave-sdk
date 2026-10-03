@@ -39,7 +39,7 @@ jobs:
           python-version: "3.13"
 
       - name: Sync environment
-        run: uv sync --locked --extra test
+        run: uv sync --locked --extra test --extra server
 
       - name: Lint
         run: |
