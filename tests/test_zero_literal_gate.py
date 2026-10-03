@@ -163,9 +163,10 @@ class TestTwinCounter:
             check=False,
         )
         assert result.returncode == 0, result.stdout + result.stderr
-        assert json.loads(result.stdout)["scanned"] == 35, (
+        assert json.loads(result.stdout)["scanned"] == 36, (
             "the scanned-file census moved — update this pin in the "
             "same commit as the tree change (the ratchet discipline)"
+        )
         )
 
     def test_twin_is_reproducible_twice_byte_identical(self) -> None:

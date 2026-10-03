@@ -9,13 +9,17 @@ assert A1-A5:
 - A1 managed: ``AI-GUIDE.md`` byte-equal to the current template's render
   (equality, not "changed" — a no-delta push still asserts meaningfully).
 - A2 owned: every author-edited owned file byte-identical to the author
-  state. Mechanism-honest scope (spike re-proof, disclosed against the
-  record's §1 table): in copier 9.18.2 ``_skip_if_exists`` is INERT on
-  update — owned preservation comes from the 3-way merge base. Owned seeds
-  the template changed between BASE and target are merged, not skipped: an
-  author-edited one ends in conflict markers with both sides intact (the
-  wrong-base test below pins that nothing is silently lost), and the landing
-  push has an empty changed-seed set, so A2 is straight byte-equality here.
+  state. Semantics (corrected after a confounded first experiment — the
+  record's §1 row was RIGHT): ``_skip_if_exists`` IS honored at update
+  time for paths that match — exact names and globstar patterns protect
+  the file entirely (author bytes preserved; template seed changes reach
+  new projects only, which is the §2.2 intent). A single ``*`` does NOT
+  cross ``/`` in update-time matching, so the shipped list uses
+  ``src/**``/``tests/**`` (pinned by test_skip_list_is_load_bearing_on_update).
+  Files matching NO pattern (the managed AI-GUIDE, and anything a future
+  list edit misses) ride the 3-way merge: same-line divergence produces
+  conflict markers with both sides intact (the wrong-base test below pins
+  that nothing is silently lost).
 - A3 provenance: answers ``_commit`` == the target ref; ``_src_path``
   preserved by the update.
 - A4 health: ``benchweave-sdk check`` exits 0 on the updated descriptor.
@@ -209,10 +213,12 @@ def test_update_keeps_the_update_promise(
 
     # Owned seeds the template changed between BASE and target: these merge
     # on update (3-way), everything else must come through byte-identical.
+    # copier.yml is template CONFIG, never a rendered member — a config-only
+    # delta touches nothing in the project.
     changed = sorted(
         relative.removeprefix("template/")
         for relative in set(base) | set(target)
-        if base.get(relative) != target.get(relative)
+        if relative.startswith("template/") and base.get(relative) != target.get(relative)
     )
 
     from copier import run_update
@@ -302,25 +308,22 @@ def test_update_without_the_answers_pin_cannot_resolve_base(tmp_path: Path) -> N
 
 
 def test_wrong_base_provenance_never_silently_loses_author_bytes(tmp_path: Path) -> None:
-    """A2's teeth (the honest substitute for the record's control (i) —
-    deleting ``_skip_if_exists`` is provably inert on update, spike P5==P6):
-    when the pinned base names template state whose seeds differ from what
-    the author actually has, the update mis-attributes the delta and the
-    author's lines survive only inside conflict markers. Wrong provenance is
-    loud, never silent."""
+    """A2's teeth via the merge lane (AI-GUIDE matches no skip pattern, so
+    it rides the 3-way merge): when the pinned base names template state
+    whose content differs from what the author actually has, the update
+    mis-attributes the delta and the author's lines survive only inside
+    conflict markers. Wrong provenance is loud, never silent."""
     from copier import run_copy, run_update
 
     base = _base_members(tmp_path)
     assert base is not None
     target = _repo_template_members()
     assert target is not None
-    # A third state A0: the base with a DIFFERENT adapter seed lineage, so
-    # the pinned base cannot explain the project's adapter bytes.
+    # A third state A0: the base with a DIFFERENT AI-GUIDE first line, so the
+    # pinned base cannot explain the project's AI-GUIDE bytes.
     a0 = dict(base)
-    a0["template/src/{{ package_name }}/adapter.py"] = (
-        a0["template/src/{{ package_name }}/adapter.py"].replace(
-            b"def create_plugin():", b"def create_plugin_a0():"
-        )
+    a0["template/AI-GUIDE.md"] = base["template/AI-GUIDE.md"].replace(
+        b"# Build a BenchWeave device plugin with AI", b"# A0 lineage guide"
     )
     repo = tmp_path / "template-repo-a0"
     repo.mkdir()
@@ -350,22 +353,306 @@ def test_wrong_base_provenance_never_silently_loses_author_bytes(tmp_path: Path)
         quiet=True,
     )
     _pin_local_answers(project, repo, _git_out(repo, "rev-parse", "v0.8.0"))
-    # The author's real lineage is the BASE adapter, and they renamed the
-    # entry point — so on the def line all three states disagree (A0 says
-    # create_plugin_a0, the author says create_plugin_author, the target
-    # says create_plugin): the wrong base cannot attribute the delta and
-    # the merge must conflict rather than pick a side silently.
-    adapter = project / "src" / PACKAGE / "adapter.py"
-    author_bytes = base["template/src/{{ package_name }}/adapter.py"].replace(
-        b"def create_plugin():", b"def create_plugin_author():"
+    # The author's real lineage is the BASE guide, locally edited on the same
+    # first line — all three states disagree there.
+    guide = project / "AI-GUIDE.md"
+    guide.write_text(
+        base["template/AI-GUIDE.md"]
+        .decode("utf-8")
+        .replace("# Build a BenchWeave device plugin with AI", "# AUTHOR-localised guide"),
+        encoding="utf-8",
     )
-    adapter.write_bytes(author_bytes)
     _git(project, "init", "-q")
     _git(project, "add", "-A")
     _git(project, "-c", "user.email=author@benchweave", "-c", "user.name=author",
          "commit", "-qm", "author state")
     run_update(str(project), defaults=True, vcs_ref=TARGET_TAG, overwrite=True, quiet=True)
-    text = adapter.read_text(encoding="utf-8")
+    text = guide.read_text(encoding="utf-8")
     assert "<<<<<<< before updating" in text
-    assert "def create_plugin_author():" in text, "the author's rename must survive the merge"
-    assert "def create_plugin():" in text, "the template's own line must also be present"
+    assert "AUTHOR-localised guide" in text, "the author's line must survive the wrong-base merge"
+    assert "A0 lineage guide" in text or "device plugin with AI" in text
+
+
+# --- upgrade / adopt: the WS2 commands (record sections 2.4-2.5) -------------
+
+
+def _upgrade_stage(tmp_path: Path) -> tuple[Path, Path, dict[str, bytes]]:
+    """A tagged throwaway repo whose TARGET deliberately moves the managed
+    AI-GUIDE and one owned seed, so the upgrade visibly moves bytes."""
+    base = _base_members(tmp_path)
+    assert base is not None
+    target = dict(_repo_template_members() or {})
+    assert target
+    # Deltas on three vehicles: the managed AI-GUIDE (never in the skip
+    # list — it must MOVE), the exact-name owned README, and the src/**
+    # owned adapter seed.
+    target["template/AI-GUIDE.md"] = target["template/AI-GUIDE.md"].replace(
+        b"# Build a BenchWeave device plugin with AI",
+        b"# Build a BenchWeave device plugin with AI v2",
+    )
+    target["template/README.md"] = base["template/README.md"].replace(
+        b"# Device plugin starter", b"# Device plugin starter v2"
+    )
+    adapter_key = "template/src/{{ package_name }}/adapter.py"
+    target[adapter_key] = target[adapter_key].replace(
+        b"def create_plugin():", b"def create_plugin_v2():"
+    )
+    repo = _build_tagged_template_repo(tmp_path, base, target)
+    materialized = tmp_path / "materialized-upg-base"
+    _write_tree(materialized, base)
+    return repo, materialized, target
+
+
+def _scaffold_offline(
+    materialized: Path, repo: Path, project: Path, with_ui: bool = False
+) -> None:
+    from copier import run_copy
+
+    run_copy(
+        str(materialized),
+        str(project),
+        data={
+            "package_name": PACKAGE,
+            "with_ui": with_ui,
+            "sdk_version": __version__,
+            "otdp_version": active_version("otdp"),
+        },
+        defaults=True,
+        quiet=True,
+    )
+    _pin_local_answers(project, repo, _git_out(repo, "rev-parse", BASE_TAG))
+
+
+def _author_commit(project: Path) -> None:
+    _git(project, "init", "-q")
+    _git(project, "add", "-A")
+    _git(project, "-c", "user.email=author@benchweave", "-c", "user.name=author",
+         "commit", "-qm", "author state")
+
+
+def test_upgrade_moves_managed_state_and_preserves_author(tmp_path: Path) -> None:
+    from benchweave_sdk.scaffold_update import upgrade_project
+
+    repo, materialized, _target = _upgrade_stage(tmp_path)
+    project = tmp_path / "P-upgrade"
+    _scaffold_offline(materialized, repo, project)
+    # The author diverges on the same lines the template moved.
+    readme = project / "README.md"
+    readme.write_text(
+        readme.read_text(encoding="utf-8").replace(
+            "# Device plugin starter", "# AUTHOR plugin"
+        ),
+        encoding="utf-8",
+    )
+    adapter = project / "src" / PACKAGE / "adapter.py"
+    adapter.write_text(
+        adapter.read_text(encoding="utf-8").replace(
+            "def create_plugin():", "def create_plugin_author():"
+        ),
+        encoding="utf-8",
+    )
+    guide = project / "AI-GUIDE.md"
+    guide.write_text(
+        guide.read_text(encoding="utf-8").replace(
+            "# Build a BenchWeave device plugin with AI",
+            "# AUTHOR-localised guide",
+        ),
+        encoding="utf-8",
+    )
+    author_state = _tree(project)
+    _author_commit(project)
+    conflicted = upgrade_project(project, target_ref=TARGET_TAG)
+    # A1 managed: AI-GUIDE rides the 3-way merge; the author edited it too,
+    # so it conflicts loudly (both sides intact) and is reported.
+    assert conflicted == ["AI-GUIDE.md"]
+    guide_text = guide.read_text(encoding="utf-8")
+    assert "<<<<<<< before updating" in guide_text
+    assert "AUTHOR-localised guide" in guide_text and "with AI v2" in guide_text
+    # A2 owned: exact-name and src/** skip members stay byte-identical to
+    # the author state — the template deltas do NOT land over them.
+    assert (project / "README.md").read_bytes() == author_state["README.md"]
+    assert adapter.read_bytes() == author_state[f"src/{PACKAGE}/adapter.py"]
+    # A3 provenance advanced to the target ref.
+    answers = (project / ".copier-answers.yml").read_text(encoding="utf-8")
+    assert f"_commit: {TARGET_TAG}" in answers
+
+
+def test_skip_list_is_load_bearing_on_update(tmp_path: Path) -> None:
+    """The record's RED control (i), standing: delete _skip_if_exists and
+    owned-file preservation fails — the author-edited README loses byte
+    purity to the 3-way merge (markers, template bytes landing)."""
+    from benchweave_sdk.scaffold_update import upgrade_project
+
+    base = _base_members(tmp_path)
+    assert base is not None
+    target = dict(_repo_template_members() or {})
+    assert target
+    for members in (base, target):
+        members["copier.yml"] = b"".join(
+            line + b"\n"
+            for line in members["copier.yml"].splitlines()
+            if not line.startswith(b"_skip_if_exists:")
+        )
+    assert b"_skip_if_exists" not in base["copier.yml"]
+    target["template/README.md"] = base["template/README.md"].replace(
+        b"# Device plugin starter", b"# Device plugin starter v2"
+    )
+    repo = _build_tagged_template_repo(tmp_path, base, target)
+    materialized = tmp_path / "materialized-noskip"
+    _write_tree(materialized, base)
+    project = tmp_path / "P-noskip"
+    _scaffold_offline(materialized, repo, project)
+    readme = project / "README.md"
+    author_readme = readme.read_text(encoding="utf-8").replace(
+        "# Device plugin starter", "# AUTHOR plugin"
+    )
+    readme.write_text(author_readme, encoding="utf-8")
+    _author_commit(project)
+    upgrade_project(project, target_ref=TARGET_TAG)
+    after = readme.read_text(encoding="utf-8")
+    assert after != author_readme, "without the skip list A2 must fail"
+    assert "<<<<<<< before updating" in after
+    assert "# Device plugin starter v2" in after
+
+
+def test_upgrade_keeps_author_bytes_when_seeds_are_unchanged(tmp_path: Path) -> None:
+    from benchweave_sdk.scaffold_update import upgrade_project
+
+    base = _base_members(tmp_path)
+    assert base is not None
+    target = dict(_repo_template_members() or {})
+    assert target
+    repo = _build_tagged_template_repo(tmp_path, base, target)
+    materialized = tmp_path / "materialized-upg-clean"
+    _write_tree(materialized, base)
+    project = tmp_path / "P-upgrade-clean"
+    _scaffold_offline(materialized, repo, project)
+    for relative in ("README.md", "CLAUDE.md", f"src/{PACKAGE}/adapter.py"):
+        path = project / relative
+        path.write_text(path.read_text(encoding="utf-8") + AUTHOR_LINE, encoding="utf-8")
+    author_state = _tree(project)
+    _author_commit(project)
+    conflicted = upgrade_project(project, target_ref=TARGET_TAG)
+    assert conflicted == []
+    for relative, content in author_state.items():
+        if relative == ".copier-answers.yml":
+            continue
+        assert (project / relative).read_bytes() == content, relative
+
+
+def test_upgrade_refuses_without_answers_pointing_at_adopt(tmp_path: Path) -> None:
+    from benchweave_sdk.scaffold_update import upgrade_project
+
+    project = tmp_path / "P-no-answers"
+    project.mkdir()
+    (project / "README.md").write_text("not scaffolded here\n", encoding="utf-8")
+    with pytest.raises(ValueError, match=r"^upgrade_answers_missing: ") as refusal:
+        upgrade_project(project)
+    assert "adopt" in str(refusal.value)
+
+
+def test_upgrade_refuses_a_non_git_project(tmp_path: Path) -> None:
+    from benchweave_sdk.scaffold_update import upgrade_project
+
+    repo, materialized, _target = _upgrade_stage(tmp_path)
+    project = tmp_path / "P-no-git"
+    _scaffold_offline(materialized, repo, project)  # answers present, no git init
+    with pytest.raises(ValueError, match=r"^upgrade_requires_git: ") as refusal:
+        upgrade_project(project, target_ref=TARGET_TAG)
+    assert "git init" in str(refusal.value)
+
+
+def test_upgrade_refuses_a_dirty_tree(tmp_path: Path) -> None:
+    from benchweave_sdk.scaffold_update import upgrade_project
+
+    repo, materialized, _target = _upgrade_stage(tmp_path)
+    project = tmp_path / "P-dirty"
+    _scaffold_offline(materialized, repo, project)
+    _author_commit(project)
+    (project / "README.md").write_text("uncommitted edit\n", encoding="utf-8")
+    with pytest.raises(ValueError, match=r"^upgrade_dirty_tree: ") as refusal:
+        upgrade_project(project, target_ref=TARGET_TAG)
+    assert "commit" in str(refusal.value).lower()
+
+
+def test_adopt_writes_exactly_what_new_writes(tmp_path: Path) -> None:
+    from benchweave_sdk.scaffold import create_project
+    from benchweave_sdk.scaffold_update import adopt_project
+
+    project = tmp_path / "P-adopt"
+    create_project(project, PACKAGE)
+    expected = (project / ".copier-answers.yml").read_bytes()
+    (project / ".copier-answers.yml").unlink()  # the pre-copier project shape
+    adopted = adopt_project(project)
+    assert adopted == __version__
+    assert (project / ".copier-answers.yml").read_bytes() == expected
+
+
+def test_adopt_infers_with_ui_from_the_ui_guide(tmp_path: Path) -> None:
+    from benchweave_sdk.presentation import create_ui_resources
+    from benchweave_sdk.scaffold import create_project
+    from benchweave_sdk.scaffold_update import adopt_project
+
+    project = tmp_path / "P-adopt-ui"
+    create_project(project, PACKAGE, with_ui=True)
+    create_ui_resources(project, PACKAGE)
+    expected = (project / ".copier-answers.yml").read_bytes()
+    (project / ".copier-answers.yml").unlink()
+    adopt_project(project)
+    assert (project / ".copier-answers.yml").read_bytes() == expected
+
+
+def test_adopt_refuses_when_answers_already_exist(tmp_path: Path) -> None:
+    from benchweave_sdk.scaffold import create_project
+    from benchweave_sdk.scaffold_update import adopt_project
+
+    project = tmp_path / "P-adopt-present"
+    create_project(project, PACKAGE)
+    with pytest.raises(ValueError, match=r"^adopt_answers_present: "):
+        adopt_project(project)
+
+
+def test_adopt_refuses_provenance_it_cannot_establish(tmp_path: Path) -> None:
+    from benchweave_sdk.scaffold import create_project
+    from benchweave_sdk.scaffold_update import adopt_project
+
+    project = tmp_path / "P-adopt-unknown"
+    create_project(project, PACKAGE)
+    (project / ".copier-answers.yml").unlink()
+    # No pin to infer from and no override: an unknown base is never claimed.
+    pyproject = project / "pyproject.toml"
+    pyproject.write_text(
+        pyproject.read_text(encoding="utf-8").replace(
+            f'test = ["benchweave-sdk=={__version__}", "pytest>=8.0"]',
+            'test = ["pytest>=8.0"]',
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match=r"^adopt_provenance_unknown: ") as refusal:
+        adopt_project(project)
+    assert "--scaffolded-at" in str(refusal.value)
+    # An unresolvable package name refuses the same way.
+    other = tmp_path / "P-adopt-nopkg"
+    create_project(other, PACKAGE)
+    (other / ".copier-answers.yml").unlink()
+    bad = other / "pyproject.toml"
+    bad.write_text(
+        bad.read_text(encoding="utf-8").replace(
+            f'packages = ["src/{PACKAGE}"]', "packages = []"
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match=r"^adopt_provenance_unknown: "):
+        adopt_project(other)
+
+
+def test_cli_wires_the_upgrade_and_adopt_refusals(tmp_path: Path) -> None:
+    from benchweave_sdk.cli import main
+    from benchweave_sdk.scaffold import create_project
+
+    bare = tmp_path / "cli-bare"
+    bare.mkdir()
+    assert main(["upgrade", str(bare)]) == 1  # upgrade_answers_missing via click
+    project = tmp_path / "cli-adopt"
+    create_project(project, PACKAGE)
+    assert main(["adopt", str(project)]) == 1  # adopt_answers_present via click

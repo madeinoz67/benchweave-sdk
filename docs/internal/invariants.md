@@ -42,9 +42,11 @@ the invariants below anchor there.
   `provider_feature_missing`, `provider_transport_undeclared`, `unknown_otdp_feature`,
   `provider_contract_missing`, `provider_contract_hash_mismatch`,
   `provider_contract_invalid` — the last six are the 0.2.1 transport-provider lane;
-  `scaffold_extra_absent`, `scaffold_template_missing`, `scaffold_answers_missing` — the
-  WS2 scaffold lane (`scaffold.py`, the copier render path); ordinary descriptor
-  schema-shape failures keep the existing
+  `scaffold_extra_absent`, `scaffold_template_missing`, `scaffold_answers_missing`
+  and `upgrade_answers_missing`, `upgrade_requires_git`, `upgrade_dirty_tree`,
+  `adopt_answers_present`, `adopt_provenance_unknown` — the WS2 scaffold lane
+  (`scaffold.py`, `scaffold_update.py`, the copier render/update path); ordinary
+  descriptor schema-shape failures keep the existing
   descriptor-validation error surface. Known wound, disclosed: the provider
   pin's read inherits the SDK-wide bounded-file cap
   (`presentation.INPUT_BYTE_LIMIT`), so a corpus-valid contract above the cap

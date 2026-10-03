@@ -131,6 +131,77 @@ def doctor_command(directory: str) -> None:
     )
 
 
+@cli.command("upgrade")
+@click.argument("directory", default=".", required=False)
+@_domain_errors
+def upgrade_command(directory: str) -> None:
+    """Move a scaffolded project to this SDK's released template tag.
+
+    Fetches the tagged template from the canonical SDK repository (network;
+    released template tags only — a development install's version has no
+    tag and the update fails loudly). Author-owned files survive; where you
+    and the template both changed a file, the conflict is written as
+    markers to resolve and commit — never resolved silently.
+    """
+    from .scaffold_update import upgrade_project
+
+    # An empty or blank argument is the default target ("."): stated here,
+    # not left to pathlib's Path("") collapse (same as doctor).
+    project = Path(directory if directory.strip() else ".").expanduser().resolve()
+    if not project.exists():
+        raise ValueError(f"project_directory_not_found: {project}")
+    if not project.is_dir():
+        raise ValueError(f"project_not_a_directory: {project}")
+    conflicted = upgrade_project(project)
+    output = ConsoleOutput()
+    output.message(
+        f"Updated to template v{__version__} (answers advanced); review and commit.",
+        style="green",
+    )
+    for relative in conflicted:
+        output.message(
+            f"conflict markers in {relative}: resolve both sides, then commit",
+            style="yellow",
+        )
+
+
+@cli.command("adopt")
+@click.argument("directory", default=".", required=False)
+@click.option(
+    "--package",
+    "package_name",
+    default=None,
+    help="Override the package name (default: inferred from pyproject.toml)",
+)
+@click.option(
+    "--scaffolded-at",
+    default=None,
+    help="Override the scaffolding SDK version (default: the pyproject pin)",
+)
+@_domain_errors
+def adopt_command(directory: str, package_name: str | None, scaffolded_at: str | None) -> None:
+    """Write the template provenance record for a pre-copier project.
+
+    The claim adopt makes: this tree equals a template@vN render plus author
+    edits. Sound within the parity back-check window (v0.4.1 forward); older
+    shapes still fail safe — deltas attribute to the author, conflicts are
+    loud, nothing is lost.
+    """
+    from .scaffold_update import adopt_project
+
+    project = Path(directory if directory.strip() else ".").expanduser().resolve()
+    if not project.exists():
+        raise ValueError(f"project_directory_not_found: {project}")
+    if not project.is_dir():
+        raise ValueError(f"project_not_a_directory: {project}")
+    version = adopt_project(project, package=package_name, scaffolded_at=scaffolded_at)
+    ConsoleOutput().message(
+        f"Adopted at template v{version}; 'benchweave-sdk upgrade' can now move "
+        "this project forward.",
+        style="green",
+    )
+
+
 @cli.command("check")
 @click.argument("descriptor", type=click.Path(path_type=Path))
 @_domain_errors

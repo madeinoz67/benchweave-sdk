@@ -14,4 +14,11 @@ sdk_version:
 otdp_version:
   type: str
 _subdirectory: template
-_skip_if_exists: [pyproject.toml, README.md, CLAUDE.md, tests/*, src/*]
+# The globstars are load-bearing (spike-proven at update time): a single
+# `*` does NOT cross `/` in copier's update-time skip matching, so `src/*`
+# left src/<pkg>/adapter.py unprotected — the 3-way merge could push
+# template bytes over real device code. `src/**` and `tests/**` protect
+# the whole subtree; exact-name members (pyproject, README, CLAUDE.md)
+# match either way. Deleting this list makes owned-file preservation fail
+# (pinned by test_skip_list_is_load_bearing_on_update).
+_skip_if_exists: [pyproject.toml, README.md, CLAUDE.md, tests/**, src/**]

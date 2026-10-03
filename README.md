@@ -62,6 +62,8 @@ An installed SDK can check its vendored standards offline with `benchweave-sdk s
 
 The generated runtime has no dependency on this SDK. The plugin test extra pins the SDK version from PyPI. Run `benchweave-sdk doctor` from the project to check that the pin matches the installed SDK. The command works offline. Generate a plugin dependency lock for the plugin. Retain it in the plugin repository.
 
+Scaffolded projects carry `.copier-answers.yml` (template provenance). `benchweave-sdk upgrade` moves a committed, clean git project to the installed SDK's released template tag — author-owned files are preserved; a file both sides changed comes back with conflict markers to resolve and commit. Pre-copier projects gain provenance with `benchweave-sdk adopt` (infers the base from the pyproject pin; refuses what it cannot provenance).
+
 ## Documentation
 
 ### Registry management (eight `registry` commands)
