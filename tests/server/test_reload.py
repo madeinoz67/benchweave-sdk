@@ -427,9 +427,14 @@ def test_the_page_declares_the_sse_advisory_region(tmp_path) -> None:
     seam = _seam(_project(tmp_path))
     with _client(seam, _policy()) as client:
         html = client.get("/").text
-    assert 'sse-connect="/events"' in html
-    assert 'sse-swap="plugin_reloaded"' in html
-    assert 'sse-swap="reload_confirmation_required"' in html
+    # The advisory bridge is the first-party EventSource hydrator (the
+    # vendored htmx-1 SSE extension predates htmx 2 and its swap API is
+    # gone); the regions it fills and the script that fills them are the
+    # rendered contract, and the rendered TEXT is pinned in the browser
+    # lane's own arm.
+    assert 'src="/assets/bw-events.js"' in html
+    assert 'id="reload-advisory"' in html
+    assert 'id="reload-confirm-advisory"' in html
 
 
 # --- the scenario session stays reload-honest ----------------------------------------

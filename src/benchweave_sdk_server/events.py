@@ -1,11 +1,16 @@
 """The seam event bus (I2c §4.2): one append-only order for every surface.
 
-The seam is the only mutation path, so it is also the only publisher: every
-state change — connect, disconnect, stage, apply, preset, reload, and the
-refusal classes — appends one ``{id, kind, data}`` row here. Ids are
-monotonic and gap-free (STO-2's spirit in-process): the counter and the
-append happen under one lock, so concurrent callers can never observe a
-hole, and ``after(cursor)`` is therefore a pure slice.
+The seam is the only mutation path, so it is also the only publisher. Two
+families ride the bus: the state-change operations themselves (connect,
+disconnect, stage, apply, preset, the reload events) and ``refused`` —
+every seam-exit refusal, whichever family it takes (unknown operation,
+declared-but-deferred, argument validation, adapter-reported, and the
+reload family's own guard and load refusals, which raise outside
+``call()`` and publish themselves). Authoring tool refusals over document
+edits are NOT seam operations and do not ride. Ids are monotonic and
+gap-free (STO-2's spirit in-process): the counter and the append happen
+under one lock, so concurrent callers can never observe a hole, and
+``after(cursor)`` is therefore a pure slice.
 
 The bus is process-lifetime and never evicts: ``events_get`` and the SSE
 stream serve the whole sequence, and a watcher that reconnects with its

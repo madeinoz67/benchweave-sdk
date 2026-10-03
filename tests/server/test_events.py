@@ -89,6 +89,70 @@ def test_refusals_publish_the_refused_class(seam) -> None:
     assert refused[-1]["data"]["code"] == "not_ready"
 
 
+def test_every_refusal_family_publishes_the_refused_class(seam) -> None:
+    """FOLD-E: the refused class covers ALL four refusal families a seam
+    exit can take — the unknown operation, the declared-but-deferred
+    operation, the argument-validation refusal, and the adapter-mapped
+    refusal. Watching pages must see every refusal, not only the ones
+    that happen to raise inside a handler."""
+    from benchweave_sdk_server.errors import SeamError
+
+    # Unknown operation (refused BEFORE any handler exists).
+    with pytest.raises(SeamError):
+        asyncio.run(seam.call("lease_create", {}))
+    # Declared but deferred (unimplemented).
+    with pytest.raises(SeamError):
+        asyncio.run(seam.call("capture_start", {}))
+    # Argument validation (the schema gate, before the handler).
+    with pytest.raises(SeamError):
+        asyncio.run(seam.call("events_get", {}))
+    refused = [row["data"] for row in _events(seam) if row["kind"] == "refused"]
+    operations = {row["operation"] for row in refused}
+    assert {"lease_create", "capture_start", "events_get"} <= operations
+    codes = {row["operation"]: row["code"] for row in refused}
+    assert codes["lease_create"] == "invalid_request"
+    assert codes["capture_start"] == "unavailable"
+    assert codes["events_get"] == "invalid_request"
+
+
+def test_reload_refusals_publish_the_refused_class(tmp_path) -> None:
+    """FOLD-E: the reload family raises SeamError OUTSIDE seam.call — its
+    refusals publish 'refused' themselves, or watching pages never see
+    Q11's own conflict."""
+    import shutil as _shutil
+    from pathlib import Path
+
+    from benchweave_sdk_server.errors import SeamError
+    from benchweave_sdk_server.seam import StandaloneSeam
+    from benchweave_sdk_server.session import load_plugin_project, mock_plugin_session
+
+    project = tmp_path / "setpoint"
+    _shutil.copytree(
+        Path(__file__).resolve().parent.parent / "fixtures" / "setpoint_plugin",
+        project,
+    )
+    plugin = load_plugin_project(project)
+    seam = StandaloneSeam(mock_plugin_session(plugin), transport_kind="mock")
+    asyncio.run(
+        seam.call(
+            "parameter_stage",
+            {"device_id": "setpoint_dev", "parameter": "current_limit", "value": 1.0},
+        )
+    )
+    with pytest.raises(SeamError):
+        asyncio.run(seam.reload_plugin(source="test"))
+    with pytest.raises(SeamError):
+        asyncio.run(seam.confirm_reload(source="test"))
+    refused = [
+        row["data"]
+        for row in asyncio.run(seam.call("events_get", {"after_id": 0}))["events"]
+        if row["kind"] == "refused"
+    ]
+    reload_refusals = [row for row in refused if "reload" in row["operation"]]
+    assert len(reload_refusals) == 2, refused
+    assert all(row["code"] != "" for row in reload_refusals)
+
+
 def test_events_get_reports_last_id_and_honours_the_cursor(seam) -> None:
     asyncio.run(seam.call("device_connect", DEV))
     first = asyncio.run(seam.call("events_get", {"after_id": 0}))

@@ -40,13 +40,13 @@ def test_the_host_no_longer_carries_copies_of_the_renderer_assets() -> None:
     listed = {row["path"] for row in inventory["assets"]}
     assert listed == {
         "htmx.min.js",
-        "sse.js",
         "standalone.css",
         "uplot.min.js",
         "uplot.css",
         "uplot-LICENCE",
         "uplot-SOURCES.md",
         "bw-plot.js",
+        "bw-events.js",
     }
 
 

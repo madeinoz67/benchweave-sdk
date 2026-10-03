@@ -216,32 +216,35 @@ class StandaloneSeam:
     ) -> dict[str, Any]:
         """Execute one catalogue operation; return its data or raise ``SeamError``."""
         correlation = self._correlation(correlation_id)
-        row = catalogue.spec(operation)
-        if row is None:
-            raise self._fail(
-                "invalid_request",
-                f"unknown operation: {operation}",
-                correlation,
-                closed_catalogue=catalogue.deferred_operations() + catalogue.served_operations(),
-            )
-        if not row.implemented:
-            raise self._fail(
-                "unavailable",
-                f"operation not implemented in this increment: {operation}",
-                correlation,
-                reason="increment_deferral",
-            )
-        self._validate(row.name, arguments or {}, correlation)
-        handler = getattr(self, f"_op_{row.name}")
         try:
+            row = catalogue.spec(operation)
+            if row is None:
+                raise self._fail(
+                    "invalid_request",
+                    f"unknown operation: {operation}",
+                    correlation,
+                    closed_catalogue=(
+                        catalogue.deferred_operations() + catalogue.served_operations()
+                    ),
+                )
+            if not row.implemented:
+                raise self._fail(
+                    "unavailable",
+                    f"operation not implemented in this increment: {operation}",
+                    correlation,
+                    reason="increment_deferral",
+                )
+            self._validate(row.name, arguments or {}, correlation)
+            handler = getattr(self, f"_op_{row.name}")
             result = await handler(arguments or {}, correlation)
         except SeamError as exc:
-            # A refusal is a state-change class of its own (I2c §4.2): the
-            # operation name and the interface code ride the bus so an
-            # open page can say what was refused and why.
+            # EVERY seam-exit refusal rides the bus (FOLD-E): the unknown
+            # operation, the deferred operation, the argument-validation
+            # refusal and the handler's own — a watching page must see
+            # what was refused and why, not only handler failures.
             self.events.publish(
                 "refused",
-                {"operation": row.name, "code": exc.code, "message": exc.message},
+                {"operation": operation, "code": exc.code, "message": exc.message},
             )
             raise
         if row.name in _STATE_EVENT_OPS:
@@ -829,18 +832,43 @@ class StandaloneSeam:
         inside a device-mutating span (the serialization class).
         """
         async with self._op_mutex:
-            return await self._reload_body(source, confirmed=confirmed)
+            try:
+                return await self._reload_body(source, confirmed=confirmed)
+            except SeamError as exc:
+                # The reload family raises OUTSIDE seam.call, so its
+                # refusals publish 'refused' themselves (FOLD-E) — a
+                # watching page must see Q11's own conflict.
+                self.events.publish(
+                    "refused",
+                    {
+                        "operation": "plugin_reload",
+                        "code": exc.code,
+                        "message": exc.message,
+                    },
+                )
+                raise
 
     async def confirm_reload(self, source: str) -> dict[str, Any]:
         """The operator's UI confirmation of a pending Q11 reload: re-run
         the full path (guards and validation included — the files may have
         changed again) with the confirmation granted."""
         async with self._op_mutex:
-            if self._pending_reload is None:
-                raise self._fail(
-                    "invalid_request", "no reload is waiting for confirmation", ""
+            try:
+                if self._pending_reload is None:
+                    raise self._fail(
+                        "invalid_request", "no reload is waiting for confirmation", ""
+                    )
+                return await self._reload_body(source, confirmed=True)
+            except SeamError as exc:
+                self.events.publish(
+                    "refused",
+                    {
+                        "operation": "plugin_reload_confirm",
+                        "code": exc.code,
+                        "message": exc.message,
+                    },
                 )
-            return await self._reload_body(source, confirmed=True)
+                raise
 
     async def _reload_body(
         self, source: str, *, confirmed: bool

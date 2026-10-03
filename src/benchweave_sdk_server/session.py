@@ -250,11 +250,14 @@ def load_plugin_project(project_root: Path) -> LoadedPlugin:
         try:
             module = importlib.import_module(module_name)
             adapter = getattr(module, factory_name)
-        except Exception as exc:  # noqa: BLE001 - import-time plugin code
+        except (Exception, SystemExit) as exc:  # noqa: BLE001 - plugin import code
             # ANY exception raised while executing the plugin's adapter
             # module at import time is an adapter import failure — the
             # tuple form let a module-level NameError (the lanes' arm)
             # escape as a raw traceback instead of the degraded load.
+            # SystemExit is BaseException, NOT Exception: it stays listed
+            # explicitly because a plugin calling sys.exit() at import
+            # must degrade the load, not kill the host (refute fold 2).
             # Refute fold 2: SyntaxError (the most common authoring failure —
             # it previously escaped as a raw traceback with serve exit 1)
             # and SystemExit (a plugin calling sys.exit() at import

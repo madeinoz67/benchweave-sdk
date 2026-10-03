@@ -209,9 +209,11 @@ def test_the_agent_completes_patch_reload_and_test(tmp_path) -> None:
         ).json()
         assert value["data"]["value"] == 3.3
         # The reload advisory is visible through the event stream's own
-        # surface: the bus carries plugin_reloaded and the page declares
-        # the advisory region that renders it.
-        assert 'sse-swap="plugin_reloaded"' in page
+        # surfaces: the bus carries plugin_reloaded and the page declares
+        # the hydrator + regions that render it (the browser lane's arm
+        # pins the rendered TEXT end to end).
+        assert 'src="/assets/bw-events.js"' in page
+        assert 'id="reload-advisory"' in page
     events = asyncio.run(
         seam.call("events_get", {"after_id": 0})
     )["events"]

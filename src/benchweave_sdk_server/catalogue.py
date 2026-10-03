@@ -355,10 +355,12 @@ CATALOGUE: tuple[OperationSpec, ...] = (
     _spec(
         "events_get",
         (
-            "Fetch the seam's events after a cursor: every state change "
-            "(connect, disconnect, stage, apply, preset, reload and the "
-            "refusal classes) in one monotonic gap-free order — the same "
-            "sequence the /events stream carries."
+            "Fetch the seam's events after a cursor: the state changes "
+            "(connect, disconnect, stage, apply, preset, reload) and "
+            "every refused seam operation — unknown, deferred, "
+            "invalid-argument and adapter-reported alike — in one "
+            "monotonic gap-free order, the same sequence the /events "
+            "stream carries."
         ),
         _object(
             {
