@@ -145,9 +145,11 @@ class TestTwinCounter:
         assert "0 outside register" in result.stdout
 
     def test_twin_census_is_pinned(self) -> None:
-        """Fold wave row 1's observability half: the sdk census is pinned
-        (18 files at the current head) — a scope change is a visible diff,
-        never a silent denominator move."""
+        """Fold wave row 1's observability half: the scanned-file census is
+        pinned (20 sdk files + 12 server files at the current head) — a
+        scope change is a visible diff, never a silent denominator move.
+        The server half is issue #309 slice A's scope extension: deleting
+        the tree or narrowing the roots reds here."""
         result = subprocess.run(
             [sys.executable, str(COUNTER), "--json"],
             capture_output=True,
@@ -155,8 +157,8 @@ class TestTwinCounter:
             check=False,
         )
         assert result.returncode == 0, result.stdout + result.stderr
-        assert json.loads(result.stdout)["scanned"] == 20, (
-            "the sdk scanned-file census moved — update this pin in the "
+        assert json.loads(result.stdout)["scanned"] == 32, (
+            "the scanned-file census moved — update this pin in the "
             "same commit as the tree change (the ratchet discipline)"
         )
 
@@ -176,6 +178,60 @@ class TestTwinCounter:
         assert first.returncode == 0 and second.returncode == 0
         assert first.stdout == second.stdout
 
+    def test_the_scope_names_the_server_tree(self) -> None:
+        """#309 slice A: the lane's denominator names both source roots —
+        the server tree is inside the gate, not an uncounted passenger."""
+        result = subprocess.run(
+            [sys.executable, str(COUNTER)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "src/benchweave_sdk_server" in result.stdout
+
+    def test_a_plant_in_the_server_tree_fails_the_twin(self, tmp_path: Path) -> None:
+        """The extension has teeth: a literal planted under
+        src/benchweave_sdk_server/ REFUSES — pre-extension this same tree
+        passed (the counter did not walk the server root at all)."""
+        scratch = tmp_path / "scratch-repo"
+        (scratch / "scripts").mkdir(parents=True)
+        shutil.copy(COUNTER, scratch / "scripts/count_version_literals.py")
+        shutil.copy(REPO / "standards-lock.json", scratch / "standards-lock.json")
+        shutil.copytree(REPO / "src/benchweave_sdk", scratch / "src/benchweave_sdk")
+        shutil.copytree(
+            REPO / "src/benchweave_sdk_server", scratch / "src/benchweave_sdk_server"
+        )
+        planted = scratch / "src/benchweave_sdk_server/session.py"
+        planted.write_text('_PLANT = "9.9.9"\n', encoding="utf-8")
+        result = subprocess.run(
+            [sys.executable, str(scratch / "scripts/count_version_literals.py")],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert "src/benchweave_sdk_server/session.py" in result.stdout
+
+    def test_a_missing_server_root_refuses(self, tmp_path: Path) -> None:
+        """A scope half that vanished is a count that cannot be computed:
+        the run REFUSES (version_literal_count_failed naming the missing
+        root), never scans the survivor and passes as if nothing was gone."""
+        scratch = tmp_path / "scratch-repo"
+        (scratch / "scripts").mkdir(parents=True)
+        shutil.copy(COUNTER, scratch / "scripts/count_version_literals.py")
+        shutil.copy(REPO / "standards-lock.json", scratch / "standards-lock.json")
+        shutil.copytree(REPO / "src/benchweave_sdk", scratch / "src/benchweave_sdk")
+        result = subprocess.run(
+            [sys.executable, str(scratch / "scripts/count_version_literals.py")],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 1, result.stdout + result.stderr
+        assert "version_literal_count_failed" in result.stderr
+        assert "benchweave_sdk_server" in result.stderr
+
     def test_a_planted_literal_fails_the_twin(self, tmp_path: Path) -> None:
         """G2's SDK plant, proven locally in a scratch tree (the wire-level
         plant rides the plant branch; this is the committed teeth)."""
@@ -184,6 +240,9 @@ class TestTwinCounter:
         shutil.copy(COUNTER, scratch / "scripts/count_version_literals.py")
         shutil.copy(REPO / "standards-lock.json", scratch / "standards-lock.json")
         shutil.copytree(REPO / "src/benchweave_sdk", scratch / "src/benchweave_sdk")
+        shutil.copytree(
+            REPO / "src/benchweave_sdk_server", scratch / "src/benchweave_sdk_server"
+        )
         planted = scratch / "src/benchweave_sdk/packaging.py"
         planted.write_text('_PLANT = "9.9.9"\n', encoding="utf-8")
         result = subprocess.run(
@@ -205,6 +264,9 @@ class TestTwinCounter:
         shutil.copy(COUNTER, scratch / "scripts/count_version_literals.py")
         shutil.copy(REPO / "standards-lock.json", scratch / "standards-lock.json")
         shutil.copytree(REPO / "src/benchweave_sdk", scratch / "src/benchweave_sdk")
+        shutil.copytree(
+            REPO / "src/benchweave_sdk_server", scratch / "src/benchweave_sdk_server"
+        )
         planted = scratch / "src/benchweave_sdk/packaging.py"
         planted.write_text('_PLANT = "9." + "9.9"\n', encoding="utf-8")
         result = subprocess.run(
@@ -228,6 +290,9 @@ class TestTwinCounter:
         shutil.copy(COUNTER, scratch / "scripts/count_version_literals.py")
         shutil.copy(REPO / "standards-lock.json", scratch / "standards-lock.json")
         shutil.copytree(REPO / "src/benchweave_sdk", scratch / "src/benchweave_sdk")
+        shutil.copytree(
+            REPO / "src/benchweave_sdk_server", scratch / "src/benchweave_sdk_server"
+        )
         scaffold_py = scratch / "src/benchweave_sdk/scaffold.py"
         scaffold_py.write_bytes(
             scaffold_py.read_bytes() + b'\n_PLANT = "9.9.9"\n',  # noqa: E501
@@ -271,6 +336,9 @@ class TestFoldHardening:
     def _scratch_sdk_repo(self, tmp_path: Path) -> Path:
         scratch = tmp_path
         shutil.copytree(REPO / "src/benchweave_sdk", scratch / "src/benchweave_sdk")
+        shutil.copytree(
+            REPO / "src/benchweave_sdk_server", scratch / "src/benchweave_sdk_server"
+        )
         (scratch / "scripts").mkdir(exist_ok=True)
         shutil.copy(COUNTER, scratch / "scripts/count_version_literals.py")
         shutil.copy(REPO / "standards-lock.json", scratch / "standards-lock.json")
