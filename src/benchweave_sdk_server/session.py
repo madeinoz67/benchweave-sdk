@@ -185,6 +185,8 @@ def load_plugin_project(project_root: Path) -> LoadedPlugin:
     if has_presentation:
         from benchweave_sdk.presentation import load_validated_preview_inputs
 
+        from .presentation import SUPPORTED_FEATURES, SUPPORTED_PANELS
+
         try:
             load_validated_preview_inputs(
                 presentation_path,
@@ -192,8 +194,8 @@ def load_plugin_project(project_root: Path) -> LoadedPlugin:
                 package_dir,
                 package_dir / "binding-catalogue.json",
                 firmware=None,
-                features=frozenset(),
-                panels=frozenset(),
+                features=SUPPORTED_FEATURES,
+                panels=SUPPORTED_PANELS,
             )
         except (ValueError, OSError) as exc:
             raise PluginLoadError(f"standalone_plugin_invalid: {exc}") from exc

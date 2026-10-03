@@ -47,7 +47,11 @@ jobs:
           uv run mypy src
 
       - name: Tests
-        run: uv run pytest -q
+        # The browser lane is marker-partitioned (I2a NFR-Q1): its Playwright
+        # chromium + axe run in the dedicated browser job below; everywhere
+        # else the marker is deselected so a missing browser never reds the
+        # unit lanes.
+        run: uv run pytest -q -m "not browser"
 
       - name: Standards self-check
         # lock <-> vendored tree <-> stamps with no bundle: the committed
@@ -106,3 +110,23 @@ jobs:
           "$BIN/benchweave-sdk" new "$RUNNER_TEMP/smoke-example" --with-ui
           "$BIN/benchweave-sdk" check "$RUNNER_TEMP/smoke-example/src/example_plugin/descriptor.json"
           "$BIN/benchweave-sdk" sync-standards --check
+
+  browser:
+    # The axe/Playwright lane (I2a NFR-Q1): the real app factory over the
+    # mock transport, every page template in both themes (data-theme
+    # forced), the doctored-template RED control and the plot-hydration
+    # assertions.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: "3.13"
+      - name: Sync environment
+        run: uv sync --locked --extra test --extra server
+      - name: Install chromium
+        run: uv run playwright install --with-deps chromium
+      - name: Browser lane
+        run: uv run pytest -q -m browser tests/server

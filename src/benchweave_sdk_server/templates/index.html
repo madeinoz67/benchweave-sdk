@@ -19,7 +19,17 @@
       {%- else %}<span class="state state-disconnected">disconnected</span>{% endif -%}
     </dd>
   </dl>
-  <p><a class="action" href="/devices/{{ device.id }}">Open readings page</a></p>
+  <p><a class="action" href="/devices/{{ device.id }}">Open device page</a></p>
+  {% if has_presentation %}
+  <h3>Presentation pages</h3>
+  <ul class="page-links">
+    {%- for page in pages %}
+    <li><a href="/pages/{{ page.id }}">{{ page.title }}</a></li>
+    {%- endfor %}
+  </ul>
+  {% else %}
+  <p class="hint">This plugin declares no presentation documents; the device page serves its readings.</p>
+  {% endif %}
 </section>
 {% endfor %}
 {% endblock %}

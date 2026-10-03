@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}{{ page.title }} — {{ plugin.package }}{% endblock %}
+{% block content %}
+<section class="panel bw-page" id="page-{{ page.id }}"
+         data-bw-page-id="{{ page.id }}"
+         data-bw-page-kind="{{ page.kind }}">
+  <h1>{{ page.title }}</h1>
+  {# The live state (severity badge, tiles, refused notices, plots) lives
+     INSIDE the poll region: a polling browser swaps only this region, so
+     anything outside it freezes at the first render (fold R-a). #}
+  <div id="page-readings"
+       hx-get="/pages/{{ page.id }}/readings"
+       hx-trigger="every 2s"
+       hx-swap="innerHTML">
+    {% include "page-readings.html" %}
+  </div>
+</section>
+{% endblock %}

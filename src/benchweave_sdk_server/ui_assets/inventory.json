@@ -2,6 +2,11 @@
   "api_version": 1,
   "assets": [
     {
+      "path": "bw-plot.js",
+      "size": 5219,
+      "sha256": "6e7a8839f3148df903e11b38d6c1105925b5e1e4aa315e6e41ea73de3b7fdc30"
+    },
+    {
       "path": "htmx.min.js",
       "size": 50917,
       "sha256": "e209dda5c8235479f3166defc7750e1dbcd5a5c1808b7792fc2e6733768fb447"
@@ -13,8 +18,28 @@
     },
     {
       "path": "standalone.css",
-      "size": 3182,
-      "sha256": "ee26a9a0c4a4123408998bcb26d41bcdd0c6becdb649e232a8a603389d37acee"
+      "size": 4299,
+      "sha256": "945961783a3cc9ed5f93c400a6c80b0af5b3cce2760a677de751db29877b75a5"
+    },
+    {
+      "path": "uplot-LICENCE",
+      "size": 1078,
+      "sha256": "8f989229699b4fe2f1a0432d0e9edc338a8a911e250e2d1b01ecd770a5f5b1bd"
+    },
+    {
+      "path": "uplot-SOURCES.md",
+      "size": 923,
+      "sha256": "630653202f2b60d08a6d047d22ccbefacb7edbcfc3fed2ef9ed16f0768e87588"
+    },
+    {
+      "path": "uplot.css",
+      "size": 1857,
+      "sha256": "df630c6a8d6f8eeaff264b50f73ce5b114f646ffd9a0bb74f049b0a00135fa04"
+    },
+    {
+      "path": "uplot.min.js",
+      "size": 51081,
+      "sha256": "19c8d4c6ad88929a79f4ae49d6f7161566dfd0ba3d15cc495e974f787eb78f1f"
     }
   ]
 }

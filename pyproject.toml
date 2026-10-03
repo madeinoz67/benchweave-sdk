@@ -88,6 +88,13 @@ dev = [
   # Dev-only so CI mypy resolves the optional signing imports; the published
   # wheel keeps cryptography optional via the `signing` extra (issue #223).
   "cryptography>=45",
+  # The browser/axe lane (I2a NFR-Q1): the pip wrapper carries the axe-core
+  # bytes in-wheel (no npm at runtime; the gateway's F-D1 ruling chose it
+  # over hand-vendored axe.min.js — dependency motion, lock moves with it).
+  # CI's sdk job deselects `-m "not browser"`; the dedicated browser job
+  # installs chromium and runs the marker.
+  "playwright>=1.49",
+  "axe-playwright-python>=0.1.7",
 ]
 
 [tool.ruff]
@@ -105,3 +112,6 @@ files = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+  "browser: Playwright-driven axe WCAG 2.2 A/AA over the real app factory (both themes) plus the doctored-template control; CI runs these in the dedicated browser lane with chromium installed — deselect locally with -m 'not browser'",
+]

@@ -7,17 +7,18 @@
   <meta name="htmx-config" content='{"allowEval": false, "selfRequestsOnly": true}'>
   <link rel="stylesheet" href="/assets/tokens.css">
   <link rel="stylesheet" href="/assets/themes.css">
+  <link rel="stylesheet" href="/assets/globals.css">
   <link rel="stylesheet" href="/assets/standalone.css">
+  <link rel="stylesheet" href="/assets/uplot.css">
   <script src="/assets/htmx.min.js" defer></script>
   <script src="/assets/sse.js" defer></script>
+  <script src="/assets/uplot.min.js" defer></script>
+  <script src="/assets/bw-plot.js" defer></script>
 </head>
 <body>
-  <header class="banner" title="Absent gateway guarantees: {{ absent | join(', ') }}">
-    <span aria-hidden="true">&#x2B21;</span> {{ banner }}
-  </header>
-  {% if simulated %}<header class="banner banner-simulated" data-transport="mock">
-    <span aria-hidden="true">&#x25CE;</span> SIMULATED — mock transport
-  </header>{% endif %}
+  <div class="banner-region" title="Absent gateway guarantees: {{ absent | join(', ') }}">
+    {{ mode_banner }}
+  </div>
   <main class="content">
     {% block content %}{% endblock %}
   </main>

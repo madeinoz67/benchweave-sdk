@@ -19,13 +19,20 @@ def test_committed_inventory_matches_the_bytes_on_disk() -> None:
 
 
 def test_the_inventory_lists_only_host_owned_files() -> None:
-    """tokens.css/themes.css serve from the installed ui-html package
-    (§4.6); this tree owns only the host shell assets."""
+    """tokens.css/themes.css/globals.css serve from the installed ui-html
+    package (§4.6, D-B3); this tree owns the host shell assets plus the
+    plot wrapper's vendored uPlot bytes (I2a §3.3, #310's host-side
+    ruling)."""
     committed = json.loads((ROOT / "inventory.json").read_text())
     assert {row["path"] for row in committed["assets"]} == {
         "htmx.min.js",
         "sse.js",
         "standalone.css",
+        "uplot.min.js",
+        "uplot.css",
+        "uplot-LICENCE",
+        "uplot-SOURCES.md",
+        "bw-plot.js",
     }
 
 
@@ -95,3 +102,13 @@ def _test_policy():
     return GuardPolicy.complete(
         bound_host="127.0.0.1", bound_port=8477, bearer_token="t", csrf_token="t"
     )
+
+
+def test_the_htmx_indicator_rules_have_a_same_origin_equivalent() -> None:
+    """Fold R-f: htmx injects a <style> for its indicator classes at boot,
+    which the strict style-src 'self' CSP blocks - the host ships the same
+    rules from its own stylesheet so the blocked injection loses nothing."""
+    css = (ROOT / "standalone.css").read_text(encoding="utf-8")
+    assert ".htmx-indicator" in css
+    assert "opacity: 0" in css
+    assert ".htmx-request" in css

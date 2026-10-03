@@ -75,9 +75,31 @@ _HOST_INFO_RESULT = _object(
         },
         "transport": {"type": "string"},
         "sdk_version": {"type": "string"},
+        "presentation": {
+            "type": "object",
+            "properties": {
+                "features": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "UI features this host declares (SW-41)",
+                },
+                "panels": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Host panels this host declares",
+                },
+                "unavailable_pages": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional manifest pages whose panel this host lacks",
+                },
+            },
+            "required": ["features", "panels", "unavailable_pages"],
+            "additionalProperties": False,
+        },
     },
     ["mode", "absent_guarantees", "served_operations", "deferred_operations",
-     "plugin", "transport", "sdk_version"],
+     "plugin", "transport", "sdk_version", "presentation"],
 )
 
 _DEVICE_SUMMARY = {
