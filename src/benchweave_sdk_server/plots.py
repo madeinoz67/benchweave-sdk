@@ -174,7 +174,8 @@ def compose_page_plot(view: PlotView, ring: ObservationRing) -> PlotRender:
             f'  <div class="bw-plot__canvas" data-bw-axes="{view.x.unit or X_UNIT}" '
             f'data-bw-plot-title="{title}"></div>\n'
             '  <p class="bw-plot__no-data" role="status">No lane data — captures begin at I3; '
-            "this figure renders the declared lane structure only.</p>\n"
+            "this figure renders the declared lane structure only "
+            f"({len(view.channels)} declared lane channel(s)).</p>\n"
             "</figure>"
         )
         payload: dict[str, Any] = {"channels": [], "x_unit": view.x.unit or X_UNIT}
@@ -205,7 +206,13 @@ def compose_page_plot(view: PlotView, ring: ObservationRing) -> PlotRender:
         title=view.title,
         description=(
             f"{view.title}: {view.kind} over {view.binding_id}; "
-            f"{len(view.channels)} channel(s) from host-observed reads."
+            "1 plotted channel from host-observed reads"
+            + (
+                f"; {len(view.channels) - 1} declared channel(s) have no "
+                "host data path yet (capture data is I3's)"
+                if len(view.channels) > 1
+                else ""
+            )
         ),
         traces=traces,
         hints=hints,

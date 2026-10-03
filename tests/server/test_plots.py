@@ -367,3 +367,54 @@ def test_a_full_ring_discloses_its_retention_window(starter_project) -> None:
         shallow.record("voltage", 10.0 * index, 1.0)
     quiet = compose_page_plot(view, shallow)
     assert "retains" not in quiet.html
+
+
+# --- the composed description admits unplotted channels (fold R-g) --------------
+
+
+def test_the_description_does_not_overstate_plotted_channels(starter_project) -> None:
+    """Row R-g: a plot view declaring TWO channels, of which the host can
+    plot only the value channel, must not claim both plot. The full
+    multi-channel data story stays I3's; the description stops
+    overstating."""
+    from dataclasses import replace as _replace
+
+    from benchweave_sdk.preview_models import PlotChannel
+
+    view = _scaffold_plot_view(starter_project)
+    second = _replace(view.channels[0], variable_id="aux")
+    wide = _replace(view, channels=(view.channels[0], second))
+    render = compose_page_plot(wide, ObservationRing())
+    assert "2 channel(s) from host-observed reads" not in render.html
+    assert "1 plotted channel" in render.html
+    assert "1 declared channel(s) have no host data path" in render.html
+
+
+def test_a_single_channel_description_claims_only_that_channel(starter_project) -> None:
+    view = _scaffold_plot_view(starter_project)
+    render = compose_page_plot(view, ObservationRing())
+    assert "1 plotted channel" in render.html
+    assert "no host data path" not in render.html
+
+
+def test_the_lanes_skeleton_names_its_declared_lane_count() -> None:
+    """Row R-g's lanes arm: the skeleton's no-data line names how many
+    lane channels are declared (an honest count of structure, not of
+    data)."""
+    from benchweave_sdk.preview_models import PlotAxis, PlotChannel, PlotView
+
+    view = PlotView(
+        page_id="readings",
+        kind="digital_lanes",
+        binding_id="capture",
+        title="Lane view",
+        x=PlotAxis(label="time", unit="s"),
+        channels=(
+            PlotChannel(variable_id="sda", label="sda", unit=None),
+            PlotChannel(variable_id="scl", label="scl", unit=None),
+        ),
+        lane_groups=(),
+        decoder_lanes=(),
+    )
+    render = compose_page_plot(view, ObservationRing())
+    assert "2 declared lane channel(s)" in render.html
