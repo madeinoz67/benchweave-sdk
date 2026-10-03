@@ -2,6 +2,39 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.0] - 2026-10-03
+
+### Bug Fixes
+
+- Regenerate standalone/uv.lock after the 0.5.0 bump (#225 follow-up)
+- The #90/#92 carry-forward rows — R1/R4/R5 (gateway #309) (#95)
+
+### Documentation
+
+- Document-writer agent + the ASD-STE100 documentation register (#354)
+- Add 'which checkout' section and 'using the SDK' pointer (refs #347) (#84)
+- Register follow-up — developer-facing guides, gortex grant, dictionary-check wording (#352 rows L1/L3/L4)
+- ASD-STE100 rewrite of user-facing documentation (#352)
+- Bridge capabilities to a structured source, stale-false streaming corrected, versions traced (#359)
+
+### Features
+
+- Registry management family — queue/status/publish-status/yank/advise/unlist/withdraw/transfer, v0.5.0 (#225)
+- Doctor — offline scaffold-version vs installed-SDK report (#347 WS1b) (#87)
+- Fold the standalone distribution into benchweave-sdk[server] (#309) (#90) [**BREAKING**]
+- B — the nine scenarios, preview semantics and the ui-html pin (#309) (#92)
+
+### Miscellaneous
+
+- Re-anchor compatibility.sdk to 0.6.0 (gateway #359 row 5)
+- Ignore .wt/ parallel-lane worktrees (governor F4, gateway #359)
+- V0.6.0 docs sweep + matrix walk (#96)
+- Register v0.6.0 docs bucket and demote v0.4.1
+
+
+### Contributors
+
+- Stephen Eaton (15 commits)
 ## [0.4.1] - 2026-10-02
 
 ### Bug Fixes
