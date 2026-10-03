@@ -71,16 +71,72 @@ def _policy() -> GuardPolicy:
 
 @pytest.fixture(scope="module")
 def starter(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """One ``--with-ui`` scaffold per module: the nine apps vary only in
-    their scenario selection (#309-B's mechanism — the selection arms the
-    mock factory's next-connection script)."""
+    """A ``--with-ui`` scaffold with TWO observation bindings (fold 5: the
+    containment arm pins EVERY binding, and one binding cannot prove
+    every). The second parameter is declared BEFORE the UI documents are
+    generated, so the manifest, the binding catalogue and the plot
+    projection all carry it. The nine apps vary only in their scenario
+    selection (#309-B's mechanism — the selection arms the mock factory's
+    next-connection script)."""
+    import json
+
     from benchweave_sdk.presentation import create_ui_resources
     from benchweave_sdk.scaffold import create_project
 
     project = tmp_path_factory.mktemp("parity") / "starter"
     create_project(project, "example_plugin")
+    descriptor_path = project / "src" / "example_plugin" / "descriptor.json"
+    document = json.loads(descriptor_path.read_text())
+    document["parameters"].append(
+        {
+            "name": "current",
+            "description": "Synthetic current",
+            "type": "float",
+            "access": "ro",
+            "semantic": "measurement",
+            "unit": "A",
+            "binding": {"kind": "adapter", "key": "current"},
+            "read_policy": {"max_age_ms": 0, "destructive": False},
+        }
+    )
+    descriptor_path.write_text(json.dumps(document, indent=2) + "\n")
     create_ui_resources(project, "example_plugin")
     return project
+
+
+def _observation_bindings(client: TestClient) -> list[str]:
+    """Every observation binding of every manifest page, from the loaded
+    presentation (never a hardcoded route list — fold 5)."""
+    presentation = client.app.state.seam.presentation
+    return [
+        binding.parameter_id
+        for page in presentation.pages
+        if page.kind == "readings"
+        for binding in page.bindings
+        if binding.kind == "observation" and binding.parameter_id is not None
+    ]
+
+
+def _manifest_pages(client: TestClient) -> list[str]:
+    presentation = client.app.state.seam.presentation
+    return [page.id for page in presentation.pages]
+
+
+def _read_all(client: TestClient, policy: GuardPolicy) -> dict[str, dict]:
+    """Read every observation binding IN BINDING ORDER: the looping mock's
+    exact-match discipline serves the scripted exchanges cyclically, so a
+    page render (which reads every binding) leaves the head where the next
+    full ordered read pass expects it."""
+    data: dict[str, dict] = {}
+    for parameter in _observation_bindings(client):
+        read = client.post(
+            "/v1/parameter_read",
+            json={"device_id": DEV, "parameter": parameter},
+            headers={"authorization": f"Bearer {policy.bearer_token}"},
+        )
+        assert read.status_code == 200, parameter
+        data[parameter] = read.json()["data"]
+    return data
 
 
 @pytest.fixture()
@@ -118,7 +174,7 @@ def _expected_severities(starter: Path) -> dict[str, str]:
     }
 
 
-def _expected_tile(data: dict) -> str:
+def _expected_tile(data: dict, *, label: str) -> str:
     """The exact partial output the page must contain, built from the LIVE
     read through the design's rules (independent of the host's render)."""
     from benchweave_ui_html.data import ReadingData
@@ -135,10 +191,10 @@ def _expected_tile(data: dict) -> str:
         text = str(value)
     return render_reading(
         ReadingData(
-            label="voltage",
+            label=label,
             severity=host_presentation.QUALITY_SEVERITY[data["quality"]],
             value=text,
-            unit=str(data.get("unit") or "V"),
+            unit=str(data.get("unit") or ""),
             quality=data["quality"],
             freshness=f"{float(data['age_ms']):g} ms",
             stale_verdict="fresh",
@@ -153,7 +209,9 @@ def _expected_tile(data: dict) -> str:
 def test_component_and_severity_parity(scenario_app, starter: Path) -> None:
     client, policy, scenario_id = scenario_app
     _connect(client)
-    page = client.get("/pages/readings")
+    pages = _manifest_pages(client)
+    assert pages, "the manifest enumerates the page set"
+    page = client.get(f"/pages/{pages[0]}")
     assert page.status_code == 200
     body = page.text
     expected = _expected_severities(starter)
@@ -173,20 +231,17 @@ def test_component_and_severity_parity(scenario_app, starter: Path) -> None:
         assert f'data-bw-page-severity="{expected[scenario_id]}"' in body
         return
 
-    read = client.post(
-        "/v1/parameter_read",
-        json={"device_id": DEV, "parameter": "voltage"},
-        headers={"authorization": f"Bearer {policy.bearer_token}"},
-    )
-    assert read.status_code == 200
-    data = read.json()["data"]
-    # HTML and REST arms assert equal values (the tile shows the read).
-    assert _expected_tile(data) in body, scenario_id
-    quality = data["quality"]
-    assert quality in body
+    # Fold 5: the containment pins EVERY observation binding on EVERY
+    # manifest page (enumerated from the loaded presentation, never a
+    # hardcoded route list). The page render and the ordered read pass
+    # leave the looping mock's head aligned (see _read_all).
+    reads = _read_all(client, policy)
+    for parameter, data in reads.items():
+        # HTML and REST arms assert equal values (the tile shows the read).
+        assert _expected_tile(data, label=parameter) in body, (scenario_id, parameter)
+        assert data["quality"] in body
     assert f'data-bw-page-severity="{expected[scenario_id]}"' in body
     if scenario_id == "loading":
-        assert data["value"] is None
         assert "—" in body
 
 
@@ -204,12 +259,19 @@ def test_the_quality_slot_carries_the_device_string_verbatim(scenario_app) -> No
 # --- 3: mode parity ------------------------------------------------------------
 
 
-@pytest.mark.parametrize("scenario_app", ["normal", "request-rejected"], indirect=True)
+@pytest.mark.parametrize("scenario_app", ALL_SCENARIOS, indirect=True)
 def test_scenario_pages_carry_the_mock_mode_entries(scenario_app) -> None:
-    """Scenario mode implies mock: the simulated entry renders beside the
+    """Mode parity across ALL NINE scenarios (the design's letter — fold 5):
+    scenario mode implies mock, so the simulated entry renders beside the
     three standalone truths on every page."""
     client, _, _ = scenario_app
-    for page in ("/", f"/devices/{DEV}", "/pages/readings"):
+    _connect(client)
+    page_routes = (
+        "/",
+        f"/devices/{DEV}",
+        *(f"/pages/{page_id}" for page_id in _manifest_pages(client)),
+    )
+    for page in page_routes:
         body = client.get(page).text
         assert SIMULATED_WORDING in body, page
         assert NO_GATEWAY in body, page
@@ -274,7 +336,8 @@ def _exercise_the_page_set(client: TestClient, policy: GuardPolicy) -> None:
         client.get("/pages/readings/readings")
 
 
-def test_no_write_on_load_over_the_new_page_set(starter: Path) -> None:
+@pytest.mark.parametrize("scenario_id", ALL_SCENARIOS)
+def test_no_write_on_load_over_the_new_page_set(starter: Path, scenario_id: str) -> None:
     """NFR-O3 re-proven where the reads now happen (the manifest pages):
     the recorder wraps the host-shipped scenario adapter over the looping
     mock transport — the author's adapter is never imported in scenario
@@ -292,7 +355,7 @@ def test_no_write_on_load_over_the_new_page_set(starter: Path) -> None:
 
     plugin = load_plugin_project(starter)
     recorder = VerbRecorder(ScenarioAdapter())
-    selection = ScenarioSelection("normal")
+    selection = ScenarioSelection(scenario_id)
     identify_declared = "identify" in plugin.descriptor.get("capabilities", [])
     seam = StandaloneSeam(
         PluginSession(
@@ -309,7 +372,10 @@ def test_no_write_on_load_over_the_new_page_set(starter: Path) -> None:
         build_app(seam, policy=policy), base_url="http://127.0.0.1:8477"
     ) as client:
         _exercise_the_page_set(client, policy)
-    assert set(recorder.verbs) == {"identify", "read"}, recorder.verbs
+    # The disconnected scenario refuses the connect before any read - the
+    # closed no-write claim is the SUBSET (nothing outside identify/read).
+    assert set(recorder.verbs) <= {"identify", "read"}, recorder.verbs
+    assert recorder.verbs, "the page set exercised the adapter"
 
 
 def test_the_deaf_recorder_control_hears_a_driven_verb(starter: Path) -> None:
@@ -398,15 +464,12 @@ def test_control_bypass_tile_must_red_the_component_arm(
     (a green control is a KILL: the suite is fluff)."""
     client, policy, scenario_id = scenario_app
     _connect(client)
-    read = client.post(
-        "/v1/parameter_read",
-        json={"device_id": DEV, "parameter": "voltage"},
-        headers={"authorization": f"Bearer {policy.bearer_token}"},
-    )
-    data = read.json()["data"]
+    reads = _read_all(client, policy)
+    parameter = _observation_bindings(client)[0]
+    data = reads[parameter]
     # The suite's oracle stays the partial's exact output; the HOST side
     # is sabotaged onto the I1-era hand tile.
-    oracle = _expected_tile(data)
+    oracle = _expected_tile(data, label=parameter)
     monkeypatch.setattr(host_presentation, "PARTIAL_TILES", False)
     try:
         hand, _severity = host_presentation.reading_tile_html(
@@ -415,13 +478,52 @@ def test_control_bypass_tile_must_red_the_component_arm(
             label="voltage",
         )
         assert "bw-reading" not in hand, "the hook must render the hand tile"
-        body = client.get("/pages/readings").text
+        body = client.get(f"/pages/{_manifest_pages(client)[0]}").text
         assert hand in body, "the sabotaged host rendered the hand tile"
         # The containment the component arm asserts must now RED:
         with pytest.raises(AssertionError):
             assert oracle in body, scenario_id
     finally:
         monkeypatch.setattr(host_presentation, "PARTIAL_TILES", True)
+
+
+@pytest.mark.parametrize("scenario_app", ["normal"], indirect=True)
+def test_control_hand_tile_on_one_binding_must_red_the_containment_arm(
+    scenario_app, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """RED control (fold 5): a host that hand-rolls the tile of ONE binding
+    (the first renders correctly through the partial) must still RED the
+    containment arm — pinning exactly one binding cannot catch it, which is
+    why the arm iterates every observation binding (the refute lane's
+    monkeypatch repro)."""
+    from benchweave_sdk_server import web as web_module
+
+    client, policy, _ = scenario_app
+    _connect(client)
+    bindings = _observation_bindings(client)
+    assert len(bindings) >= 2, "the discrimination needs a second binding"
+    victim = bindings[-1]
+    real = web_module.reading_tile_html
+
+    def selective(read, parameter, *, label):
+        html, severity = real(read, parameter, label=label)
+        if label == victim:
+            return (
+                f'<tr><th scope="row">{label}</th>'
+                f'<td class="value">{read.get("value") if read else ""}</td></tr>',
+                severity,
+            )
+        return html, severity
+
+    reads = _read_all(client, policy)
+    monkeypatch.setattr(web_module, "reading_tile_html", selective)
+    try:
+        body = client.get(f"/pages/{_manifest_pages(client)[0]}").text
+        oracle = _expected_tile(reads[victim], label=victim)
+        with pytest.raises(AssertionError):
+            assert oracle in body, victim
+    finally:
+        monkeypatch.setattr(web_module, "reading_tile_html", real)
 
 
 @pytest.mark.parametrize("scenario_app", ["warning", "critical"], indirect=True)
