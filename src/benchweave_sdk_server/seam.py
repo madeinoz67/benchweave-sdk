@@ -43,7 +43,7 @@ from .session import (
     PluginSession,
     evict_plugin_modules,
     load_plugin_project,
-    package_py_digest,
+    project_py_digest,
 )
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -148,7 +148,7 @@ class StandaloneSeam:
         # no capture exists until I3 arms it.
         self._unattended = unattended
         self._reload_wrapper = reload_wrapper
-        self._adapter_sha256 = package_py_digest(session.plugin)
+        self._adapter_sha256 = project_py_digest(session.plugin)
         self._pending_reload: dict[str, Any] | None = None
         self._capture_in_flight = False
         self.reload_state: dict[str, Any] | None = None
@@ -853,7 +853,7 @@ class StandaloneSeam:
         package = self._session.plugin.package
         # Re-import the CURRENT bytes: the import cache is evicted first so
         # the reload cannot hand back the previous adapter object.
-        evict_plugin_modules(package)
+        evict_plugin_modules(package, src_root=project_root / "src")
         try:
             loaded = load_plugin_project(project_root)
         except PluginLoadError as exc:
@@ -863,7 +863,7 @@ class StandaloneSeam:
                 correlation,
                 diagnostic=str(exc),
             ) from exc
-        next_adapter_sha256 = package_py_digest(loaded)
+        next_adapter_sha256 = project_py_digest(loaded)
         adapter_changed = next_adapter_sha256 != self._adapter_sha256
         if (
             adapter_changed
@@ -915,7 +915,7 @@ class StandaloneSeam:
         # samples from the old code would launder into the new version's
         # plots, so the ring resets with the plugin.
         self.observation_ring.clear()
-        self._adapter_sha256 = package_py_digest(self._session.plugin)
+        self._adapter_sha256 = project_py_digest(self._session.plugin)
         self._pending_reload = None
         reconnected = False
         refusal: dict[str, Any] | None = None

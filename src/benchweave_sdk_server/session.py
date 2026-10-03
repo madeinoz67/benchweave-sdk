@@ -39,24 +39,33 @@ class PluginLoadError(ValueError):
     """A plugin project could not be loaded or validated; always prefixed."""
 
 
-def package_py_digest(plugin: LoadedPlugin) -> str:
-    """The loaded package's adapter-code digest: every ``*.py`` file under
-    the package, path-and-bytes, sorted. Computed at load, recomputed at
-    reload — the mechanical adapter-code/contract-only discrimination
-    Q11's confirmation branch rides."""
+def project_py_digest(plugin: LoadedPlugin) -> str:
+    """The loaded project's adapter-code digest: every ``*.py`` file
+    under the project's ``src/`` tree (the package AND any top-level
+    sibling modules it imports — the loader puts the whole src root on
+    ``sys.path``, so a sibling IS loaded adapter code), path-and-bytes,
+    sorted. Computed at load, recomputed at reload — the mechanical
+    adapter-code/contract-only discrimination Q11's confirmation branch
+    rides. A deliberate superset of the exact loaded closure: an edit to
+    an unloaded Python file may ask for confirmation unnecessarily, but
+    loaded code can never slip PAST the digest."""
+    src_root = plugin.project_root / "src"
     hasher = hashlib.sha256()
-    for path in sorted(plugin.package_dir.rglob("*.py")):
-        hasher.update(path.relative_to(plugin.package_dir).as_posix().encode())
+    for path in sorted(src_root.rglob("*.py")):
+        hasher.update(path.relative_to(src_root).as_posix().encode())
         hasher.update(b"\0")
         hasher.update(path.read_bytes())
     return hasher.hexdigest()
 
 
-def evict_plugin_modules(package: str) -> None:
+def evict_plugin_modules(package: str, src_root: Path | None = None) -> None:
     """Drop the plugin's modules from the import cache so a reload
     re-executes the CURRENT bytes. ``importlib`` caches by name; without
     eviction a reload would keep handing out the previous adapter object
-    forever — the one case where reload silently fails its whole purpose."""
+    forever — the one case where reload silently fails its whole purpose.
+    The eviction covers the package, its submodules, AND every cached
+    module whose file lives under the project's ``src/`` root (top-level
+    siblings the package imports are loaded adapter code too)."""
     prefix = f"{package}."
     for name in [
         module
@@ -65,6 +74,18 @@ def evict_plugin_modules(package: str) -> None:
     ]:
         del sys.modules[name]
     importlib.invalidate_caches()
+    if src_root is None:
+        return
+    root = src_root.resolve()
+    for name, module in list(sys.modules.items()):
+        module_file = getattr(module, "__file__", None)
+        if not module_file:
+            continue
+        try:
+            if Path(module_file).resolve().is_relative_to(root):
+                del sys.modules[name]
+        except OSError:
+            continue
 
 
 @dataclass(frozen=True, slots=True)

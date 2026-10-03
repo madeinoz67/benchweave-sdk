@@ -192,6 +192,60 @@ def test_pages_re_render_the_patch_after_reload(tmp_path) -> None:
         assert "Live readings" in after
 
 
+# --- FOLD-D: sibling top-level src modules ride the digest and eviction ----------
+
+
+def test_d_sibling_src_modules_enter_the_adapter_digest(tmp_path) -> None:
+    """A top-level src module the package imports is adapter CODE: an
+    edit to it changes what a reload would execute, so a connected
+    ATTENDED host must ask — today the digest walked only the package
+    dir and the edit slipped past with no confirmation."""
+    import sys
+
+    project = _project(tmp_path)
+    helper = project / "src" / "helper_module.py"
+    helper.write_text("MARK = 1\n")
+    adapter = project / "src" / "example_plugin" / "adapter.py"
+    adapter.write_text("import helper_module\n" + adapter.read_text())
+    seam = _seam(project)
+    _call(seam, "device_connect", DEV)
+    helper.write_text("MARK = 2\n")
+    result = asyncio.run(seam.reload_plugin(source="test"))
+    assert result["status"] == "confirmation_required", (
+        "an edit to a module the plugin loads changed adapter code — the "
+        "digest must see it"
+    )
+    # And the confirmation is not theatre: confirming must EXECUTE the new
+    # bytes — today eviction cleared only the package, so the module cache
+    # kept serving MARK=1 after the reload.
+    confirm = asyncio.run(seam.confirm_reload(source="test"))
+    assert confirm["status"] == "reloaded"
+    import importlib
+
+    fresh = importlib.import_module("helper_module")
+    assert fresh is sys.modules["helper_module"]
+    assert fresh.MARK == 2, "the module cache survived the reload — stale bytes"
+
+
+def test_d_the_helper_edit_requires_no_descriptor_motion(tmp_path) -> None:
+    """The digest's widening must not drag CONTRACT documents into the
+    adapter-change class: the walk covers Python modules under src/, and
+    nothing else — a descriptor edit still confirms-free in unattended
+    mode with a helper present."""
+    project = _project(tmp_path)
+    helper = project / "src" / "helper_module.py"
+    helper.write_text("MARK = 1\n")
+    seam = _seam(project, unattended=True)
+    _call(seam, "device_connect", DEV)
+    authoring._contract_patch(
+        seam,
+        "descriptor",
+        [{"op": "replace", "path": "/display_name", "value": "Contracts only"}],
+    )
+    result = asyncio.run(seam.reload_plugin(source="test"))
+    assert result["status"] == "reloaded"
+
+
 # --- the Q11 confirmation branch --------------------------------------------------
 
 
