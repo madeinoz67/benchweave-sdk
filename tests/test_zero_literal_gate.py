@@ -572,6 +572,27 @@ class TestUnreadableRootRefuses:
         monkeypatch.setattr(counter, "SOURCE_ROOTS", roots)
         return counter
 
+    def _unreadable(self, monkeypatch, *closed: Path) -> None:
+        """Make directories unreadable at the os.scandir boundary — the
+        exact boundary os.walk's onerror fires at — on EVERY OS: chmod(0)
+        does not remove list permission on Windows (the first PR #95 run
+        reddened exactly there: os.walk entered the chmod-0 directory and
+        scanned it), so the arms inject PermissionError where the walk
+        would meet it instead. pathlib's rglob suppresses the SAME error
+        at the same boundary — which is the base's silent narrowing."""
+        import os as _os
+
+        real_scandir = _os.scandir
+        closed_set = {str(path.resolve()) for path in closed}
+
+        def scandir(path=".", *args, **kwargs):
+            resolved = _os.path.realpath(_os.fspath(path))
+            if resolved in closed_set or str(_os.fspath(path)) in closed_set:
+                raise PermissionError(13, "Permission denied", _os.fspath(path))
+            return real_scandir(path, *args, **kwargs)
+
+        monkeypatch.setattr(_os, "scandir", scandir)
+
     def test_an_unreadable_root_refuses_instead_of_narrowing(
         self, tmp_path, monkeypatch, capsys
     ) -> None:
@@ -581,15 +602,12 @@ class TestUnreadableRootRefuses:
         unreadable = tmp_path / "closed-root"
         unreadable.mkdir()
         (unreadable / "secret.py").write_text("PIN = '1.2.3'\n", encoding="utf-8")
-        unreadable.chmod(0)
-        try:
-            counter = self._armed_counter(tmp_path, monkeypatch, (readable, unreadable))
-            code = counter.main([])
-            captured = capsys.readouterr()
-            assert code == 1
-            assert "source tree unreadable" in captured.err
-        finally:
-            unreadable.chmod(0o755)
+        self._unreadable(monkeypatch, unreadable)
+        counter = self._armed_counter(tmp_path, monkeypatch, (readable, unreadable))
+        code = counter.main([])
+        captured = capsys.readouterr()
+        assert code == 1
+        assert "source tree unreadable" in captured.err
 
     def test_an_unreadable_subdirectory_refuses_too(
         self, tmp_path, monkeypatch, capsys
@@ -601,12 +619,9 @@ class TestUnreadableRootRefuses:
         (root / "closed").mkdir(parents=True)
         (root / "mod.py").write_text("VALUE = 1\n", encoding="utf-8")
         (root / "closed" / "secret.py").write_text("PIN = '1.2.3'\n", encoding="utf-8")
-        (root / "closed").chmod(0)
-        try:
-            counter = self._armed_counter(tmp_path, monkeypatch, (root,))
-            code = counter.main([])
-            captured = capsys.readouterr()
-            assert code == 1
-            assert "source tree unreadable" in captured.err
-        finally:
-            (root / "closed").chmod(0o755)
+        self._unreadable(monkeypatch, root / "closed")
+        counter = self._armed_counter(tmp_path, monkeypatch, (root,))
+        code = counter.main([])
+        captured = capsys.readouterr()
+        assert code == 1
+        assert "source tree unreadable" in captured.err
