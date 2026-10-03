@@ -24,7 +24,6 @@ from typing import NoReturn
 import click
 
 from .seam import StandaloneSeam
-from .security import GuardPolicy, new_token
 from .session import (
     LoadedPlugin,
     PluginLoadError,
@@ -89,8 +88,14 @@ def serve(
 ) -> None:
     """Serve UI, REST and MCP over one plugin project."""
     try:
+        # All three ride the [server] extra: web and uvicorn directly, and
+        # security through starlette's middleware base -- the module-level
+        # import set must stay free of every name the extra owns, or the
+        # console script dies before click can even print --help (the A-E
+        # default-venv arm caught exactly that, through starlette).
         import uvicorn
 
+        from .security import GuardPolicy, new_token
         from .web import build_app
     except ImportError as exc:
         _require_server_extra(exc)

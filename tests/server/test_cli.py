@@ -83,20 +83,34 @@ def test_mcp_command_builds_without_an_http_listener(starter_project: Path) -> N
 
 # --- slice A: the console entry degrades gracefully without the extra ------
 
-#: The modules only `benchweave-sdk[server]` installs.
-_SERVER_EXTRA_MODULES = ("fastapi", "fastmcp", "uvicorn", "jinja2")
+#: The top-level modules only `benchweave-sdk[server]` installs, including
+#: the transitive names the host's import closure can reach: starlette
+#: rides fastapi and pydantic rides fastapi/fastmcp (the A-E venv run
+#: caught starlette through security.py when the name list had only the
+#: four direct dependencies -- a simulation weaker than reality is a
+#: false pass, so the set names the closure, not the extras table).
+_SERVER_EXTRA_MODULES = ("fastapi", "fastmcp", "uvicorn", "jinja2", "starlette", "pydantic")
 
 
 def _simulate_default_install(monkeypatch: pytest.MonkeyPatch, *blocked: str) -> None:
-    """Make the extra's modules absent: a None sys.modules entry makes
-    ``import <name>`` raise ImportError — the same failure the lazy imports
-    hit on an install without the extra. The host modules that import them
-    are dropped so their import re-executes against the blocked set.
+    """Make the extra's modules absent the way an uninstall is absent: a
+    None sys.modules entry makes a top-level ``import <name>`` raise
+    ImportError, and every cached submodule under it is dropped so
+    ``from <name>.sub import X`` re-resolves through the blocked parent
+    instead of a leftover cached module (that bypass is real: the A-E
+    venv run caught starlette through security.py while the in-suite
+    simulation passed vacuously on the cached starlette.middleware.base).
+    Every host submodule is dropped too, so their module-level imports
+    re-execute against the blocked set.
     """
     for name in blocked:
         monkeypatch.setitem(sys.modules, name, None)
-    for module in ("benchweave_sdk_server.web", "benchweave_sdk_server.mcp"):
-        monkeypatch.delitem(sys.modules, module, raising=False)
+        for existing in list(sys.modules):
+            if existing.startswith(name + "."):
+                monkeypatch.delitem(sys.modules, existing, raising=False)
+    for module in list(sys.modules):
+        if module == "benchweave_sdk_server" or module.startswith("benchweave_sdk_server."):
+            monkeypatch.delitem(sys.modules, module, raising=False)
 
 
 def test_serve_without_the_server_extra_refuses_gracefully(
