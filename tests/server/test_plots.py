@@ -334,3 +334,36 @@ def test_the_lanes_skeleton_escapes_the_manifest_title() -> None:
     # The title still renders, escaped, in the attribute slots.
     assert "Lane view" in render.html
     assert "&#34;" in render.html or "&quot;" in render.html
+
+
+# --- decimation duplicate points and retention honesty (fold 3) -----------------
+
+
+def test_the_column_band_retains_every_point_without_duplicates() -> None:
+    """n in (columns, 2*columns]: single-point columns must emit ONE point,
+    not their min and max twice. The duplicate form claimed drawn > acquired
+    (1200 points for 601 samples) - inflating the wire payload and making
+    the package's drawn>=acquired rule skip the disclosure even where
+    points were dropped."""
+    points = [(float(index), float(index % 7)) for index in range(PLOT_COLUMNS + 1)]
+    reduced = decimate_minmax(points, columns=PLOT_COLUMNS)
+    assert len(reduced) == PLOT_COLUMNS + 1, "every point retained, once"
+    assert len({x for x, _ in reduced}) == len(reduced), "no duplicate columns"
+
+
+def test_a_full_ring_discloses_its_retention_window(starter_project) -> None:
+    """When the ring is at its cap the disclosure's 'Acquired {n}' names the
+    RETAINED count, not everything ever acquired: the figure carries the
+    retention window beside the disclosure (the honest channel)."""
+    view = _scaffold_plot_view(starter_project)
+    ring = ObservationRing(cap=2000)
+    for index in range(5000):
+        ring.record("voltage", 10.0 * index, float(index % 5))
+    render = compose_page_plot(view, ring)
+    assert "Acquired" in render.html
+    assert "retains the most recent 2000 samples" in render.html
+    shallow = ObservationRing(cap=4096)
+    for index in range(10):
+        shallow.record("voltage", 10.0 * index, 1.0)
+    quiet = compose_page_plot(view, shallow)
+    assert "retains" not in quiet.html

@@ -103,8 +103,18 @@ def decimate_minmax(
     def flush() -> None:
         if not column:
             return
+        # Ties resolve to the FIRST minimum and the LAST maximum, so a
+        # multi-point column of equal values keeps its x-extent instead of
+        # collapsing onto its first point.
         low = min(column, key=lambda point: point[1])
-        high = max(column, key=lambda point: point[1])
+        high = max(reversed(column), key=lambda point: point[1])
+        if low == high:
+            # A single-point column emits ONE point (fold 3): emitting its
+            # min and max twice inflated the drawn count past the acquired
+            # count - a duplicated wire payload and a disclosure the
+            # package's drawn>=acquired rule then skipped.
+            reduced.append(low)
+            return
         pair = [low, high] if low[0] <= high[0] else [high, low]
         reduced.extend(pair)
 
@@ -201,7 +211,18 @@ def compose_page_plot(view: PlotView, ring: ObservationRing) -> PlotRender:
         hints=hints,
     )
     payload = {"channels": channels_payload, "x_unit": view.x.unit or X_UNIT}
-    return PlotRender(html=render_plot(composed), json=json.dumps(payload))
+    html = render_plot(composed)
+    if len(samples) >= ring.cap:
+        # The package's disclosure row says "Acquired {n}" - but at the cap
+        # n is the RETAINED count, not everything ever acquired (the ring
+        # dropped the oldest to get here). The retention window is
+        # disclosed beside the figure (fold 3: the wording must not claim
+        # more than the window).
+        html += (
+            '\n<p class="bw-plot-retention" role="status">The host retains '
+            f"the most recent {ring.cap} samples of this parameter.</p>"
+        )
+    return PlotRender(html=html, json=json.dumps(payload))
 
 
 def plot_host_html(view: PlotView, ring: ObservationRing) -> str:
