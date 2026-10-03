@@ -26,6 +26,16 @@ class ConsoleOutput:
     def message(self, text: str, *, style: str | None = None) -> None:
         self.console.print(text, style=style if self.terminal else None, markup=False)
 
+    def path(self, text: str) -> None:
+        """One width-safe line naming a filesystem path.
+
+        Rich's wrapping console splits long paths mid-word at its default
+        width 80 (CI terminals; the same corruption class document() and
+        findings() shed) — and these lines are exactly what operators and
+        tests grep for, so they bypass rich entirely.
+        """
+        self.console.file.write(text + "\n")
+
     def document(self, value: object) -> None:
         import json
 

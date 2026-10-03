@@ -655,8 +655,8 @@ def registry_publish_status_command(
         f"{doc['lifecycle']}) and signed:",
         style="green",
     )
-    output.message(f"  {release_dir / 'status.json'}", style="green")
-    output.message(f"  {release_dir / 'status.sig'}", style="green")
+    output.path(f"  {release_dir / 'status.json'}")
+    output.path(f"  {release_dir / 'status.sig'}")
     if defaulted:
         output.message(
             "expires_at defaulted to updated_at + 365 days; pass --expires-at "
@@ -708,7 +708,7 @@ def registry_yank_command(
         f"Yanked at status sequence {doc['sequence']}; record appended:",
         style="green",
     )
-    output.message(f"  {record}", style="green")
+    output.path(f"  {record}")
 
 
 @registry_group.command("advise")
@@ -762,7 +762,7 @@ def registry_advise_command(
         "record appended:",
         style="green",
     )
-    output.message(f"  {record}", style="green")
+    output.path(f"  {record}")
 
 
 @registry_group.command("unlist")
@@ -791,7 +791,7 @@ def registry_unlist_command(
     )
     output = ConsoleOutput()
     output.message("Unlist record appended (no status document touched):", style="green")
-    output.message(f"  {record}", style="green")
+    output.path(f"  {record}")
 
 
 @registry_group.command("withdraw")
@@ -824,7 +824,7 @@ def registry_withdraw_command(
     )
     output = ConsoleOutput()
     output.message("Withdraw record appended; the queue now derives withdrawn:", style="green")
-    output.message(f"  {record}", style="green")
+    output.path(f"  {record}")
 
 
 @registry_group.command("transfer")
@@ -888,7 +888,7 @@ def registry_transfer_command(
         f"Transfer record appended ({to_publisher} is the recorded receiver):",
         style="green",
     )
-    output.message(f"  {record}", style="green")
+    output.path(f"  {record}")
 
 
 def _renderer_origin(renderer_url: str | None) -> str | None:

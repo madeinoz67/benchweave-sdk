@@ -217,6 +217,30 @@ def test_keyed_commands_accept_a_key_matching_the_clone_root(
     _signature_verifies(clone, public)
 
 
+def test_success_path_lines_survive_width_80(
+    clone: Path, origin_key: tuple[Path, Any]
+) -> None:
+    """The keyed-write success echo names filesystem paths — rich's wrapping
+    console splits them mid-word at width 80 (CI is 80 columns; the local
+    suite never saw it). Paths emit width-safe, one greppable line each:
+    the same corruption class document() and findings() shed.
+    """
+    from benchweave_sdk.cli import cli
+
+    key_path, _public = origin_key
+    result = CliRunner(env={"COLUMNS": "80"}).invoke(
+        cli,
+        ["registry", "publish-status", RELEASE, "--origin-key", str(key_path),
+         "--expires-at", "2030-01-01T00:00:00Z", "--registry-clone", str(clone)],
+    )
+    assert result.exit_code == 0, result.output
+    status_line = [line for line in result.output.splitlines() if "status.json" in line]
+    assert len(status_line) == 1, result.output
+    assert str(_status_path(clone)) in result.output, result.output
+    sig_line = [line for line in result.output.splitlines() if "status.sig" in line]
+    assert len(sig_line) == 1, result.output
+
+
 # --- yank (CR-29's record half; the replay half is the registry lane's) -----------
 
 
