@@ -285,7 +285,7 @@ def _add_html_routes(
 
     async def _page_reading_state(
         device_id: str, page: Any
-    ) -> tuple[list[str], list[Any], dict[str, Any] | None]:
+    ) -> tuple[list[str], list[Any], list[Any], dict[str, Any] | None]:
         """Gather one page's reading tiles (read-only, NFR-O3).
 
         Stops at the first refused read — the refused state renders as the
@@ -320,11 +320,11 @@ def _add_html_routes(
                     "message": exc.message,
                     "adapter": adapter,
                 }
-                return tiles, severities, refusal
+                return tiles, severities, no_data, refusal
             html, severity = reading_tile_html(data, parameter, label=binding.target_id)
             tiles.append(html)
             severities.append(severity)
-        return tiles, severities, None
+        return tiles, severities, no_data, None
 
     def _page_context(
         page: Any,
@@ -368,22 +368,46 @@ def _add_html_routes(
         tiles: list[str] = []
         refusal = None
         no_data: list[Any] = []
+        connected = seam.session.connected
         if page.panel_id is None:
             if page.kind == "readings":
-                # The page always probes its bindings: a not-connected
-                # device answers not_ready and the page renders the refused
-                # state (the disconnected baseline's own severity — the
-                # honest negative, never a silent blank).
-                tiles, severities, refusal = await _page_reading_state(
-                    seam.session.device_id, page
+                has_observations = any(
+                    binding.kind == "observation" and binding.parameter_id is not None
+                    for binding in page.bindings
                 )
-                if refusal is not None:
-                    severities.append(
-                        refusal_severity(
-                            refusal["code"], refusal.get("adapter")
-                        )
+                if connected:
+                    # Connected: the page probes its bindings; a refused
+                    # read renders the refused state (the request-rejected
+                    # baseline's own shape — never a silent blank).
+                    tiles, severities, no_data, refusal = await _page_reading_state(
+                        seam.session.device_id, page
                     )
-                severity = compose_severity(severities)
+                    if refusal is not None:
+                        severities.append(
+                            refusal_severity(refusal["code"], refusal.get("adapter"))
+                        )
+                    severity = compose_severity(severities)
+                else:
+                    # Not connected: nothing was refused — the connect
+                    # prompt renders ONLY for pages that declare
+                    # observations to read (fold R-b); pages without them
+                    # render their disclosures alone, never the prompt.
+                    no_data = [
+                        binding
+                        for binding in page.bindings
+                        if binding.kind != "observation"
+                        or binding.parameter_id is None
+                    ]
+                    show_prompt = has_observations
+                    return _TEMPLATES.TemplateResponse(
+                        request=request,
+                        name="page.html",
+                        context=shared(
+                            **_page_context(page, severity, tiles, refusal, no_data),
+                            show_prompt=show_prompt,
+                            plots=_page_plots(page.id),
+                        ),
+                    )
             else:
                 no_data = [binding for binding in page.bindings if binding.kind != "observation"]
         return _TEMPLATES.TemplateResponse(
@@ -391,33 +415,53 @@ def _add_html_routes(
             name="page.html",
             context=shared(
                 **_page_context(page, severity, tiles, refusal, no_data),
+                show_prompt=False,
                 plots=_page_plots(page.id),
             ),
         )
 
     @app.get("/pages/{page_id}/readings", response_class=HTMLResponse)
     async def page_partial(request: Request, page_id: str) -> Response:
-        """The polled partial: the severity header, the tiles, the refused
-        state (I1's poll mechanism — SW-26's degenerate coalescing-by-poll,
-        disclosed as D-I2a until the event bus lands at I2c)."""
+        """The polled partial: the severity badge, the tiles, the refused
+        state, the no-data disclosures and the plots — everything the swap
+        region owns (I1's poll mechanism — SW-26's degenerate
+        coalescing-by-poll, disclosed as D-I2a until the event bus lands at
+        I2c). The no-data lines SURVIVE the swap (fold R-b: a disclosure
+        that vanishes on poll is a laundered disclosure)."""
         page = presentation.page(page_id)
         if page is None:
             return HTMLResponse("not found", status_code=404)
         severity = "neutral"
         tiles: list[str] = []
         refusal = None
+        no_data: list[Any] = []
+        show_prompt = False
         if page.panel_id is None and page.kind == "readings":
-            tiles, severities, refusal = await _page_reading_state(
-                seam.session.device_id, page
-            )
-            if refusal is not None:
-                severities.append(refusal_severity(refusal["code"], refusal.get("adapter")))
-            severity = compose_severity(severities)
+            if seam.session.connected:
+                tiles, severities, no_data, refusal = await _page_reading_state(
+                    seam.session.device_id, page
+                )
+                if refusal is not None:
+                    severities.append(refusal_severity(refusal["code"], refusal.get("adapter")))
+                severity = compose_severity(severities)
+            else:
+                no_data = [
+                    binding
+                    for binding in page.bindings
+                    if binding.kind != "observation" or binding.parameter_id is None
+                ]
+                show_prompt = any(
+                    binding.kind == "observation" and binding.parameter_id is not None
+                    for binding in page.bindings
+                )
+        elif page.panel_id is None:
+            no_data = [binding for binding in page.bindings if binding.kind != "observation"]
         return _TEMPLATES.TemplateResponse(
             request=request,
             name="page-readings.html",
             context=shared(
-                **_page_context(page, severity, tiles, refusal, []),
+                **_page_context(page, severity, tiles, refusal, no_data),
+                show_prompt=show_prompt,
                 plots=_page_plots(page.id),
             ),
         )

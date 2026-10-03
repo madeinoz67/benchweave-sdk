@@ -16,9 +16,9 @@
 <div class="bw-tiles">
   {%- for tile in tiles %}{{ tile }}{% endfor %}
 </div>
-{% elif not refusal and not panel_refusal %}
+{% elif show_prompt and not refusal and not panel_refusal %}
 <div class="notice">
-  <p>No readings yet. Connect the device to read the page's declared observations.</p>
+  <p>No readings yet. Connect the device to read this page's declared observations.</p>
 </div>
 {% endif %}
 {% for binding in no_data %}

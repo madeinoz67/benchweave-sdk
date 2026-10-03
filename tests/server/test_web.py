@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 from benchweave_sdk_server.web import build_app
 
@@ -308,3 +309,127 @@ def test_a_scenario_switch_moves_the_badge_through_the_poll(
         _connect(poll_client, policy)
         after = poll_client.get("/pages/readings/readings").text
         assert 'data-bw-page-severity="critical"' in after
+
+
+# --- the connect prompt and the no-data line (folds R-b/R-c) --------------------
+
+
+def _empty_configuration_page(project: Path) -> Path:
+    """A manifest page with NO bindings (the lane's empty-bindings shape):
+    valid by the schema (``ids`` has no floor), and it declares nothing to
+    read — so the connect prompt would be a falsehood on it."""
+    import hashlib
+    import json
+
+    package = project / "src" / "example_plugin"
+    manifest_path = package / "ui" / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["pages"].append(
+        {
+            "id": "settings",
+            "title": "Settings",
+            "kind": "configuration",
+            "bindings": [],
+            "required": False,
+        }
+    )
+    raw = (json.dumps(manifest, indent=2) + "\n").encode()
+    manifest_path.write_bytes(raw)
+    envelope_path = package / "presentation.json"
+    envelope = json.loads(envelope_path.read_text())
+    envelope["manifest"]["sha256"] = hashlib.sha256(raw).hexdigest()
+    envelope_path.write_text(json.dumps(envelope, indent=2) + "\n")
+    return project
+
+
+def test_an_empty_page_never_shows_the_connect_prompt(starter_project, tmp_path, policy) -> None:
+    """Row R-b: the connect prompt names observations to read — a page that
+    DECLARES none (connected or not) must never show it."""
+    import shutil
+
+    from fastapi.testclient import TestClient
+
+    from benchweave_sdk_server.cli import _build_seam
+
+    project = tmp_path / "empty-page"
+    shutil.copytree(starter_project, project)
+    _empty_configuration_page(project)
+    seam, _ = _build_seam(project)
+    with TestClient(
+        build_app(seam, policy=policy), base_url="http://127.0.0.1:8477"
+    ) as page_client:
+        _connect(page_client, policy)
+        body = page_client.get("/pages/settings").text
+        assert "Connect the device" not in body
+        assert "panel_unavailable" not in body
+
+
+def test_the_connect_prompt_names_the_page_it_serves(client, policy) -> None:
+    """Row R-b: a readings page WITH observation bindings and no connection
+    shows the prompt (the honest not-connected-yet state)."""
+    body = client.get("/pages/readings").text
+    assert "Connect the device" in body
+
+
+def test_the_no_data_line_survives_the_poll_swap(monkeypatch, client, policy) -> None:
+    """Row R-b (the laundered-poll repro): a page carrying a non-observation
+    binding renders its no-data disclosure on the full page AND on the poll
+    partial — the swap must never launder the disclosure away."""
+    from benchweave_sdk_server.presentation import BindingRow, HostPresentation, PageView
+
+    synthetic = PageView(
+        id="mixed",
+        title="Mixed",
+        kind="readings",
+        required=False,
+        panel_id=None,
+        bindings=(
+            BindingRow(
+                id="obs", kind="observation", target_id="voltage", parameter_id="voltage"
+            ),
+            BindingRow(id="bulk", kind="dataset", target_id="capture"),
+        ),
+    )
+    original = HostPresentation.page
+
+    def patched(self, page_id):
+        return synthetic if page_id == "mixed" else original(self, page_id)
+
+    monkeypatch.setattr(HostPresentation, "page", patched)
+    _connect(client, policy)
+    full = client.get("/pages/mixed").text
+    assert 'data-bw-binding="bulk"' in full
+    assert "No data — dataset binding" in full
+    partial = client.get("/pages/mixed/readings").text
+    assert 'data-bw-binding="bulk"' in partial, "the poll swap dropped the disclosure"
+    assert "No data — dataset binding" in partial
+
+
+def test_a_page_with_no_observations_renders_only_disclosures(monkeypatch, client) -> None:
+    """Row R-c: the no-data coverage arm — a page whose every binding is
+    non-observation renders one disclosure line per binding, no prompt, no
+    tiles."""
+    from benchweave_sdk_server.presentation import BindingRow, HostPresentation, PageView
+
+    synthetic = PageView(
+        id="bulk-only",
+        title="Bulk only",
+        kind="dataset",
+        required=False,
+        panel_id=None,
+        bindings=(
+            BindingRow(id="one", kind="dataset", target_id="capture"),
+            BindingRow(id="two", kind="procedure", target_id="invoke"),
+        ),
+    )
+    original = HostPresentation.page
+
+    def patched(self, page_id):
+        return synthetic if page_id == "bulk-only" else original(self, page_id)
+
+    monkeypatch.setattr(HostPresentation, "page", patched)
+    body = client.get("/pages/bulk-only").text
+    assert "No data — dataset binding" in body
+    assert "No data — procedure binding" in body
+    assert "Connect the device" not in body
+    assert "bw-reading" not in body

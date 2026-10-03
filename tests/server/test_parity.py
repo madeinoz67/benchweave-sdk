@@ -149,11 +149,14 @@ def scenario_app(starter: Path, request) -> Iterator[tuple[TestClient, GuardPoli
         yield client, policy, scenario_id
 
 
-def _connect(client: TestClient) -> None:
+def _connect(client: TestClient) -> str:
+    """Connect and return the POST's final body: a refused connect RENDERS
+    its refusal there (the M1 fold) — the refused-state render the
+    disconnected parity arm asserts."""
     body = client.get(f"/devices/{DEV}").text
     marker = 'hx-headers=\'{"X-CSRF-Token": "'
     token = body.split(marker, 1)[1].split('"', 1)[0]
-    client.post(f"/devices/{DEV}/connect", headers={"x-csrf-token": token})
+    return client.post(f"/devices/{DEV}/connect", headers={"x-csrf-token": token}).text
 
 
 def _starter_of(client: TestClient) -> Path:
@@ -208,7 +211,7 @@ def _expected_tile(data: dict, *, label: str) -> str:
 @pytest.mark.parametrize("scenario_app", ALL_SCENARIOS, indirect=True)
 def test_component_and_severity_parity(scenario_app, starter: Path) -> None:
     client, policy, scenario_id = scenario_app
-    _connect(client)
+    connect_render = _connect(client)
     pages = _manifest_pages(client)
     assert pages, "the manifest enumerates the page set"
     page = client.get(f"/pages/{pages[0]}")
@@ -217,11 +220,15 @@ def test_component_and_severity_parity(scenario_app, starter: Path) -> None:
     expected = _expected_severities(starter)
 
     if scenario_id in ("disconnected",):
-        # Through the pipeline, disconnected IS a refused connection: the
-        # page renders the refused state and composes critical.
-        assert "Readings refused" in body
-        assert "not_ready" in body
-        assert f'data-bw-page-severity="{expected[scenario_id]}"' in body
+        # Through the pipeline, disconnected IS a refused connection. The
+        # refused-state render (the design's own arm for this scenario) is
+        # the DEVICE page's — the refusal happened at connect; the readings
+        # page honestly shows the connect prompt (fold R-b: nothing was
+        # refused of IT), and the severity stays neutral there.
+        assert "Connect refused" in connect_render
+        assert "not_ready" in connect_render
+        assert "Connect the device" in body, "the readings page prompts honestly"
+        assert "Readings refused" not in body
         return
     if scenario_id in ("request-rejected",):
         # The refusal carries the adapter's code verbatim (SW-12) and the
