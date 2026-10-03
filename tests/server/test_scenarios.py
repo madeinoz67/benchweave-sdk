@@ -249,3 +249,61 @@ def test_selection_validates_ids() -> None:
     assert selection.current == "stale"
     with pytest.raises(ValueError, match="standalone_scenario_unknown:"):
         selection.select("nope")
+
+
+# --- FOLD-3 (refute lane-1 F2/F3): derivation honesty -------------------------
+
+
+def test_a_schema_valid_huge_range_derives_a_finite_in_range_value(tmp_path: Path) -> None:
+    """(a+b)/2 overflows to inf on schema-valid [1e308, 1.7e308] — the
+    script then served inf as a 'valid' reading (REST 500 on strict JSON,
+    an out-of-range value rendered valid). The derivation must stay
+    finite AND inside the declared range."""
+    from fastapi.testclient import TestClient
+
+    from benchweave_sdk_server.cli import _build_seam
+    from benchweave_sdk_server.security import GuardPolicy, new_token
+    from benchweave_sdk_server.web import build_app
+
+    plugin = _range_plugin("float", {"range": [1e308, 1.7e308]}, tmp_path)
+    script = scenario_exchanges(plugin, "normal")
+    line = script[1][1]["data"]
+    assert line != b"inf,valid\n"
+    value = float(line[:-1].split(b",")[0])
+    import math
+
+    assert math.isfinite(value)
+    assert 1e308 <= value <= 1.7e308
+
+    seam, _ = _build_seam(_project_of(plugin), scenario="normal")
+    policy = GuardPolicy.complete(
+        bound_host="127.0.0.1", bound_port=8477, bearer_token=new_token(), csrf_token=new_token()
+    )
+    with TestClient(build_app(seam, policy=policy), base_url="http://127.0.0.1:8477") as client:
+        connect = client.post(
+            "/v1/device_connect",
+            json={"device_id": "example_device"},
+            headers={"authorization": f"Bearer {policy.bearer_token}"},
+        )
+        assert connect.status_code == 200, connect.text
+        read = client.post(
+            "/v1/parameter_read",
+            json={"device_id": "example_device", "parameter": "voltage"},
+            headers={"authorization": f"Bearer {policy.bearer_token}"},
+        )
+        assert read.status_code == 200, read.text
+        assert 1e308 <= read.json()["data"]["value"] <= 1.7e308
+
+
+def _project_of(plugin):
+    return plugin.project_root
+
+
+def test_a_range_with_no_integer_refuses_the_derivation(tmp_path: Path) -> None:
+    """The int truncation exit (lane-1 F3): int((a+b)/2) on a range that
+    contains no integer served an OUT-OF-RANGE value as quality valid
+    (the probe served -1). The invariant: every derived value lies within
+    the declared range, else a prefixed typed refusal at script build."""
+    plugin = _range_plugin("int", {"range": [1.4, 1.6]}, tmp_path)
+    with pytest.raises(PluginLoadError, match="standalone_scenario_derivation:"):
+        scenario_exchanges(plugin, "normal")

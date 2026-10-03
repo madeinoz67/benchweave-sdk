@@ -165,17 +165,47 @@ def _line(*fields: str) -> bytes:
 def canonical_value(parameter: dict[str, Any]) -> bool | int | float | str:
     """The scenario's value for one parameter, from its own declaration.
 
-    Midpoint of the declared ``range`` for numeric parameters (an int
-    parameter keeps an int: the largest int not exceeding the midpoint);
-    otherwise the type-canonical value — ``generate_baselines``'
-    ``_synthetic_value`` vocabulary keyed on the descriptor's own type
-    names (an enum parameter reads its first declared value).
+    Midpoint of the declared ``range`` for numeric parameters — computed
+    overflow-SAFELY (``a/2 + b/2``: ``(a+b)/2`` overflows to inf on the
+    schema-valid [1e308, 1.7e308], and an inf served as a 'valid' reading
+    is the launder the scenario adapter exists to prevent) — else the
+    type-canonical value: ``generate_baselines``' ``_synthetic_value``
+    vocabulary keyed on the descriptor's own type names (an enum
+    parameter reads its first declared value).
+
+    The derivation invariant (refute fold 3): every derived value LIES
+    WITHIN the declared range, or the derivation refuses with a prefixed
+    typed error — an int parameter whose declared range contains no
+    integer (int(1.5) truncation served 1 as 'valid' against [1.4, 1.6])
+    refuses honestly instead of serving an out-of-range value.
     """
+    import math
+
+    name = str(parameter.get("name", "<unnamed>"))
     declared_type = str(parameter.get("type", ""))
     bounds = parameter.get("range")
     if declared_type in ("float", "int") and isinstance(bounds, list) and len(bounds) == 2:
-        midpoint = (float(bounds[0]) + float(bounds[1])) / 2
-        return int(midpoint) if declared_type == "int" else midpoint
+        low, high = float(bounds[0]), float(bounds[1])
+        midpoint = low / 2 + high / 2
+        midpoint = min(max(midpoint, low), high)
+        if not math.isfinite(midpoint):
+            raise PluginLoadError(
+                f"standalone_scenario_derivation: {name}: the midpoint of the "
+                f"declared range {bounds} is not a finite value"
+            )
+        if declared_type == "int":
+            candidate = round(midpoint)
+            if candidate < low:
+                candidate = math.ceil(low)
+            if candidate > high:
+                candidate = math.floor(high)
+            if not low <= candidate <= high:
+                raise PluginLoadError(
+                    f"standalone_scenario_derivation: {name}: no integer lies "
+                    f"within the declared range {bounds}"
+                )
+            return candidate
+        return midpoint
     if declared_type == "enum":
         enum_values = parameter.get("enum_values")
         if isinstance(enum_values, list) and enum_values:
