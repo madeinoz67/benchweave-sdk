@@ -26,7 +26,7 @@ from .publishing import (
     parse_dependency,
     validate_transport_triple,
 )
-from .scaffold import create_project
+from .scaffold import create_project, recorded_sdk_version
 from .validation import validate_descriptor, verify_provider_pin
 
 
@@ -86,6 +86,43 @@ def new_command(directory: Path, package_name: str, with_ui: bool) -> None:
     ConsoleOutput().message(
         f"Created synthetic plugin at {destination}; review before hardware or publication.",
         style="green",
+    )
+
+
+@cli.command("doctor")
+@click.argument("directory", default=".", type=click.Path(path_type=Path))
+@_domain_errors
+def doctor_command(directory: Path) -> None:
+    """Report the project's recorded scaffold SDK version against the installed one.
+
+    Fully offline (issue #347 WS1b): reads the benchweave-sdk== pin that
+    ``new`` writes into [project.optional-dependencies] test and compares it
+    with the running SDK. A version mismatch is reported, never failed on —
+    ``check`` stays the conformance gate; ``doctor`` only diagnoses.
+    """
+    project = directory.expanduser().resolve()
+    if not project.is_dir():
+        raise ValueError(f"project_directory_not_found: {project}")
+    recorded = recorded_sdk_version(project)
+    output = ConsoleOutput()
+    if recorded is None:
+        output.message(
+            "No scaffold version recorded: no benchweave-sdk== pin in this "
+            "project's [project.optional-dependencies] test extra; nothing to compare.",
+        )
+        return
+    if recorded == __version__:
+        output.message(
+            f"Scaffold version matches the installed SDK: benchweave-sdk {__version__}.",
+            style="green",
+        )
+        return
+    output.message(
+        f"Version mismatch: this project was scaffolded with benchweave-sdk {recorded}, "
+        f"but the installed SDK is {__version__}. Reinstall the pinned version to "
+        f"reproduce it (uv pip install 'benchweave-sdk=={recorded}'), or update the pin "
+        "in pyproject.toml deliberately to move the project forward.",
+        style="yellow",
     )
 
 

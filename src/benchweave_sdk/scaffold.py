@@ -7,6 +7,7 @@ import keyword
 import re
 import shutil
 import sys
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -612,6 +613,53 @@ def _parameterize(template: str, package: str) -> str:
     return template.replace("__PLUGIN_DASHED__", package.replace("_", "-")).replace(
         "__PLUGIN__", package
     )
+
+
+def recorded_sdk_version(project: Path) -> str | None:
+    """The SDK version pin ``create_project`` records in ``project``.
+
+    ``create_project`` writes ``benchweave-sdk==<version>`` into the
+    generated ``[project.optional-dependencies]`` test extra; that pin is the
+    scaffold's provenance marker — the only record a project carries of
+    which SDK version wrote it (pre-copier; issue #347 WS1b).
+
+    Parameters
+    ----------
+    project
+        Project directory whose ``pyproject.toml`` carries the pin.
+
+    Returns
+    -------
+    str | None
+        The pinned version, or None when the project has no
+        ``pyproject.toml`` or no ``benchweave-sdk==`` pin in its test
+        extra. An unpinned ``benchweave-sdk`` requirement, or one in
+        another extra, is not a recorded version.
+
+    Raises
+    ------
+    ValueError
+        If ``pyproject.toml`` exists but cannot be parsed.
+    """
+    pyproject = project / "pyproject.toml"
+    if not pyproject.is_file():
+        return None
+    try:
+        with pyproject.open("rb") as handle:
+            document: dict[str, Any] = tomllib.load(handle)
+    except (tomllib.TOMLDecodeError, UnicodeDecodeError, OSError) as exc:
+        raise ValueError(f"pyproject_unreadable: {pyproject}: {exc}") from exc
+    section = document.get("project")
+    extras = section.get("optional-dependencies") if isinstance(section, dict) else None
+    test_extra = extras.get("test") if isinstance(extras, dict) else None
+    if not isinstance(test_extra, list):
+        return None
+    for requirement in test_extra:
+        if isinstance(requirement, str):
+            match = re.fullmatch(r"benchweave-sdk==([0-9A-Za-z.+-]+)", requirement.strip())
+            if match is not None:
+                return match.group(1)
+    return None
 
 
 def create_project(destination: Path, package: str) -> None:

@@ -46,6 +46,8 @@ pytest
 
 Keep the environment that contains the SDK wheel. If you create a new environment inside the project, install the wheel there too. For a repeatable `uv lock` against a locally built wheel, configure that wheel or your organisation's package source explicitly.
 
+Run `benchweave-sdk doctor` from the project to compare the pin with the installed SDK. The command names the recorded version, the installed version, and the reinstall command when they differ. The command works offline and does not fail the run. A stale SDK is a report, not an error.
+
 Replace `acme/model100` with your manufacturer and device or plugin name. The destination controls the directory hierarchy. The `--package` option controls the Python import package. The SDK creates missing parent directories and refuses to overwrite an existing project. A destination that you reach through a symlinked directory is canonicalized before any write. On macOS, `/tmp/...` is such a symlink. Messages report the real path.
 
 ```text
