@@ -25,6 +25,8 @@ from typing import Any, Protocol
 
 from benchweave_sdk.capture import StandaloneCaptureWriter
 
+from .session import LoadedPlugin, PluginSession
+
 _TERMINATORS = {"lf": b"\n", "crlf": b"\r\n"}
 
 #: The section 8.1 stream transaction field sets, exactly as the guide's
@@ -433,3 +435,63 @@ class SerialCaptureServices:
         writer = self._writers.pop(capture_id, None)
         if writer is not None:
             await writer.artifact_abort(capture_id)
+
+
+def _serial_settings(plugin: Any) -> dict[str, Any]:
+    """The descriptor's transport settings (the serial knobs the opener uses)."""
+    settings = plugin.descriptor.get("transport", {}).get("settings", {})
+    return settings if isinstance(settings, dict) else {}
+
+
+def open_serial_port(device: str, settings: dict[str, Any]) -> Any:
+    """Open a real serial port through pyserial with the descriptor's own
+    declared settings (A02: the plugin's declared bound is the bound). A
+    missing pyserial refuses with the prefixed install hint, never a bare
+    ImportError."""
+    try:
+        import serial  # type: ignore[import-untyped]  # pyserial, [server] extra
+    except ImportError as exc:
+        raise RuntimeError(
+            "standalone_serial_pyserial_missing: install 'benchweave-sdk[server]' "
+            "for serial transport support"
+        ) from exc
+    parity = {
+        "none": serial.PARITY_NONE,
+        "even": serial.PARITY_EVEN,
+        "odd": serial.PARITY_ODD,
+    }.get(str(settings.get("parity", "none")), serial.PARITY_NONE)
+    stop = {1: serial.STOPBITS_ONE, 2: serial.STOPBITS_TWO}.get(
+        int(settings.get("stop_bits", 1)), serial.STOPBITS_ONE
+    )
+    data = {7: serial.SEVENBITS, 8: serial.EIGHTBITS}.get(
+        int(settings.get("data_bits", 8)), serial.EIGHTBITS
+    )
+    return serial.Serial(
+        device,
+        baudrate=int(settings.get("baud", 115200)),
+        bytesize=data,
+        parity=parity,
+        stopbits=stop,
+        rtscts=bool(settings.get("rtscts", False)),
+        timeout=0.05,
+        write_timeout=1.0,
+    )
+
+
+def serial_plugin_session(
+    plugin: LoadedPlugin, device_path: str, *, open_port: Any = None
+) -> PluginSession:
+    """A ``PluginSession`` over a serial port: the services factory mints a
+    FRESH link + services per connection (the M1 fold's per-connection
+    precedent — a reconnect starts a new conversation over a new link, and
+    a faulted link never serves a second conversation). ``open_port`` stays
+    injectable so tests never need a real port."""
+    settings = _serial_settings(plugin)
+    max_frame = int(settings.get("max_frame_bytes", 0)) or 4096
+    opener = open_port or open_serial_port
+
+    def factory() -> SerialCaptureServices:
+        transport = opener(device_path, settings)
+        return SerialCaptureServices(SerialLink(transport), max_frame_bytes=max_frame)
+
+    return PluginSession(plugin, factory)

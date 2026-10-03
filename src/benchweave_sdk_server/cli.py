@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, NoReturn
+from typing import TYPE_CHECKING, Any, NoReturn
 
 import click
 
@@ -71,6 +71,8 @@ def _build_seam(
     transport: str = "mock",
     scenario: str | None = None,
     unattended: bool = False,
+    device: str | None = None,
+    open_port: Any = None,
 ) -> tuple[StandaloneSeam, ScenarioSelection | None]:
     """Compose the seam over one transport (§4.1's composition step).
 
@@ -91,6 +93,7 @@ def _build_seam(
         scenario_session,
         wrap_scenario_plugin,
     )
+    from .serial import serial_plugin_session
     from .session import mock_plugin_session
 
     plugin = _load(project)
@@ -112,6 +115,28 @@ def _build_seam(
             ),
             selection,
         )
+        return (
+            StandaloneSeam(
+                serial_plugin_session(plugin, device, open_port=open_port),
+                transport_kind="serial",
+                unattended=unattended,
+            ),
+            None,
+        )
+    if transport == "serial" and not device:
+        click.echo(
+            "standalone_transport_serial_device_required: --transport serial "
+            "requires --device <path>",
+            err=True,
+        )
+        raise SystemExit(2)
+    if transport != "serial" and device:
+        click.echo(
+            "standalone_transport_device_serial_only: --device applies only to "
+            "--transport serial",
+            err=True,
+        )
+        raise SystemExit(2)
     return (
         StandaloneSeam(
             mock_plugin_session(plugin),
@@ -141,7 +166,17 @@ def cli() -> None:
 @click.option("--port", default=8477, type=click.IntRange(1, 65535), show_default=True)
 @click.option("--allow-network", is_flag=True)
 @click.option("--no-open", is_flag=True)
-@click.option("--transport", type=click.Choice(["mock"]), default="mock", show_default=True)
+@click.option(
+    "--transport",
+    type=click.Choice(["mock", "serial"]),
+    default="mock",
+    show_default=True,
+)
+@click.option(
+    "--device",
+    default=None,
+    help="Serial device path (required with --transport serial, refused otherwise).",
+)
 @click.option(
     "--scenario",
     type=click.Choice(_scenario_ids()),
@@ -162,6 +197,7 @@ def serve(
     allow_network: bool,
     no_open: bool,
     transport: str,
+    device: str | None,
     scenario: str | None,
     authoring: bool,
     unattended: bool,
@@ -198,7 +234,11 @@ def serve(
             err=True,
         )
     seam, selection = _build_seam(
-        project, transport=transport, scenario=scenario, unattended=unattended
+        project,
+        transport=transport,
+        scenario=scenario,
+        unattended=unattended,
+        device=device,
     )
     if seam.session.plugin.load_diagnostic is not None:
         # §4.5: the degraded load BINDS (exit 0) with its diagnostic on
