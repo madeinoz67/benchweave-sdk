@@ -615,13 +615,59 @@ def _parameterize(template: str, package: str) -> str:
     )
 
 
+_PIN_RE = re.compile(
+    r"^(?P<name>[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)"
+    r"(?:\s*\[[^\]]*\])?"
+    r"\s*==\s*(?P<version>\S+)$"
+)
+_VERSION_RE = re.compile(
+    r"^[Vv]?(?P<release>\d+(?:\.\d+)*)"
+    r"(?P<rest>(?:\.?[A-Za-z][0-9A-Za-z.]*)?(?:\+[0-9A-Za-z.]+)?)$"
+)
+
+
+def _normalize_version(version: str) -> str | None:
+    """Normalize a version for comparison; None when not version-shaped.
+
+    PEP 440-lite (issue #347 WS1b refute F2): strips one leading ``v`` and
+    zero-pads the release to three dot-separated parts, so ``0.5`` and
+    ``0.5.0`` compare equal. Text without a leading numeric release
+    (``..++--``) is not version-shaped and returns None.
+    """
+    match = _VERSION_RE.match(version.strip())
+    if match is None:
+        return None
+    parts = match["release"].split(".")
+    while len(parts) < 3:
+        parts.append("0")
+    return ".".join(parts) + match["rest"]
+
+
+def _requirement_pin(requirement: str) -> str | None:
+    """The normalized ``==`` version of a benchweave-sdk requirement line.
+
+    Tolerates the PEP 508 spellings a hand-edited line realistically carries
+    (refute F1): an extras clause (``benchweave-sdk[signing]==0.5.0``), an
+    environment marker after ``;``, whitespace around ``==``, and PEP 503
+    name normalization (``BenchWeave-SDK``, ``benchweave_sdk``). Returns None
+    when the line names another distribution, carries no ``==`` pin, or its
+    version is not version-shaped.
+    """
+    match = _PIN_RE.match(requirement.split(";", 1)[0].strip())
+    if match is None:
+        return None
+    if re.sub(r"[-_.]+", "-", match["name"]).lower() != "benchweave-sdk":
+        return None
+    return _normalize_version(match["version"])
+
+
 def recorded_sdk_version(project: Path) -> str | None:
-    """The SDK version pin ``create_project`` records in ``project``.
+    """The normalized SDK version pin recorded in ``project``.
 
     ``create_project`` writes ``benchweave-sdk==<version>`` into the
-    generated ``[project.optional-dependencies]`` test extra; that pin is the
-    scaffold's provenance marker — the only record a project carries of
-    which SDK version wrote it (pre-copier; issue #347 WS1b).
+    generated ``[project.optional-dependencies]`` test extra. That line is
+    the requirement ``new`` writes — a mutable declaration the author may
+    later edit, not an immutable provenance record (issue #347 WS1b).
 
     Parameters
     ----------
@@ -631,10 +677,13 @@ def recorded_sdk_version(project: Path) -> str | None:
     Returns
     -------
     str | None
-        The pinned version, or None when the project has no
-        ``pyproject.toml`` or no ``benchweave-sdk==`` pin in its test
-        extra. An unpinned ``benchweave-sdk`` requirement, or one in
-        another extra, is not a recorded version.
+        The pinned version, normalized (leading ``v`` stripped, release
+        zero-padded to three parts), or None when the project has no
+        ``pyproject.toml`` or no version-shaped ``benchweave-sdk==`` pin in
+        its test extra. Hand-edited PEP 508 spellings — an extras clause,
+        an environment marker, whitespace around ``==``, PEP 503 name case
+        — still record. When the extra lists several ``benchweave-sdk``
+        requirements, the first one with a version-shaped ``==`` pin wins.
 
     Raises
     ------
@@ -656,9 +705,9 @@ def recorded_sdk_version(project: Path) -> str | None:
         return None
     for requirement in test_extra:
         if isinstance(requirement, str):
-            match = re.fullmatch(r"benchweave-sdk==([0-9A-Za-z.+-]+)", requirement.strip())
-            if match is not None:
-                return match.group(1)
+            version = _requirement_pin(requirement)
+            if version is not None:
+                return version
     return None
 
 

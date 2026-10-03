@@ -26,7 +26,7 @@ from .publishing import (
     parse_dependency,
     validate_transport_triple,
 )
-from .scaffold import create_project, recorded_sdk_version
+from .scaffold import _normalize_version, create_project, recorded_sdk_version
 from .validation import validate_descriptor, verify_provider_pin
 
 
@@ -90,19 +90,24 @@ def new_command(directory: Path, package_name: str, with_ui: bool) -> None:
 
 
 @cli.command("doctor")
-@click.argument("directory", default=".", type=click.Path(path_type=Path))
+@click.argument("directory", default=".", required=False)
 @_domain_errors
-def doctor_command(directory: Path) -> None:
-    """Report the project's recorded scaffold SDK version against the installed one.
+def doctor_command(directory: str) -> None:
+    """Report the project's pinned SDK version against the installed one.
 
-    Fully offline (issue #347 WS1b): reads the benchweave-sdk== pin that
-    ``new`` writes into [project.optional-dependencies] test and compares it
-    with the running SDK. A version mismatch is reported, never failed on —
+    Fully offline (issue #347 WS1b): reads the benchweave-sdk== requirement
+    that ``new`` writes into [project.optional-dependencies] test — a mutable
+    declaration, not a provenance record — and compares it, normalized, with
+    the running SDK. A version mismatch is reported, never failed on;
     ``check`` stays the conformance gate; ``doctor`` only diagnoses.
     """
-    project = directory.expanduser().resolve()
-    if not project.is_dir():
+    # An empty or blank argument is the default target ("."): stated here,
+    # not left to pathlib's Path("") collapse.
+    project = Path(directory if directory.strip() else ".").expanduser().resolve()
+    if not project.exists():
         raise ValueError(f"project_directory_not_found: {project}")
+    if not project.is_dir():
+        raise ValueError(f"project_not_a_directory: {project}")
     recorded = recorded_sdk_version(project)
     output = ConsoleOutput()
     if recorded is None:
@@ -111,14 +116,14 @@ def doctor_command(directory: Path) -> None:
             "project's [project.optional-dependencies] test extra; nothing to compare.",
         )
         return
-    if recorded == __version__:
+    if recorded == _normalize_version(__version__):
         output.message(
             f"Scaffold version matches the installed SDK: benchweave-sdk {__version__}.",
             style="green",
         )
         return
     output.message(
-        f"Version mismatch: this project was scaffolded with benchweave-sdk {recorded}, "
+        f"Version mismatch: this project pins benchweave-sdk {recorded}, "
         f"but the installed SDK is {__version__}. Reinstall the pinned version to "
         f"reproduce it (uv pip install 'benchweave-sdk=={recorded}'), or update the pin "
         "in pyproject.toml deliberately to move the project forward.",
