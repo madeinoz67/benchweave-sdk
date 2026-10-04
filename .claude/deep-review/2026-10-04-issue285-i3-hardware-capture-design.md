@@ -473,3 +473,16 @@ stream_exchange), matching MockHost. The guide's example itself does not
 enforce markers — it stays the copy-into-your-project floor; the
 productised backend adds the discipline. Deferral: the guide's example is
 not updated in this fold.
+
+
+## Addendum (2026-10-04, fold-refute wave)
+
+- An adapter that transmits without a dispatch marker is omitted from serial
+  discovery (fail-closed, AR-4) — now with a logged warning naming the port
+  and the conformance refusal, not a silent empty result (fold-refute 1).
+- The writer enforces the reservation at every append; the addendum's earlier
+  "at every flush and at finalise" named a check that does not exist at
+  finalise (fold-refute 4).
+- capture-id reuse after abort is a same-process guarantee; a crash-left
+  event directory reserves the id until the capture root is cleared — the
+  orphan sweep belongs to I3c (fold-refute 3).
