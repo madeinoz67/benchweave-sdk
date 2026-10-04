@@ -84,6 +84,53 @@ jobs:
           # (the wheel force-include) and the resource path in
           # verify_installed before anything reaches PyPI.
           "$BIN/benchweave-sdk" sync-standards --check
+          # #308 A2: preview-ui on the DEFAULT install refuses through serve's
+          # own guard — exit 2, prefix + install command, never a traceback.
+          # The scaffolded project's path exists; the refusal fires before
+          # anything loads, but click's exists-check still needs a real path.
+          set +e
+          err=$("$BIN/benchweave-sdk" preview-ui "$RUNNER_TEMP/example" 2>&1)
+          code=$?
+          set -e
+          [ "$code" -eq 2 ] || { echo "::error::preview-ui exited $code on the default install (expected 2)"; echo "$err"; exit 1; }
+          echo "$err" | grep -F "benchweave_sdk_server_extras_missing:" \
+            || { echo "::error::preview-ui refusal is missing the prefix"; exit 1; }
+          echo "$err" | grep -F "benchweave-sdk[server]" \
+            || { echo "::error::preview-ui refusal is missing the install command"; exit 1; }
+          case "$err" in *Traceback*)
+            echo "::error::preview-ui refusal printed a traceback"; exit 1;; esac
+
+      - name: Server smoke — preview-ui over the installed wheel ([server], ubuntu only)
+        # #308 A3(b), the installed-wheel proof: a second venv with the
+        # wheel's [server] extra spawns preview-ui against a scaffolded
+        # project, the home page answers 200 with BOTH mode banners, and
+        # SIGINT stops it with exit 0. Ubuntu-only: one OS proves the
+        # installed shape; the matrix above already covers entry-point
+        # presence on every OS.
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv venv "$RUNNER_TEMP/server-smoke"
+          SBIN="$RUNNER_TEMP/server-smoke/bin"
+          # The glob must expand BEFORE the extras suffix is appended (the
+          # ci.yml lane's recorded trap: a quoted glob-plus-extras reaches
+          # uv as a literal and it refuses with an invalid wheel filename).
+          WHEEL="$(ls dist/*.whl)"
+          uv pip install --python "$RUNNER_TEMP/server-smoke" "${WHEEL}[server]"
+          "$SBIN/benchweave-sdk" new "$RUNNER_TEMP/server-example" --with-ui
+          PORT=18477
+          "$SBIN/benchweave-sdk" preview-ui "$RUNNER_TEMP/server-example" --no-open --port "$PORT" &
+          PID=$!
+          body="$RUNNER_TEMP/server-smoke-body.html"
+          for _ in $(seq 1 30); do
+            if curl -fsS "http://127.0.0.1:${PORT}/" -o "$body"; then break; fi
+            sleep 1
+          done
+          grep -F "SIMULATED — mock transport" "$body"
+          grep -F "STANDALONE — no gateway" "$body"
+          kill -INT "$PID"
+          wait "$PID"
 
   publish:
     name: Publish to PyPI (Trusted Publishing)
