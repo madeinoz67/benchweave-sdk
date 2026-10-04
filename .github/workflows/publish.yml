@@ -72,7 +72,15 @@ jobs:
           # --python takes the venv directory, not "$BIN/python": on Windows the
           # interpreter is python.exe and uv does not append the suffix, whereas
           # bash does resolve the suffix-less entry points used below.
-          uv pip install --python "$RUNNER_TEMP/sdk-smoke" dist/*.whl
+          # [scaffold] rides the install so `new` can render through the
+          # packaged copier template (WS2, issue #347, made the extra
+          # load-bearing AFTER v0.6.0 tagged — the bare line is a latent red
+          # for the next release, fixed here). The install still carries NO
+          # [server] extra, which is exactly what the preview-ui refusal arm
+          # below proves against. The glob expands before the extras suffix
+          # is appended (ci.yml's recorded trap).
+          WHEEL="$(ls dist/*.whl)"
+          uv pip install --python "$RUNNER_TEMP/sdk-smoke" "${WHEEL}[scaffold]"
           "$BIN/benchweave-sdk" --version | grep -F "version ${TAG#v}"
           # PR #90 carry-forward row R1: the server console script on the
           # default install, smoked at release time too (same version pin
