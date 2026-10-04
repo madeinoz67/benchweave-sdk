@@ -115,6 +115,14 @@ def _build_seam(
             ),
             selection,
         )
+    if transport == "serial":
+        if device is None:
+            click.echo(
+                "standalone_transport_serial_device_required: --transport serial "
+                "requires --device <path>",
+                err=True,
+            )
+            raise SystemExit(2)
         return (
             StandaloneSeam(
                 serial_plugin_session(plugin, device, open_port=open_port),
@@ -123,14 +131,7 @@ def _build_seam(
             ),
             None,
         )
-    if transport == "serial" and not device:
-        click.echo(
-            "standalone_transport_serial_device_required: --transport serial "
-            "requires --device <path>",
-            err=True,
-        )
-        raise SystemExit(2)
-    if transport != "serial" and device:
+    if device is not None:
         click.echo(
             "standalone_transport_device_serial_only: --device applies only to "
             "--transport serial",

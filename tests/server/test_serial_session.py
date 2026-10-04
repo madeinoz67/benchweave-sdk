@@ -149,14 +149,32 @@ def test_cli_serial_choice_is_served(starter_project: Path) -> None:
     assert "mock" in result.output and "serial" in result.output
 
 
-def test_build_seam_serial_transport_kind(starter_project) -> None:
+def test_build_seam_serial_constructs_the_real_serial_host(starter_project) -> None:
+    """The wiring test must DISCRIMINATE the real host from the mock: a
+    ``transport_kind`` assertion alone passes against a seam that serves
+    the MOCK over a "serial" label (the fold's finding). The injected
+    opener must be the seam's transport source (the factory builds through
+    it), the factory's product must be the serial services, and the mode
+    banner must follow the transport kind (simulated iff mock)."""
     from benchweave_sdk_server.cli import _build_seam
+    from benchweave_sdk_server.presentation import mode_banner_html
 
+    ports: dict[str, LoopbackPort] = {}
     seam, selection = _build_seam(
         starter_project,
         transport="serial",
         device="/dev/fake0",
-        open_port=_open_port_recorder({}),
+        open_port=_open_port_recorder(ports),
     )
     assert seam.transport_kind == "serial"
     assert selection is None
+    services = seam.session._services_factory()
+    assert isinstance(services, SerialCaptureServices), (
+        "the serial transport must serve the real serial host, never the mock"
+    )
+    assert "/dev/fake0" in ports, "the injected opener built the transport"
+    serial_banner = mode_banner_html(simulated=seam.transport_kind == "mock")
+    assert "SIMULATED PRESENTATION DATA" not in serial_banner
+    mock_seam, _ = _build_seam(starter_project, transport="mock")
+    mock_banner = mode_banner_html(simulated=mock_seam.transport_kind == "mock")
+    assert "SIMULATED PRESENTATION DATA" in mock_banner
