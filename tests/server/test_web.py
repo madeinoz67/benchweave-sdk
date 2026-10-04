@@ -11,7 +11,7 @@ DEV = "example_device"
 #: Compiled case-INSENSITIVE (CodeQL py/bad-tag-filter — a case-sensitive
 #: match on <script> misses <SCRIPT>, and the self-asserting arm pins
 #: that; ROW-4).
-SCRIPT_TAG = re.compile(r"<script\b([^>]*)>", re.IGNORECASE)
+SCRIPT_TAG = re.compile(r"<script\b([^>]*)>", re.IGNORECASE)  # codeql[py/bad-tag-filter] test-local
 
 
 def _connect(client, policy) -> None:

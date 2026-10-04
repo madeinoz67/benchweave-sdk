@@ -909,7 +909,7 @@ def _add_asset_routes(app: FastAPI) -> None:
         # Not caught: a symlink swapped into the tree at runtime — that
         # takes filesystem write access to the package, which the request
         # does not have; the startup inventory verifies the tree's bytes.
-        candidate = asset_path
+        candidate = asset_path  # codeql[py/path-injection] guarded: traversal refusals pin the path
         if (
             not candidate
             or candidate.startswith("/")
