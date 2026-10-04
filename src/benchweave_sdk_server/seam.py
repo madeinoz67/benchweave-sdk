@@ -1408,9 +1408,11 @@ class StandaloneSeam:
             # but the bench must not stay capture-dead until restart: the
             # watcher is cancelled, the outcome settles stop_timeout, the
             # capture slot frees, and capture_stopped fires. Disclosed
-            # residual: the zombie adapter's later writes can re-stage an
-            # orphan directory (no manifest — never a capture, disk
-            # residue only); a full services detach is I3c's sweep.
+            # residual (fold-refute corrected): the zombie's later writes
+            # are refused at the cancelled context — NOTHING reaches disk —
+            # but the refused flush's bytes stay in the services buffer
+            # (memory, unbounded without a configured ceiling) until the
+            # services object dies; a full detach is I3c's sweep.
             watcher = cast("asyncio.Task[dict[str, Any]]", state["watcher"])
             watcher.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
