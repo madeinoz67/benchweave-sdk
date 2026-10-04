@@ -1767,7 +1767,12 @@ class StandaloneSeam:
                 )
                 last_event_at = now
                 last_event_bytes = state["progress"]
-            if state["stop_event"].is_set() and reason_pending is None:
+            if state["stop_event"].is_set() and reason_pending != "stopped":
+                if reason_pending == "bound":
+                    # The operator asked inside the bound grace: their
+                    # reason wins over the armed bound (A-F2/B-F6) — the
+                    # docstring's short-circuit, now true in the code.
+                    grace_until = None
                 reason_pending = "stopped"
                 state["context"].cancel()
                 forced_at = now

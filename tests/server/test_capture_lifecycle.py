@@ -495,6 +495,31 @@ def test_count_bound_backstop_cancels_a_lingering_adapter(tmp_path: Path) -> Non
     assert outcome["sha256"]
 
 
+def test_a_stop_during_the_bound_grace_wins_over_the_bound(
+    tmp_path: Path,
+) -> None:
+    """A-F2/B-F6 (T5 shape): the operator's stop inside the 0.30 s bound
+    grace is honored — the reason is ``stopped``, never misattributed to
+    the armed bound, and the settle latency stays well inside the grace."""
+    host = _host(tmp_path, mode="linger")
+
+    async def scenario() -> tuple[dict[str, Any], float]:
+        await _connected(host)
+        started = await host.call("capture_start", _start(count=3))
+        await asyncio.sleep(0.15)
+        asked = time.monotonic()
+        stopped = await host.call(
+            "capture_stop", {"capture_id": started["capture_id"]}
+        )
+        return stopped, time.monotonic() - asked
+
+    stopped, elapsed = asyncio.run(scenario())
+    assert stopped["state"] == "published"
+    assert stopped["stop_reason"] == "stopped"
+    assert stopped["manifest"]["byte_length"] == 24
+    assert elapsed < 0.30
+
+
 def test_duration_bound_ends_the_capture(tmp_path: Path) -> None:
     host = _host(tmp_path, mode="linger", default_count=6)
 
