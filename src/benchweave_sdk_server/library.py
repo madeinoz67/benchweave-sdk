@@ -200,7 +200,7 @@ class CaptureLibrary:
     def _acquire_lock(self) -> Path:
         lock = self._root / _LOCK_NAME
         try:
-            handle = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+            handle = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         except FileExistsError as taken:
             holder = self._lock_holder(lock)
             pid = holder.get("pid") if holder is not None else None
@@ -208,7 +208,7 @@ class CaptureLibrary:
                 # A crashed host's lock must not wedge the root forever.
                 lock.unlink()
                 try:
-                    handle = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+                    handle = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
                 except OSError as error:
                     raise RuntimeError(
                         f"standalone_library_locked: could not take {lock} "
