@@ -15,6 +15,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 
 from benchweave_sdk_server.seam import StandaloneSeam
@@ -257,6 +258,31 @@ def test_a_failing_scan_renders_a_typed_refusal_not_a_500(tmp_path: Path) -> Non
         assert after.status_code == 200
         assert seam.discovery_cache is None, "the failure is not cached into the GET view"
         assert "example_device" not in after.text
+
+
+def test_an_unparseable_usb_hint_refuses_loudly(tmp_path: Path) -> None:
+    """FOLD-F: an unparseable declared vid/pid hint used to make every
+    port mismatch silently (`_identity_int("zz") -> None`) — an empty
+    discovery with zero diagnostics. The declaration is now a loud typed
+    refusal naming the value: fail-closed as before, but VISIBLE."""
+    project = tmp_path / "proj"
+    from benchweave_sdk.scaffold import create_project
+    from benchweave_sdk_server.serial import (
+        SerialPortHooks,
+        discover_serial_devices,
+    )
+
+    create_project(project, "example_plugin")
+    descriptor_path = project / "src" / "example_plugin" / "descriptor.json"
+    document = json.loads(descriptor_path.read_text())
+    document["transport"]["settings"]["x-standalone-usb-vid"] = "zz"
+    descriptor_path.write_text(json.dumps(document))
+    plugin = load_plugin_project(project)
+    hooks = SerialPortHooks(
+        enumerate_ports=lambda: [], open_port=lambda device, settings: None
+    )
+    with pytest.raises(ValueError, match="zz"):
+        asyncio.run(discover_serial_devices(plugin, hooks=hooks))
 
 
 def test_ar4_get_root_never_transmits_and_the_scan_is_an_explicit_post(

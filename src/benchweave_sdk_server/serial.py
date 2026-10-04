@@ -775,6 +775,16 @@ async def discover_serial_devices(
     is served from the session's established identity without re-probing."""
     effective = hooks or _default_hooks()
     hint = usb_identity_filter(plugin)
+    if hint is not None:
+        # An unparseable declared hint would mismatch every port silently
+        # (an empty discovery with zero diagnostics): refuse loudly naming
+        # the value — fail-closed as before, but visible (FOLD-F).
+        for key, value in hint.items():
+            if value is not None and _identity_int(value) is None:
+                raise ValueError(
+                    f"standalone_serial_usb_hint: declared x-standalone-usb-{key} "
+                    f"{value!r} does not parse as a USB id"
+                )
     timeout_ms = _identify_timeout_ms(plugin)
     rows: list[dict[str, Any]] = []
     for port in effective.enumerate_ports():
