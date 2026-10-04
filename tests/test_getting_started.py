@@ -315,12 +315,21 @@ def execute_sequence(
                     )
                     return failures, records
 
-            if shutil.which(head, path=env.get("PATH")) is None:
+            resolved_path = shutil.which(head, path=env.get("PATH"))
+            if resolved_path is None:
                 failures.append(
                     f"getting_started_unrecognized_line: {line} "
                     f"(no executable named {head!r} resolves)"
                 )
                 return failures, records
+            # PR #103's root cause: on Windows, CreateProcess resolves a BARE
+            # executable name against the PARENT's PATH, not the child env's —
+            # `pytest` launched the runner's venv (its plugins line named anyio
+            # and benchweave-ui-html, which only the runner's --extra server
+            # environment installs) while the page's venv held the editable
+            # plugin. Launch every command by the absolute path the gate just
+            # verified, so the launch and the gate can never disagree.
+            parts = [resolved_path, *parts[1:]]
             try:
                 # argv list, shell=False by design; every part came from a
                 # verbatim page line or one of the two declared translations.
@@ -490,6 +499,39 @@ def wheel(tmp_path_factory: pytest.TempPathFactory) -> Path:
     built = sorted(out.glob("*.whl"))
     assert len(built) == 1, f"expected exactly one wheel, found {[path.name for path in built]}"
     return built[0]
+
+
+def test_launched_commands_use_the_resolved_absolute_executable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PR #103's root cause, pinned locally: on Windows, CreateProcess resolves
+    a bare executable name against the PARENT's PATH, not the child
+    environment's — so `pytest` launched the RUNNER's venv (its session
+    header named the plugins anyio and benchweave-ui-html, which only the
+    runner's `--extra server` environment installs) while the page's venv
+    held the editable plugin. The harness must launch every command by its
+    shutil.which-resolved ABSOLUTE path, so the launch lands where the A-F3
+    gate already verified."""
+    scripts = tmp_path / ".venv" / "bin"
+    scripts.mkdir(parents=True)
+    stub = scripts / "benchweave-sdk"
+    stub.write_text("#!/bin/sh\nexit 0\n")
+    stub.chmod(0o755)
+    launched: list[str] = []
+    real_run = subprocess.run
+
+    def spying_run(parts: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        launched.append(parts[0])
+        return real_run(parts, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(subprocess, "run", spying_run)
+    page = "```sh\nsource .venv/bin/activate\nbenchweave-sdk --version\n```\n"
+    _failures, _records = execute_sequence(extract_sh_blocks(page), tmp_path, Path("/unused"))
+    assert launched and launched[0] == str(stub), (
+        "getting_started_launch: commands must launch by the resolved absolute "
+        "path; a bare name resolves against the PARENT's PATH on Windows, which "
+        "is how the runner's pytest answered for the page's (PR #103)"
+    )
 
 
 # --- T2's environment emulation, unit-pinned cross-OS ----------------------------------
