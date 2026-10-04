@@ -768,6 +768,17 @@ async def _confirm_by_identify(
         ):
             return None
         return data
+    except ConformanceError as error:
+        # Omitted, but not silently: an adapter that transmits without a
+        # dispatch marker fails its own conformance (FOLD-D's check) and
+        # the developer deserves to know why the device did not appear
+        # — the silent-empty class FOLD-F fixed for hints. Foreign,
+        # silent and erroring candidates stay unreported by design
+        # (AR-4: an unconfirmed port is not a device).
+        _LOGGER.warning(
+            "serial discovery: %s omitted — %s", _port_name(port), error
+        )
+        return None
     except Exception:
         # A silent, erroring or foreign candidate is omitted, not reported:
         # an unconfirmed port is not a device (AR-4's posture).

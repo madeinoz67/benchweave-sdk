@@ -322,3 +322,53 @@ def test_usb_hint_filter_accepts_int_and_hex_string(tmp_path: Path) -> None:
 
     fx = _scan_fixture(tmp_path)
     assert usb_identity_filter(fx["plugin"]) == {"vid": "1a86", "pid": None}
+
+
+def test_an_unmarked_adapter_is_omitted_with_a_diagnostic(
+    tmp_path: Path, caplog: Any
+) -> None:
+    """Fold-refute 1: FOLD-D's marker enforcement made an adapter that
+    transmits without the dispatch marker vanish from serial discovery
+    — silently, through the confirm-by-identify swallow. The omission
+    is correct (fail-closed, AR-4) but a developer's device disappearing
+    with zero diagnostics is the silent-empty class FOLD-F fixed for
+    hints: the omission now logs a warning naming the port and the
+    conformance refusal."""
+    import logging
+
+    from benchweave_sdk.scaffold import create_project
+    from benchweave_sdk_server.serial import SerialPortHooks, discover_serial_devices
+
+    project = tmp_path / "proj"
+    create_project(project, "example_plugin")
+    descriptor_path = project / "src" / "example_plugin" / "descriptor.json"
+    document = json.loads(descriptor_path.read_text())
+    document["transport"]["settings"]["x-standalone-usb-vid"] = "1a86"
+    descriptor_path.write_text(json.dumps(document))
+    adapter_path = project / "src" / "example_plugin" / "adapter.py"
+    text = adapter_path.read_text()
+    assert "await context.mark_dispatch_started()" in text
+    adapter_path.write_text(
+        text.replace("            await context.mark_dispatch_started()\n", "")
+    )
+    plugin = load_plugin_project(project)
+
+    port = LoopbackPort(replies={b"ID?\n": _MATCHING})
+    opened: list[str] = []
+
+    def open_port(device: str, settings: dict[str, Any]) -> Any:
+        opened.append(device)
+        return port
+
+    hooks = SerialPortHooks(
+        enumerate_ports=lambda: [CandidatePort("/dev/match-a", vid=0x1A86, pid=0x7523)],
+        open_port=open_port,
+    )
+    with caplog.at_level(logging.WARNING, logger="benchweave_sdk_server.serial"):
+        rows = asyncio.run(discover_serial_devices(plugin, hooks=hooks))
+    assert rows == []  # omitted, as before — fail-closed
+    assert any(
+        "dispatch marker" in record.message
+        and "/dev/match-a" in record.message
+        for record in caplog.records
+    ), [record.message for record in caplog.records]
