@@ -1413,6 +1413,7 @@ class StandaloneSeam:
             "state": outcome["state"],
             "stop_reason": outcome["stop_reason"],
             "manifest": manifest,
+            "details": state.get("stop_details"),
         }
 
     def _published_manifest(self, capture_id: str) -> dict[str, Any] | None:
@@ -1798,10 +1799,15 @@ class StandaloneSeam:
         try:
             envelope = task.result()
         except asyncio.CancelledError:
+            state["stop_details"] = {
+                "dispatch_state": None,
+                "message": "the adapter task was cancelled before reporting "
+                "an outcome",
+            }
             return await self._abort_capture(
                 state,
                 "stop_unknown",
-                detail="the adapter task was cancelled before reporting an outcome",
+                detail=state["stop_details"]["message"],
             )
         except Exception as exc:  # noqa: BLE001 - the uncaught bucket
             if reason_pending in ("stopped", "bound"):
@@ -1824,10 +1830,17 @@ class StandaloneSeam:
                 return await self._finalise_capture(state, reason_pending)
             return await self._finalise_capture(state, "completed")
         if status == "unknown" or dispatch_state == "unknown":
+            error = envelope.get("error") or {}
+            # AR-8: the ambiguity is surfaced VERBATIM — the envelope's own
+            # dispatch_state and message ride the stop result's details.
+            state["stop_details"] = {
+                "dispatch_state": error.get("dispatch_state"),
+                "message": str(error.get("message", "")),
+            }
             return await self._abort_capture(
                 state,
                 "stop_unknown",
-                detail=str((envelope.get("error") or {}).get("message", "")),
+                detail=state["stop_details"]["message"],
             )
         if reason_pending in ("stopped", "bound"):
             return await self._finalise_capture(state, reason_pending)
@@ -1913,6 +1926,10 @@ class StandaloneSeam:
         un-finalised event directory (a capture that never published has
         nothing on disk), and the outcome row is session state."""
         capture_id = str(state["capture_id"])
+        if detail is not None and "stop_details" not in state:
+            # The abort's own reason is terminal evidence too (B-F1): a
+            # detail the caller can read back, never silently discarded.
+            state["stop_details"] = {"dispatch_state": None, "message": detail}
         services = cast("_CaptureCapable | None", self._session.services)
         if services is not None:
             with contextlib.suppress(Exception):

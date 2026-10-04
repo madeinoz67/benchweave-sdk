@@ -318,8 +318,21 @@ _CAPTURE_STOP_RESULT = _object(
         "state": {"enum": ["published", "aborted"]},
         "stop_reason": {"type": "string"},
         "manifest": {"type": ["object", "null"]},
+        "details": {
+            "type": ["object", "null"],
+            "description": "The terminal ambiguity, verbatim: the adapter "
+            "envelope's dispatch_state and message on the unknown path, or "
+            "the aborting condition's own message; null when the outcome "
+            "carries no ambiguity (AR-8).",
+            "properties": {
+                "dispatch_state": {"type": ["string", "null"]},
+                "message": {"type": "string"},
+            },
+            "required": ["dispatch_state", "message"],
+            "additionalProperties": False,
+        },
     },
-    ["capture_id", "state", "stop_reason", "manifest"],
+    ["capture_id", "state", "stop_reason", "manifest", "details"],
 )
 
 _CAPTURE_ROW = _object(
@@ -582,8 +595,9 @@ CATALOGUE: tuple[OperationSpec, ...] = (
         "capture_stop",
         (
             "Stop one running capture and terminal it (publish or abort); "
-            "an ambiguous stop outcome raises not_ready with the adapter "
-            "envelope's dispatch_state verbatim (A06)."
+            "an ambiguous stop outcome aborts with stop_reason stop_unknown "
+            "and the result's details carry the adapter envelope's "
+            "dispatch_state and message verbatim (A06)."
         ),
         _CAPTURE_ID_INPUT,
         _CAPTURE_STOP_RESULT,

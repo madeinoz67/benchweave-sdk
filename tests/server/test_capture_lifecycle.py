@@ -591,6 +591,27 @@ def test_second_start_while_in_flight_conflicts(tmp_path: Path) -> None:
     asyncio.run(scenario())
 
 
+def test_stop_unknown_surfaces_the_envelope_verbatim(tmp_path: Path) -> None:
+    """B-F1 (AR-8's honest sentence): an unknown-dispatch stop aborts and
+    the stop RESULT carries the envelope's dispatch_state and message
+    verbatim in ``details`` — the ambiguity is surfaced, not swallowed."""
+    host = _host(tmp_path, mode="unknown")
+
+    async def scenario() -> dict[str, Any]:
+        await _connected(host)
+        started = await host.call("capture_start", _start(count=6))
+        return await host.call(
+            "capture_stop", {"capture_id": started["capture_id"]}
+        )
+
+    stopped = asyncio.run(scenario())
+    assert stopped["state"] == "aborted"
+    assert stopped["stop_reason"] == "stop_unknown"
+    assert stopped["manifest"] is None
+    assert stopped["details"]["dispatch_state"] == "unknown"
+    assert stopped["details"]["message"] == "outcome uncertain after appends"
+
+
 def test_stop_of_an_unknown_capture_is_not_found(tmp_path: Path) -> None:
     host = _host(tmp_path)
 
