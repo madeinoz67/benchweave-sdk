@@ -91,6 +91,52 @@ def test_document_failures_still_refuse_startup(tmp_path: Path) -> None:
         load_plugin_project(project)
 
 
+def test_check_ui_and_the_host_loader_agree_on_document_failures(tmp_path: Path) -> None:
+    """R-10's agreement test (issue #308), both directions on ONE mutation:
+    the same invalid presentation reddens the offline conformance command
+    AND refuses the host's startup loader — the standalone distribution's
+    own suite pinning its two halves against each other, resolving
+    benchweave_sdk from the synced environment (the installed dependency),
+    never a sys.path checkout.
+    """
+    from click.testing import CliRunner
+
+    from benchweave_sdk.cli import cli as sdk_cli
+    from benchweave_sdk.presentation import create_ui_resources
+    from benchweave_sdk.scaffold import create_project
+    from benchweave_sdk_server.session import PluginLoadError, load_plugin_project
+
+    project = tmp_path / "disagreement-probe"
+    create_project(project, "example_plugin")
+    create_ui_resources(project, "example_plugin")
+    package = project / "src" / "example_plugin"
+    manifest = package / "ui" / "manifest.json"
+    document = json.loads(manifest.read_text())
+    document["plugin_id"] = "something.else"
+    manifest.write_text(json.dumps(document))
+
+    # Direction 1: the offline conformance command refuses (non-zero exit).
+    result = CliRunner().invoke(
+        sdk_cli,
+        [
+            "check-ui",
+            str(package / "presentation.json"),
+            "--descriptor",
+            str(package / "descriptor.json"),
+            "--resources",
+            str(package),
+            "--catalogue",
+            str(package / "binding-catalogue.json"),
+        ],
+    )
+    assert result.exit_code != 0, result.output
+    assert "Presentation validation failed" in result.output
+
+    # Direction 2: the host's loader refuses startup with the same cause.
+    with pytest.raises(PluginLoadError, match="standalone_plugin_invalid:"):
+        load_plugin_project(project)
+
+
 # --- the degraded session answers not_ready -----------------------------------
 
 
