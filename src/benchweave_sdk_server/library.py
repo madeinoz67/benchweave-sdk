@@ -213,8 +213,18 @@ class CaptureLibrary:
                     continue
                 if not isinstance(manifest, dict):
                     continue
-                row = _row_of(manifest, _read_metadata(entry))
-                if not row["capture_id"]:
+                capture_id = manifest.get("capture_id")
+                if not isinstance(capture_id, str) or not capture_id:
+                    # A null/missing/non-string id is not a capture: no row
+                    # may be published under a str()-coerced "None" (A-F4).
+                    continue
+                try:
+                    row = _row_of(manifest, _read_metadata(entry))
+                except (TypeError, ValueError):
+                    # The row coercions sit inside the guard too: a
+                    # valid-JSON manifest with an uncoercible field (a
+                    # byte_length of "12x") skips this row instead of
+                    # escaping the constructor (A-F3).
                     continue
                 self._connection.execute(
                     "INSERT OR REPLACE INTO captures VALUES "

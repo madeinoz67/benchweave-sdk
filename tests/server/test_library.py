@@ -279,6 +279,43 @@ def test_corrupt_event_directory_is_skipped_not_fatal(root: Path) -> None:
         library.close()
 
 
+def test_uncoercible_field_skips_the_row_not_the_index(root: Path) -> None:
+    """A-F3 (L7 shape): a VALID-JSON manifest whose byte_length is
+    uncoercible ("12x") skips that row — the constructor must not escape,
+    wedging every capture op on the root until manual deletion."""
+    root.mkdir()
+    write_capture(root, "cap-good")
+    bad = write_capture(root, "cap-wedge")
+    manifest = json.loads((bad / "manifest.json").read_text())
+    manifest["byte_length"] = "12x"
+    (bad / "manifest.json").write_text(json.dumps(manifest))
+    library = CaptureLibrary(root)
+    try:
+        assert [row["capture_id"] for row in library.list_captures()] == [
+            "cap-good"
+        ]
+    finally:
+        library.close()
+
+
+def test_null_capture_id_publishes_no_row_named_none(root: Path) -> None:
+    """A-F4 (L7b shape): a manifest whose capture_id is null publishes no
+    row — the index must never serve a capture named "None"."""
+    root.mkdir()
+    write_capture(root, "cap-good")
+    bad = write_capture(root, "cap-null")
+    manifest = json.loads((bad / "manifest.json").read_text())
+    manifest["capture_id"] = None
+    (bad / "manifest.json").write_text(json.dumps(manifest))
+    library = CaptureLibrary(root)
+    try:
+        assert [row["capture_id"] for row in library.list_captures()] == [
+            "cap-good"
+        ]
+    finally:
+        library.close()
+
+
 def test_sqlite_file_is_not_an_event(root: Path) -> None:
     root.mkdir()
     write_capture(root, "cap-a")
