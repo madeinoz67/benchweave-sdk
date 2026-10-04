@@ -17,6 +17,9 @@ exactly the contract the host lifecycle rulings assume. The per-project
 - ``overrun`` — append ``count`` then two more ``count`` lots at 50 ms a
                 sample, ignoring the bound's cancellation, then return ok
                 (declared N, staged 3N)
+- ``zombie``  — absorb every cancellation and outlive the host's stop
+                discipline for ``stubborn_s`` (5 s), then give up — the
+                wedge shape (the host's stop-timeout escape)
 - ``unknown`` — append, then return a status/dispatch ``unknown`` envelope
 - ``error``   — append, then return an error envelope
 - ``silent``  — return ok with zero appends (publishes nothing)
@@ -184,6 +187,14 @@ class Plugin:
                 )
                 appended += 1
             return self._ok(verb, operation_id, {"capture_id": capture_id, "appended": appended})
+        if mode == "zombie":
+            deadline = time.monotonic() + float(behaviour.get("stubborn_s", 5.0))
+            while time.monotonic() < deadline:
+                try:
+                    await asyncio.sleep(0.02)
+                except asyncio.CancelledError:
+                    continue
+            return self._failure(verb, operation_id, "TIMEOUT", "zombie gave up", True)
         if mode == "unknown":
             return self._failure(
                 verb,

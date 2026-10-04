@@ -1402,9 +1402,35 @@ class StandaloneSeam:
                 timeout=timeout,
             )
         except TimeoutError as exc:
+            # B-F5's wedge escape: the adapter ignored even task
+            # cancellation. The stop still refuses internal_error — the
+            # operator must learn the adapter never honoured the stop —
+            # but the bench must not stay capture-dead until restart: the
+            # watcher is cancelled, the outcome settles stop_timeout, the
+            # capture slot frees, and capture_stopped fires. Disclosed
+            # residual: the zombie adapter's later writes can re-stage an
+            # orphan directory (no manifest — never a capture, disk
+            # residue only); a full services detach is I3c's sweep.
+            watcher = cast("asyncio.Task[dict[str, Any]]", state["watcher"])
+            watcher.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await watcher
+            state["task"].cancel()
+            await self._abort_capture(
+                state,
+                "stop_timeout",
+                detail=(
+                    "the adapter ignored the stop and did not honour "
+                    "cancellation; the host settled the outcome after "
+                    f"{timeout:.1f}s"
+                ),
+            )
             raise self._fail(
                 "internal_error",
-                f"capture {capture_id} did not settle after the stop request",
+                f"capture {capture_id} did not settle after the stop "
+                "request: the adapter did not honour cancellation (the "
+                "outcome was recorded as stop_timeout and the capture "
+                "slot is free)",
                 correlation,
             ) from exc
         manifest = self._published_manifest(capture_id)

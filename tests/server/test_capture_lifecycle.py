@@ -74,6 +74,7 @@ def _patch_descriptor(
     *,
     max_samples: int = 100_000,
     max_bytes: int = 16 * 1024 * 1024,
+    verb_timeout_ms: int = 5000,
 ) -> None:
     """Declare the capture verbs the test wants in the scaffold's descriptor.
 
@@ -87,7 +88,7 @@ def _patch_descriptor(
     descriptor["capabilities"] = ["identify", "read", *verbs]
     for verb in verbs:
         descriptor["operations"][verb] = {
-            "timeout_ms": 5000,
+            "timeout_ms": verb_timeout_ms,
             "side_effect": "state_change" if verb == "capture" else "none",
             "retry": "never",
             "cancellable": True,
@@ -107,14 +108,22 @@ def _host(
     default_count: int = 8,
     max_samples: int = 100_000,
     max_bytes: int = 16 * 1024 * 1024,
+    verb_timeout_ms: int = 5000,
+    stubborn_s: float | None = None,
 ) -> StandaloneSeam:
     """A serial-transport seam over the fixture plugin, not yet connected."""
     root = tmp_path / "proj"
     create_project(root, _PACKAGE)
-    _patch_descriptor(root, verbs, max_samples=max_samples, max_bytes=max_bytes)
+    _patch_descriptor(
+        root, verbs, max_samples=max_samples, max_bytes=max_bytes,
+        verb_timeout_ms=verb_timeout_ms,
+    )
     shutil.copy(FIXTURES / "wavegen_adapter.py", root / "src" / _PACKAGE / "adapter.py")
+    behaviour: dict[str, Any] = {"mode": mode, "default_count": default_count}
+    if stubborn_s is not None:
+        behaviour["stubborn_s"] = stubborn_s
     (root / "src" / _PACKAGE / "behaviour.json").write_text(
-        json.dumps({"mode": mode, "default_count": default_count}), encoding="utf-8"
+        json.dumps(behaviour), encoding="utf-8"
     )
     loaded = load_plugin_project(root)
     port = LoopbackPort(replies={b"ID?\n": _ID_REPLY})
@@ -610,6 +619,52 @@ def test_stop_unknown_surfaces_the_envelope_verbatim(tmp_path: Path) -> None:
     assert stopped["manifest"] is None
     assert stopped["details"]["dispatch_state"] == "unknown"
     assert stopped["details"]["message"] == "outcome uncertain after appends"
+
+
+def test_a_stop_timeout_frees_the_bench(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """B-F5 (P3 stubborn shape): an adapter that absorbs every
+    cancellation wedged the bench for the process's life — capture_stop
+    answered internal_error, the watcher looped forever, the slot stayed
+    held. The timeout now settles out-of-band: the outcome records
+    stop_timeout, the slot frees, capture_stopped fires, and a later
+    capture_start works."""
+    from benchweave_sdk_server import seam as seam_module
+
+    monkeypatch.setattr(seam_module, "_STOP_SETTLE_MARGIN_S", 0.5)
+    host = _host(
+        tmp_path, mode="zombie", verb_timeout_ms=500, stubborn_s=3.0
+    )
+
+    async def scenario() -> dict[str, Any]:
+        await _connected(host)
+        started = await host.call("capture_start", _start(count=4))
+        with pytest.raises(SeamError) as caught:
+            await host.call(
+                "capture_stop", {"capture_id": started["capture_id"]}
+            )
+        assert "internal_error" in str(caught.value.code)
+        # The escape: the slot must be free — a new capture starts.
+        second = await host.call("capture_start", _start(count=2))
+        settled = await host.await_capture()
+        return {"first_id": started["capture_id"], "second": second, "settled": settled}
+
+    result = asyncio.run(scenario())
+    assert result["settled"]["state"] == "published"
+    rows = asyncio.run(host.call("capture_list", {}))["captures"]
+    first_row = next(
+        row for row in rows if row["capture_id"] == result["first_id"]
+    )
+    assert first_row["state"] == "aborted"
+    assert first_row["stop_reason"] == "stop_timeout"
+    events = asyncio.run(host.call("events_get", {"after_id": 0}))["events"]
+    assert any(
+        event["kind"] == "capture_stopped"
+        and event["data"]["capture_id"] == result["first_id"]
+        and event["data"]["stop_reason"] == "stop_timeout"
+        for event in events
+    )
 
 
 def test_stop_of_an_unknown_capture_is_not_found(tmp_path: Path) -> None:
