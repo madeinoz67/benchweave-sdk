@@ -92,6 +92,82 @@ def _tool_handlers(seam: StandaloneSeam) -> dict[str, Callable[..., Any]]:
     async def events_get(after_id: int) -> Any:
         return await _dispatch(seam, "events_get", {"after_id": after_id})
 
+    async def capture_start(
+        device_id: str,
+        count: int | None = None,
+        duration_s: float | None = None,
+        format: str = "raw_binary",
+        sample_interval_s: float | None = None,
+        unit: str | None = None,
+        max_bytes: int | None = None,
+        project: str | None = None,
+        tags: list[str] | None = None,
+        notes: str | None = None,
+    ) -> Any:
+        arguments: dict[str, Any] = {
+            "device_id": device_id,
+            "format": format,
+        }
+        if count is not None:
+            arguments["count"] = count
+        if duration_s is not None:
+            arguments["duration_s"] = duration_s
+        if sample_interval_s is not None:
+            arguments["sample_interval_s"] = sample_interval_s
+        if unit is not None:
+            arguments["unit"] = unit
+        if max_bytes is not None:
+            arguments["max_bytes"] = max_bytes
+        if project is not None:
+            arguments["project"] = project
+        if tags is not None:
+            arguments["tags"] = tags
+        if notes is not None:
+            arguments["notes"] = notes
+        return await _dispatch(seam, "capture_start", arguments)
+
+    async def capture_stop(capture_id: str) -> Any:
+        return await _dispatch(seam, "capture_stop", {"capture_id": capture_id})
+
+    async def capture_list() -> Any:
+        return await _dispatch(seam, "capture_list", {})
+
+    async def capture_get(capture_id: str) -> Any:
+        return await _dispatch(seam, "capture_get", {"capture_id": capture_id})
+
+    async def capture_series(capture_id: str, max_points: int = 2000) -> Any:
+        return await _dispatch(
+            seam,
+            "capture_series",
+            {"capture_id": capture_id, "max_points": max_points},
+        )
+
+    async def capture_annotate(
+        capture_id: str, notes: str | None = None, tags: list[str] | None = None
+    ) -> Any:
+        arguments: dict[str, Any] = {"capture_id": capture_id}
+        if notes is not None:
+            arguments["notes"] = notes
+        if tags is not None:
+            arguments["tags"] = tags
+        return await _dispatch(seam, "capture_annotate", arguments)
+
+    async def capture_pin(capture_id: str) -> Any:
+        return await _dispatch(seam, "capture_pin", {"capture_id": capture_id})
+
+    async def capture_unpin(capture_id: str) -> Any:
+        return await _dispatch(seam, "capture_unpin", {"capture_id": capture_id})
+
+    async def capture_delete(capture_id: str) -> Any:
+        return await _dispatch(seam, "capture_delete", {"capture_id": capture_id})
+
+    async def artifact_read(capture_id: str, offset: int, length: int) -> Any:
+        return await _dispatch(
+            seam,
+            "artifact_read",
+            {"capture_id": capture_id, "offset": offset, "length": length},
+        )
+
     handlers: dict[str, Callable[..., Any]] = {
         "host_info": host_info,
         "device_discover": device_discover,
@@ -104,6 +180,16 @@ def _tool_handlers(seam: StandaloneSeam) -> dict[str, Callable[..., Any]]:
         "preset_list": preset_list,
         "preset_apply": preset_apply,
         "events_get": events_get,
+        "capture_start": capture_start,
+        "capture_stop": capture_stop,
+        "capture_list": capture_list,
+        "capture_get": capture_get,
+        "capture_series": capture_series,
+        "capture_annotate": capture_annotate,
+        "capture_pin": capture_pin,
+        "capture_unpin": capture_unpin,
+        "capture_delete": capture_delete,
+        "artifact_read": artifact_read,
     }
     missing = set(catalogue.served_operations()) - set(handlers)
     extra = set(handlers) - set(catalogue.served_operations())

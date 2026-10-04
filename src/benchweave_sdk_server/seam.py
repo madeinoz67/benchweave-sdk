@@ -109,11 +109,15 @@ class StandaloneSeam:
         reload_wrapper: Callable[[Any], Any] | None = None,
         serial_ports: Any = None,
         serial_device_path: str | None = None,
+        capture_root: Any | None = None,
     ) -> None:
         self._session = session
         self._transport_kind = transport_kind
         self._serial_ports = serial_ports
         self._serial_device_path = serial_device_path
+        self._capture_root = capture_root
+        self._capture: Any | None = None
+        self._capture_outcomes: dict[str, dict[str, Any]] = {}
         # Lazy by contract (see the module's TYPE_CHECKING note): these run
         # inside the guarded serve/mcp bodies, never at the console entry's
         # module import.

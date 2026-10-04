@@ -1,11 +1,12 @@
 """The closed operation catalogue: the one contract behind REST, HTML and MCP.
 
-SW-10's full 18-name set is defined here as data on day one; I1 marks six
-operations implemented and the seam refuses the other twelve with
-``unavailable`` and a ``reason: increment_deferral`` detail rather than
-silently omitting them — ``host_info`` reports both sets so an agent cannot
-assume a capability the increment does not ship (the SW-32 honesty rule
-applied to our own roadmap).
+SW-10's 18-name set is defined here as data; I3b flips the last seven
+deferred rows (the six capture operations and ``artifact_read``) and adds
+three new rows — ``capture_delete``/``capture_pin``/``capture_unpin`` (the
+design record's fork F-2, a disclosed PRD delta: SW-56/SW-59 name the
+capabilities, SW-10's closed list omits them). Every row is now served; the
+seam's ``unavailable`` refusal stays for future increments rather than for
+this catalogue's names.
 
 The error vocabulary and its HTTP statuses live in :mod:`.errors`, pinned
 against the vendored interface catalog by test. Nothing in this module is
@@ -214,6 +215,225 @@ _PRESET_APPLY_RESULT = _object(
     ["device_id", "preset_id", "applied"],
 )
 
+# --- capture (I3b): the flipped rows and fork F-2's three new rows ---------
+
+_FORMATS = {"enum": ["waveform_f64le", "raw_binary"]}
+
+#: SW-33's ceilings, with their denominators: 10M samples is the record's
+#: own 10-minute class at 8 B/sample against the fork's published 2 Mbaud
+#: line rate (about 250 KiB/s), and 600 s is that class directly.
+_COUNT_CEILING = 10_000_000
+_DURATION_CEILING_S = 600
+
+#: The writer's development-tooling reservation default (capture.py) is the
+#: reservation ceiling a start request may name; the bench's configured
+#: reservation (the services' constructor bound) remains the authority the
+#: effective reservation never exceeds (A02).
+_MAX_BYTES_CEILING = 16 * 1024 * 1024
+
+_CAPTURE_START_INPUT = {
+    "type": "object",
+    "properties": {
+        "device_id": _IDENT,
+        "count": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": _COUNT_CEILING,
+            "description": "Sample bound (waveform_f64le: 8 B/sample; "
+            "raw_binary: 1 B/sample)",
+        },
+        "duration_s": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": _DURATION_CEILING_S,
+            "description": "Wall-clock bound in seconds",
+        },
+        "format": {
+            **_FORMATS,
+            "description": "The primary artifact's format (default raw_binary)",
+            "default": "raw_binary",
+        },
+        "sample_interval_s": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "Sample interval (waveform_f64le captures)",
+        },
+        "unit": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Sample unit (waveform_f64le captures)",
+        },
+        "max_bytes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": _MAX_BYTES_CEILING,
+            "description": "Requested byte reservation for this capture; the "
+            "bench's configured reservation caps it",
+        },
+        "project": {"type": "string", "minLength": 1},
+        "tags": {
+            "type": "array",
+            "items": {"type": "string", "minLength": 1},
+            "uniqueItems": True,
+        },
+        "notes": {"type": "string"},
+    },
+    "required": ["device_id"],
+    "additionalProperties": False,
+    # Exactly one of count / duration_s (SW-33): both branches pass when both
+    # keys are present, so oneOf refuses the pair; neither key fails both.
+    "oneOf": [{"required": ["count"]}, {"required": ["duration_s"]}],
+    "allOf": [
+        {
+            "if": {
+                "properties": {"format": {"const": "waveform_f64le"}},
+                "required": ["format"],
+            },
+            "then": {
+                "properties": {
+                    "format": {"const": "waveform_f64le"},
+                    "sample_interval_s": {"type": "number", "exclusiveMinimum": 0},
+                    "unit": {"type": "string", "minLength": 1},
+                },
+                "required": ["sample_interval_s", "unit"],
+            },
+        }
+    ],
+}
+
+_CAPTURE_START_RESULT = _object(
+    {
+        "capture_id": {"type": "string", "minLength": 1},
+        "device_id": _IDENT,
+        "state": {"const": "capturing"},
+        "bound": {"type": "object"},
+        "format": _FORMATS,
+    },
+    ["capture_id", "device_id", "state", "bound", "format"],
+)
+
+_CAPTURE_STOP_RESULT = _object(
+    {
+        "capture_id": {"type": "string", "minLength": 1},
+        "state": {"enum": ["published", "aborted"]},
+        "stop_reason": {"type": "string"},
+        "manifest": {"type": ["object", "null"]},
+    },
+    ["capture_id", "state", "stop_reason", "manifest"],
+)
+
+_CAPTURE_ROW = _object(
+    {
+        "capture_id": {"type": "string", "minLength": 1},
+        "state": {"enum": ["capturing", "published", "aborted"]},
+        "started_at": {"type": "string"},
+        "format": {"type": "string"},
+        "byte_length": {"type": ["integer", "null"]},
+        "sha256": {"type": ["string", "null"]},
+        "surface": {"type": ["string", "null"]},
+        "project": {"type": ["string", "null"]},
+        "tags": {"type": "array", "items": {"type": "string"}},
+        "notes": {"type": "string"},
+        "pinned": {"type": "boolean"},
+        "stop_reason": {"type": ["string", "null"]},
+        "progress_bytes": {"type": ["integer", "null"]},
+    },
+    [
+        "capture_id", "state", "started_at", "format", "byte_length",
+        "sha256", "surface", "project", "tags", "notes", "pinned",
+        "stop_reason", "progress_bytes",
+    ],
+)
+
+_CAPTURE_LIST_RESULT = _object(
+    {"captures": {"type": "array", "items": _CAPTURE_ROW}}, ["captures"]
+)
+
+_CAPTURE_GET_RESULT = _object(
+    {
+        "capture_id": {"type": "string", "minLength": 1},
+        "manifest": {"type": "object"},
+        "metadata": {"type": "object"},
+    },
+    ["capture_id", "manifest", "metadata"],
+)
+
+_CAPTURE_SERIES_RESULT = _object(
+    {
+        "capture_id": {"type": "string", "minLength": 1},
+        "format": {"type": "string"},
+        "decimated": {"type": "boolean"},
+        "max_points": {"type": "integer"},
+        "points": {
+            "type": "array",
+            "items": {
+                "type": "array",
+                "items": {"type": "number"},
+                "minItems": 2,
+                "maxItems": 2,
+            },
+            "description": "[x, y] pairs in acquisition order",
+        },
+    },
+    ["capture_id", "format", "decimated", "max_points", "points"],
+)
+
+_CAPTURE_ANNOTATE_INPUT = _object(
+    {
+        "capture_id": {"type": "string", "minLength": 1},
+        "notes": {"type": "string"},
+        "tags": {
+            "type": "array",
+            "items": {"type": "string", "minLength": 1},
+            "uniqueItems": True,
+        },
+    },
+    ["capture_id"],
+)
+
+_CAPTURE_ANNOTATE_RESULT = _object(
+    {
+        "capture_id": {"type": "string", "minLength": 1},
+        "notes": {"type": "string"},
+        "tags": {"type": "array", "items": {"type": "string"}},
+    },
+    ["capture_id", "notes", "tags"],
+)
+
+_CAPTURE_ID_INPUT = _object(
+    {"capture_id": {"type": "string", "minLength": 1}}, ["capture_id"]
+)
+
+_PIN_RESULT = _object(
+    {"capture_id": {"type": "string", "minLength": 1}, "pinned": {"type": "boolean"}},
+    ["capture_id", "pinned"],
+)
+
+_DELETE_RESULT = _object(
+    {"capture_id": {"type": "string", "minLength": 1}, "deleted": {"const": True}},
+    ["capture_id", "deleted"],
+)
+
+_ARTIFACT_READ_INPUT = _object(
+    {
+        "capture_id": {"type": "string", "minLength": 1},
+        "offset": {"type": "integer", "minimum": 0},
+        "length": {"type": "integer", "minimum": 1, "maximum": 262_144},
+    },
+    ["capture_id", "offset", "length"],
+)
+
+_ARTIFACT_READ_RESULT = _object(
+    {
+        "capture_id": {"type": "string", "minLength": 1},
+        "artifact_id": {"type": "string"},
+        "offset": {"type": "integer", "minimum": 0},
+        "length": {"type": "integer", "minimum": 0},
+        "data_base64": {"type": "string"},
+    },
+    ["capture_id", "artifact_id", "offset", "length", "data_base64"],
+)
+
 
 def _spec(
     name: str,
@@ -345,13 +565,87 @@ CATALOGUE: tuple[OperationSpec, ...] = (
         ),
         _PRESET_APPLY_RESULT,
     ),
-    _deferred("capture_start", "Start a bounded capture (I3: capture, SW-50)."),
-    _deferred("capture_stop", "Stop a running capture (I3: capture, SW-51)."),
-    _deferred("capture_list", "List stored captures (I3: capture, SW-49)."),
-    _deferred("capture_get", "Fetch one capture's manifest (I3: capture)."),
-    _deferred("capture_series", "Fetch a decimated capture series (I3: capture, SW-33)."),
-    _deferred("capture_annotate", "Annotate a stored capture (I3: capture, SW-54)."),
-    _deferred("artifact_read", "Read a bounded artifact window (I3: capture artifacts)."),
+    _spec(
+        "capture_start",
+        (
+            "Start a bounded capture on a connected device: the adapter's "
+            "declared capture verb runs and appends device bytes through "
+            "the capture services; the host watches the bound (SW-33) and "
+            "finalises or aborts honestly at the bound, an explicit stop, "
+            "or an ambiguous stop outcome (an unknown stop never publishes "
+            "complete — A06)."
+        ),
+        _CAPTURE_START_INPUT,
+        _CAPTURE_START_RESULT,
+    ),
+    _spec(
+        "capture_stop",
+        (
+            "Stop one running capture and terminal it (publish or abort); "
+            "an ambiguous stop outcome raises not_ready with the adapter "
+            "envelope's dispatch_state verbatim (A06)."
+        ),
+        _CAPTURE_ID_INPUT,
+        _CAPTURE_STOP_RESULT,
+    ),
+    _spec(
+        "capture_list",
+        (
+            "List the stored captures: published rows from the rebuildable "
+            "index, the in-flight capture, and this session's aborted "
+            "outcomes."
+        ),
+        _object({}, []),
+        _CAPTURE_LIST_RESULT,
+    ),
+    _spec(
+        "capture_get",
+        "Fetch one published capture's manifest and metadata.",
+        _CAPTURE_ID_INPUT,
+        {**_CAPTURE_GET_RESULT, "required": ["capture_id", "manifest", "metadata"]},
+    ),
+    _spec(
+        "capture_series",
+        (
+            "Fetch a capture's series, decimated by default through host-side "
+            "min/max-per-column decimation (SW-33: max_points 2000 default, "
+            "0 serves raw points refused above the sample ceiling)."
+        ),
+        _object(
+            {
+                "capture_id": {"type": "string", "minLength": 1},
+                "max_points": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 10_000_000,
+                    "description": "Column budget (default 2000); 0 = raw",
+                },
+            },
+            ["capture_id"],
+        ),
+        _CAPTURE_SERIES_RESULT,
+    ),
+    _spec(
+        "capture_annotate",
+        "Edit a stored capture's notes and tags (SW-54: they stay editable; "
+        "everything else is fixed at start).",
+        _CAPTURE_ANNOTATE_INPUT,
+        _CAPTURE_ANNOTATE_RESULT,
+    ),
+    _spec(
+        "artifact_read",
+        (
+            "Read a bounded window of a published capture's primary artifact "
+            "as base64 (SW-31's interface-0.1.0 semantics)."
+        ),
+        _ARTIFACT_READ_INPUT,
+        {
+            **_ARTIFACT_READ_RESULT,
+            "required": [
+                "capture_id", "artifact_id", "offset", "length", "data_base64"
+            ],
+        },
+    ),
     _spec(
         "events_get",
         (
@@ -392,6 +686,29 @@ CATALOGUE: tuple[OperationSpec, ...] = (
             },
             ["events", "last_id"],
         ),
+    ),
+    # Fork F-2's disclosed delta: rows 19-21, beyond SW-10's closed 18.
+    _spec(
+        "capture_delete",
+        (
+            "Delete one stored capture: removes the event directory and its "
+            "index row; refuses pinned captures and an in-flight id (SW-59)."
+        ),
+        _CAPTURE_ID_INPUT,
+        _DELETE_RESULT,
+    ),
+    _spec(
+        "capture_pin",
+        "Pin a capture: retention (I3c) will never prune it automatically "
+        "(SW-56).",
+        _CAPTURE_ID_INPUT,
+        _PIN_RESULT,
+    ),
+    _spec(
+        "capture_unpin",
+        "Unpin a capture (SW-56).",
+        _CAPTURE_ID_INPUT,
+        _PIN_RESULT,
     ),
 )
 
