@@ -237,6 +237,24 @@ def test_close_joins_the_reader_and_closes_the_transport_once() -> None:
         link.write(b"x")
 
 
+def test_a_closed_link_drains_complete_frames_and_refuses_a_partial_fast() -> None:
+    """Closed-link semantics (FOLD-H), stated exactly by the docstring:
+    drain-then-refuse — buffered COMPLETE frames still deliver (evidence
+    already received is real); a partial can never complete, the reader is
+    dead, so it refuses promptly instead of burning the deadline."""
+    port = LoopbackPort(b"ok\n3.3")  # one complete frame, one partial
+    link = _link(port, quiet_s=0.02)
+    deadline = time.monotonic() + 5
+    while link.ring_length() < 7 and time.monotonic() < deadline:
+        time.sleep(0.005)
+    link.close()
+    assert _take(link, max_bytes=8) == b"ok\n", "a complete frame drains after close"
+    started = time.monotonic()
+    with pytest.raises(ConnectionError, match="closed"):
+        _take(link, max_bytes=8, deadline=time.monotonic() + 2)
+    assert time.monotonic() - started < 0.5, "a partial on a dead reader must refuse fast"
+
+
 def test_a_write_reaches_the_transport_and_reports_the_count() -> None:
     port = LoopbackPort(replies={b"ID?\n": b"ok\n"})
     link = _link(port)

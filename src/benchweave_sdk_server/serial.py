@@ -224,6 +224,15 @@ class SerialLink:
                         del self._ring[:max_bytes]
                         raise ValueError(f"no terminator within {max_bytes} bytes")
                 empty = not self._ring
+                if self._closed:
+                    # Closed-link drain-then-refuse: buffered COMPLETE
+                    # frames still deliver (evidence already received is
+                    # real — the completeness checks above return them);
+                    # a partial can never complete, the reader is dead,
+                    # so it refuses now instead of burning the deadline.
+                    raise ConnectionError(
+                        "serial link is closed with a partial frame buffered"
+                    )
             now = time.monotonic()
             if empty and now >= quiet_until:
                 return b""
@@ -269,7 +278,10 @@ class SerialLink:
 
     def close(self) -> None:
         """Stop the reader, join it, then close the transport; tolerant of
-        repeated calls. A closed link's receives and writes refuse."""
+        repeated calls. A closed link's writes refuse; its receives DRAIN
+        THEN REFUSE: buffered complete frames still deliver (evidence
+        already received is real), while a partial can never complete —
+        the reader is dead — so it refuses promptly."""
         with self._cond:
             if self._closed:
                 return
