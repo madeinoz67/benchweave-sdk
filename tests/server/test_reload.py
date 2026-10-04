@@ -100,11 +100,12 @@ def test_staged_unapplied_refuses_conflict(tmp_path) -> None:
 
 
 def test_capture_in_flight_refuses_conflict(tmp_path) -> None:
-    """No capture exists until I3; the guard reads the seam's in-flight
-    state, so the arm is exercised by setting it — exactly how I3's
-    capture_start will hold it."""
+    """The guard reads the seam's live capture slot — the state
+    capture_start arms and the watcher clears (I3c-design finding A
+    deleted the dead flag nothing armed; the end-to-end arm over a real
+    in-flight capture is test_capture_lifecycle's reload row)."""
     seam = _seam(_project(tmp_path))
-    seam._capture_in_flight = True
+    seam._capture = {"capture_id": "cap-fixture"}
     with pytest.raises(SeamError) as caught:
         asyncio.run(seam.reload_plugin(source="test"))
     assert caught.value.code == "conflict"

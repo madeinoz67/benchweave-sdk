@@ -926,3 +926,22 @@ def test_artifact_read_serves_bounded_windows(tmp_path: Path) -> None:
         assert "invalid_request" in str(caught.value.code)
 
     asyncio.run(beyond_eof())
+
+
+def test_reload_refuses_while_a_capture_is_in_flight(tmp_path: Path) -> None:
+    """I3c-design finding A: the reload guard read a flag nothing ever
+    armed — a reload swapped the plugin under a LIVE capture. The guard
+    reads the capture slot itself (one source of truth: capture_start
+    arms it, the watcher clears it at the terminal state)."""
+    host = _host(tmp_path, mode="slow")
+
+    async def scenario() -> None:
+        await _connected(host)
+        started = await host.call("capture_start", _start(count=1000))
+        with pytest.raises(SeamError) as caught:
+            await host.reload_plugin(source="test")
+        assert "conflict" in str(caught.value.code)
+        assert "capture is in flight" in str(caught.value.message)
+        await host.call("capture_stop", {"capture_id": started["capture_id"]})
+
+    asyncio.run(scenario())

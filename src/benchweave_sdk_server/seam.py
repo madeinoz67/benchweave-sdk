@@ -220,13 +220,12 @@ class StandaloneSeam:
         # confirmation; the adapter-code digest is computed at load and
         # recomputed at reload (the mechanical adapter/contract
         # discrimination); the pending confirmation is a STATE, never an
-        # error; _capture_in_flight is the reload guard's capture leg —
-        # no capture exists until I3 arms it.
+        # error. The reload guard's capture leg is the live capture slot
+        # itself (_capture) — no second flag to keep in step.
         self._unattended = unattended
         self._reload_wrapper = reload_wrapper
         self._adapter_sha256 = project_py_digest(session.plugin)
         self._pending_reload: dict[str, Any] | None = None
-        self._capture_in_flight = False
         self._discovery_cache: list[dict[str, Any]] | None = None
         self.reload_state: dict[str, Any] | None = None
         # The op-vs-reload mutex (the refute lanes' serialization class):
@@ -918,8 +917,10 @@ class StandaloneSeam:
 
     def _reload_guards(self, correlation: str) -> None:
         """The conflict guards every reload path runs: a staged value that
-        was never applied, and a capture in flight (no capture exists until
-        I3; the flag is the state I3's capture_start will hold)."""
+        was never applied, and a capture in flight (the live capture slot
+        is the state itself — capture_start arms it, the watcher clears it
+        at the terminal state; I3c-design finding A deleted the dead flag
+        nothing ever armed)."""
         if self._staged:
             raise self._fail(
                 "conflict",
@@ -927,7 +928,7 @@ class StandaloneSeam:
                 "reloading",
                 correlation,
             )
-        if self._capture_in_flight:
+        if self._capture is not None:
             raise self._fail(
                 "conflict",
                 "a capture is in flight: stop it before reloading",
