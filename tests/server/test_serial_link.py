@@ -209,6 +209,21 @@ def test_overflow_drops_the_oldest_bytes_and_keeps_the_newest_tail() -> None:
     link.close()
 
 
+def test_overflow_counts_the_dropped_bytes() -> None:
+    """The cumulative dropped-bytes counter (FOLD-G): overflow silently
+    discarded the oldest bytes with no telemetry — the counter makes the
+    loss diagnosable after the fact. Diagnostics only: surfaced nowhere
+    yet, by design."""
+    port = LoopbackPort()
+    link = _link(port, ring_capacity=8)
+    port.inbound += b"012345678901234"  # 15 bytes into an 8-byte ring
+    deadline = time.monotonic() + 5
+    while link.ring_length() < 8 and time.monotonic() < deadline:
+        time.sleep(0.005)
+    assert link.dropped_bytes == 7
+    link.close()
+
+
 def test_close_joins_the_reader_and_closes_the_transport_once() -> None:
     port = LoopbackPort()
     link = _link(port)

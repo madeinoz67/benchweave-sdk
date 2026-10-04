@@ -135,6 +135,7 @@ class SerialLink:
         self._fault: BaseException | None = None
         self._closing = False
         self._closed = False
+        self._dropped_bytes = 0
         self._thread = threading.Thread(
             target=self._drain, name="benchweave-serial-reader", daemon=True
         )
@@ -154,6 +155,13 @@ class SerialLink:
     def quiet_s(self) -> float:
         """The quiet-window length in seconds."""
         return self._quiet_s
+
+    @property
+    def dropped_bytes(self) -> int:
+        """The cumulative bytes dropped on ring overflow (the oldest bytes
+        go first). Diagnostics only — surfaced nowhere yet, by design; a
+        future status surface reads it from here."""
+        return self._dropped_bytes
 
     def ring_length(self) -> int:
         """The ring's current length (test and soak instrumentation)."""
@@ -252,6 +260,7 @@ class SerialLink:
                     overflow = len(self._ring) - self._ring_capacity
                     if overflow > 0:
                         del self._ring[:overflow]
+                        self._dropped_bytes += overflow
                     self._cond.notify_all()
         except BaseException as exc:
             with self._cond:
