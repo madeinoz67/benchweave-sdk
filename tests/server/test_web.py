@@ -8,7 +8,10 @@ from pathlib import Path
 from benchweave_sdk_server.web import build_app
 
 DEV = "example_device"
-SCRIPT_TAG = re.compile(r"<script\b([^>]*)>")
+#: Compiled case-INSENSITIVE (CodeQL py/bad-tag-filter — a case-sensitive
+#: match on <script> misses <SCRIPT>, and the self-asserting arm pins
+#: that; ROW-4).
+SCRIPT_TAG = re.compile(r"<script\b([^>]*)>", re.IGNORECASE)
 
 
 def _connect(client, policy) -> None:
@@ -150,6 +153,15 @@ def test_no_script_without_src_anywhere(client, policy) -> None:
             if 'type="application/json"' in attributes:
                 continue
             assert "src=" in attributes, (template.name, attributes)
+
+
+def test_the_script_tag_filter_is_case_insensitive() -> None:
+    """ROW-4b (CodeQL py/bad-tag-filter): the filter pattern is itself
+    pinned — a case-sensitive match on <script> misses <SCRIPT>, and the
+    served-page scan would pass an uppercase tag straight through."""
+    assert SCRIPT_TAG.findall("<SCRIPT src='/x.js'></SCRIPT>"), (
+        "the script-tag pattern misses uppercase <SCRIPT>"
+    )
 
 
 def test_htmx_config_meta_disallows_eval(client) -> None:

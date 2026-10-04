@@ -902,6 +902,13 @@ def _add_asset_routes(app: FastAPI) -> None:
     async def asset(asset_path: str) -> Response:
         # Same traversal refusals as the preview server's asset route: a
         # backslash is a separator on Windows and a colon is a drive or ADS.
+        # These refusals are the guard CodeQL's py/path-injection alert
+        # asks about (ROW-4): the request can only name a relative,
+        # "/"-separated, non-parent path, so root / candidate stays inside
+        # one of the two package-local roots (pinned by the traversal arm).
+        # Not caught: a symlink swapped into the tree at runtime — that
+        # takes filesystem write access to the package, which the request
+        # does not have; the startup inventory verifies the tree's bytes.
         candidate = asset_path
         if (
             not candidate
