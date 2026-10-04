@@ -224,7 +224,7 @@ The listener rules are the same in every host command. The listener uses the loo
 
 ### Local UI preview
 
-`benchweave-sdk preview-ui <project>` is the standalone host under an alias. It serves the plugin project's pages on the scripted mock transport, with the transport pinned: real-hardware serving is `benchweave-sdk-server serve --transport serial` directly. The command needs the `[server]` extra. A default install refuses with `benchweave_sdk_server_extras_missing:` and exit 2.
+`benchweave-sdk preview-ui <project>` is a second name for the standalone host. It serves the plugin project's pages on the scripted mock transport. `preview-ui` never leaves the mock transport. For real hardware, use `benchweave-sdk-server serve --transport serial` directly. The command needs the `[server]` extra. On a default installation, the command refuses with `benchweave_sdk_server_extras_missing:` and exit 2.
 
 > [!CAUTION]
 > Preview success is not admission, not hardware qualification and not permission to operate equipment.
@@ -233,7 +233,7 @@ The listener rules are the same in every host command. The listener uses the loo
 benchweave-sdk preview-ui /path/to/plugin-project --no-open
 ```
 
-Options mirror serve's listener and scenario flags: `--host`, `--port` (default 8477), `--allow-network`, `--no-open` and `--scenario <id>`. The startup output prints the URL and the per-launch bearer token. On the mock transport every page carries the `SIMULATED PRESENTATION DATA` banner. A control interaction creates only an in-memory simulated receipt. It never updates an observed reading optimistically.
+The options are the same as the listener and scenario options of `serve`: `--host`, `--port`, `--allow-network`, `--no-open` and `--scenario <id>`. The default port is 8477. The startup output prints the URL and a bearer token for each launch. On the mock transport, every page carries the `SIMULATED PRESENTATION DATA` banner. A control interaction creates only an in-memory simulated receipt. It never updates an observed reading optimistically.
 
 A default installation does not include the extra. The `benchweave-sdk-server` command still exists in a default installation. The `serve` and `mcp` commands then stop before they do any work. They print `benchweave_sdk_server_extras_missing: install 'benchweave-sdk[server]' for the serve, mcp and preview-ui commands` and exit with code 2.
 

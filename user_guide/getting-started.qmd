@@ -208,4 +208,4 @@ uv pip install 'benchweave-sdk[server]'
 benchweave-sdk preview-ui . --no-open
 ```
 
-The preview serves until you stop it. Press `Ctrl+C` to stop the server. With `--no-open`, open the printed URL in a browser yourself. The startup output also prints a bearer token. The token gates REST mutations and MCP over HTTP. See [Troubleshooting](troubleshooting.qmd) for the stop behavior.
+The preview serves until you stop it. Press `Ctrl+C` to stop the server. With `--no-open`, open the printed URL in a browser yourself. The startup output also prints a bearer token. REST mutations and MCP over HTTP need this token. See [Troubleshooting](troubleshooting.qmd) for the stop behavior.
