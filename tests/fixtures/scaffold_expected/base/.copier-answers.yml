@@ -1,7 +1,7 @@
 # Changes here will be overwritten by Copier
-_commit: v0.6.0
+_commit: v0.7.0
 _src_path: https://github.com/madeinoz67/benchweave-sdk
 otdp_version: 0.2.2
 package_name: example_plugin
-sdk_version: 0.6.0
+sdk_version: 0.7.0
 with_ui: false
