@@ -35,8 +35,8 @@ from .session import (
 if TYPE_CHECKING:
     from .scenarios import ScenarioSelection
 
-#: What a default (no-extra) install hears from serve/mcp: the prefixed
-#: error names the install command (the R-9 shim pattern, exit 2).
+#: What a default (no-extra) install hears from serve/mcp/preview-ui: the
+#: prefixed error names the install command (the R-9 shim pattern, exit 2).
 def _scenario_ids() -> tuple[str, ...]:
     """The nine scenario ids, for the CLI's choice set (lazy import — the
     cli module stays importable on a default install)."""
@@ -47,7 +47,7 @@ def _scenario_ids() -> tuple[str, ...]:
 
 _EXTRAS_MESSAGE = (
     "benchweave_sdk_server_extras_missing: install 'benchweave-sdk[server]' "
-    "for the serve and mcp commands"
+    "for the serve, mcp and preview-ui commands"
 )
 
 

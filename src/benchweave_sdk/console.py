@@ -6,7 +6,6 @@ import sys
 from typing import TextIO
 
 from rich.console import Console
-from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
@@ -62,13 +61,3 @@ class ConsoleOutput:
             # strings that must never become clickable links or restyled output.
             table.add_row(Text(row[0]), Text(row[1]), Text(row[2]))
         self.console.print(table)
-
-    def preview_ready(self, url: str, *, scenarios: int, renderer_version: str) -> None:
-        text = (
-            f"SIMULATED PRESENTATION DATA: {url}\n"
-            f"Renderer {renderer_version} · {scenarios} scenarios"
-        )
-        if self.terminal:
-            self.console.print(Panel(text, title="BenchWeave SDK preview", border_style="cyan"))
-        else:
-            self.message(text)
