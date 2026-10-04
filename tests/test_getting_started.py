@@ -530,7 +530,12 @@ def test_launched_commands_use_the_resolved_absolute_executable(
     monkeypatch.setattr(subprocess, "run", spying_run)
     page = "```sh\nsource .venv/bin/activate\nbenchweave-sdk --version\n```\n"
     _failures, _records = execute_sequence(extract_sh_blocks(page), tmp_path, Path("/unused"))
-    assert launched and launched[0] == str(stub), (
+    # shutil.which on Windows spells the hit with the PATHEXT casing (".EXE")
+    # while the on-disk stub is ".exe" — one file on NTFS, so the launch-path
+    # pin compares case-insensitively there (normcase is identity on POSIX).
+    launched_norm = os.path.normcase(launched[0]) if launched else ""
+    stub_norm = os.path.normcase(str(stub))
+    assert launched and launched_norm == stub_norm, (
         "getting_started_launch: commands must launch by the resolved absolute "
         "path; a bare name resolves against the PARENT's PATH on Windows, which "
         "is how the runner's pytest answered for the page's (PR #103)"
