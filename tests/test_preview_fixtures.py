@@ -194,6 +194,12 @@ def test_preview_model_is_built_from_the_validated_candidate(tmp_path: Path) -> 
     assert len(model.scenarios) == 11
     author_ids = {scenario.id for scenario in model.scenarios if not scenario.baseline}
     assert author_ids == {"example-normal", "example-warning"}
+    # Carried from the gateway's dying copy at 0.7.0 (review fold adv2 F1):
+    # the scaffold's declared plot must project — one time_series view over
+    # the real scaffolded project, not only the hand-built corpus candidates
+    # below. Never existed SDK-side before this fold (git log -S over this
+    # file: '== ["time_series"]' has no prior commit).
+    assert [view.kind for view in model.plot_views] == ["time_series"]
 
     # renderer_version reports the EMITTER's version since 0.7.0 (#308):
     # the same importlib.metadata derivation __init__ uses for __version__
@@ -226,9 +232,24 @@ def test_served_preview_document_conforms_to_wire_schema(tmp_path: Path) -> None
     validator = Draft202012Validator(schema)
     assert not list(validator.iter_errors(document))
 
+    # Carried from the gateway's dying copy at 0.7.0 (review fold adv2 F1):
+    # the scaffold declares one HINTED time-series plot; its projection must
+    # ride the served document and validate (metric F, Python side).
+    assert document["plot_views"], "the scaffold plot must project into the served document"
+    assert document["plot_views"][0]["kind"] == "time_series"
+    assert document["plot_views"][0]["channels"][0]["color_role"] == "muted"
+
     poisoned = json.loads(json.dumps(document))
     poisoned["scenarios"][0]["expected_severity"] = "catastrophic"
     assert list(validator.iter_errors(poisoned))
+
+    # Carried from the gateway's dying copy at 0.7.0 (review fold adv2 F1):
+    # the wire schema is the authority on channel color roles — a doctored
+    # role must REFUSE (never existed SDK-side before this fold; git log -S
+    # 'poisoned_plot' over this file is empty).
+    poisoned_plot = json.loads(json.dumps(document))
+    poisoned_plot["plot_views"][0]["channels"][0]["color_role"] = "critical"
+    assert list(validator.iter_errors(poisoned_plot))
 
 
 # --- plot_views projection and previewability relaxation (issue #67) ---------
