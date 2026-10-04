@@ -202,6 +202,63 @@ def _serial_app(tmp_path: Path) -> tuple[Any, ...]:
     return app, policy, fx, seam
 
 
+def _serial_app_with_hooks(tmp_path: Path, hooks: Any) -> tuple[Any, ...]:
+    """A serial-transport app over the AR-4 fixture with EXPLICIT hooks
+    (the fold's failure-injection seam)."""
+    fx = _scan_fixture(tmp_path)
+    from benchweave_sdk_server.serial import serial_plugin_session
+    from benchweave_sdk_server.web import build_app
+
+    session = serial_plugin_session(fx["plugin"], "/dev/match-a")
+    seam = StandaloneSeam(
+        session,
+        transport_kind="serial",
+        serial_ports=hooks,
+        serial_device_path="/dev/match-a",
+    )
+    policy = GuardPolicy.complete(
+        bound_host="127.0.0.1",
+        bound_port=8477,
+        bearer_token=new_token(),
+        csrf_token=new_token(),
+    )
+    app = build_app(seam, policy=policy)
+    return app, policy, fx, seam
+
+
+def test_a_failing_scan_renders_a_typed_refusal_not_a_500(tmp_path: Path) -> None:
+    """FOLD-E: the serial scan's real failures (a missing pyserial, an
+    enumerate error) raise RuntimeError/ValueError/OSError BEFORE any
+    SeamError exists — the route caught SeamError only, so they escaped as
+    raw 500s. A refused scan renders the typed scan-refused row and is
+    never cached into the GET view."""
+    from benchweave_sdk_server.serial import SerialPortHooks
+
+    def _broken_enumerate() -> list[Any]:
+        raise RuntimeError(
+            "standalone_serial_pyserial_missing: install 'benchweave-sdk[server]' "
+            "for serial transport support"
+        )
+
+    app, policy, fx, seam = _serial_app_with_hooks(
+        tmp_path,
+        SerialPortHooks(
+            enumerate_ports=_broken_enumerate, open_port=lambda device, settings: None
+        ),
+    )
+    with TestClient(
+        app, base_url="http://127.0.0.1:8477", raise_server_exceptions=False
+    ) as client:
+        page = client.post("/discover", headers={"x-csrf-token": policy.csrf_token})
+        assert page.status_code == 200, page.status_code
+        assert "Scan refused" in page.text
+        assert "standalone_serial_pyserial_missing" in page.text
+        after = client.get("/")
+        assert after.status_code == 200
+        assert seam.discovery_cache is None, "the failure is not cached into the GET view"
+        assert "example_device" not in after.text
+
+
 def test_ar4_get_root_never_transmits_and_the_scan_is_an_explicit_post(
     tmp_path: Path,
 ) -> None:

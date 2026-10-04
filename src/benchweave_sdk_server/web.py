@@ -247,6 +247,24 @@ def _add_html_routes(
                     scan_error={"code": exc.code, "message": exc.message},
                 ),
             )
+        except (RuntimeError, ValueError, OSError) as exc:
+            # The scan's failure classes that raise before any SeamError
+            # exists (FOLD-E) render the same typed scan-refused row; the
+            # seam maps them for REST and MCP too, so this arm is the
+            # route's own defense, not the only reader.
+            devices = seam.discovery_cache or []
+            return _TEMPLATES.TemplateResponse(
+                request=request,
+                name="index.html",
+                context=shared(
+                    devices=devices,
+                    connected=seam.session.connected,
+                    pages=pres().pages,
+                    has_presentation=pres().available,
+                    scan_available=True,
+                    scan_error={"code": "not_ready", "message": str(exc)},
+                ),
+            )
         return RedirectResponse(url="/", status_code=303)
 
     async def _gather_readings(

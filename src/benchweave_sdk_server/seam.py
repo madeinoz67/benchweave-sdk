@@ -329,14 +329,23 @@ class StandaloneSeam:
             from .serial import discover_serial_devices
 
             session = self._session
-            devices = await discover_serial_devices(
-                session.plugin,
-                hooks=self._serial_ports,
-                connected_device=(
-                    self._serial_device_path if session.connected else None
-                ),
-                connected_identity=session.identity,
-            )
+            try:
+                devices = await discover_serial_devices(
+                    session.plugin,
+                    hooks=self._serial_ports,
+                    connected_device=(
+                        self._serial_device_path if session.connected else None
+                    ),
+                    connected_identity=session.identity,
+                )
+            except (RuntimeError, ValueError, OSError) as exc:
+                # The scan's real failure classes (a missing pyserial, an
+                # enumerate error, an invalid declared hint) raise BEFORE
+                # any SeamError exists — surface them typed, never as a
+                # raw 500 through the interfaces, and cache nothing.
+                raise self._fail(
+                    "not_ready", f"device scan refused: {exc}", correlation
+                ) from exc
             self._discovery_cache = devices
             return {"devices": devices}
         descriptor = self._session.plugin.descriptor
