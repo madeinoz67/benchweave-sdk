@@ -116,7 +116,7 @@ def _build_seam(
             selection,
         )
     if transport == "serial":
-        if device is None:
+        if not device:  # absent OR empty — "" is a missing path, not a path
             click.echo(
                 "standalone_transport_serial_device_required: --transport serial "
                 "requires --device <path>",

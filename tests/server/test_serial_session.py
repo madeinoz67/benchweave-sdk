@@ -130,6 +130,27 @@ def test_cli_transport_serial_requires_device(starter_project: Path) -> None:
     assert "--device" in result.output
 
 
+def test_cli_transport_serial_refuses_an_empty_device(
+    starter_project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fold-refute 2: ``--device ""`` is a missing device, not a path —
+    the guard must refuse it at boot, not pass it to pyserial at
+    connect (the ``is None`` check let the empty string through)."""
+    import benchweave_sdk_server.serial as serial_module
+
+    def _no_session(*args: object, **kwargs: object) -> None:
+        raise AssertionError("the guard must fire before the session builds")
+
+    monkeypatch.setattr(serial_module, "serial_plugin_session", _no_session)
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["serve", str(starter_project), "--transport", "serial", "--device", "", "--no-open"],
+    )
+    assert result.exit_code == 2
+    assert "--device" in result.output
+
+
 def test_cli_device_with_mock_is_refused(starter_project: Path) -> None:
     runner = CliRunner()
     result = runner.invoke(
