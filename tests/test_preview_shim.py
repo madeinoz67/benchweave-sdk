@@ -222,3 +222,36 @@ def test_importing_the_sdk_cli_never_imports_the_server_package() -> None:
     )
     proc = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True)
     assert proc.returncode == 0, proc.stderr
+
+
+# --- the deletion is structural (A4) ------------------------------------------
+
+
+def test_the_old_preview_server_module_is_gone() -> None:
+    """The never-fallback pin: the stdlib preview server's module is
+    deleted, not deprecated — importing it must raise ModuleNotFoundError,
+    so no code path can quietly fall back to the envelope-era preview."""
+    with pytest.raises(ModuleNotFoundError):
+        import benchweave_sdk.preview_server  # noqa: F401
+
+
+def test_no_frozen_bundle_tree_references_remain() -> None:
+    """Rename-completeness, the A-R shape: after the frozen renderer
+    bundle's deletion no byte under src/, tests/, .github/ or the README
+    names the deleted tree. The needle is assembled at runtime so this arm
+    is not itself a hit (its own name included)."""
+    needle = "preview_" + "assets"
+    repo = Path(__file__).resolve().parents[1]
+    targets: list[Path] = [repo / "README.md"]
+    for base in (repo / "src", repo / "tests", repo / ".github"):
+        targets.extend(
+            path
+            for path in sorted(base.rglob("*"))
+            if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc"
+        )
+    hits = [
+        str(path.relative_to(repo))
+        for path in targets
+        if path.is_file() and needle in path.read_text(encoding="utf-8", errors="replace")
+    ]
+    assert hits == [], f"{needle} references remain: {hits}"

@@ -339,9 +339,9 @@ def _renderer_version() -> str:
     the emitter — the same ``importlib.metadata`` derivation
     ``benchweave_sdk.__init__`` uses for ``__version__`` (derived, never a
     literal; the zero-literal gate's register discipline). The React
-    renderer's frozen build version, read from ``preview_assets/
-    inventory.json``, died with the bundle; the wire schema keeps requiring
-    a string.
+    renderer's frozen build version, once read from the deleted renderer
+    bundle's inventory, died with the bundle; the wire schema keeps
+    requiring a string.
     """
     from . import __version__
 

@@ -110,9 +110,10 @@ def _guard_error(name: str, status: int = 403) -> JSONResponse:
 class TrustedHostGuard(BaseHTTPMiddleware):
     """Refuse DNS-rebinding: the Host header must name this listener.
 
-    Ports ``preview_server``'s ``_handler._host_is_trusted`` logic (bracketed
-    IPv6, port match, ``localhost`` implies loopback-bound) onto the ASGI
-    stack; it covers HTML, ``/v1`` and ``/mcp`` alike.
+    The bracketed-IPv6/port-match/``localhost`` logic was ported from the
+    SDK preview server's handler and became this class's own at 0.7.0
+    (#308, when that module was deleted); it covers HTML, ``/v1`` and
+    ``/mcp`` alike.
     """
 
     def __init__(self, app: object, bound_host: str, bound_port: int) -> None:

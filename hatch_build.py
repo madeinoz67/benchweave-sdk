@@ -22,27 +22,6 @@ SCAFFOLD_REQUIRED = (
 )
 
 
-def _validate_preview_assets(package: Path) -> None:
-    root = package / "preview_assets"
-    inventory_path = root / "inventory.json"
-    if not inventory_path.is_file():
-        raise RuntimeError("Bundled preview inventory missing; run npm run build:preview from ui/")
-    try:
-        inventory = json.loads(inventory_path.read_bytes())
-        assets = inventory["assets"]
-    except (json.JSONDecodeError, KeyError, TypeError) as exc:
-        raise RuntimeError("Bundled preview inventory is invalid") from exc
-    if inventory.get("api_version") != 1 or not isinstance(assets, list) or not assets:
-        raise RuntimeError("Bundled preview inventory is incompatible or empty")
-    for asset in assets:
-        relative = Path(asset["path"])
-        if relative.is_absolute() or ".." in relative.parts:
-            raise RuntimeError(f"Unsafe preview asset path: {relative}")
-        content = (root / relative).read_bytes()
-        if len(content) != asset["size"] or hashlib.sha256(content).hexdigest() != asset["sha256"]:
-            raise RuntimeError(f"Bundled preview asset is stale or corrupt: {relative}")
-
-
 # The 8.3 short name of _GENERATED.txt. A row spelled with the alias can
 # resolve to the stamp at lookup when the stamp was created first (a
 # hand-crafted tree); this writer's row-before-stamp order avoids that —
@@ -177,8 +156,6 @@ def _validate_scaffold_template(root: Path) -> None:
 class CustomBuildHook(BuildHookInterface):
     def initialize(self, version, build_data):
         root = Path(self.root)
-        package = root / "src/benchweave_sdk"
-        _validate_preview_assets(package)
         _validate_vendored_standards(root)
         _validate_scaffold_template(root)
         _drop_vcs_exclusion_force_include(build_data)

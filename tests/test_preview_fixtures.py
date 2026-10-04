@@ -198,7 +198,8 @@ def test_preview_model_is_built_from_the_validated_candidate(tmp_path: Path) -> 
     # renderer_version reports the EMITTER's version since 0.7.0 (#308):
     # the same importlib.metadata derivation __init__ uses for __version__
     # — derived, never a literal (the zero-literal gate). The React
-    # renderer's frozen build version died with the preview_assets bundle.
+    # renderer's frozen build version died with the deleted renderer
+    # bundle.
     from benchweave_sdk import __version__
 
     assert model.renderer_version == __version__
