@@ -436,3 +436,40 @@ embedded DON'T-BUILD calls ARE taken: no custom serial provider contract
 (corpus bytes; generic §8.1 kinds suffice), and no measurement profiles
 (upstream contract gap). The premise verified; the one gate-blocking
 premise failure is the missing Q5/Q7/Q13 rulings (§0, §7).
+
+## Addendum (2026-10-04, refute fold) — capture_max_bytes semantics and the
+## parity ruling
+
+Dated addendum; sections 0–9 above stay frozen as written. This documents
+what the two-lane refute fold (lanes A+B, same day) CHANGED about the
+mechanisms §1 described, so the record and the code agree.
+
+capture_max_bytes: the WRITER is the reservation's authority. The
+StandaloneCaptureWriter enforces the reservation at every flush and at
+finalise. The services layer's append guard is a conservative buffer-path
+refusal only (an un-staged span larger than the whole reservation, refused
+before buffering); it is not the reservation's enforcement point. A
+refused capture is CLEANABLE: the writer attaches before any check that
+can refuse, the buffer retires only on the writer's acceptance, and a
+services-level abort removes an un-finalised capture's event directory
+(gated on the writer's own manifest.json publication marker), so the
+capture_id is reusable after the abort. The flushed accounting moves only
+on the writer's acceptance, so refusal messages name true counts and a
+refused flush loses no bytes. §1's original tail-crossing description —
+"the last flush refuses" — stays true; the fold added the property that
+mattered: the refusal leaves the capture abortable and the id reusable.
+
+Parity ruling (FOLD-D, decided by the documented surface): the guide's
+SerialStandaloneHost example (user_guide/plugin-sdk.qmd, section "A
+standalone runtime around the writer") mandates bytes-only data on the
+serial surface (`isinstance(data, bytes)` strict), so the serial backend
+stays strict. MockHost's whole-dict equality accepts a bytearray where
+bytes were scripted — that leniency is a DISCLOSED two-backend divergence
+(asserted and pinned in the instantiated conformance cell set); a future
+mock tightening flips that cell deliberately. The mock's other transmit
+discipline DID move to the real backend: the serial services now enforce
+dispatch markers (ConformanceError on an unmarked stream_send or
+stream_exchange), matching MockHost. The guide's example itself does not
+enforce markers — it stays the copy-into-your-project floor; the
+productised backend adds the discipline. Deferral: the guide's example is
+not updated in this fold.

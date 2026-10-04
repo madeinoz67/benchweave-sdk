@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import math
 import shutil
 import threading
@@ -33,6 +34,8 @@ from benchweave_sdk.testing import ConformanceError
 from .session import LoadedPlugin, PluginSession
 
 _TERMINATORS = {"lf": b"\n", "crlf": b"\r\n"}
+
+_LOGGER = logging.getLogger(__name__)
 
 #: The section 8.1 stream transaction field sets, exactly as the guide's
 #: example validates them (and as the mock's scripted cells exercise them):
@@ -289,6 +292,17 @@ class SerialLink:
             self._closing = True
             self._cond.notify_all()
         self._thread.join(timeout=_JOIN_TIMEOUT_S)
+        if self._thread.is_alive():
+            # The reader is still draining an in-flight port read past the
+            # join bound: report it — a silent still-live reader after
+            # close looks closed while it still holds the port handle.
+            # (The thread is daemon, so the process can still exit; the
+            # link stays closed and the transport close runs regardless.)
+            _LOGGER.warning(
+                "standalone_serial_close: reader still alive after the "
+                "%0.0fs join; the transport close still runs",
+                _JOIN_TIMEOUT_S,
+            )
         with contextlib.suppress(OSError):
             self._transport.close()
 
