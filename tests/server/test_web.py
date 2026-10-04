@@ -189,13 +189,34 @@ def test_rest_envelopes_carry_correlation_ids(client, policy) -> None:
     assert body["data"]["mode"] == "standalone"
 
 
-def test_rest_deferred_operation_refuses(client, policy) -> None:
+def test_rest_unservable_operation_refuses_explicitly(client, policy) -> None:
+    """The closed-set honesty over REST, post-I3b flip: every declared row
+    answers. capture_start on the mock seam (no capture-capable services)
+    is unavailable naming the gap — the pre-I3b shape of this test pinned
+    the increment-deferral refusal; nothing defers any more, and the
+    handler's own typed refusal is the same explicit-answer discipline."""
     headers = {"authorization": f"Bearer {policy.bearer_token}"}
-    response = client.post("/v1/capture_start", headers=headers, json={})
+    connected = client.post(
+        "/v1/device_connect",
+        headers=headers,
+        json={"device_id": "example_device"},
+    )
+    assert connected.status_code == 200
+    response = client.post(
+        "/v1/capture_start",
+        headers=headers,
+        json={
+            "device_id": "example_device",
+            "format": "waveform_f64le",
+            "count": 4,
+            "sample_interval_s": 0.001,
+            "unit": "V",
+        },
+    )
     assert response.status_code == 503
     body = response.json()
     assert body["error"]["code"] == "unavailable"
-    assert body["error"]["details"]["reason"] == "increment_deferral"
+    assert "capture" in body["error"]["message"]
     assert body["correlation_id"]
 
 
