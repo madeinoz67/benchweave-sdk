@@ -1568,7 +1568,16 @@ class StandaloneSeam:
             raise self._fail(
                 "not_found", f"no published capture: {capture_id}", correlation
             )
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except ValueError as exc:
+            # The same closed refusal capture_get gives (B-F4): an
+            # unparseable manifest is not a raw JSONDecodeError.
+            raise self._fail(
+                "not_found",
+                f"capture {capture_id} has an unparseable manifest",
+                correlation,
+            ) from exc
         fmt = str(manifest.get("format", ""))
         if fmt != "waveform_f64le":
             raise self._fail(
@@ -1612,15 +1621,34 @@ class StandaloneSeam:
             "points": [[x, y] for x, y in served],
         }
 
+    def _stale_row_refusal(
+        self, library: CaptureLibrary, capture_id: str, correlation: str
+    ) -> None:
+        """The index-mediated mutations (annotate, pin) verify the event
+        directory still carries its manifest: an out-of-band deletion can
+        leave a stale row, and a stale row must refuse CLOSED (not_found,
+        never a raw filesystem error) and drop itself from the index
+        (delete-style self-heal, B-F4)."""
+        event = self._event_dir(capture_id, correlation)
+        row = library.get(capture_id)
+        if row is not None:
+            if (event / "manifest.json").is_file():
+                return
+            with contextlib.suppress(Exception):
+                # Delete-style self-heal: the index row AND the session
+                # outcome row both go, exactly as capture_delete drops them.
+                library.remove(capture_id)
+                self._capture_outcomes.pop(capture_id, None)
+        raise self._fail(
+            "not_found", f"no published capture: {capture_id}", correlation
+        )
+
     async def _op_capture_annotate(
         self, arguments: dict[str, Any], correlation: str
     ) -> dict[str, Any]:
         capture_id = str(arguments["capture_id"])
         library = self._library(correlation)
-        if library.get(capture_id) is None:
-            raise self._fail(
-                "not_found", f"no published capture: {capture_id}", correlation
-            )
+        self._stale_row_refusal(library, capture_id, correlation)
         library.update_annotation(
             capture_id,
             notes=arguments.get("notes"),
@@ -1639,10 +1667,7 @@ class StandaloneSeam:
     ) -> dict[str, Any]:
         capture_id = str(arguments["capture_id"])
         library = self._library(correlation)
-        if library.get(capture_id) is None:
-            raise self._fail(
-                "not_found", f"no published capture: {capture_id}", correlation
-            )
+        self._stale_row_refusal(library, capture_id, correlation)
         library.set_pinned(capture_id, pinned)
         return {"capture_id": capture_id, "pinned": pinned}
 

@@ -784,6 +784,61 @@ def test_delete_refuses_the_in_flight_capture(tmp_path: Path) -> None:
     asyncio.run(scenario())
 
 
+def test_stale_index_rows_refuse_closed_and_self_heal(tmp_path: Path) -> None:
+    """B-F4 (P6 shape): an out-of-band deleted event dir leaves a stale
+    index row — annotate and pin answer not_found (never a raw
+    FileNotFoundError) and the stale row is dropped from capture_list
+    (delete-style self-heal)."""
+    host = _host(tmp_path, mode="ok")
+
+    async def scenario() -> str:
+        await _connected(host)
+        started = await host.call("capture_start", _start(count=2))
+        await host.await_capture()
+        return started["capture_id"]
+
+    capture_id = asyncio.run(scenario())
+    shutil.rmtree(tmp_path / "captures" / capture_id)
+
+    async def refused(operation: str, arguments: dict[str, Any]) -> None:
+        with pytest.raises(SeamError) as caught:
+            await host.call(operation, arguments)
+        assert "not_found" in str(caught.value.code)
+
+    asyncio.run(
+        refused(
+            "capture_annotate",
+            {"capture_id": capture_id, "notes": "too late", "tags": ["x"]},
+        )
+    )
+    asyncio.run(refused("capture_pin", {"capture_id": capture_id}))
+    rows = asyncio.run(host.call("capture_list", {}))["captures"]
+    assert all(row["capture_id"] != capture_id for row in rows)
+
+
+def test_series_on_an_unparseable_manifest_is_not_found(tmp_path: Path) -> None:
+    """B-F4 (P10 shape): capture_get wraps an unparseable manifest into
+    not_found; capture_series refuses the same way — never a raw
+    JSONDecodeError."""
+    host = _host(tmp_path, mode="ok")
+
+    async def scenario() -> str:
+        await _connected(host)
+        started = await host.call("capture_start", _start(count=2))
+        await host.await_capture()
+        return started["capture_id"]
+
+    capture_id = asyncio.run(scenario())
+    (tmp_path / "captures" / capture_id / "manifest.json").write_text("{nope")
+
+    async def refused() -> None:
+        with pytest.raises(SeamError) as caught:
+            await host.call("capture_series", {"capture_id": capture_id})
+        assert "not_found" in str(caught.value.code)
+
+    asyncio.run(refused())
+
+
 def test_artifact_read_serves_bounded_windows(tmp_path: Path) -> None:
     host = _host(tmp_path, mode="ok")
 
