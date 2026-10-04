@@ -134,7 +134,26 @@ Deterministic; a third party can execute. Both checkouts; `UV_PROJECT_ENVIRONMEN
 
 - **A1 wheel census.** `uv build`; `unzip -l dist/*.whl` → **zero** entries under `benchweave_sdk/preview_assets/`; `preview_server.py`/`preview_tui.py` absent from the listing; `benchweave_sdk_server/` intact. RED baseline: the same command on `main` lists the preview_assets entries (count recorded in the PR body).
 - **A2 default-install refusal (R-9).** Fresh venv 1: `pip install dist/*.whl`; scaffold a project (`benchweave-sdk new p --with-ui`); `benchweave-sdk preview-ui p` → **exit 2**, stderr contains `benchweave_sdk_server_extras_missing:` AND `benchweave-sdk[server]`, and does NOT contain `Traceback`.
+
+> **[ERRATUM 2026-10-04 — review fold R4.]** A2's letter was unexecutable as
+> written: the bare default install cannot run `new` — WS2 (issue #347)
+> made the `[scaffold]` extra load-bearing for scaffolding after v0.6.0
+> tagged, so the bullet's scaffold step refuses with `scaffold_extra_absent:`
+> before preview-ui ever runs. The correction (commit e2c8279): the release
+> smoke installs the wheel with `[scaffold]` (still no `[server]` — the axis
+> A2 tests), and the local A2 proof used a plain existing directory; the
+> refusal fires in serve's body before any project load. The frozen bullet
+> text above is unchanged.
 - **A3 delegation (both arms).** Fresh venv 2: `pip install 'dist/benchweave_sdk-*.whl[server]'`; spawn `benchweave-sdk preview-ui p --no-open --port <fixed>` in the background; poll `GET /` → 200 with `SIMULATED — mock transport` AND `STANDALONE — no gateway`; SIGINT → exit 0. In-process arm (suite): `uvicorn.run` monkeypatched; the invocation is recorded AND `transport == "mock"` — RED: relaxing the pin (dropping the explicit mock) fails the arm.
+
+> **[ERRATUM 2026-10-04 — review fold R5.]** A3's banner wordings are stale
+> record prose: the mode-banner rework (PRs #97/#101, after this record's
+> evidence baseline and after v0.6.0) replaced them. The tree's pinned
+> wordings rule — `SIMULATED PRESENTATION DATA` (mock transport only) and
+> `NO GATEWAY · LOCAL PRESENTATION ONLY` (both transports), per
+> tests/server/test_banner.py; commit 8e8bf78 corrected the smoke to grep
+> those, and the live re-proof measured both present with SIGINT exit 0.
+> The frozen bullet text above is unchanged.
 - **A4 no-fallback pins.** A suite arm asserts `import benchweave_sdk.preview_server` raises `ModuleNotFoundError` (the old path is gone — the never-fallback structural pin); `grep -rn "preview_assets" src/ tests/ .github/ README.md` → **0** hits (rename-completeness, the A-R shape).
 - **A5 coverage motion.** Full `uv run pytest -q --junitxml=…` exit 0; collected count = main's count − deleted arms + moved 8 + new arms, with a PR-body mapping table naming every dying arm (gateway 34 + SDK-side deletions) and its disposition (dies / dies-as-duplicate / moves / already-covered-server-side). A collected count of 0 is a FAILED gate.
 - **A6 static.** Bare `uv run ruff check .` exit 0; fresh-cache (`rm -rf .mypy_cache`) bare `uv run mypy` exit 0.

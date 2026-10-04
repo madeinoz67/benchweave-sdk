@@ -17,6 +17,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import click
 import pytest
 from click.testing import CliRunner
 
@@ -54,13 +55,24 @@ def _simulate_default_install(monkeypatch: pytest.MonkeyPatch, *blocked: str) ->
 # --- the parity pin (risk R2) -------------------------------------------------
 
 
+def _type_shape(param_type: click.ParameterType) -> tuple[str, dict[str, object]]:
+    """A click parameter type's comparable shape: class name plus the
+    instance's own construction fields. click 8.3's ParamType defines no
+    value equality — two IDENTICAL IntRanges compare unequal by identity —
+    so the pin compares the structure each type was constructed from."""
+    return type(param_type).__name__, dict(getattr(param_type, "__dict__", {}))
+
+
 def test_preview_ui_mirrors_exactly_the_serve_option_subset() -> None:
     """The shim declares exactly {project, host, port, allow-network,
     no-open, scenario} — never transport/device/authoring/unattended (R-9:
     mock is pinned; real hardware is ``benchweave-sdk-server serve``
     directly — D-1/D-6) — and every declared name matches serve's own
-    declaration on kind, default and requiredness. serve GROWING a flag
-    does not redden this pin; serve CHANGING one of the six does."""
+    declaration on kind, default, requiredness and TYPE SHAPE. serve
+    GROWING a flag does not redden this pin; serve CHANGING one of the six
+    does — including narrowing a range: an IntRange's min/max ride the
+    compared shape (review fold R1).
+    """
     from benchweave_sdk_server.cli import serve
 
     shim = {param.name: param for param in sdk_cli.preview_ui_command.params}
@@ -79,11 +91,15 @@ def test_preview_ui_mirrors_exactly_the_serve_option_subset() -> None:
         assert type(param) is type(twin), name  # Argument/Option kind
         assert param.default == twin.default, name
         assert param.required == twin.required, name
-    # What the pin deliberately does NOT compare: --scenario's type. serve
-    # declares a click.Choice (resolved at ITS decoration time); the shim
-    # declares a plain string because its decoration must not import the
-    # server package at benchweave_sdk.cli import time, and enforces the
-    # same membership in its command body
+        if name != "scenario":
+            assert _type_shape(param.type) == _type_shape(twin.type), name
+    # The one structural exclusion: --scenario's TYPE. serve declares a
+    # click.Choice resolved at ITS decoration time; the shim cannot — a
+    # Choice over the scenario ids constructed at benchweave_sdk.cli
+    # decoration time imports the server package at import time, which
+    # test_importing_the_sdk_cli_never_imports_the_server_package forbids
+    # (the core->server layering). Every other parameter's type shape IS
+    # compared; scenario's membership is enforced in the command body
     # (test_preview_ui_refuses_scenario_ids_serve_does_not_offer).
 
 

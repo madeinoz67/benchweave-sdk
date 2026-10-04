@@ -150,13 +150,14 @@ carry the rubric out.
   across every plugin authored from the scaffold — treat shape changes to generated output
   as interface changes, because downstream repos diff them.
 
-- **Preview / presentation** — `preview_server.py`, `preview_tui.py`, `preview_models.py`,
-  `presentation.py`, `preview_assets/`, `console.py`. The preview renders plugin-ui
-  surfaces against the **vendored** plugin-ui contracts; the invariant is agreement
-  between what the preview renders and what `check-ui` accepts — a preview that happily
-  renders what the conformance check rejects (or the reverse) is the cross-surface bug
-  this bucket exists to catch. Watch for the preview reading standards from anywhere other
-  than the vendored tree.
+- **Preview / presentation** — `presentation.py`, `preview_models.py`, `fixtures.py`,
+  the `preview-ui` shim in `cli.py`, and the standalone host's loader
+  (`benchweave_sdk_server/session.py`). The preview serves plugin-ui surfaces against
+  the **vendored** plugin-ui contracts; the invariant is agreement between what the
+  standalone host loads and what `check-ui` accepts — a host that happily serves what
+  the conformance check rejects (or the reverse) is the cross-surface bug this bucket
+  exists to catch. Watch for the preview reading standards from anywhere other than the
+  vendored tree.
 
 - **Conformance / validation / fixtures** — `conformance.py`, `validation.py`,
   `fixtures.py`, `testing.py`, `interfaces.py`, `packaging.py`. These encode, offline, the
