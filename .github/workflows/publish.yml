@@ -135,8 +135,13 @@ jobs:
             if curl -fsS "http://127.0.0.1:${PORT}/" -o "$body"; then break; fi
             sleep 1
           done
-          grep -F "SIMULATED — mock transport" "$body"
-          grep -F "STANDALONE — no gateway" "$body"
+          # The mode banners the suite pins (tests/server/test_banner.py):
+          # the simulated banner renders on mock transport only, the no-gateway
+          # banner on both transports. (The #308 design record named the
+          # pre-I2a wordings 'SIMULATED — mock transport'/'STANDALONE — no
+          # gateway' — stale record prose; the tree's pins are these.)
+          grep -F "SIMULATED PRESENTATION DATA" "$body"
+          grep -F "NO GATEWAY · LOCAL PRESENTATION ONLY" "$body"
           kill -INT "$PID"
           wait "$PID"
 
