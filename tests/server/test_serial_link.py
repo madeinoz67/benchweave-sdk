@@ -136,6 +136,26 @@ def test_a_line_longer_than_max_bytes_is_refused_and_discarded() -> None:
     link.close()
 
 
+def test_a_partial_frame_polls_boundedly_after_the_quiet_window_expires() -> None:
+    """A partial frame buffered after the quiet window expired must not
+    hot-spin: the wait budget never goes non-positive (the pre-fold code
+    computed ``min(quiet_until, deadline) - now``, went negative once
+    quiet_until passed with a partial buffered, and ``Condition.wait(<= 0)``
+    returns immediately — a measured 0.88–0.97 core). The bound is generous
+    (cpu < 0.25 × wall) so the arm measures the spin class, not scheduler
+    noise."""
+    port = LoopbackPort(b"3.3")  # a partial that never completes
+    link = _link(port, quiet_s=0.02)
+    started_wall = time.monotonic()
+    started_cpu = time.process_time()
+    with pytest.raises(TimeoutError):
+        _take(link, deadline=time.monotonic() + 1.0)
+    wall = time.monotonic() - started_wall
+    cpu = time.process_time() - started_cpu
+    link.close()
+    assert cpu < wall * 0.25, f"hot spin suspected: cpu={cpu:.3f}s wall={wall:.3f}s"
+
+
 def test_a_transport_error_faults_the_link_and_wakes_every_waiter() -> None:
     port = LoopbackPort()
     port._fail_read = OSError("device gone")

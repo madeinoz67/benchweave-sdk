@@ -46,6 +46,12 @@ _FIELDS = {
 _READ_CHUNK = 4096
 _JOIN_TIMEOUT_S = 5.0
 
+#: The poll quantum a receive waits on once the quiet window has expired
+#: with a partial frame buffered (FOLD-C): the quiet-line answer no longer
+#: applies, and a non-positive wait budget would hot-spin — wait this
+#: quantum per loop until the deadline instead.
+_IDLE_POLL_S = 0.005
+
 
 class Transport(Protocol):
     """pyserial's surface, injectable so tests never need a real port.
@@ -217,6 +223,12 @@ class SerialLink:
                     "receive deadline expired; a partial frame stays buffered"
                 )
             budget = min(quiet_until, deadline) - now
+            if budget <= 0:
+                # The quiet window has expired with a partial frame
+                # buffered: the quiet-line answer no longer applies, and a
+                # non-positive wait budget would return immediately — poll
+                # on a small bounded quantum until the deadline.
+                budget = _IDLE_POLL_S
             with self._cond:
                 self._cond.wait(budget + 0.001)
 
