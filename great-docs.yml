@@ -310,7 +310,12 @@ changelog:
 # --------
 # : index - (default) separate homepage from the README / index source
 # : user_guide - the first user-guide page becomes the landing page
-# homepage: index
+# Fold B-F1 (2026-10-04): homepage: user_guide measured broken when built —
+# the promoted page's relative .qmd hrefs 404 at the site root and every
+# inbound citation of user-guide/getting-started.html dangles (sixteen dead
+# links; scripts/check_docs_links.py). The recorded fallback stands: the
+# index homepage, with the getting-started link at the top of index.qmd.
+homepage: index
 
 # User Guide
 # ----------
@@ -339,6 +344,12 @@ changelog:
 # The explicit list resolves against the conventional user_guide/ directory at
 # the project root, so guide sources live in user_guide/, not docs/.
 user_guide:
+  - section: "Get started"
+    contents:
+      - getting-started.qmd
+      - which-checkout.qmd
+      - glossary.qmd
+      - troubleshooting.qmd
   - section: "Plugin development"
     contents:
       - plugin-sdk.qmd

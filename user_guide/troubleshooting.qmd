@@ -1,0 +1,76 @@
+---
+title: "Troubleshooting"
+---
+
+Each row below names a symptom, its cause, and a fix that uses a command that exists. The rows come from the recorded gaps of a first run. New rows are added when first-time users report them.
+
+## The install reports no virtual environment
+
+**Symptom.** `uv pip install` stops with `error: No virtual environment found; run uv venv`.
+
+**Cause.** No virtual environment exists in the directory tree. The install command ran before Step 0 of [Get started](getting-started.qmd).
+
+**Fix.** Create the environment, activate it, then retry the install:
+
+```sh
+uv venv
+source .venv/bin/activate
+```
+
+## The created path differs from the typed path
+
+**Symptom.** You type `new /tmp/.../model100`. The message reports `Created synthetic plugin at /private/tmp/.../model100`.
+
+**Cause.** On macOS, `/tmp` is a symbolic link. The SDK canonicalizes the destination before any write, and messages report the real path. This behavior is correct. Nothing is missing.
+
+**Fix.** No fix is needed. Use the reported path. For temporary work, use `/private/tmp/...` directly.
+
+## The inventory command reports a missing argument
+
+**Symptom.** `benchweave-sdk inventory` stops with `Missing argument 'DIRECTORY'` and prints the usage text.
+
+**Cause.** The command needs the prepared bundle directory. A bare call has no directory to read.
+
+**Fix.** Build first, then point the command at the build output:
+
+```sh
+uv build
+benchweave-sdk inventory dist/
+```
+
+## `uv run pytest` reports a missing module
+
+**Symptom.** `uv run pytest` fails with `ModuleNotFoundError: No module named 'benchweave_sdk'`.
+
+**Cause.** `uv run` resolves its own environment and dependencies. It does not use the activated environment from Step 0.
+
+**Fix.** Use the activated environment. Run the tests with `pytest` after `source .venv/bin/activate`. The [Get started](getting-started.qmd) page teaches this one path.
+
+## An installed tool misses a command
+
+**Symptom.** A subcommand from this documentation reports `Error: No such command ...` on your machine.
+
+**Cause.** A tool installed earlier with `uv tool install` is an older release. Tool installs do not update by themselves.
+
+**Fix.** Upgrade the installed tool, then verify it:
+
+```sh
+uv tool upgrade benchweave-sdk
+benchweave-sdk --version
+```
+
+## The `check-ui` firmware value is unclear
+
+**Symptom.** A `check-ui` example passes `--firmware` with a value, and you do not know where the value comes from.
+
+**Cause.** The value is not a free choice. The descriptor's `identity.supported_firmware` list declares the supported firmware versions. A generated project declares its synthetic version there.
+
+**Fix.** Read the list in your `descriptor.json`. Use one of its values with `--firmware`.
+
+## The preview does not stop
+
+**Symptom.** `benchweave-sdk preview-ui` keeps running. It does not return to the prompt.
+
+**Cause.** The preview serves until you interrupt it. This posture is by design.
+
+**Fix.** Press `Ctrl+C` to stop the server. The command then exits.

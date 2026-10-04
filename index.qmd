@@ -1,3 +1,5 @@
+New to the plugin SDK? Start with the [Get started](user-guide/getting-started.qmd) page. It walks the path from an empty directory to a first check-pass, with the command and the expected output at every step.
+
 The **BenchWeave plugin developer SDK** is the offline toolkit to develop BenchWeave OTDP device plugins. Use it to generate a plugin project. Use it to implement and test the plugin against SDK-supplied interfaces and scripted mocks. Use it to validate descriptor and presentation contracts offline. Use it to prepare a reviewed release. You do not import gateway internals in any of these steps.
 
 The SDK is a separate wheel from the BenchWeave gateway. PyPI publishes it as `benchweave-sdk`. The [main BenchWeave repository](https://github.com/madeinoz67/benchweave) mounts it at `packages/sdk` as a git submodule. The SDK has its own CI and release cycle. Python 3.13+, OTDP 0.2.2 and adapter API 1.1 are the baseline. `pyproject.toml` and the changelog give the SDK's own version. This page does not claim a version.
@@ -30,10 +32,11 @@ Generate an independent plugin project with one command:
 benchweave-sdk new plugins/acme/model100 --package benchweave_acme_model100
 ```
 
-The generator creates a standalone project. The project has a source package, an explicitly synthetic protocol, generated mock and conformance tests, and an `AI-GUIDE.md`. The `AI-GUIDE.md` describes the design, build, test, review and release workflow. The path from there has five steps: install, generate, replace the synthetic protocol with verified device behaviour, run the checks, then prepare and approve a release. The [plugin developer guide](user-guide/plugin-sdk.qmd) walks through each step.
+The generator creates a standalone project. The project has a source package, an explicitly synthetic protocol, generated mock and conformance tests, and an `AI-GUIDE.md`. The `AI-GUIDE.md` describes the design, build, test, review and release workflow. The path from there has five steps: install, generate, replace the synthetic protocol with verified device behaviour, run the checks, then prepare and approve a release. The [plugin developer guide](user-guide/plugin-sdk.qmd) walks through each step. The [Get started](user-guide/getting-started.qmd) page walks the full sequence with the exact commands and the expected output.
 
 # Documentation
 
+- [Get started](user-guide/getting-started.qmd): the runnable path from an empty directory to a first check-pass.
 - [Plugin developer guide](user-guide/plugin-sdk.qmd): install, generate, implement, test, review and release a device plugin.
 - [API reference](reference/index.qmd): the structural-typing protocols (`Adapter`, `HostServices`, `OperationContext`, the provisional `CaptureServices`) and the testing, conformance, validation, presentation and packaging surfaces.
 - [CLI reference](reference/cli/index.qmd): `new`, `check`, `check-ui`, `check-preset`, `preview-ui`, `inventory` and `sync-standards`.

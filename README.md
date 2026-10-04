@@ -4,26 +4,6 @@
 
 Build an external device plugin. The plugin does not need gateway internals. Python 3.13+, SDK 0.6.0, OTDP 0.2.2 and adapter API 1.1 are the baseline. This package is a separate wheel built alongside BenchWeave. PyPI publishes it as benchweave-sdk.
 
-## Which checkout do I use?
-
-**This repository (`madeinoz67/benchweave-sdk`) is the canonical SDK.** Install it, scaffold plugins with it, and develop SDK features here.
-
-The gateway repository (`madeinoz67/benchweave`) also contains `packages/sdk/`. That directory is a git-submodule mount of this repository, used for gateway integration. The mount is **not** the canonical SDK. The mount can lag this repository. If you build a plugin, use this repository, not `packages/sdk/`.
-
-To see which SDK you have:
-
-```sh
-grep '^version' pyproject.toml   # the version this checkout declares
-git describe --tags              # the nearest release tag on this checkout
-benchweave-sdk --version         # the version of an installed SDK
-```
-
-The BenchWeave gateway and the canonical architecture and contract standards live in the main repository: [madeinoz67/benchweave](https://github.com/madeinoz67/benchweave). The main repository mounts this SDK at `packages/sdk` as a git submodule. The SDK has its own CI and release cycle.
-
-## Community
-
-Questions and discussion happen on the [BenchWeave Discord](https://discord.gg/Y5XPTWQQXr). The invite is permanent. Put SDK bugs and feature requests in the [gateway issue tracker](https://github.com/madeinoz67/benchweave/issues). The project uses one issue stream. The SDK repository's tracker is retired.
-
 ## Installation
 
 Stable releases are on PyPI:
@@ -53,6 +33,8 @@ An installed SDK can check its vendored standards offline with `benchweave-sdk s
 
 > [!CAUTION]
 > A template is not qualified firmware or a real instrument driver.
+
+New here? The [getting-started page](https://madeinoz67.github.io/benchweave-sdk/docs/user-guide/getting-started.html) walks these five steps with the full commands and the expected output.
 
 1. Install the SDK from PyPI with `uv pip install 'benchweave-sdk[scaffold]'` — the `[scaffold]` extra carries the copier dependency `new` renders through; without it, `new` refuses with `scaffold_extra_absent:` naming the install command. For more options, see [Installation](#installation).
 2. Run `benchweave-sdk new plugins/acme/model100 --package benchweave_acme_model100`. Replace `acme/model100` with your manufacturer and device name. The independent project contains `src/benchweave_acme_model100/` and `tests/`.
@@ -85,6 +67,26 @@ Every record write appends a new file under `records/lifecycle/…`. No command 
 The registry uses its own process for its own release. Status documents there are an interim measure. `publish-status` refuses when a baseline already exists, with the prefix `status_present:`. No CLI command signs an EXISTING unsigned baseline. That signature is a maintainer ceremony with the origin-key mint, kept out of band by design. It is not a CLI operation.
 
 The project publishes the versioned documentation site at <https://madeinoz67.github.io/benchweave-sdk/>. Start from the rendered [plugin SDK guide](https://madeinoz67.github.io/benchweave-sdk/docs/user-guide/plugin-sdk.html). The version selector on each docs page switches between the released versions and the current `main` build.
+
+## Which checkout do I use?
+
+**This repository (`madeinoz67/benchweave-sdk`) is the canonical SDK.** Install it, scaffold plugins with it, and develop SDK features here.
+
+The gateway repository (`madeinoz67/benchweave`) also contains `packages/sdk/`. That directory is a git-submodule mount of this repository, used for gateway integration. The mount is **not** the canonical SDK. The mount can lag this repository. If you build a plugin, use this repository, not `packages/sdk/`.
+
+To see which SDK you have:
+
+```sh
+grep '^version' pyproject.toml   # the version this checkout declares
+git describe --tags              # the nearest release tag on this checkout
+benchweave-sdk --version         # the version of an installed SDK
+```
+
+The BenchWeave gateway and the canonical architecture and contract standards live in the main repository: [madeinoz67/benchweave](https://github.com/madeinoz67/benchweave). The main repository mounts this SDK at `packages/sdk` as a git submodule. The SDK has its own CI and release cycle.
+
+## Community
+
+Questions and discussion happen on the [BenchWeave Discord](https://discord.gg/Y5XPTWQQXr). The invite is permanent. Put SDK bugs and feature requests in the [gateway issue tracker](https://github.com/madeinoz67/benchweave/issues). The project uses one issue stream. The SDK repository's tracker is retired.
 
 ## Directory structure
 
