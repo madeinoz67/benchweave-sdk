@@ -248,6 +248,23 @@ def test_mcp_mount_initializes(client, policy) -> None:
     assert response.status_code == 200
 
 
+def test_a_ui_mutation_carries_the_ui_surface(seam, client, policy, monkeypatch) -> None:
+    """ROW-2 (I3c-design finding B): the page routes' mutating seam calls
+    carry the dispatch layer's own surface (SW-34 — host knowledge: REST
+    passes "rest" on its dispatches; a bare call records surface null, so
+    the SW-54 tag could never name a UI-originated capture)."""
+    seen: list = []
+    real = seam.call
+
+    async def spy(*args, **kwargs):
+        seen.append(kwargs.get("surface"))
+        return await real(*args, **kwargs)
+
+    monkeypatch.setattr(seam, "call", spy)
+    _connect(client, policy)
+    assert seen == ["ui"]
+
+
 def test_failed_connect_renders_a_refusal_state(plugin, policy) -> None:
     """M1 RED arm (UI): a refused connect must RENDER the refusal — the
     operator never gets the silent 'Connect the device...' prompt instead."""

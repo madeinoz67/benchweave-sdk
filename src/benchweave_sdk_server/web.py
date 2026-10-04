@@ -206,6 +206,17 @@ def _add_html_routes(
         context.update(extra)
         return context
 
+    async def _ui_call(
+        operation: str, arguments: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """The page routes' dispatches carry the UI surface (SW-34): the
+        originating surface is host knowledge supplied by the dispatch
+        layer — REST passes ``surface="rest"`` on its routes, and the
+        browser's mutations pass ``"ui"`` here, so what the tag feeds
+        (the SW-54 capture sidecar reads it) records the true origin,
+        never null."""
+        return await seam.call(operation, arguments, surface="ui")
+
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request) -> Response:
         if seam.transport_kind == "serial":
@@ -621,7 +632,7 @@ def _add_html_routes(
         if device_id != seam.session.device_id:
             return HTMLResponse("not found", status_code=404)
         try:
-            await seam.call("device_connect", {"device_id": device_id})
+            await _ui_call("device_connect", {"device_id": device_id})
         except SeamError as exc:
             # The M1 fold: a refused connect RENDERS its refusal — the
             # operator never gets the silent prompt back instead.
@@ -635,7 +646,7 @@ def _add_html_routes(
         if device_id != seam.session.device_id:
             return HTMLResponse("not found", status_code=404)
         with contextlib.suppress(SeamError):
-            await seam.call("device_disconnect", {"device_id": device_id})
+            await _ui_call("device_disconnect", {"device_id": device_id})
         return _redirect()
 
     def _page_action_error(exc: SeamError) -> dict[str, Any]:
@@ -725,7 +736,7 @@ def _add_html_routes(
                     action_label="Stage refused",
                 )
             try:
-                await seam.call(
+                await _ui_call(
                     "parameter_stage",
                     {
                         "device_id": seam.session.device_id,
@@ -749,9 +760,7 @@ def _add_html_routes(
         if page is None:
             return HTMLResponse("not found", status_code=404)
         try:
-            await seam.call(
-                "parameter_apply", {"device_id": seam.session.device_id}
-            )
+            await _ui_call("parameter_apply", {"device_id": seam.session.device_id})
         except SeamError as exc:
             return await _render_page(request, page, _page_action_error(exc))
         return RedirectResponse(url=f"/pages/{page.id}", status_code=303)
@@ -765,7 +774,7 @@ def _add_html_routes(
         form = await request.form()
         preset_id = str(form.get("preset_id", ""))
         try:
-            await seam.call(
+            await _ui_call(
                 "preset_apply",
                 {"device_id": device_id, "preset_id": preset_id},
             )
