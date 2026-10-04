@@ -858,6 +858,21 @@ def test_the_four_pages_prose_carries_no_version_literals() -> None:
     assert problems == [], "\n" + "\n".join(problems)
 
 
+def _installed_sdk_version() -> str:
+    """The package version the machine source owns (pyproject, installed)."""
+    from importlib.metadata import version
+
+    return version("benchweave-sdk")
+
+
+def _active_otdp_version() -> str:
+    """The active OTDP row of the vendored standards lock."""
+    lock = json.loads((REPO / "standards-lock.json").read_text(encoding="utf-8"))
+    rows = [s for s in lock["standards"] if s.get("id") == "otdp" and s.get("active")]
+    assert len(rows) == 1, f"expected exactly one active otdp row, got {rows!r}"
+    return str(rows[0]["version"])
+
+
 def test_the_readme_delta_carries_no_version_literals() -> None:
     proc = subprocess.run(
         ["git", "diff", "origin/main...HEAD", "--", "README.md"],
@@ -877,7 +892,22 @@ def test_the_readme_delta_carries_no_version_literals() -> None:
         for line in proc.stdout.splitlines()
         if line.startswith("+") and not line.startswith("+++")
     ]
-    hits = [line for line in added if SEMVER.search(line)]
+    # Machine-sourced allowance (first exercised by the 0.7.0 release): the
+    # README baseline line states the package version and the active OTDP
+    # version — both owned by machine sources (pyproject via the installed
+    # distribution; standards-lock.json's active row). Those two values may
+    # appear on added lines; every other bare semver still reddens. This is
+    # the register-row pattern in miniature: an exemption whose value is
+    # derived, never hand-listed.
+    allowed = {
+        _installed_sdk_version(),
+        _active_otdp_version(),
+    }
+    hits = [
+        line
+        for line in added
+        if any(m for m in SEMVER.findall(line) if m not in allowed)
+    ]
     assert not hits, (
         "getting_started_version_literal: README added lines carry a bare semver: "
         f"{hits!r}"
