@@ -2,6 +2,71 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.0] - 2026-10-04
+
+### Bug Fixes
+
+- Resolve the installed benchweave-sdk launch path on Windows (PR #103)
+- Make the launch-resolution stub platform-aware (Scripts/.exe on Windows)
+- Compare the launch-path pin case-insensitively on Windows
+- Renderer_version reports the SDK's own version (#308) [**BREAKING**]
+- The publish smoke's install rides [scaffold] — a latent red for the 0.7.0 release (#308 follow-up)
+- The server-smoke banners are the tree's pinned wordings (#308)
+- The v0.7.0 bucket registers without git_ref — the ref cannot precede its tag
+- Docs-version registration moves to the post-tag pin-up — pre-tag is structurally impossible
+
+### Documentation
+
+- De-hardcode the user-guide wheel filename (glob, no version literal) (#102)
+- WS4 first-timer documentation and docs-as-tests design record (issue #347 increment 5)
+- Four first-timer pages, usage-first navigation (issue #347 WS4)
+- Re-home the preview surface — invariants, drift rows, CLAUDE.md, README, user guide (#308)
+- STE register pass on the preview-ui surfaces (#107, gateway #308)
+
+### Features
+
+- I2a — presentation render, plot wrapper and the parity suite (#284) (#97)
+- Copier-backed new with updatable scaffolds, upgrade + adopt (#347 WS2) (#93)
+- Claude assets — AGENTS.md carrier + five managed skills (#347 WS3) (#99)
+- I2b — staged/apply and presets over the SW-10 catalogue (#284) (#98)
+- I2c — the authoring loop, events and plugin_test (#284) (#101)
+- I3a — the serial backend, discovery and the mock/serial parity (#285) (#106)
+- Preview-ui becomes the standalone-host shim (PRD 12 R-9, gateway #308) [**BREAKING**]
+- The scaffold's preview citations move to the shim surface (#308) [**BREAKING**]
+
+### Miscellaneous
+
+- Advance benchweave-ui-html pin to 0.2.0 (D-B5, #285) (#104)
+- Advance benchweave-ui-html pin to 0.2.1 (#105)
+
+### Refactoring
+
+- Own the listener rules in the guard module (#308)
+- Delete the frozen renderer bundle and the TUI; textual leaves the base install (#308) [**BREAKING**]
+
+### Testing
+
+- Pin-shape guard on the [server] extra's ui-html pin (issue #294 slice 1, design §2.1)
+- Docs-as-tests over the page's sh blocks (issue #347 WS4)
+- Self-diagnosing harness for the Windows lane (issue #347 WS4, PR #103)
+- Move the SRF-2 projection arms into the SDK suite; the agreement test gains both directions (R-10, gateway #308)
+- The twin census pin moves to 37 with the #308 deletions
+- Carry the four gateway-only preview pins SDK-side (review fold adv2 F1, gateway #308)
+- Fold review rows R1-R5 — the parity pin gains type shape, the .claude references and the PR-time mirror follow the shim (#107, gateway #308)
+
+### Ci
+
+- Ui-html pin-freshness lane — the missing freshness signal (issue #294 slice 1, design §2.2)
+- The installed-wheel smoke proves the preview-ui posture (#308)
+
+### Fold
+
+- Two-lane adversarial review, all rows RED-first (issue #347 WS4)
+
+
+### Contributors
+
+- Stephen Eaton (35 commits)
 ## [0.6.0] - 2026-10-03
 
 ### Bug Fixes
