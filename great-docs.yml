@@ -552,7 +552,11 @@ versions:
   - tag: v0.7.0
     label: v0.7.0
     latest: true          # latest stable lives at the docs/ root (landing version; site root is the static site)
-    git_ref: v0.7.0
+    # git_ref omitted BY DESIGN at registration time: the ref cannot exist
+    # before the tag, and a declared-but-missing ref reddens the docs
+    # assembly. This bucket renders the release tree (identical bytes to
+    # the upcoming tag). The post-release docs pin-up commit adds
+    # `git_ref: v0.7.0` once the tag exists.
   - tag: v0.6.0
     label: v0.6.0
     latest: false
