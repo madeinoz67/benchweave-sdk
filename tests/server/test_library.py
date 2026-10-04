@@ -13,11 +13,12 @@ from __future__ import annotations
 import json
 import os
 import struct
+import sys
 from pathlib import Path
 
 import pytest
 
-from benchweave_sdk_server.library import CaptureLibrary
+from benchweave_sdk_server.library import CaptureLibrary, _pid_is_dead
 
 # --- the on-disk shape the writer + host publish (the rebuild's source) ---
 
@@ -120,21 +121,41 @@ def test_stale_lock_from_a_dead_process_is_stolen(root: Path) -> None:
 
 
 def _dead_pid() -> int:
-    """A pid that is not this process and holds no live process here."""
-    # On POSIX, spawning nothing and probing: use a pid guaranteed absent by
-    # os.fork discipline — instead, pick the highest plausible pid and walk
-    # down until os.kill reports nothing lives there.
+    """A pid that is not this process and holds no live process here —
+    found with the library's own portable probe (the same liveness rule
+    the lock steal runs, so the arm cannot diverge from the mechanism:
+    ``os.kill(pid, 0)`` is refused outright on Windows, WinError 87)."""
     pid = os.getpid() - 1
     while pid > 1:
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
+        if _pid_is_dead(pid):
             return pid
-        except PermissionError:
-            pid -= 1  # alive under another user; keep looking
-        else:
-            pid -= 1
+        pid -= 1
     raise RuntimeError("no dead pid found to test the stale-lock path")
+
+
+def test_the_windows_probe_branch_shape(monkeypatch: pytest.MonkeyPatch) -> None:
+    """ROW-3: the Windows liveness mapping, pinned against a mocked kernel
+    seam — macOS cannot run the real branch, so this arm is the local proxy
+    and CI's Windows leg is the live proof (the W1 posture). A handle is a
+    live pid; a 0 handle with ERROR_INVALID_PARAMETER (87) is a pid the
+    kernel does not know — provably dead, the lock is stolen; any other
+    failure is unprovable — conservative refuse."""
+    from benchweave_sdk_server import library
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(
+        "benchweave_sdk_server.library._windows_process_probe", lambda pid: (0, 87)
+    )
+    assert library._pid_is_dead(4242) is True
+    monkeypatch.setattr(
+        "benchweave_sdk_server.library._windows_process_probe",
+        lambda pid: (0x1A2B, 0),
+    )
+    assert library._pid_is_dead(4242) is False
+    monkeypatch.setattr(
+        "benchweave_sdk_server.library._windows_process_probe", lambda pid: (0, 5)
+    )
+    assert library._pid_is_dead(4242) is False
 
 
 def test_lockfile_records_the_owner_pid(root: Path) -> None:

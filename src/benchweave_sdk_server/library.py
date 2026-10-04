@@ -23,6 +23,7 @@ import json
 import os
 import shutil
 import sqlite3
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -64,18 +65,56 @@ _INDEX_NAME = "library.sqlite3"
 _LOCK_NAME = "library.lock"
 
 
+#: ``OpenProcess``'s minimal access right for asking a process about
+#: itself, and the kernel's error for a pid it does not know — a stale
+#: pid, the crashed host whose lock the steal path exists to reclaim.
+_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+_ERROR_INVALID_PARAMETER = 87
+
+
+def _windows_process_probe(pid: int) -> tuple[int, int]:
+    """``(OpenProcess handle, GetLastError)`` — the kernel's own answer
+    on win32. ``os.kill(pid, 0)`` is no liveness probe there: signal 0 is
+    refused with ``WinError 87`` before anything is asked, so the kernel
+    is asked directly instead. ctypes is imported in-function — the POSIX
+    hosts never pay for the win32 leg (the seam's lazy-import posture)."""
+    if sys.platform != "win32":  # pragma: no cover - the POSIX leg
+        return 0, 0
+    import ctypes
+
+    kernel32 = ctypes.windll.kernel32
+    handle = kernel32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        return 0, int(kernel32.GetLastError())
+    kernel32.CloseHandle(handle)
+    return int(handle), 0
+
+
+def _windows_pid_is_dead(pid: int) -> bool:
+    """The Windows liveness mapping: a handle is a live pid; a 0 handle
+    with ``ERROR_INVALID_PARAMETER`` (87) is a pid the kernel does not
+    know — provably dead; any other failure is unprovable."""
+    handle, error = _windows_process_probe(pid)
+    if handle:
+        return False
+    return error == _ERROR_INVALID_PARAMETER
+
+
 def _pid_is_dead(pid: int) -> bool:
     """Whether ``pid`` provably holds no live process here.
 
-    Signal 0 probes existence without delivering anything:
+    POSIX: signal 0 probes existence without delivering anything:
     ``ProcessLookupError`` is a provably dead pid (steal the lock);
     ``PermissionError`` is a LIVE pid under another user; a clean return is
-    a live pid. Anything else — a non-positive pid, an OS refusal — is
-    unprovable, and an unprovable lock is treated as live (conservative
-    refuse), never stolen.
+    a live pid. Windows: the ``OpenProcess`` probe above (the same
+    conservative rule at the end). Anything else — a non-positive pid, an
+    OS refusal — is unprovable, and an unprovable lock is treated as live
+    (conservative refuse), never stolen.
     """
     if pid <= 0:
         return False
+    if sys.platform == "win32":
+        return _windows_pid_is_dead(pid)
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
