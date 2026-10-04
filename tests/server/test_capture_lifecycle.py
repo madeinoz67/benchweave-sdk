@@ -703,6 +703,27 @@ def test_surface_is_recorded_in_metadata(tmp_path: Path) -> None:
     assert metadata["surface"] == "mcp"
 
 
+def test_the_sidecar_names_the_effective_reservation(tmp_path: Path) -> None:
+    """B-F3 (P1 shape): the SW-54 sidecar's config records the EFFECTIVE
+    reservation — min(requested, descriptor ceiling), the value the writer
+    enforces — not the raw requested argument."""
+    host = _host(tmp_path, max_bytes=1000, mode="ok")
+
+    async def scenario() -> str:
+        await _connected(host)
+        started = await host.call(
+            "capture_start", _start(count=4, max_bytes=10_000)
+        )
+        await host.await_capture()
+        return started["capture_id"]
+
+    capture_id = asyncio.run(scenario())
+    metadata = json.loads(
+        (tmp_path / "captures" / capture_id / "metadata.json").read_text()
+    )
+    assert metadata["config"]["max_bytes"] == 1000
+
+
 def test_annotate_pin_unpin_and_delete_round_trip(tmp_path: Path) -> None:
     host = _host(tmp_path, mode="ok")
 

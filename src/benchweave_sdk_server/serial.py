@@ -480,12 +480,22 @@ class SerialCaptureServices:
         writer's FIRST append, and the per-capture reservation —
         ``min(requested, the configured ceiling)`` when both exist; the
         writer stays the reservation's enforcement authority either way.
+        The sidecar's ``config`` records the EFFECTIVE reservation (both
+        clamps applied), never the raw requested argument — the durable
+        evidence names what the writer enforces (B-F3).
         """
         reservation = max_bytes
         if max_bytes is not None and self._capture_max_bytes is not None:
             reservation = min(max_bytes, self._capture_max_bytes)
         if reservation is not None:
             self._reservations[capture_id] = int(reservation)
+        effective = self._reservations.get(capture_id, self._capture_max_bytes)
+        if effective is not None:
+            config = metadata.get("config")
+            if isinstance(config, dict):
+                metadata = dict(
+                    metadata, config={**config, "max_bytes": int(effective)}
+                )
         self._capture_meta[capture_id] = dict(metadata)
         self._meta_written.discard(capture_id)
 
