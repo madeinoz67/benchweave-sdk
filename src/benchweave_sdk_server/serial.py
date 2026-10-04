@@ -18,6 +18,7 @@ import asyncio
 import contextlib
 import json
 import math
+import shutil
 import threading
 import time
 import uuid
@@ -413,66 +414,102 @@ class SerialCaptureServices:
 
     # capture: per-capture writers with block-buffered appends
 
+    def _writer_kwargs(self) -> dict[str, Any]:
+        """The writer constructor arguments the services layer derives from
+        its own configuration (the reservation rides the composer's
+        configuration, A02)."""
+        kwargs: dict[str, Any] = {"root": self._capture_root}
+        if self._capture_max_bytes is not None:
+            kwargs["max_bytes"] = self._capture_max_bytes
+        return kwargs
+
     def _writer_for(self, capture_id: str) -> StandaloneCaptureWriter:
         writer = self._writers.get(capture_id)
         if writer is None:
-            kwargs: dict[str, Any] = {"root": self._capture_root}
-            if self._capture_max_bytes is not None:
-                kwargs["max_bytes"] = self._capture_max_bytes
-            writer = StandaloneCaptureWriter(**kwargs)
+            writer = StandaloneCaptureWriter(**self._writer_kwargs())
             self._writers[capture_id] = writer
-        return writer
         return writer
 
     async def artifact_append(self, capture_id: str, data: bytes, context: Any) -> None:
-        """Buffer the append; flush to the per-capture writer at 64 KiB."""
+        """Buffer the append; flush to the per-capture writer at the block
+        size or the reservation, whichever is tighter.
+
+        The buffer-path refusal is CONSERVATIVE, not the reservation's
+        authority: an un-staged span larger than the whole reservation is
+        refused before buffering, while fitting spans are buffered and the
+        WRITER enforces the reservation per flush and at finalise — its
+        refusal is cleanable (the capture stays abortable, FOLD-B)."""
         buffer = self._buffers.get(capture_id)
         if buffer is None:
             buffer = self._buffers[capture_id] = bytearray()
         if (
             self._capture_max_bytes is not None
             and len(buffer) + len(data) > self._capture_max_bytes
-            and (self._capture_max_bytes - len(buffer)) >= 0
-            and self._flushed.get(capture_id, 0)
-            + len(buffer)
-            + len(data)
-            > self._capture_max_bytes
         ):
             raise ValueError(
                 f"append of {len(data)} bytes exceeds the declared "
                 f"max_bytes reservation ({self._capture_max_bytes} bytes, "
-                f"{self._flushed.get(capture_id, 0) + len(buffer)} already staged)"
+                f"{self._flushed.get(capture_id, 0)} flushed + "
+                f"{len(buffer)} buffered)"
             )
         buffer += bytes(data)
         while len(buffer) >= self._flush_threshold:
             block = bytes(buffer[: self._flush_threshold])
+            # Accept-then-account: the writer may refuse the flush (its
+            # staged count plus this block would cross the reservation) —
+            # the block stays buffered and is counted only on acceptance,
+            # so every refusal names true counts and loses no bytes.
+            await self._writer_for(capture_id).artifact_append(capture_id, block, context)
             del buffer[: self._flush_threshold]
             self._flushed[capture_id] = self._flushed.get(capture_id, 0) + len(block)
-            await self._writer_for(capture_id).artifact_append(capture_id, block, context)
 
     async def artifact_finalise(
         self, capture_id: str, metadata: dict[str, Any], context: Any
     ) -> dict[str, Any]:
         """Flush the buffered tail, then publish through the per-capture
-        writer; the digest is computed by the writer over flushed bytes."""
-        writer = self._writers.pop(capture_id, None)
+        writer; the digest is computed by the writer over flushed bytes.
+
+        Nothing detaches before the writer accepts: the writer (a fresh
+        one included) is attached FIRST, so a refused tail flush or a
+        refused finalise leaves the capture abortable — the pre-fold code
+        popped writer and buffer up front and a refusal stranded the event
+        directory (abort a no-op, the id un-reusable). The buffer retires
+        once the writer accepts the tail, so a metadata-fix retry cannot
+        double-flush it; the per-capture state retires only on success."""
+        writer = self._writers.get(capture_id)
         if writer is None:
-            kwargs2: dict[str, Any] = {"root": self._capture_root}
-            if self._capture_max_bytes is not None:
-                kwargs2["max_bytes"] = self._capture_max_bytes
-            writer = StandaloneCaptureWriter(**kwargs2)
-        buffer = self._buffers.pop(capture_id, None) or bytearray()
+            writer = StandaloneCaptureWriter(**self._writer_kwargs())
+            self._writers[capture_id] = writer
+        buffer = self._buffers.get(capture_id)
         if buffer:
             await writer.artifact_append(capture_id, bytes(buffer), context)
-        return await writer.artifact_finalise(capture_id, metadata, context)
+            # The tail was accepted: the services copy retires so a
+            # metadata-fix retry cannot double-flush it.
+            self._buffers.pop(capture_id, None)
+        manifest = await writer.artifact_finalise(capture_id, metadata, context)
+        self._writers.pop(capture_id, None)
+        self._flushed.pop(capture_id, None)
+        return manifest
 
     async def artifact_abort(self, capture_id: str) -> None:
         """Discard the buffer and the in-flight capture; publish nothing.
-        Unknown ids are a no-op (the writer protocol's abort rule)."""
+        Unknown ids are a no-op (the writer protocol's abort rule).
+
+        An un-finalised capture's event directory is REMOVED: the writer's
+        own abort deliberately leaves it (a published capture stands), and
+        a leftover empty directory would wedge the capture_id against
+        reuse (the writer's collision check refuses while the name
+        exists). The publication marker (``manifest.json``) decides what
+        is removed — the writer no-ops on a finalised capture, so the
+        removal can only touch an un-published event."""
         self._buffers.pop(capture_id, None)
+        self._flushed.pop(capture_id, None)
         writer = self._writers.pop(capture_id, None)
         if writer is not None:
+            event = writer.event_path
             await writer.artifact_abort(capture_id)
+            if event is not None and not (event / "manifest.json").exists():
+                shutil.rmtree(event, ignore_errors=True)
 
 
 def _serial_settings(plugin: Any) -> dict[str, Any]:

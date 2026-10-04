@@ -368,6 +368,77 @@ def test_evidence_is_appended_as_json_lines_and_host_fields_win(tmp_path: Path) 
     assert services.evidence[1]["at"].endswith("Z")
 
 
+def test_a_tail_crossing_finalise_refusal_leaves_the_capture_abortable(
+    tmp_path: Path,
+) -> None:
+    """The tail-crossing wedge: a tail that crosses the reservation is
+    refused by the writer at finalise — and that refusal must leave the
+    capture ABORTABLE (writer still attached, event directory removed by
+    abort) and the capture_id REUSABLE afterwards. The pre-fold code popped
+    writer and buffer before the writer's own check could refuse, so the
+    refusal stranded the event directory forever: abort was a no-op and a
+    retry append hit the writer's collision refusal."""
+    services = SerialCaptureServices(
+        SerialLink(LoopbackPort()),
+        max_frame_bytes=64,
+        capture_root=tmp_path,
+        capture_max_bytes=8 * 1024,
+    )
+    _run(services.artifact_append("cap-wedge", b"\x01" * (8 * 1024), _ctx()))
+    _run(services.artifact_append("cap-wedge", b"\x01", _ctx()))
+    with pytest.raises(ValueError, match="max_bytes reservation"):
+        _run(
+            services.artifact_finalise(
+                "cap-wedge",
+                {"format": "raw_binary", "started_at": "2026-10-04T00:00:00Z"},
+                _ctx(),
+            )
+        )
+    _run(services.artifact_abort("cap-wedge"))
+    assert not (tmp_path / "cap-wedge").exists(), (
+        "the refused finalise must leave the capture abortable"
+    )
+    # The id is reusable: a retry append must not hit the writer's
+    # capture_id collision refusal against the stranded directory.
+    _run(services.artifact_append("cap-wedge", b"\x02\x03", _ctx()))
+    manifest = _run(
+        services.artifact_finalise(
+            "cap-wedge",
+            {"format": "raw_binary", "started_at": "2026-10-04T00:00:00Z"},
+            _ctx(),
+        )
+    )
+    assert manifest["byte_length"] == 2
+
+
+def test_a_flush_refusal_reports_true_counts_and_loses_no_bytes(tmp_path: Path) -> None:
+    """The flushed accounting moves only on the writer's ACCEPTANCE: a
+    refused flush must leave its block buffered (never silently dropped)
+    and never counted, so the next refusal names the writer's true staged
+    count instead of a number inflated by refused bytes."""
+    services = SerialCaptureServices(
+        SerialLink(LoopbackPort()),
+        max_frame_bytes=64,
+        capture_root=tmp_path,
+        capture_max_bytes=8 * 1024,
+    )
+    # Fill the writer exactly to the reservation (the flush is accepted).
+    _run(services.artifact_append("cap-truth", b"\x01" * 4096, _ctx()))
+    _run(services.artifact_append("cap-truth", b"\x01" * 4096, _ctx()))
+    # A flush the writer must refuse: its staged count equals the
+    # reservation and this block would cross it.
+    _run(services.artifact_append("cap-truth", b"\x01" * 4096, _ctx()))
+    with pytest.raises(ValueError, match="max_bytes reservation"):
+        _run(services.artifact_append("cap-truth", b"\x01" * 4096, _ctx()))
+    # The next refusal reports the truth: the refused block is still
+    # buffered and was never counted as flushed.
+    with pytest.raises(ValueError) as info:
+        _run(services.artifact_append("cap-truth", b"\x01" * 8192, _ctx()))
+    message = str(info.value)
+    assert "8192 flushed + 8192 buffered" in message, message
+    assert "16384 already staged" not in message, message
+
+
 def test_two_backends_agree_on_the_adapters_exchange_flow() -> None:
     """One suite, two backends (AR-1): the scaffolded adapter's identify
     flow produces the same envelope over MockHost and over the serial
