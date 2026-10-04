@@ -195,11 +195,13 @@ def test_preview_model_is_built_from_the_validated_candidate(tmp_path: Path) -> 
     author_ids = {scenario.id for scenario in model.scenarios if not scenario.baseline}
     assert author_ids == {"example-normal", "example-warning"}
 
-    assert fixtures.__file__ is not None
-    inventory = json.loads(
-        (Path(fixtures.__file__).with_name("preview_assets") / "inventory.json").read_bytes()
-    )
-    assert model.renderer_version == inventory["renderer_version"]
+    # renderer_version reports the EMITTER's version since 0.7.0 (#308):
+    # the same importlib.metadata derivation __init__ uses for __version__
+    # — derived, never a literal (the zero-literal gate). The React
+    # renderer's frozen build version died with the preview_assets bundle.
+    from benchweave_sdk import __version__
+
+    assert model.renderer_version == __version__
 
 
 def test_served_preview_document_conforms_to_wire_schema(tmp_path: Path) -> None:
