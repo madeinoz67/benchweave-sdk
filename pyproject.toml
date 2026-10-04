@@ -49,7 +49,7 @@ server = [
   # The renderer's tokens/themes arrive by release + pin bump (PRD 12
   # Q5): an EXACT pin — a range would re-open silent drift between the
   # gateway's renderer corpus and what this host serves.
-  "benchweave-ui-html==0.2.0",
+  "benchweave-ui-html==0.2.1",
   "uvicorn>=0.52.4",
   # WS2: the folded authoring lane's plugin_new renders through the copier
   # template too (the standalone tree's benchweave-sdk[scaffold] dep, rebased).
