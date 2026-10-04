@@ -220,7 +220,10 @@ async def _dispatch(seam: StandaloneSeam, operation: str, arguments: dict[str, A
 
     try:
         return await seam.call(
-            operation, arguments, correlation_id=f"mcp-{uuid4().hex[:12]}"
+            operation,
+            arguments,
+            correlation_id=f"mcp-{uuid4().hex[:12]}",
+            surface="mcp",
         )
     except SeamError as exc:
         return ToolResult(structured_content=exc.body(), is_error=True)

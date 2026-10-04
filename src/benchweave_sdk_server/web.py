@@ -111,6 +111,10 @@ def build_app(
                 yield
             finally:
                 await seam.session.close()
+                # The host's own resources: the capture library's root lock
+                # (NFR-O1's close-down shape; I3c extends this to settle an
+                # in-flight capture first).
+                seam.close()
 
     app = FastAPI(title="BenchWeave SDK server", lifespan=_lifespan)
     app.state.seam = seam
@@ -151,7 +155,9 @@ def _add_rest_routes(app: FastAPI, seam: StandaloneSeam) -> None:
                     status_code=400,
                 )
             try:
-                data = await seam.call(operation, body, correlation_id=correlation)
+                data = await seam.call(
+                    operation, body, correlation_id=correlation, surface="rest"
+                )
             except SeamError as exc:
                 return _failure(exc)
             return _envelope({"correlation_id": correlation, "data": data})

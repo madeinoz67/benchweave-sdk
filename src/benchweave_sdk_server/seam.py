@@ -129,6 +129,10 @@ _BYTES_PER_SAMPLE: dict[str, int] = {"waveform_f64le": 8, "raw_binary": 1}
 #: completion, a stop request, or this timeout — whichever comes first.
 _CAPTURE_POLL_S = 0.05
 
+#: The capture_progress coalescing window (SW-26/NFR-Q3): at most one
+#: progress row per this many seconds, carrying the staged-byte total.
+_PROGRESS_WINDOW_S = 0.25
+
 #: How long the watchdog waits at a reached bound for a cooperative adapter
 #: to return on its own before cancelling the operation context (the
 #: backstop, not the primary mechanism).
@@ -1345,6 +1349,19 @@ class StandaloneSeam:
         }
         self._capture = state
         state["watcher"] = asyncio.create_task(self._watch_capture(state))
+        # The capture events ride the EXISTING bus (I2c's one-sequence
+        # rule): started at arm time, progress coalesced by the watcher,
+        # stopped at the terminal state — the /events stream and every
+        # watcher surface see the same rows.
+        self.events.publish(
+            "capture_started",
+            {
+                "capture_id": capture_id,
+                "device_id": arguments["device_id"],
+                "bound": bound,
+                "format": fmt,
+            },
+        )
         return {
             "capture_id": capture_id,
             "device_id": arguments["device_id"],
@@ -1693,6 +1710,15 @@ class StandaloneSeam:
             "data_base64": base64.b64encode(data).decode("ascii"),
         }
 
+    def close(self) -> None:
+        """Release host-owned resources: the capture library's root lock
+        (the lifespan close-down's host half — the session's own adapter
+        close is the lifespan's separate call). Idempotent."""
+        library, self._capture_library = self._capture_library, None
+        if library is not None:
+            with contextlib.suppress(Exception):
+                library.close()
+
     # --- the capture watcher (ruling 1: the host finalises, never the adapter)
 
     async def _watch_capture(self, state: dict[str, Any]) -> dict[str, Any]:
@@ -1717,12 +1743,30 @@ class StandaloneSeam:
         reason_pending: str | None = None
         grace_until: float | None = None
         forced_at: float | None = None
+        # Progress coalescing (SW-26/NFR-Q3's frame budget): at most one
+        # capture_progress row per window, and only when the staged total
+        # actually moved.
+        last_event_at = time.monotonic()
+        last_event_bytes = 0
         while not task.done():
             await asyncio.wait({task}, timeout=_CAPTURE_POLL_S)
             if task.done():
                 break
             now = time.monotonic()
             state["progress"] = self._capture_progress(state)
+            if (
+                state["progress"] > last_event_bytes
+                and now - last_event_at >= _PROGRESS_WINDOW_S
+            ):
+                self.events.publish(
+                    "capture_progress",
+                    {
+                        "capture_id": state["capture_id"],
+                        "bytes": state["progress"],
+                    },
+                )
+                last_event_at = now
+                last_event_bytes = state["progress"]
             if state["stop_event"].is_set() and reason_pending is None:
                 reason_pending = "stopped"
                 state["context"].cancel()
@@ -1836,6 +1880,15 @@ class StandaloneSeam:
         self._capture_outcomes[capture_id] = row
         if self._capture is not None and self._capture["capture_id"] == capture_id:
             self._capture = None
+        self.events.publish(
+            "capture_stopped",
+            {
+                "capture_id": capture_id,
+                "state": "published",
+                "stop_reason": reason,
+                "byte_length": row["byte_length"],
+            },
+        )
         return row
 
     async def _abort_capture(
@@ -1863,6 +1916,15 @@ class StandaloneSeam:
         self._capture_outcomes[capture_id] = row
         if self._capture is not None and self._capture["capture_id"] == capture_id:
             self._capture = None
+        self.events.publish(
+            "capture_stopped",
+            {
+                "capture_id": capture_id,
+                "state": "aborted",
+                "stop_reason": reason,
+                "byte_length": None,
+            },
+        )
         return row
 
     # --- adapter envelope handling -----------------------------------------
