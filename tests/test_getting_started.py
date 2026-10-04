@@ -512,17 +512,20 @@ def test_launched_commands_use_the_resolved_absolute_executable(
     held the editable plugin. The harness must launch every command by its
     shutil.which-resolved ABSOLUTE path, so the launch lands where the A-F3
     gate already verified."""
-    scripts = tmp_path / ".venv" / "bin"
+    win = os.name == "nt"
+    scripts = tmp_path / ".venv" / ("Scripts" if win else "bin")
     scripts.mkdir(parents=True)
-    stub = scripts / "benchweave-sdk"
+    stub = scripts / ("benchweave-sdk.exe" if win else "benchweave-sdk")
     stub.write_text("#!/bin/sh\nexit 0\n")
     stub.chmod(0o755)
     launched: list[str] = []
-    real_run = subprocess.run
 
     def spying_run(parts: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         launched.append(parts[0])
-        return real_run(parts, **kwargs)  # type: ignore[arg-type]
+        # The stub is a placeholder: this test pins the LAUNCH PATH, not the
+        # command's execution, so return a dummy success instead of running the
+        # shell-content stub (which Windows cannot execute as an .exe).
+        return subprocess.CompletedProcess(parts, 0, "", "")
 
     monkeypatch.setattr(subprocess, "run", spying_run)
     page = "```sh\nsource .venv/bin/activate\nbenchweave-sdk --version\n```\n"
