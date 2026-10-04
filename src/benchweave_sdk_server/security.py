@@ -27,8 +27,32 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
-#: Mirrors the SDK preview server's request cap (NFR-S6).
-from benchweave_sdk.preview_server import MAX_REQUEST_BYTES  # noqa: F401 - re-exported
+#: The request-body cap (NFR-S6), owned here since 0.7.0: moved verbatim
+#: from ``benchweave_sdk.preview_server`` when the frozen renderer bundle was
+#: deleted (issue #308); the guard module is the surviving owner of the
+#: listener/body rules the standalone host enforces.
+MAX_REQUEST_BYTES = 64 * 1024
+
+
+def validate_listener(host: str, allow_network: bool) -> None:
+    """Reject wildcard listeners and require acknowledgement outside loopback.
+
+    Moved verbatim from ``benchweave_sdk.preview_server`` at 0.7.0 (issue
+    #308): what NFR-S1 called verbatim reuse is ownership — ``serve`` and the
+    ``preview-ui`` shim both route their ``--host``/``--allow-network`` rules
+    through here. The ``preview_`` refusal prefixes are recorded lineage.
+    """
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError as exc:
+        raise ValueError(f"preview_invalid_listener: {host}") from exc
+    if address.is_unspecified:
+        raise ValueError(f"preview_unsafe_listener: wildcard address {host} is prohibited")
+    if not address.is_loopback and not allow_network:
+        raise ValueError(
+            f"preview_network_acknowledgement_required: {host} requires --allow-network"
+        )
+
 
 CSP_POLICY = (
     "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'"

@@ -216,12 +216,10 @@ def serve(
         # default-venv arm caught exactly that, through starlette).
         import uvicorn
 
-        from .security import GuardPolicy, new_token
+        from .security import GuardPolicy, new_token, validate_listener
         from .web import build_app
     except ImportError as exc:
         _require_server_extra(exc)
-
-    from benchweave_sdk.preview_server import validate_listener
 
     try:
         validate_listener(host, allow_network)

@@ -3,6 +3,7 @@ in the minus-one app (gate D — each guard proven to be the mechanism)."""
 
 from __future__ import annotations
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -220,6 +221,30 @@ def test_minus_csp_serves_without_the_header(seam, policy) -> None:
     with minus(seam, policy, "enable_csp") as client:
         head = client.get("/").headers
     assert "content-security-policy" not in head
+
+
+# --- listener rules (NFR-S1): owned by the guard module since #308 ----------
+
+
+def test_listener_rules_live_in_the_guard_module() -> None:
+    """``validate_listener`` and ``MAX_REQUEST_BYTES`` are OWNED here, moved
+    verbatim from the dying ``benchweave_sdk.preview_server`` at 0.7.0: the
+    refusals keep their ``preview_`` prefixes (recorded lineage), and the
+    three rules are pinned at the new home — loopback binds freely, wildcard
+    never binds, non-loopback binds only with acknowledgement."""
+    from benchweave_sdk_server.security import MAX_REQUEST_BYTES, validate_listener
+
+    assert MAX_REQUEST_BYTES == 64 * 1024
+    with pytest.raises(ValueError, match="preview_invalid_listener"):
+        validate_listener("not-an-address", False)
+    with pytest.raises(ValueError, match="preview_unsafe_listener"):
+        validate_listener("0.0.0.0", False)
+    with pytest.raises(ValueError, match="preview_network_acknowledgement_required"):
+        validate_listener("192.168.1.5", False)
+    # Loopback binds without acknowledgement; acknowledgement lifts the
+    # non-loopback refusal (the serve CLI arms pin the same rules end to end).
+    validate_listener("127.0.0.1", False)
+    validate_listener("192.168.1.5", True)
 
 
 # --- the CLI never omits a guard ---------------------------------------------
