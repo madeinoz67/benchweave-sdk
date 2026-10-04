@@ -1852,11 +1852,13 @@ class StandaloneSeam:
             manifest = await services.artifact_finalise(
                 capture_id, writer_metadata, self._terminal_context(capture_id)
             )
-        except (ValueError, RuntimeError, TimeoutError) as exc:
+        except (ValueError, RuntimeError, TimeoutError, OSError) as exc:
             # A refused finalise (a zero-byte capture, a partial trailing
-            # sample, a writer refusal) aborts — nothing half-published.
+            # sample, a writer refusal, an ENOSPC-class OSError) aborts —
+            # nothing half-published. The detail names the exception class
+            # and errno (A-F1: the OSError is terminal, never a wedge).
             return await self._abort_capture(
-                state, "finalise_refused", detail=str(exc)
+                state, "finalise_refused", detail=f"{type(exc).__name__}: {exc}"
             )
         metadata = dict(state["metadata"])
         metadata["stop_reason"] = reason

@@ -435,6 +435,49 @@ def test_uncaught_adapter_exception_aborts(tmp_path: Path) -> None:
     assert outcome["stop_reason"] == "adapter_exception"
 
 
+def test_finalise_os_error_settles_and_frees_the_slot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A-F1 (T4 shape): an ENOSPC-class OSError at finalise is a TERMINAL
+    outcome, never a wedge — the artifact aborts, the outcome settles
+    ``finalise_refused``, the slot frees (a later start works), and
+    capture_stopped carries the reason."""
+    host = _host(tmp_path, mode="ok")
+
+    async def scenario() -> dict[str, Any]:
+        await _connected(host)
+        services = host._session.services
+        real = services.artifact_finalise
+
+        async def refusing(
+            capture_id: str, metadata: dict[str, Any], context: Any
+        ) -> dict[str, Any]:
+            raise OSError(28, "No space left on device")
+
+        monkeypatch.setattr(services, "artifact_finalise", refusing)
+        started = await host.call("capture_start", _start(count=4))
+        outcome = await host.await_capture()
+        monkeypatch.setattr(services, "artifact_finalise", real)
+        assert host._capture is None, "the slot must free at the terminal state"
+        await host.call("capture_start", _start(count=2))
+        settled = await host.await_capture()
+        return {"first": outcome, "id": started["capture_id"], "settled": settled}
+
+    result = asyncio.run(scenario())
+    assert result["first"]["state"] == "aborted"
+    assert result["first"]["stop_reason"] == "finalise_refused"
+    assert not (tmp_path / "captures" / result["id"]).exists()
+    assert result["settled"]["state"] == "published"
+    events = asyncio.run(host.call("events_get", {"after_id": 0}))["events"]
+    stopped = next(
+        event
+        for event in events
+        if event["kind"] == "capture_stopped"
+        and event["data"]["capture_id"] == result["id"]
+    )
+    assert stopped["data"]["stop_reason"] == "finalise_refused"
+
+
 def test_count_bound_backstop_cancels_a_lingering_adapter(tmp_path: Path) -> None:
     """The watchdog: a cooperative adapter that never returns on its own is
     cancelled at the bound and the bound's bytes are finalised."""
