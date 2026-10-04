@@ -28,6 +28,7 @@ from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from benchweave_sdk.capture import StandaloneCaptureWriter
+from benchweave_sdk.testing import ConformanceError
 
 from .session import LoadedPlugin, PluginSession
 
@@ -391,6 +392,14 @@ class SerialCaptureServices:
         if kind != "stream_receive" and not isinstance(transaction["data"], bytes):
             raise ValueError("data must be bytes")
         self._live(context)
+        if kind != "stream_receive" and not getattr(context, "dispatched", False):
+            # The mock's discipline on the real backend (A06): a transmit
+            # happens only under a dispatch marker — honest dispatch_state
+            # reporting is a conformance requirement, not a mock luxury.
+            # The tolerance is getattr, matching the mock's own read of
+            # minimal contexts (a context without the attribute refuses,
+            # the same as one whose marker was never set).
+            raise ConformanceError("Transmission needs a dispatch marker")
         if kind != "stream_receive":
             data = transaction["data"]
             try:

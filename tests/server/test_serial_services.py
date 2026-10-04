@@ -262,8 +262,10 @@ def test_a_cancelled_operation_transmits_nothing_and_a_closed_link_is_a_connecti
         _run(services.transfer({"kind": "stream_send", "data": b"X"}, context))
     assert port.written == []
     _run(services.close_transport(_ctx()))
+    closed_context = _ctx()
+    _run(closed_context.mark_dispatch_started())
     with pytest.raises(ConnectionError):
-        _run(services.transfer({"kind": "stream_send", "data": b"X"}, _ctx()))
+        _run(services.transfer({"kind": "stream_send", "data": b"X"}, closed_context))
 
 
 @pytest.mark.parametrize("sent", [0, 3])
@@ -277,14 +279,18 @@ def test_a_short_write_is_a_connection_error_and_nothing_is_read(kind: str, sent
     transaction: dict[str, Any] = {"kind": kind, "data": b"PING"}
     if kind == "stream_exchange":
         transaction = {**_receive(), **transaction}
+    context = _ctx()
+    _run(context.mark_dispatch_started())
     with pytest.raises(ConnectionError, match=f"reported {sent} of 4 bytes"):
-        _run(services.transfer(transaction, _ctx()))
+        _run(services.transfer(transaction, context))
 
 
 def test_a_port_that_reports_no_count_is_trusted() -> None:
     port = ShortWritePort(None)
     services = _services(port)
-    reply = _run(services.transfer({"kind": "stream_send", "data": b"PING"}, _ctx()))
+    context = _ctx()
+    _run(context.mark_dispatch_started())
+    reply = _run(services.transfer({"kind": "stream_send", "data": b"PING"}, context))
     assert reply == {}
     assert port.written == [b"PING"]
 
@@ -439,6 +445,55 @@ def test_a_flush_refusal_reports_true_counts_and_loses_no_bytes(tmp_path: Path) 
     assert "16384 already staged" not in message, message
 
 
+@pytest.mark.parametrize("backend", ["mock", "serial"])
+def test_an_unmarked_transmit_is_refused_on_both_backends(backend: str) -> None:
+    """AR-1 parity (FOLD-D): the mock's dispatch-marker discipline binds the
+    real backend (A06 — transmissions only under dispatch markers). A
+    stream_send/stream_exchange without a prior mark_dispatch_started is
+    refused before any I/O on BOTH backends."""
+    if backend == "mock":
+        backend_obj: Any = MockHost([({"kind": "stream_send", "data": b"X"}, {})
+        ])
+        context: Any = MockContext(
+            "op", deadline_monotonic=backend_obj.monotonic() + 2.0
+        )
+    else:
+        port = LoopbackPort()
+        backend_obj = _services(port)
+        context = _ctx()
+    with pytest.raises(ConformanceError):
+        _run(backend_obj.transfer({"kind": "stream_send", "data": b"X"}, context))
+    if backend == "serial":
+        assert port.written == [], "the refused transmit wrote nothing"
+
+
+def test_the_two_backends_disagree_on_bytearray_data_by_ruling() -> None:
+    """The documented contract (user_guide/plugin-sdk.qmd, section 'A
+    standalone runtime around the writer', the SerialStandaloneHost example)
+    mandates bytes-only data on the serial surface: ``not isinstance(data,
+    bytes)`` refuses. Serial stays strict (ValueError, nothing written);
+    the MOCK accepts a bytearray where bytes were scripted (whole-dict
+    equality compares by value) — asserted here as a DISCLOSED leniency, so
+    a future mock tightening flips this cell deliberately."""
+    port = LoopbackPort()
+    services = _services(port)
+    with pytest.raises(ValueError, match="data must be bytes"):
+        _run(
+            services.transfer(
+                {"kind": "stream_send", "data": bytearray(b"X")}, _ctx()
+            )
+        )
+    assert port.written == [], "the refused transaction wrote nothing"
+    host = MockHost([({"kind": "stream_send", "data": b"X"}, {})
+    ])
+    context = MockContext("op", deadline_monotonic=host.monotonic() + 2.0)
+    _run(context.mark_dispatch_started())
+    assert (
+        _run(host.transfer({"kind": "stream_send", "data": bytearray(b"X")}, context))
+        == {}
+    )
+
+
 def test_two_backends_agree_on_the_adapters_exchange_flow() -> None:
     """One suite, two backends (AR-1): the scaffolded adapter's identify
     flow produces the same envelope over MockHost and over the serial
@@ -472,6 +527,8 @@ def test_two_backends_agree_on_the_adapters_exchange_flow() -> None:
     async def over_serial() -> dict[str, Any]:
         port = LoopbackPort(replies={b"ID?\n": b"SDK Example,demo,SIM001,1.0.0\n"})
         services = _services(port, max_frame_bytes=128)
+        context = _ctx()
+        await context.mark_dispatch_started()
         return await services.transfer(
             {
                 "kind": "stream_exchange",
@@ -480,7 +537,7 @@ def test_two_backends_agree_on_the_adapters_exchange_flow() -> None:
                 "termination": "lf",
                 "exact_bytes": None,
             },
-            _ctx(),
+            context,
         )
 
     assert _run(over_mock()) == _run(over_serial())
