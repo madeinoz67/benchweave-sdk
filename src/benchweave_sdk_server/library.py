@@ -149,6 +149,13 @@ class CaptureLibrary:
         self._released = False
         self.rebuild()
 
+    @property
+    def root(self) -> Path:
+        """The resolved capture root this library indexes (file reads for
+        ``capture_get``/``artifact_read`` go through it — the disk is the
+        truth the index accelerates)."""
+        return self._root
+
     # --- the lockfile ------------------------------------------------------
 
     def _acquire_lock(self) -> Path:

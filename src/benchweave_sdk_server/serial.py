@@ -19,6 +19,7 @@ import contextlib
 import json
 import logging
 import math
+import os
 import shutil
 import threading
 import time
@@ -349,16 +350,6 @@ class SerialCaptureServices:
                 "standalone_serial_frame: max_frame_bytes must be a positive integer"
             )
         self._capture_max_bytes = capture_max_bytes
-        # Flush at the block size OR at the reservation, whichever is
-        # tighter — a small reservation must reach the writer promptly, or
-        # a sub-block capture would buffer in RAM forever (the writer's
-        # max_bytes never seeing a byte until finalise).
-        self._flush_threshold = (
-            min(self._BLOCK, capture_max_bytes)
-            if capture_max_bytes is not None
-            else self._BLOCK
-        )
-
         self._link = link
         self._max_frame_bytes = max_frame_bytes
         self._ceiling = min(link.transfer_ceiling, max_frame_bytes)
@@ -367,6 +358,13 @@ class SerialCaptureServices:
         self._writers: dict[str, StandaloneCaptureWriter] = {}
         self._buffers: dict[str, bytearray] = {}
         self._flushed: dict[str, int] = {}
+        # The host lifecycle's per-capture configuration (I3b): the SW-54
+        # metadata sidecar written beside the primary at the writer's FIRST
+        # append, and the per-capture reservation — min(requested, the
+        # configured ceiling); the writer stays the authority.
+        self._reservations: dict[str, int] = {}
+        self._capture_meta: dict[str, dict[str, Any]] = {}
+        self._meta_written: set[str] = set()
         self.evidence: list[dict[str, Any]] = []
 
     @property
@@ -470,21 +468,90 @@ class SerialCaptureServices:
 
     # capture: per-capture writers with block-buffered appends
 
-    def _writer_kwargs(self) -> dict[str, Any]:
-        """The writer constructor arguments the services layer derives from
-        its own configuration (the reservation rides the composer's
+    def configure_capture(
+        self,
+        capture_id: str,
+        *,
+        metadata: dict[str, Any],
+        max_bytes: int | None = None,
+    ) -> None:
+        """Arm one capture's host-side configuration (the lifecycle's
+        call): the SW-54 metadata sidecar written beside the primary at the
+        writer's FIRST append, and the per-capture reservation —
+        ``min(requested, the configured ceiling)`` when both exist; the
+        writer stays the reservation's enforcement authority either way.
+        """
+        reservation = max_bytes
+        if max_bytes is not None and self._capture_max_bytes is not None:
+            reservation = min(max_bytes, self._capture_max_bytes)
+        if reservation is not None:
+            self._reservations[capture_id] = int(reservation)
+        self._capture_meta[capture_id] = dict(metadata)
+        self._meta_written.discard(capture_id)
+
+    def capture_progress(self, capture_id: str) -> int:
+        """The capture's staged progress: flushed + buffered bytes — the
+        host's progress rows never fabricate a count the writer did not
+        see. Zero for an unknown id."""
+        return self._flushed.get(capture_id, 0) + len(
+            self._buffers.get(capture_id, b"")
+        )
+
+    def _reservation(self, capture_id: str) -> int | None:
+        """The effective reservation for one capture: the per-capture value
+        (min(requested, the configured ceiling), set by configure_capture),
+        falling back to the configured ceiling."""
+        return self._reservations.get(capture_id, self._capture_max_bytes)
+
+    def _flush_threshold(self, capture_id: str) -> int:
+        """The flush threshold for one capture: the block size or the
+        reservation, whichever is tighter — a small reservation must reach
+        the writer promptly (the constructor rule, per capture now)."""
+        reservation = self._reservation(capture_id)
+        if reservation is not None:
+            return min(self._BLOCK, reservation)
+        return self._BLOCK
+
+    def _writer_kwargs(self, capture_id: str) -> dict[str, Any]:
+        """The writer constructor arguments for one capture: the root plus
+        the per-capture reservation when one exists (the composer's
         configuration, A02)."""
         kwargs: dict[str, Any] = {"root": self._capture_root}
-        if self._capture_max_bytes is not None:
+        reservation = self._reservations.get(capture_id)
+        if reservation is not None:
+            kwargs["max_bytes"] = reservation
+        elif self._capture_max_bytes is not None:
             kwargs["max_bytes"] = self._capture_max_bytes
         return kwargs
 
     def _writer_for(self, capture_id: str) -> StandaloneCaptureWriter:
         writer = self._writers.get(capture_id)
         if writer is None:
-            writer = StandaloneCaptureWriter(**self._writer_kwargs())
+            writer = StandaloneCaptureWriter(**self._writer_kwargs(capture_id))
             self._writers[capture_id] = writer
         return writer
+
+    async def _writer_append(
+        self, capture_id: str, block: bytes, context: Any
+    ) -> None:
+        """One writer append plus the SW-54 sidecar: the writer owns
+        directory creation, so ``metadata.json`` is written into the event
+        directory immediately after the FIRST accepted append — a
+        sub-block capture's first append is the finalise tail-flush, so
+        the sidecar lands there too (the design record's rule)."""
+        writer = self._writer_for(capture_id)
+        await writer.artifact_append(capture_id, block, context)
+        if capture_id in self._meta_written:
+            return
+        self._meta_written.add(capture_id)
+        metadata = self._capture_meta.get(capture_id)
+        event = writer.event_path
+        if metadata is None or event is None:
+            return
+        payload = json.dumps(metadata, sort_keys=True).encode("utf-8")
+        temp = event / "metadata.json.tmp"
+        temp.write_bytes(payload)
+        os.replace(temp, event / "metadata.json")
 
     async def artifact_append(self, capture_id: str, data: bytes, context: Any) -> None:
         """Buffer the append; flush to the per-capture writer at the block
@@ -498,25 +565,24 @@ class SerialCaptureServices:
         buffer = self._buffers.get(capture_id)
         if buffer is None:
             buffer = self._buffers[capture_id] = bytearray()
-        if (
-            self._capture_max_bytes is not None
-            and len(buffer) + len(data) > self._capture_max_bytes
-        ):
+        reservation = self._reservation(capture_id)
+        if reservation is not None and len(buffer) + len(data) > reservation:
             raise ValueError(
                 f"append of {len(data)} bytes exceeds the declared "
-                f"max_bytes reservation ({self._capture_max_bytes} bytes, "
+                f"max_bytes reservation ({reservation} bytes, "
                 f"{self._flushed.get(capture_id, 0)} flushed + "
                 f"{len(buffer)} buffered)"
             )
         buffer += bytes(data)
-        while len(buffer) >= self._flush_threshold:
-            block = bytes(buffer[: self._flush_threshold])
+        threshold = self._flush_threshold(capture_id)
+        while len(buffer) >= threshold:
+            block = bytes(buffer[:threshold])
             # Accept-then-account: the writer may refuse the flush (its
             # staged count plus this block would cross the reservation) —
             # the block stays buffered and is counted only on acceptance,
             # so every refusal names true counts and loses no bytes.
-            await self._writer_for(capture_id).artifact_append(capture_id, block, context)
-            del buffer[: self._flush_threshold]
+            await self._writer_append(capture_id, block, context)
+            del buffer[:threshold]
             self._flushed[capture_id] = self._flushed.get(capture_id, 0) + len(block)
 
     async def artifact_finalise(
@@ -534,17 +600,20 @@ class SerialCaptureServices:
         double-flush it; the per-capture state retires only on success."""
         writer = self._writers.get(capture_id)
         if writer is None:
-            writer = StandaloneCaptureWriter(**self._writer_kwargs())
+            writer = StandaloneCaptureWriter(**self._writer_kwargs(capture_id))
             self._writers[capture_id] = writer
         buffer = self._buffers.get(capture_id)
         if buffer:
-            await writer.artifact_append(capture_id, bytes(buffer), context)
+            await self._writer_append(capture_id, bytes(buffer), context)
             # The tail was accepted: the services copy retires so a
             # metadata-fix retry cannot double-flush it.
             self._buffers.pop(capture_id, None)
         manifest = await writer.artifact_finalise(capture_id, metadata, context)
         self._writers.pop(capture_id, None)
         self._flushed.pop(capture_id, None)
+        self._reservations.pop(capture_id, None)
+        self._capture_meta.pop(capture_id, None)
+        self._meta_written.discard(capture_id)
         return manifest
 
     async def artifact_abort(self, capture_id: str) -> None:
@@ -560,6 +629,9 @@ class SerialCaptureServices:
         removal can only touch an un-published event."""
         self._buffers.pop(capture_id, None)
         self._flushed.pop(capture_id, None)
+        self._reservations.pop(capture_id, None)
+        self._capture_meta.pop(capture_id, None)
+        self._meta_written.discard(capture_id)
         writer = self._writers.pop(capture_id, None)
         if writer is not None:
             event = writer.event_path
@@ -610,20 +682,33 @@ def open_serial_port(device: str, settings: dict[str, Any]) -> Any:
 
 
 def serial_plugin_session(
-    plugin: LoadedPlugin, device_path: str, *, open_port: Any = None
+    plugin: LoadedPlugin,
+    device_path: str,
+    *,
+    open_port: Any = None,
+    capture_root: Any = None,
+    capture_max_bytes: int | None = None,
 ) -> PluginSession:
     """A ``PluginSession`` over a serial port: the services factory mints a
     FRESH link + services per connection (the M1 fold's per-connection
     precedent — a reconnect starts a new conversation over a new link, and
     a faulted link never serves a second conversation). ``open_port`` stays
-    injectable so tests never need a real port."""
+    injectable so tests never need a real port. ``capture_root`` and
+    ``capture_max_bytes`` are the host's capture configuration — the root
+    the per-capture writers publish under and the configured reservation
+    ceiling (I3b's lifecycle wiring)."""
     settings = _serial_settings(plugin)
     max_frame = int(settings.get("max_frame_bytes", 0)) or 4096
     opener = open_port or open_serial_port
 
     def factory() -> SerialCaptureServices:
         transport = opener(device_path, settings)
-        return SerialCaptureServices(SerialLink(transport), max_frame_bytes=max_frame)
+        return SerialCaptureServices(
+            SerialLink(transport),
+            max_frame_bytes=max_frame,
+            capture_root=capture_root,
+            capture_max_bytes=capture_max_bytes,
+        )
 
     return PluginSession(plugin, factory)
 
