@@ -38,7 +38,7 @@ Each term below has one fixed meaning across the SDK documentation. Technical na
 
 **preset**: A complete set of configuration settings with metadata about compatibility and provenance. A preset never contains collected measurements.
 
-**preview**: The `benchweave-sdk preview-ui` subcommand. It renders simulated presentation states on a local renderer. It serves until you stop it.
+**preview**: The `benchweave-sdk preview-ui` subcommand. It serves the plugin project's pages on the standalone host, with simulated data on the scripted mock transport. It serves until you stop it.
 
 **S01–S18 obligations**: The safety obligation family. The vendored standards and the [device developer guide](https://github.com/madeinoz67/benchweave/blob/main/docs/device-developer-guide.md) in the main repository define them. The glossary does not restate them.
 

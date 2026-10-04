@@ -28,7 +28,7 @@ session's own edits, not only dispatched agents.
 | File indexed, primary checkout | `mcp__gortex__edit` — `change(operation:"impact")` before, `change(operation:"detect")` after; signatures also `verify` |
 | Linked worktree overlay | gortex single-file edit when freshness reports `exact: true` with `actual_view` naming the worktree; otherwise native Edit, and the bypass names the caveat |
 | Branch-new / untracked file | native Write; visible to the graph after the next index pass |
-| Generated files (`src/benchweave_sdk/preview_assets/`, `CHANGELOG_AUTO.md`, `.docs-assembly/`, `site/`, vendored standards trees) | never hand-edited — regenerated via their tool |
+| Generated files (`CHANGELOG_AUTO.md`, `.docs-assembly/`, `site/`, vendored standards trees) | never hand-edited — regenerated via their tool |
 
 Every native bypass states which row covers it. Guessing `pytest -k` filters is
 the anti-pattern this table replaces — `change(operation:"tests")` names the files.
@@ -55,7 +55,8 @@ The clauses map to real machinery:
 
 - **authors, checks and previews** → `scaffold.py` (the generated project is the public
   face), `conformance.py`/`validation.py`/`fixtures.py` (the offline standards), the
-  preview suite (`preview_server.py`, `presentation.py`, `preview_assets/`).
+  preview surface (`preview-ui` delegating to the standalone host; `presentation.py`
+  the one offline validator both halves share).
 - **never seen the gateway checkout** → self-containment: CI checks out with no submodules
   and never reads the parent repository; the wheel packages `src/benchweave_sdk` only.
 - **what the SDK accepts is what the gateway accepts** → the vendored standards corpus,
@@ -74,7 +75,7 @@ passes.
 | Scaffold | `src/benchweave_sdk/scaffold.py` | Generated plugin projects, AI-GUIDE text, the pinned SDK-version test extra |
 | Conformance | `conformance.py`, `validation.py`, `fixtures.py`, `testing.py` | The offline encoding of the gateway's load-time standards |
 | Standards sync | `standards_sync.py`, `standards-lock.json`, `src/benchweave_sdk/standards/` | Lock ↔ vendored tree ↔ stamps; refusal prefixes; the three check lanes |
-| Preview | `preview_server.py`, `preview_models.py`, `preview_tui.py`, `presentation.py`, `preview_assets/` | Plugin-ui rendering against the vendored contracts; agreement with `check-ui` |
+| Preview | `preview_models.py`, `presentation.py`, `fixtures.py`; the `preview-ui` shim in `cli.py` | The offline presentation validator and projections behind `check-ui` and the standalone host's loader; `preview-ui` delegates to `benchweave_sdk_server` |
 | Packaging | `pyproject.toml`, `hatch_build.py` | Wheel/sdist contents; vendored-tree verification before packaging |
 
 Reference docs: `docs/internal/invariants.md` (STD/PKG/SRF/TWO),
@@ -98,9 +99,10 @@ Reference docs: `docs/internal/invariants.md` (STD/PKG/SRF/TWO),
 5. **Scaffold output is an interface (SRF-1).** Downstream plugin repositories diff
    generated projects; shape changes are interface changes. The generated runtime has no
    dependency on this SDK.
-6. **Preview ↔ check-ui agreement (SRF-2).** A preview that renders what the conformance
-   check rejects (or the reverse) trains plugin authors to ship what the gateway will
-   refuse.
+6. **Host-loader ↔ check-ui agreement (SRF-2, amended 0.7.0).** The standalone host
+   loads presentations through the same validator `check-ui` runs; a host that serves
+   what the conformance check rejects (or the reverse) trains plugin authors to ship
+   what the gateway will refuse.
 7. **Conformance weakens silently (SRF-3).** Compare every rule against the vendored
    standard text, never against memory of what it says.
 8. **Pin the observable wire, not the source schema.** Serve-time layers normalize;
