@@ -1,8 +1,8 @@
 ---
 name: benchweave-plugin-ui
 description: Use when you validate or preview plugin UI presentation —
-  check-ui, check-preset and preview-ui runs for envelopes, presets,
-  manifests and fixtures.
+  check-ui, check-preset and preview-ui runs for presets, manifests
+  and fixtures.
 ---
 
 # Plugin UI checks and preview
@@ -26,17 +26,17 @@ or hardware.
 
 ## Preview simulated states
 
-- `benchweave-sdk preview-ui <envelope.json> --descriptor <descriptor.json>
-  --resources <resource-root> --catalogue <binding-catalogue.json>` — serve the
-  preview API and the bundled renderer locally. Extra flags: `--fixtures`,
-  `--renderer-url`, `--host`, `--port`, `--allow-network`, `--no-open`, plus
-  the shared presentation flags `--firmware`, repeatable `--feature` and
-  repeatable `--panel`.
+- `benchweave-sdk preview-ui <project>` — serve the project's pages on the
+  standalone host, on the scripted mock transport. The command needs the
+  server extra: install `benchweave-sdk[server]`. Extra flags: `--host`,
+  `--port`, `--allow-network`, `--no-open`, `--scenario <id>`. Real hardware
+  is served by `benchweave-sdk-server serve --transport serial`; preview-ui
+  never leaves the mock transport.
 
 ## Rules that bite
 
-- The preview server listens on loopback only. A `--renderer-url` must also
-  name a loopback host.
+- The preview listener uses loopback only. A non-loopback host needs
+  `--allow-network`.
 - Input paths that contain a symlinked component are refused. Use canonical
   paths.
 - Every scenario, observation and control receipt in the preview is simulated

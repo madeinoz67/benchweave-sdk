@@ -93,19 +93,6 @@ const RULES = [
     ],
   },
   {
-    // Obligation 7 — the renderer pairs with a main-side rebuild.
-    id: 'renderer-assets-drift',
-    triggers: (p) => p.startsWith('src/benchweave_sdk/preview_assets/'),
-    satisfies: () => false,
-    message: [
-      '**[Drift 7] Committed renderer assets were touched — is a fresh build byte-identical?**',
-      '',
-      'The main repo\'s CI rebuilds the preview renderer and fails on any diff here, so a',
-      'renderer-affecting UI change lands as a rebuild in the same change — hand-edited',
-      'assets drift from the build that produces them.',
-    ],
-  },
-  {
     // Obligation 9-equivalent — a dependency change means the lock moves in the same commit.
     id: 'dependency-lock-drift',
     triggers: (p) => p === 'pyproject.toml',

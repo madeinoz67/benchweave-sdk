@@ -50,7 +50,8 @@ The directory `.claude/skills/` holds five SDK-managed skills:
 
 - `benchweave-plugin-workflow` — the five steps as commands.
 - `benchweave-descriptor` — descriptor authoring and its refusal codes.
-- `benchweave-plugin-ui` — offline UI checks and the simulated preview.
+- `benchweave-plugin-ui` — offline UI checks; the simulated preview through
+  `benchweave-sdk preview-ui` (the standalone host; needs the server extra).
 - `benchweave-adapter-testing` — adapter tests against SDK mocks.
 - `benchweave-capture` — standalone capture without a gateway.
 

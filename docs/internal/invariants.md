@@ -90,15 +90,19 @@ the invariants below anchor there.
   OWN `.claude/`, `.mcp.json`, `AGENTS.md` and `CLAUDE.md` at their repo-root locations
   must never appear in either artifact — the template-borne copies under `template/` are
   the carve-out above (WS3); `hatch_build.py` validates
-  the vendored standards, the preview assets and the scaffold template's presence **before**
-  packaging — `pyproject.toml` `[tool.hatch...]`, `hatch_build.py` `CustomBuildHook.initialize`.
+  the vendored standards and the scaffold template's presence **before** packaging —
+  `pyproject.toml` `[tool.hatch...]`, `hatch_build.py` `CustomBuildHook.initialize`.
   *A wheel that ships agent config or an unverified tree is a supply-chain event, not a
   packaging nit.*
-- **[PKG-3]** **Renderer freshness**: a fresh renderer build must leave the committed
-  `src/benchweave_sdk/preview_assets/` unchanged — enforced main-side by the `ui` job's
-  `git -C packages/sdk diff --exit-code -- src/benchweave_sdk/preview_assets`. *Source drift
-  would otherwise ship silently in the wheel; hatch's inventory check only proves
-  committed-bytes consistency.*
+- **[PKG-3]** **Renderer freshness — CLOSED at 0.7.0** (issue #308): the frozen
+  renderer bundle (`src/benchweave_sdk/preview_assets/`) is deleted; there is no
+  renderer build to keep fresh and no bundle bytes to drift — previews render through
+  the standalone host and `benchweave-ui-html`, whose freshness is the EXACT pin in
+  the `[server]` extra (it moves only by a pin bump in this repository). The row
+  stays as the closed record. Its former enforcement (the gateway `ui` job's
+  `git -C packages/sdk diff` over the tree) no longer exists in gateway CI either
+  (verified absent at the 0.7.0 design). *Freshness moved from a committed-bytes
+  check to a pinned dependency — the same guarantee, one mechanism fewer.*
 
 ## Surface & conformance invariants
 
@@ -119,13 +123,20 @@ against SDK source and the user guide by `tests/test_agent_assets.py` (R-5b,
 with permanent planted-violation arms R-5c). The generated plugin runtime has **no dependency on this SDK**. *A defect
   here multiplies across every plugin authored from the scaffold, and downstream repos
   diff generated output, so shape changes are interface changes.*
-- **[SRF-2]** **Preview ↔ check-ui agreement**: the preview renders plugin-ui surfaces
-  against the vendored plugin-ui contracts and must accept exactly what `check-ui`
-  accepts — a preview that happily renders what the conformance check rejects (or the
-  reverse) is the cross-surface bug — `preview_server.py`, `preview_models.py`,
-  `presentation.py`; the preview reads standards from the vendored tree and nowhere else.
-  *A preview that disagrees with the checker trains plugin authors to ship what the
-  gateway will refuse.*
+- **[SRF-2]** **Host-loader ↔ check-ui agreement** (amended at 0.7.0, issue #308): the
+  standalone host loads a plugin's presentation through
+  `load_validated_preview_inputs` — the same loader `check-ui` validates with — so
+  the host accepts exactly what `check-ui` accepts; a host that serves what the
+  conformance check rejects (or the reverse) is the cross-surface bug — anchors:
+  `presentation.py` (the one loader), `benchweave_sdk_server/session.py::
+  load_plugin_project` (the host's refusing consumer), `fixtures.py` (the projections
+  behind both); standards are read from the vendored tree and nowhere else. The
+  pinning suite lives in THIS repository — the standalone distribution's own tests
+  (the projection arms in `tests/test_preview_fixtures.py`, the both-directions
+  agreement arm in `tests/server/test_adapter_failure.py`), resolving
+  `benchweave_sdk` from the installed environment, never a `sys.path` checkout
+  (R-10). *A host that disagrees with the checker trains plugin authors to ship
+  what the gateway will refuse.*
 - **[SRF-3]** Conformance and validation encode, offline, the standards the gateway
   enforces at load: a weakening here silently greenlights a non-conformant plugin. When
   reviewing a rule, compare it against the vendored standard text in

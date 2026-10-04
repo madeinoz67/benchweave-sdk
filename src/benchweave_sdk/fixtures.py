@@ -333,14 +333,19 @@ def generate_baselines(
 
 
 def _renderer_version() -> str:
-    """Report the version stamped by the renderer build, not a Python literal."""
-    inventory = json.loads(
-        (Path(__file__).with_name("preview_assets") / "inventory.json").read_bytes()
-    )
-    version = inventory.get("renderer_version")
-    if not isinstance(version, str) or not version:
-        raise ValueError("preview_renderer_inventory_invalid")
-    return version
+    """The document emitter's version: the SDK's own ``__version__``.
+
+    Since 0.7.0 (#308) the served document's ``renderer_version`` reports
+    the emitter — the same ``importlib.metadata`` derivation
+    ``benchweave_sdk.__init__`` uses for ``__version__`` (derived, never a
+    literal; the zero-literal gate's register discipline). The React
+    renderer's frozen build version, once read from the deleted renderer
+    bundle's inventory, died with the bundle; the wire schema keeps
+    requiring a string.
+    """
+    from . import __version__
+
+    return __version__
 
 
 def project_plot_views(candidate: ValidatedPreviewInputs) -> tuple[PlotView, ...]:

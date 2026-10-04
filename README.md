@@ -194,29 +194,6 @@ Add `--with-ui` to `benchweave-sdk new` to generate a declarative readings page,
 
 Use `benchweave-sdk check-ui` and `benchweave-sdk check-preset` for offline validation before packaging. Validation does not admit a plugin. Validation is not approval to apply settings. The [plugin presentation guide](https://github.com/madeinoz67/benchweave/blob/main/standards/plugin-ui/0.3.0/README.md) (main repository) covers the directory structure, preconfigured settings, optional graphs, data bindings, per-channel display hints and CLI examples.
 
-### Local UI preview
-
-The SDK includes the version-matched React renderer and nine deterministic baseline scenarios.
-
-> [!CAUTION]
-> Preview success is not admission, not hardware qualification and not permission to operate equipment.
-
-Preview author fixtures with this command. The preview does not import plugin Python. The preview does not open a device transport. The preview does not contact a gateway:
-
-```sh
-benchweave-sdk preview-ui src/benchweave_acme_model100/presentation.json \
-  --descriptor src/benchweave_acme_model100/descriptor.json \
-  --resources src/benchweave_acme_model100 \
-  --catalogue src/benchweave_acme_model100/binding-catalogue.json \
-  --fixtures src/benchweave_acme_model100/ui/fixtures
-```
-
-Use `--no-open` in CI or for a terminal-only readiness check. The default listener is an ephemeral port on `127.0.0.1`. The command rejects wildcard listeners. A non-loopback host needs `--allow-network`. A non-loopback host remains unsuitable for shared or production use. UI contributors can point at a compatible Vite renderer with `--renderer-url`. The CLI adds the preview server URL as the renderer's `apiBase` query parameter. The CLI permits cross-origin API responses only for that renderer's exact origin. Both renderers need preview API version 1.
-
-The command suite uses Click for stable parsing and stable exit codes. It uses Rich for readable non-interactive output. In an interactive terminal, `preview-ui` uses a Textual status screen. Press `o` to open the browser again. Press `q` to stop the preview. The commands deliberately bypass Textual for `--no-open` and non-terminal output. Thus CI, pipes and SDK tests stay deterministic.
-
-Every preview carries the label `SIMULATED PRESENTATION DATA`. A control interaction creates only an in-memory simulated receipt. It never updates an observed reading optimistically.
-
 ## The server extra
 
 Install the optional server extra to serve one plugin project without a gateway:
@@ -243,9 +220,22 @@ Serve one of the nine preview states with `--scenario <id>`. The ids are `normal
 
 The startup output prints the URL and a bearer token for each launch. REST mutations and MCP-over-HTTP calls need this token.
 
-The listener rules are the same as for the local UI preview. The listener uses the loopback interface by default. The command rejects wildcard listeners. A non-loopback host needs `--allow-network`.
+The listener rules are the same in every host command. The listener uses the loopback interface by default. The command rejects wildcard listeners. A non-loopback host needs `--allow-network`.
 
-A default installation does not include the extra. The `benchweave-sdk-server` command still exists in a default installation. The `serve` and `mcp` commands then stop before they do any work. They print `benchweave_sdk_server_extras_missing: install 'benchweave-sdk[server]' for the serve and mcp commands` and exit with code 2.
+### Local UI preview
+
+`benchweave-sdk preview-ui <project>` is a second name for the standalone host. It serves the plugin project's pages on the scripted mock transport. `preview-ui` never leaves the mock transport. For real hardware, use `benchweave-sdk-server serve --transport serial` directly. The command needs the `[server]` extra. On a default installation, the command refuses with `benchweave_sdk_server_extras_missing:` and exit 2.
+
+> [!CAUTION]
+> Preview success is not admission, not hardware qualification and not permission to operate equipment.
+
+```sh
+benchweave-sdk preview-ui /path/to/plugin-project --no-open
+```
+
+The options are the same as the listener and scenario options of `serve`: `--host`, `--port`, `--allow-network`, `--no-open` and `--scenario <id>`. The default port is 8477. The startup output prints the URL and a bearer token for each launch. On the mock transport, every page carries the `SIMULATED PRESENTATION DATA` banner. A control interaction creates only an in-memory simulated receipt. It never updates an observed reading optimistically.
+
+A default installation does not include the extra. The `benchweave-sdk-server` command still exists in a default installation. The `serve` and `mcp` commands then stop before they do any work. They print `benchweave_sdk_server_extras_missing: install 'benchweave-sdk[server]' for the serve, mcp and preview-ui commands` and exit with code 2.
 
 ## Public surfaces
 

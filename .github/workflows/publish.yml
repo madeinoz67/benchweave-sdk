@@ -30,8 +30,8 @@ jobs:
       - name: Standards self-check
         run: uv run benchweave-sdk sync-standards --check
       - name: Build wheel and sdist
-        # hatch_build verifies the vendored standards tree and preview assets
-        # against the lock during the build, so a stale tree cannot reach PyPI.
+        # hatch_build verifies the vendored standards tree against the lock
+        # during the build, so a stale tree cannot reach PyPI.
         run: uv build
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -72,7 +72,15 @@ jobs:
           # --python takes the venv directory, not "$BIN/python": on Windows the
           # interpreter is python.exe and uv does not append the suffix, whereas
           # bash does resolve the suffix-less entry points used below.
-          uv pip install --python "$RUNNER_TEMP/sdk-smoke" dist/*.whl
+          # [scaffold] rides the install so `new` can render through the
+          # packaged copier template (WS2, issue #347, made the extra
+          # load-bearing AFTER v0.6.0 tagged — the bare line is a latent red
+          # for the next release, fixed here). The install still carries NO
+          # [server] extra, which is exactly what the preview-ui refusal arm
+          # below proves against. The glob expands before the extras suffix
+          # is appended (ci.yml's recorded trap).
+          WHEEL="$(ls dist/*.whl)"
+          uv pip install --python "$RUNNER_TEMP/sdk-smoke" "${WHEEL}[scaffold]"
           "$BIN/benchweave-sdk" --version | grep -F "version ${TAG#v}"
           # PR #90 carry-forward row R1: the server console script on the
           # default install, smoked at release time too (same version pin
@@ -84,6 +92,58 @@ jobs:
           # (the wheel force-include) and the resource path in
           # verify_installed before anything reaches PyPI.
           "$BIN/benchweave-sdk" sync-standards --check
+          # #308 A2: preview-ui on the DEFAULT install refuses through serve's
+          # own guard — exit 2, prefix + install command, never a traceback.
+          # The scaffolded project's path exists; the refusal fires before
+          # anything loads, but click's exists-check still needs a real path.
+          set +e
+          err=$("$BIN/benchweave-sdk" preview-ui "$RUNNER_TEMP/example" 2>&1)
+          code=$?
+          set -e
+          [ "$code" -eq 2 ] || { echo "::error::preview-ui exited $code on the default install (expected 2)"; echo "$err"; exit 1; }
+          echo "$err" | grep -F "benchweave_sdk_server_extras_missing:" \
+            || { echo "::error::preview-ui refusal is missing the prefix"; exit 1; }
+          echo "$err" | grep -F "benchweave-sdk[server]" \
+            || { echo "::error::preview-ui refusal is missing the install command"; exit 1; }
+          case "$err" in *Traceback*)
+            echo "::error::preview-ui refusal printed a traceback"; exit 1;; esac
+
+      - name: Server smoke — preview-ui over the installed wheel ([server], ubuntu only)
+        # #308 A3(b), the installed-wheel proof: a second venv with the
+        # wheel's [server] extra spawns preview-ui against a scaffolded
+        # project, the home page answers 200 with BOTH mode banners, and
+        # SIGINT stops it with exit 0. Ubuntu-only: one OS proves the
+        # installed shape; the matrix above already covers entry-point
+        # presence on every OS.
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv venv "$RUNNER_TEMP/server-smoke"
+          SBIN="$RUNNER_TEMP/server-smoke/bin"
+          # The glob must expand BEFORE the extras suffix is appended (the
+          # ci.yml lane's recorded trap: a quoted glob-plus-extras reaches
+          # uv as a literal and it refuses with an invalid wheel filename).
+          WHEEL="$(ls dist/*.whl)"
+          uv pip install --python "$RUNNER_TEMP/server-smoke" "${WHEEL}[server]"
+          "$SBIN/benchweave-sdk" new "$RUNNER_TEMP/server-example" --with-ui
+          PORT=18477
+          "$SBIN/benchweave-sdk" preview-ui "$RUNNER_TEMP/server-example" --no-open --port "$PORT" &
+          PID=$!
+          body="$RUNNER_TEMP/server-smoke-body.html"
+          for _ in $(seq 1 30); do
+            if curl -fsS "http://127.0.0.1:${PORT}/" -o "$body"; then break; fi
+            sleep 1
+          done
+          # The mode banners the suite pins (tests/server/test_banner.py):
+          # the simulated banner renders on mock transport only, the no-gateway
+          # banner on both transports. (The #308 design record named the
+          # pre-I2a wordings 'SIMULATED — mock transport'/'STANDALONE — no
+          # gateway' — stale record prose; the tree's pins are these.)
+          grep -F "SIMULATED PRESENTATION DATA" "$body"
+          grep -F "NO GATEWAY · LOCAL PRESENTATION ONLY" "$body"
+          kill -INT "$PID"
+          wait "$PID"
 
   publish:
     name: Publish to PyPI (Trusted Publishing)

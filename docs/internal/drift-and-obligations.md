@@ -50,20 +50,25 @@ rubric's G5 gate is the obligation; this file is the detail behind it.
 
 6. **SDK behavioral changes** → the behavioral test suite lives here (`tests/`:
    `test_standards_sync`, `test_cli_frameworks`, `test_presentation_cli`,
-   `test_preview_server`, `test_preview_cli`, `test_preview_fixtures`, `test_sdk`,
+   `test_preview_shim`, `test_preview_fixtures`, `test_sdk`,
    `test_getting_started` (the docs-as-tests lane over `user_guide/getting-started.qmd`,
    issue #347 WS4), plus the regression modules beside them) and runs in this
    repository's CI. A behavior change with
    no coverage here is a required change; name the module that should carry the test.
-   Modules that compare the SDK with the gateway stay main-side (`tests/sdk/` in the
-   gateway checkout: `test_presentation_packaging` and the agreement modules), because
-   only the parent can see both sides; a change to such a property names its main-side
-   module instead.
+   Since 0.7.0 (#308, R-10) the SRF-2 agreement arms live here too — the both-directions
+   loader/check-ui arm in `tests/server/test_adapter_failure.py` and the projection
+   arms in `test_preview_fixtures.py` — resolving `benchweave_sdk` from the synced
+   environment. Modules that compare the SDK with the gateway stay main-side
+   (`tests/sdk/` in the gateway checkout: `test_presentation_packaging`), because
+   only the parent can see both sides; a change to such a property names its
+   main-side module instead.
 
-7. **The renderer** 🪝 (`ui/` main-side builds into `preview_assets/` here) → a fresh
-   `npm --prefix ui run build:preview` must leave the committed assets unchanged
-   (invariants PKG-3); renderer-affecting UI changes land with a rebuilt, committed
-   asset tree in the same change.
+7. **The renderer — CLOSED at 0.7.0** (issue #308): the frozen renderer bundle was
+   deleted from this repository; nothing builds into it and no `npm --prefix ui run
+   build:preview` output lands here. Renderer freshness is now the
+   `benchweave-ui-html` EXACT pin in the `[server]` extra, which moves only by a pin
+   bump in this repository (the closed record is invariants PKG-3). The row stays
+   numbered — closed, not deleted.
 
 8. **The two-repo landing order** → this repository's commit is pushed BEFORE the main
    repository's pointer commit advances (invariants TWO-1). A PR here that expects a

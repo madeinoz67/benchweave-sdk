@@ -29,7 +29,7 @@ Manifest asset paths are relative to ui/, for example presets/default.json.
 Use canonical paths without symlink components. Keep the binding catalogue
 aligned with the descriptor and update exact byte hashes after edits.
 
-Preview with: `benchweave-sdk preview-ui src/example_plugin/presentation.json --descriptor src/example_plugin/descriptor.json --resources src/example_plugin --catalogue src/example_plugin/binding-catalogue.json --fixtures src/example_plugin/ui/fixtures`.
+Preview with: `benchweave-sdk preview-ui .` from the project root (the standalone host on the scripted mock transport; needs the `benchweave-sdk[server]` extra).
 
 All preview values and receipts are simulated. check-ui and preview-ui are not
 admission, hardware qualification or permission to operate hardware.

@@ -7,14 +7,10 @@ signing stack) and the registry validates and labels, never signs.
 
 from __future__ import annotations
 
-import ipaddress
 import json
-import sys
-import webbrowser
 from collections.abc import Callable, Sequence
 from functools import wraps
 from pathlib import Path
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import click
 
@@ -1013,138 +1009,83 @@ def registry_transfer_command(
     output.path(f"  {record}")
 
 
-def _renderer_origin(renderer_url: str | None) -> str | None:
-    if renderer_url is None:
-        return None
-    parsed = urlsplit(renderer_url)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise ValueError(f"preview_renderer_url_invalid: {renderer_url}")
-    host = parsed.hostname or ""
-    try:
-        loopback = ipaddress.ip_address(host).is_loopback
-    except ValueError:
-        loopback = host == "localhost"
-    if not loopback:
-        # Author-editable plugin docs can suggest command lines; a non-loopback
-        # renderer would get CORS-trusted API access without the bundled
-        # renderer's simulation labelling. Keep trust on the operator's machine.
-        raise ValueError(
-            f"preview_renderer_origin_not_local: {renderer_url} must name a loopback "
-            "host; serve third-party renderers locally"
-        )
-    return f"{parsed.scheme}://{parsed.netloc}"
+#: The refusal a default install hears from ``preview-ui`` when the server
+#: package's own bytes are absent (a mangled install — with the bytes
+#: present, serve's body refuses instead, through the same words). Kept
+#: byte-identical to ``benchweave_sdk_server.cli._EXTRAS_MESSAGE``: the
+#: module cannot be imported to reuse the constant in exactly the case
+#: this covers, so the text is carried here too; a test pins the two equal
+#: whenever the server module is importable.
+_PREVIEW_EXTRAS_MESSAGE = (
+    "benchweave_sdk_server_extras_missing: install 'benchweave-sdk[server]' "
+    "for the serve, mcp and preview-ui commands"
+)
 
 
-def _renderer_target(renderer_url: str | None, api_base: str) -> str:
-    if renderer_url is None:
-        return api_base
-    parsed = urlsplit(renderer_url)
-    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
-    query["apiBase"] = api_base
-    return urlunsplit(parsed._replace(query=urlencode(query)))
-
-
-def _run_preview(
-    *,
-    envelope: Path,
-    descriptor: Path,
-    resources: Path,
-    catalogue: Path,
-    fixtures: Path | None,
-    firmware: str | None,
-    feature: tuple[str, ...],
-    panel: tuple[str, ...],
-    renderer_url: str | None,
+@cli.command("preview-ui")
+@click.argument("project", type=click.Path(path_type=Path, exists=True))
+@click.option("--host", default="127.0.0.1", show_default=True)
+@click.option("--port", default=8477, type=click.IntRange(1, 65535), show_default=True)
+@click.option("--allow-network", is_flag=True)
+@click.option("--no-open", is_flag=True)
+@click.option(
+    "--scenario",
+    default=None,
+    help=(
+        "Serve one of the nine baseline states (mock transport only); "
+        "validated at launch, as on serve"
+    ),
+)
+def preview_ui_command(
+    project: Path,
     host: str,
     port: int,
     allow_network: bool,
     no_open: bool,
+    scenario: str | None,
 ) -> None:
-    from .fixtures import build_preview_model
-    from .presentation import load_validated_preview_inputs
-    from .preview_server import PreviewServer, bundled_assets, validate_listener
+    """Preview the plugin on the standalone host (mock transport only).
 
-    validate_listener(host, allow_network)
-    renderer_origin = _renderer_origin(renderer_url)
-    if fixtures is not None and not fixtures.is_dir():
-        raise ValueError(f"preview_fixtures_directory_expected: {fixtures}")
-    candidate = load_validated_preview_inputs(
-        envelope,
-        descriptor,
-        resources,
-        catalogue,
-        firmware=firmware,
-        features=frozenset(feature),
-        panels=frozenset(panel),
-    )
-    if fixtures is not None:
-        candidate = type(candidate)(
-            envelope=candidate.envelope,
-            manifest=candidate.manifest,
-            binding_catalogue=candidate.binding_catalogue,
-            resource_root=fixtures.parent,
+    PRD 12 R-9: an in-process alias over ``benchweave-sdk-server serve`` —
+    the same listener rules and pages, with the transport pinned to the
+    scripted mock. Real-hardware serving is ``benchweave-sdk-server serve
+    --transport serial``; this command never leaves the mock (D-6).
+    Requires the ``[server]`` extra: a default install refuses with
+    ``benchweave_sdk_server_extras_missing:`` and exit 2.
+    """
+    try:
+        # Body-import only (risk R1): at module level this would invert the
+        # core→server layering — the server imports core at ITS module level
+        # — and make every benchweave-sdk command die on a mangled install,
+        # not just this one.
+        from benchweave_sdk_server.cli import _scenario_ids
+        from benchweave_sdk_server.cli import serve as _server_serve
+    except ImportError as exc:
+        click.echo(_PREVIEW_EXTRAS_MESSAGE, err=True)
+        raise SystemExit(2) from exc
+    if scenario is not None and scenario not in _scenario_ids():
+        # serve parses --scenario as a click.Choice; ctx.invoke bypasses
+        # option processing, so the shim enforces the same membership here —
+        # exit 2, the same usage-error family serve's Choice produces.
+        raise click.BadParameter(
+            f"{scenario!r} is not one of {', '.join(_scenario_ids())}",
+            param_hint="'--scenario'",
         )
-    model = build_preview_model(candidate)
-    server = PreviewServer(
-        model,
-        bundled_assets(),
+    # Transport is PINNED, never a flag (R-9). A read past this point
+    # cannot tell an explicit value from a default-filled one (click's
+    # Context.invoke merges the command's parameter defaults into the
+    # kwargs), so the pin lives in THIS call — the delegation arm pins it
+    # by intercepting the exact kwargs dict.
+    click.get_current_context().invoke(
+        _server_serve,
+        project=project,
         host=host,
         port=port,
         allow_network=allow_network,
-        allowed_origin=renderer_origin,
+        no_open=no_open,
+        scenario=scenario,
+        transport="mock",
     )
-    try:
-        address = server.start()
-        target_url = _renderer_target(renderer_url, address.url)
-        if renderer_url is not None:
-            ConsoleOutput().message(
-                "Custom renderer: a developer-supplied page is display, not the bundled "
-                "BenchWeave renderer; all data remains simulated.",
-                style="yellow",
-            )
-        if no_open or not sys.stdout.isatty():
-            ConsoleOutput().preview_ready(
-                target_url,
-                scenarios=len(model.scenarios),
-                renderer_version=model.renderer_version,
-            )
-            try:
-                opened = False if no_open else webbrowser.open(target_url)
-            except webbrowser.Error:
-                opened = False
-            if not no_open and not opened:
-                ConsoleOutput().message(f"Browser did not open; use {target_url}", style="yellow")
-            server.wait()
-            return
-        from .preview_tui import PreviewStatusApp
-
-        PreviewStatusApp(
-            url=target_url,
-            renderer_version=model.renderer_version,
-            scenarios=len(model.scenarios),
-            open_browser=webbrowser.open,
-            shutdown=server.shutdown,
-            open_on_mount=True,
-        ).run()
-    except KeyboardInterrupt:
-        return
-    finally:
-        server.shutdown()
-
-
-@cli.command("preview-ui")
-@click.argument("envelope", type=click.Path(path_type=Path))
-@_presentation_options
-@click.option("--fixtures", type=click.Path(path_type=Path))
-@click.option("--renderer-url")
-@click.option("--host", default="127.0.0.1", show_default=True)
-@click.option("--port", default=0, type=click.IntRange(0, 65535), show_default=True)
-@click.option("--allow-network", is_flag=True)
-@click.option("--no-open", is_flag=True)
-@_domain_errors
-def preview_ui_command(**options: object) -> None:
-    """Preview simulated presentation states on a local renderer."""
-    _run_preview(**options)  # type: ignore[arg-type]
 
 
 def main(args: Sequence[str] | None = None) -> int:

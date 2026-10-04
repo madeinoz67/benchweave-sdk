@@ -201,14 +201,11 @@ The `--firmware` value comes from the generated project. The descriptor's `ident
 > [!CAUTION]
 > A preview pass is not admission, not approval to apply settings, and not hardware qualification.
 
-Preview the pages in a browser. The preview does not import plugin Python and does not open a device transport:
+Preview the pages in a browser. The preview serves this project's pages on the standalone host, on the scripted mock transport. The preview command needs the server extra. Install the extra once, in the environment you made in Step 1:
 
 ```text
-benchweave-sdk preview-ui src/benchweave_acme_model200/presentation.json \
-  --descriptor src/benchweave_acme_model200/descriptor.json \
-  --resources src/benchweave_acme_model200 \
-  --catalogue src/benchweave_acme_model200/binding-catalogue.json \
-  --no-open
+uv pip install 'benchweave-sdk[server]'
+benchweave-sdk preview-ui . --no-open
 ```
 
-The preview serves until you stop it. Press `Ctrl+C` to stop the server. With `--no-open`, open the printed URL in a browser yourself. See [Troubleshooting](troubleshooting.qmd) for the stop behavior.
+The preview serves until you stop it. Press `Ctrl+C` to stop the server. With `--no-open`, open the printed URL in a browser yourself. The startup output also prints a bearer token. REST mutations and MCP over HTTP need this token. See [Troubleshooting](troubleshooting.qmd) for the stop behavior.

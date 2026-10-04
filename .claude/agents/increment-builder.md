@@ -97,14 +97,13 @@ means the generated docs including the AI-GUIDE text carried in `scaffold.py`, a
 interface change for every downstream plugin repo; a packaging change means wheel/sdist
 contents and the README install steps, with `.claude/`, `.mcp.json`, `AGENTS.md` and
 `CLAUDE.md` never appearing in either artifact; vendored bytes never change here first —
-they arrive as a re-sync with a version increment; a renderer-affecting change pairs with
-a main-side rebuild of the committed `preview_assets/`.
+they arrive as a re-sync with a version increment.
 
 ## Push discipline for shared surfaces (main #69)
 
 CI tests the MERGE RESULT (your branch + current `origin/main`), not your base.
 Before pushing a branch that shares a surface with a sibling (this repo's main, the
-vendored tree, preview assets): simulate the merge and run the sibling lanes against
+vendored tree): simulate the merge and run the sibling lanes against
 that tree. The vendored standards tree moves ONLY via `sync-standards` — a local edit
 to it is a defect, not a shortcut. When parked behind a sibling: stand by at
 review-complete and rebase onto the merged predecessor exactly once. **Check your
