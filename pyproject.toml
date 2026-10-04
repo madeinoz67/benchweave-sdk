@@ -51,6 +51,9 @@ server = [
   # gateway's renderer corpus and what this host serves.
   "benchweave-ui-html==0.2.1",
   "uvicorn>=0.52.4",
+  # The serial provider backend (issue #285 I3a): pyserial rides the server
+  # extra ONLY — the default install never gains it (PKG-1/2 hold).
+  "pyserial>=3.5,<4",
   # WS2: the folded authoring lane's plugin_new renders through the copier
   # template too (the standalone tree's benchweave-sdk[scaffold] dep, rebased).
   "copier>=9.18,<10",

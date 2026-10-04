@@ -202,7 +202,15 @@ def _add_html_routes(
 
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request) -> Response:
-        devices = (await seam.call("device_discover"))["devices"]
+        if seam.transport_kind == "serial":
+            # NFR-O3: a page load never transmits — GET serves the LAST
+            # discovery result (host state, initially empty with a scan
+            # prompt); scanning is the explicit POST below.
+            devices = seam.discovery_cache or []
+            scan_error = None
+        else:
+            devices = (await seam.call("device_discover"))["devices"]
+            scan_error = None
         return _TEMPLATES.TemplateResponse(
             request=request,
             name="index.html",
@@ -211,8 +219,53 @@ def _add_html_routes(
                 connected=seam.session.connected,
                 pages=pres().pages,
                 has_presentation=pres().available,
+                scan_available=seam.transport_kind == "serial",
+                scan_error=scan_error,
             ),
         )
+
+    @app.post("/discover")
+    async def discover_route(request: Request) -> Response:
+        """The explicit scan (NFR-O3's arm): the ONLY page route that calls
+        device_discover on the serial transport. A refused scan renders its
+        refusal — never a silent no-op."""
+        if seam.transport_kind != "serial":
+            return RedirectResponse(url="/", status_code=303)
+        try:
+            await seam.call("device_discover")
+        except SeamError as exc:
+            devices = seam.discovery_cache or []
+            return _TEMPLATES.TemplateResponse(
+                request=request,
+                name="index.html",
+                context=shared(
+                    devices=devices,
+                    connected=seam.session.connected,
+                    pages=pres().pages,
+                    has_presentation=pres().available,
+                    scan_available=True,
+                    scan_error={"code": exc.code, "message": exc.message},
+                ),
+            )
+        except (RuntimeError, ValueError, OSError) as exc:
+            # The scan's failure classes that raise before any SeamError
+            # exists (FOLD-E) render the same typed scan-refused row; the
+            # seam maps them for REST and MCP too, so this arm is the
+            # route's own defense, not the only reader.
+            devices = seam.discovery_cache or []
+            return _TEMPLATES.TemplateResponse(
+                request=request,
+                name="index.html",
+                context=shared(
+                    devices=devices,
+                    connected=seam.session.connected,
+                    pages=pres().pages,
+                    has_presentation=pres().available,
+                    scan_available=True,
+                    scan_error={"code": "not_ready", "message": str(exc)},
+                ),
+            )
+        return RedirectResponse(url="/", status_code=303)
 
     async def _gather_readings(
         device_id: str

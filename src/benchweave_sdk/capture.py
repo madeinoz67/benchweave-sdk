@@ -276,6 +276,17 @@ class StandaloneCaptureWriter:
         """The resolved capture root this writer publishes under."""
         return self._root
 
+    @property
+    def event_path(self) -> Path | None:
+        """The in-flight capture's event directory, ``None`` when the
+        writer has none open. The services layer uses it to remove an
+        un-finalised capture's event directory on abort: the writer's own
+        abort deliberately leaves the directory (a published capture
+        stands), and a leftover empty directory would wedge the capture_id
+        (the collision check refuses any reuse while the name exists) —
+        un-publishing an un-finalised capture is the CALLER's business."""
+        return self._event
+
     def _open_event(self, capture_id: str) -> Path:
         """Open (or return the already-open) event directory for a capture.
 
