@@ -537,6 +537,46 @@ def test_duration_bound_ends_the_capture(tmp_path: Path) -> None:
     assert outcome["byte_length"] == 48
 
 
+def test_a_stubborn_adapter_stopped_then_ok_publishes_stopped(
+    tmp_path: Path,
+) -> None:
+    """B-F2 (P3 shape): an adapter that ignores the stop, keeps its head
+    down, and eventually returns ok publishes with the OPERATOR's reason —
+    ``stopped``, never relabelled ``completed``."""
+    host = _host(tmp_path, mode="stubborn_ok")
+
+    async def scenario() -> dict[str, Any]:
+        await _connected(host)
+        started = await host.call("capture_start", _start(count=8))
+        await asyncio.sleep(0.1)
+        return await host.call(
+            "capture_stop", {"capture_id": started["capture_id"]}
+        )
+
+    stopped = asyncio.run(scenario())
+    assert stopped["state"] == "published"
+    assert stopped["stop_reason"] == "stopped"
+    assert stopped["manifest"]["byte_length"] == 64
+
+
+def test_a_count_bound_overrun_records_bound(tmp_path: Path) -> None:
+    """B-F2 (P11 shape): an adapter that blows past its declared count
+    (declared 8, stages 24) and returns ok after the bound's cancellation
+    publishes the real bytes with the reason ``bound`` — the overrun is
+    never laundered into ``completed``."""
+    host = _host(tmp_path, mode="overrun")
+
+    async def scenario() -> dict[str, Any]:
+        await _connected(host)
+        await host.call("capture_start", _start(count=8))
+        return await host.await_capture()
+
+    outcome = asyncio.run(scenario())
+    assert outcome["state"] == "published"
+    assert outcome["stop_reason"] == "bound"
+    assert outcome["byte_length"] == 192
+
+
 def test_second_start_while_in_flight_conflicts(tmp_path: Path) -> None:
     host = _host(tmp_path, mode="slow")
 

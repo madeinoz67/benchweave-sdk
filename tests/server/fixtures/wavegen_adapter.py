@@ -11,6 +11,12 @@ exactly the contract the host lifecycle rulings assume. The per-project
 - ``slow``    — the same, with a 20 ms pause per sample (stop-mid-flight)
 - ``linger``  — append ``count`` doubles, then wait cancelled (the bound
                 watchdog's backstop: a device that never returns on its own)
+- ``stubborn_ok`` — append ``count`` doubles, ignore cancellation for
+                ``stubborn_s`` (0.6 s), then return ok anyway (the host
+                asked; the adapter answered ok regardless)
+- ``overrun`` — append ``count`` then two more ``count`` lots at 50 ms a
+                sample, ignoring the bound's cancellation, then return ok
+                (declared N, staged 3N)
 - ``unknown`` — append, then return a status/dispatch ``unknown`` envelope
 - ``error``   — append, then return an error envelope
 - ``silent``  — return ok with zero appends (publishes nothing)
@@ -25,6 +31,7 @@ from __future__ import annotations
 import asyncio
 import json
 import struct
+import time
 from pathlib import Path
 from typing import Any
 
@@ -158,6 +165,25 @@ class Plugin:
             while not context.is_cancelled():
                 await asyncio.sleep(0.02)
             return self._failure(verb, operation_id, "TIMEOUT", "cancelled at bound", True)
+        if mode == "stubborn_ok":
+            deadline = time.monotonic() + float(behaviour.get("stubborn_s", 0.6))
+            while time.monotonic() < deadline:
+                try:
+                    await asyncio.sleep(0.02)
+                except asyncio.CancelledError:
+                    continue
+            return self._ok(verb, operation_id, {"capture_id": capture_id, "appended": appended})
+        if mode == "overrun":
+            for value in [float(index % 20) - 9.5 for index in range(count * 2)]:
+                try:
+                    await asyncio.sleep(0.05)
+                except asyncio.CancelledError:
+                    continue
+                await self.services.artifact_append(
+                    capture_id, struct.pack("<d", value), context
+                )
+                appended += 1
+            return self._ok(verb, operation_id, {"capture_id": capture_id, "appended": appended})
         if mode == "unknown":
             return self._failure(
                 verb,

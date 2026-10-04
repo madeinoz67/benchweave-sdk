@@ -1814,6 +1814,14 @@ class StandaloneSeam:
         status = str(envelope.get("status", ""))
         dispatch_state = str((envelope.get("error") or {}).get("dispatch_state", ""))
         if status == "ok":
+            if reason_pending in ("stopped", "bound") and forced_at is not None:
+                # The envelope says ok, but the HOST is the one that pulled
+                # the trigger (B-F2): an adapter that ignored the stop or
+                # blew past its bound and answered ok afterwards publishes
+                # under the host's own cancel reason, never relabelled
+                # "completed". A bound that merely armed while the adapter
+                # finished on its own (forced_at unset) stays completed.
+                return await self._finalise_capture(state, reason_pending)
             return await self._finalise_capture(state, "completed")
         if status == "unknown" or dispatch_state == "unknown":
             return await self._abort_capture(
