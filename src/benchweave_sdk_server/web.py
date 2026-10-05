@@ -111,6 +111,10 @@ def build_app(
                 yield
             finally:
                 await seam.session.close()
+                # The host's own resources: the capture library's root lock
+                # (NFR-O1's close-down shape; I3c extends this to settle an
+                # in-flight capture first).
+                seam.close()
 
     app = FastAPI(title="BenchWeave SDK server", lifespan=_lifespan)
     app.state.seam = seam
@@ -151,7 +155,9 @@ def _add_rest_routes(app: FastAPI, seam: StandaloneSeam) -> None:
                     status_code=400,
                 )
             try:
-                data = await seam.call(operation, body, correlation_id=correlation)
+                data = await seam.call(
+                    operation, body, correlation_id=correlation, surface="rest"
+                )
             except SeamError as exc:
                 return _failure(exc)
             return _envelope({"correlation_id": correlation, "data": data})
@@ -199,6 +205,17 @@ def _add_html_routes(
         }
         context.update(extra)
         return context
+
+    async def _ui_call(
+        operation: str, arguments: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """The page routes' dispatches carry the UI surface (SW-34): the
+        originating surface is host knowledge supplied by the dispatch
+        layer — REST passes ``surface="rest"`` on its routes, and the
+        browser's mutations pass ``"ui"`` here, so what the tag feeds
+        (the SW-54 capture sidecar reads it) records the true origin,
+        never null."""
+        return await seam.call(operation, arguments, surface="ui")
 
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request) -> Response:
@@ -615,7 +632,7 @@ def _add_html_routes(
         if device_id != seam.session.device_id:
             return HTMLResponse("not found", status_code=404)
         try:
-            await seam.call("device_connect", {"device_id": device_id})
+            await _ui_call("device_connect", {"device_id": device_id})
         except SeamError as exc:
             # The M1 fold: a refused connect RENDERS its refusal — the
             # operator never gets the silent prompt back instead.
@@ -629,7 +646,7 @@ def _add_html_routes(
         if device_id != seam.session.device_id:
             return HTMLResponse("not found", status_code=404)
         with contextlib.suppress(SeamError):
-            await seam.call("device_disconnect", {"device_id": device_id})
+            await _ui_call("device_disconnect", {"device_id": device_id})
         return _redirect()
 
     def _page_action_error(exc: SeamError) -> dict[str, Any]:
@@ -719,7 +736,7 @@ def _add_html_routes(
                     action_label="Stage refused",
                 )
             try:
-                await seam.call(
+                await _ui_call(
                     "parameter_stage",
                     {
                         "device_id": seam.session.device_id,
@@ -743,9 +760,7 @@ def _add_html_routes(
         if page is None:
             return HTMLResponse("not found", status_code=404)
         try:
-            await seam.call(
-                "parameter_apply", {"device_id": seam.session.device_id}
-            )
+            await _ui_call("parameter_apply", {"device_id": seam.session.device_id})
         except SeamError as exc:
             return await _render_page(request, page, _page_action_error(exc))
         return RedirectResponse(url=f"/pages/{page.id}", status_code=303)
@@ -759,7 +774,7 @@ def _add_html_routes(
         form = await request.form()
         preset_id = str(form.get("preset_id", ""))
         try:
-            await seam.call(
+            await _ui_call(
                 "preset_apply",
                 {"device_id": device_id, "preset_id": preset_id},
             )
@@ -887,7 +902,14 @@ def _add_asset_routes(app: FastAPI) -> None:
     async def asset(asset_path: str) -> Response:
         # Same traversal refusals as the preview server's asset route: a
         # backslash is a separator on Windows and a colon is a drive or ADS.
-        candidate = asset_path
+        # These refusals are the guard CodeQL's py/path-injection alert
+        # asks about (ROW-4): the request can only name a relative,
+        # "/"-separated, non-parent path, so root / candidate stays inside
+        # one of the two package-local roots (pinned by the traversal arm).
+        # Not caught: a symlink swapped into the tree at runtime — that
+        # takes filesystem write access to the package, which the request
+        # does not have; the startup inventory verifies the tree's bytes.
+        candidate = asset_path  # codeql[py/path-injection] guarded: traversal refusals pin the path
         if (
             not candidate
             or candidate.startswith("/")

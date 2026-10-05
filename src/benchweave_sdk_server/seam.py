@@ -24,21 +24,31 @@ adapter directly. The seam owns the closed refusal model —
 from __future__ import annotations
 
 import asyncio
+import base64
+import contextlib
+import getpass
 import hashlib
 import json
+import struct
 import time
 import uuid
 from collections.abc import Callable
+from contextvars import ContextVar
+from datetime import UTC, datetime
 from importlib import metadata
-from typing import TYPE_CHECKING, Any, cast
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
+from benchweave_sdk.capture import capture_root as resolve_capture_root
 from benchweave_sdk.presentation import read_file, validate_preset
 from benchweave_sdk.testing import ConformanceError
 
 from . import catalogue
 from .errors import SeamError
 from .events import EventBus
+from .library import CaptureLibrary
 from .session import (
+    HostOperationContext,
     PluginLoadError,
     PluginSession,
     evict_plugin_modules,
@@ -57,6 +67,23 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     # constructed — inside the guarded serve/mcp bodies.
     from .plots import ObservationRing
     from .presentation import HostPresentation
+
+    class _CaptureCapable(Protocol):
+        """The capture members the lifecycle drives on a capture-capable
+        services object (the runtime check is the callable-capability gate
+        in ``_op_capture_start``; this type is the static mirror)."""
+
+        def configure_capture(
+            self, capture_id: str, *, metadata: dict[str, Any], max_bytes: int | None
+        ) -> None: ...
+
+        def capture_progress(self, capture_id: str) -> int: ...
+
+        async def artifact_finalise(
+            self, capture_id: str, metadata: dict[str, Any], context: Any
+        ) -> dict[str, Any]: ...
+
+        async def artifact_abort(self, capture_id: str) -> None: ...
 
 #: The adapter envelope error codes → interface codes (SW-12 distinctness kept:
 #: the adapter's own code and dispatch_state ride in ``details`` verbatim).
@@ -88,6 +115,42 @@ _STATE_EVENT_OPS: frozenset[str] = frozenset(
     }
 )
 
+#: The dispatch surface of the CURRENT call (SW-34: the originating surface
+#: is host knowledge, supplied by the dispatch layer — web/rest/mcp — never
+#: by clients; ``capture_start`` records it into the SW-54 metadata). The
+#: contextvar is task-local, so concurrent calls each carry their own.
+_SURFACE: ContextVar[str | None] = ContextVar("bws_dispatch_surface", default=None)
+
+#: Bytes per sample by capture format (ruling 2: the count bound is
+#: samples × bytes-per-sample).
+_BYTES_PER_SAMPLE: dict[str, int] = {"waveform_f64le": 8, "raw_binary": 1}
+
+#: The capture watchdog's poll quantum (s): the loop wakes on adapter-task
+#: completion, a stop request, or this timeout — whichever comes first.
+_CAPTURE_POLL_S = 0.05
+
+#: The capture_progress coalescing window (SW-26/NFR-Q3): at most one
+#: progress row per this many seconds, carrying the staged-byte total.
+_PROGRESS_WINDOW_S = 0.25
+
+#: How long the watchdog waits at a reached bound for a cooperative adapter
+#: to return on its own before cancelling the operation context (the
+#: backstop, not the primary mechanism).
+_BOUND_GRACE_S = 0.30
+
+#: ``capture_stop``'s settle budget beyond the verb's own declared timeout
+#: (grace included): an adapter that ignores even context cancellation
+#: cannot hold the stop call forever.
+_STOP_SETTLE_MARGIN_S = 5.0
+
+#: Raw (``max_points: 0``) series serving is refused above this sample
+#: count — the catalogue's own authored maximum (10M), not a second number.
+_RAW_SAMPLE_CEILING = 10_000_000
+
+#: The primary-artifact extensions by manifest format (the manifest's
+#: ``format`` field stays the source of truth; the filename is derived).
+_PRIMARY_SUFFIXES = {"waveform_f64le": ".f64", "raw_binary": ".bin"}
+
 
 def sdk_version() -> str:
     """The SDK version this host runs on, derived — never a literal."""
@@ -109,11 +172,20 @@ class StandaloneSeam:
         reload_wrapper: Callable[[Any], Any] | None = None,
         serial_ports: Any = None,
         serial_device_path: str | None = None,
+        capture_root: Any | None = None,
     ) -> None:
         self._session = session
         self._transport_kind = transport_kind
         self._serial_ports = serial_ports
         self._serial_device_path = serial_device_path
+        self._capture_root = capture_root
+        self._capture: Any | None = None
+        self._capture_outcomes: dict[str, dict[str, Any]] = {}
+        # The capture library (I3b slice 2) is LAZY: constructed on the
+        # first library op or capture terminal, never at seam construction —
+        # a seam that never touches captures must not create or lock a
+        # root (and the lockfile is one-library-per-root by design).
+        self._capture_library: CaptureLibrary | None = None
         # Lazy by contract (see the module's TYPE_CHECKING note): these run
         # inside the guarded serve/mcp bodies, never at the console entry's
         # module import.
@@ -148,13 +220,12 @@ class StandaloneSeam:
         # confirmation; the adapter-code digest is computed at load and
         # recomputed at reload (the mechanical adapter/contract
         # discrimination); the pending confirmation is a STATE, never an
-        # error; _capture_in_flight is the reload guard's capture leg —
-        # no capture exists until I3 arms it.
+        # error. The reload guard's capture leg is the live capture slot
+        # itself (_capture) — no second flag to keep in step.
         self._unattended = unattended
         self._reload_wrapper = reload_wrapper
         self._adapter_sha256 = project_py_digest(session.plugin)
         self._pending_reload: dict[str, Any] | None = None
-        self._capture_in_flight = False
         self._discovery_cache: list[dict[str, Any]] | None = None
         self.reload_state: dict[str, Any] | None = None
         # The op-vs-reload mutex (the refute lanes' serialization class):
@@ -225,43 +296,52 @@ class StandaloneSeam:
         arguments: dict[str, Any] | None = None,
         *,
         correlation_id: str | None = None,
+        surface: str | None = None,
     ) -> dict[str, Any]:
-        """Execute one catalogue operation; return its data or raise ``SeamError``."""
+        """Execute one catalogue operation; return its data or raise ``SeamError``.
+
+        ``surface`` is the dispatch layer's own identity (SW-34: host
+        knowledge — the web/rest/mcp adapters pass it; clients cannot).
+        """
         correlation = self._correlation(correlation_id)
+        token = _SURFACE.set(surface)
         try:
-            row = catalogue.spec(operation)
-            if row is None:
-                raise self._fail(
-                    "invalid_request",
-                    f"unknown operation: {operation}",
-                    correlation,
-                    closed_catalogue=(
-                        catalogue.deferred_operations() + catalogue.served_operations()
-                    ),
+            try:
+                row = catalogue.spec(operation)
+                if row is None:
+                    raise self._fail(
+                        "invalid_request",
+                        f"unknown operation: {operation}",
+                        correlation,
+                        closed_catalogue=(
+                            catalogue.deferred_operations() + catalogue.served_operations()
+                        ),
+                    )
+                if not row.implemented:
+                    raise self._fail(
+                        "unavailable",
+                        f"operation not implemented in this increment: {operation}",
+                        correlation,
+                        reason="increment_deferral",
+                    )
+                self._validate(row.name, arguments or {}, correlation)
+                handler = getattr(self, f"_op_{row.name}")
+                result = await handler(arguments or {}, correlation)
+            except SeamError as exc:
+                # EVERY seam-exit refusal rides the bus (FOLD-E): the unknown
+                # operation, the deferred operation, the argument-validation
+                # refusal and the handler's own — a watching page must see
+                # what was refused and why, not only handler failures.
+                self.events.publish(
+                    "refused",
+                    {"operation": operation, "code": exc.code, "message": exc.message},
                 )
-            if not row.implemented:
-                raise self._fail(
-                    "unavailable",
-                    f"operation not implemented in this increment: {operation}",
-                    correlation,
-                    reason="increment_deferral",
-                )
-            self._validate(row.name, arguments or {}, correlation)
-            handler = getattr(self, f"_op_{row.name}")
-            result = await handler(arguments or {}, correlation)
-        except SeamError as exc:
-            # EVERY seam-exit refusal rides the bus (FOLD-E): the unknown
-            # operation, the deferred operation, the argument-validation
-            # refusal and the handler's own — a watching page must see
-            # what was refused and why, not only handler failures.
-            self.events.publish(
-                "refused",
-                {"operation": operation, "code": exc.code, "message": exc.message},
-            )
-            raise
-        if row.name in _STATE_EVENT_OPS:
-            self.events.publish(row.name, self._event_data(row.name, result))
-        return cast(dict[str, Any], result)
+                raise
+            if row.name in _STATE_EVENT_OPS:
+                self.events.publish(row.name, self._event_data(row.name, result))
+            return cast(dict[str, Any], result)
+        finally:
+            _SURFACE.reset(token)
 
     def _event_data(self, operation: str, result: dict[str, Any]) -> dict[str, Any]:
         """The event payload for one state change: small, derived from the
@@ -837,8 +917,10 @@ class StandaloneSeam:
 
     def _reload_guards(self, correlation: str) -> None:
         """The conflict guards every reload path runs: a staged value that
-        was never applied, and a capture in flight (no capture exists until
-        I3; the flag is the state I3's capture_start will hold)."""
+        was never applied, and a capture in flight (the live capture slot
+        is the state itself — capture_start arms it, the watcher clears it
+        at the terminal state; I3c-design finding A deleted the dead flag
+        nothing ever armed)."""
         if self._staged:
             raise self._fail(
                 "conflict",
@@ -846,7 +928,7 @@ class StandaloneSeam:
                 "reloading",
                 correlation,
             )
-        if self._capture_in_flight:
+        if self._capture is not None:
             raise self._fail(
                 "conflict",
                 "a capture is in flight: stop it before reloading",
@@ -1072,6 +1154,864 @@ class StandaloneSeam:
             "events": self.events.after(cursor),
             "last_id": self.events.last_id(),
         }
+
+    # --- the capture lifecycle (I3b slice 3) -------------------------------
+
+    def _library(self, correlation: str) -> CaptureLibrary:
+        """The seam's capture library, constructed lazily on first use. A
+        second host process over the same root refuses here (the lockfile's
+        two-writers hazard, surfaced as ``unavailable``)."""
+        if self._capture_library is None:
+            try:
+                self._capture_library = CaptureLibrary(
+                    resolve_capture_root(self._capture_root)
+                )
+            except ValueError as exc:
+                raise SeamError(
+                    "not_ready", f"capture root refused: {exc}", correlation_id=correlation
+                ) from exc
+            except RuntimeError as exc:
+                raise SeamError(
+                    "unavailable", str(exc), correlation_id=correlation
+                ) from exc
+        return self._capture_library
+
+    def _capture_limits(self) -> dict[str, Any]:
+        """The descriptor's declared ``capture_limits`` (the schema-mandated
+        commissioning: declaring the capture capability requires them —
+        A02's posture, the plugin's own bounds, never a host constant)."""
+        limits = self._session.plugin.descriptor.get("capture_limits", {})
+        return limits if isinstance(limits, dict) else {}
+
+    def _resolve_capture_verb(self, correlation: str) -> str:
+        """Ruling 6: the capture verb is descriptor-declared — ``capture``
+        first, the declared ``invoke`` second, and no declaration at all is
+        an explicit gap the refusal names."""
+        operations = self._session.plugin.descriptor.get("operations", {})
+        if "capture" in operations:
+            return "capture"
+        if "invoke" in operations:
+            return "invoke"
+        raise self._fail(
+            "unavailable",
+            "no capture verb is declared: neither 'capture' nor 'invoke' "
+            "appears in the descriptor's operations policy",
+            correlation,
+        )
+
+    def _capture_metadata(
+        self,
+        arguments: dict[str, Any],
+        capture_id: str,
+        bound: dict[str, Any],
+        fmt: str,
+    ) -> dict[str, Any]:
+        """The SW-54 metadata sidecar, composed before dispatch: device and
+        plugin identity, the dispatch surface (host knowledge), the local
+        operator, the annotation fields, the effective start configuration
+        read back from the validated arguments, the declared bound and
+        format, and the terminal fields pinned at their start values."""
+        plugin = self._session.plugin
+        identity = self._session.identity or {}
+        try:
+            operator = getpass.getuser()
+        except Exception:  # noqa: BLE001 - an environment with no user name
+            operator = "unknown"
+        return {
+            "capture_id": capture_id,
+            "device": {"id": plugin.device_id, "firmware": identity.get("firmware")},
+            "plugin": {
+                "package": plugin.package,
+                "version": plugin.plugin_version,
+                "descriptor_sha256": plugin.descriptor_sha256,
+            },
+            "surface": _SURFACE.get(),
+            "operator": operator,
+            "project": arguments.get("project"),
+            "tags": list(arguments.get("tags", [])),
+            "notes": str(arguments.get("notes", "")),
+            "config": {
+                key: value
+                for key, value in arguments.items()
+                if key not in {"device_id", "project", "tags", "notes"}
+            },
+            "declared": {"format": fmt, "bound": bound},
+            "at": datetime.now(UTC).isoformat(),
+            "pinned": False,
+            "stop_reason": None,
+        }
+
+    async def _op_capture_start(
+        self, arguments: dict[str, Any], correlation: str
+    ) -> dict[str, Any]:
+        if not self._session.connected:
+            raise self._fail("not_ready", "device is not connected", correlation)
+        if self._capture is not None:
+            raise self._fail(
+                "conflict",
+                f"a capture is already in flight: {self._capture['capture_id']}",
+                correlation,
+            )
+        if self._pending_reload is not None:
+            raise self._fail(
+                "conflict",
+                "a plugin reload is waiting for confirmation; confirm or "
+                "clear it before capturing",
+                correlation,
+            )
+        services = self._session.services
+        if not all(
+            callable(getattr(services, name, None))
+            for name in ("configure_capture", "capture_progress", "artifact_finalise")
+        ):
+            raise self._fail(
+                "unavailable",
+                "the connected transport's services do not implement capture "
+                "(the mock transport's host does not; connect a "
+                "capture-capable device)",
+                correlation,
+            )
+        verb = self._resolve_capture_verb(correlation)
+        capture_services = cast("_CaptureCapable", services)
+        fmt = str(arguments.get("format", "raw_binary"))
+        bytes_per_sample = _BYTES_PER_SAMPLE.get(fmt, 1)
+        limits = self._capture_limits()
+        if "count" in arguments:
+            count = int(arguments["count"])
+            max_samples = limits.get("max_samples")
+            if max_samples is not None and count > int(max_samples):
+                raise self._fail(
+                    "invalid_request",
+                    f"count {count} exceeds the descriptor's declared capture "
+                    f"limit (max_samples {max_samples})",
+                    correlation,
+                )
+            bound_kind = "count"
+            bound_bytes = count * bytes_per_sample
+            bound: dict[str, Any] = {"kind": "count", "count": count, "bytes": bound_bytes}
+            deadline: float | None = None
+        else:
+            duration = float(arguments["duration_s"])
+            bound_kind = "duration_s"
+            bound_bytes = None
+            bound = {"kind": "duration_s", "duration_s": duration}
+            deadline = time.monotonic() + duration
+        requested = arguments.get("max_bytes")
+        ceiling = limits.get("max_bytes")
+        reservation = requested
+        if requested is not None and ceiling is not None:
+            reservation = min(int(requested), int(ceiling))
+        elif ceiling is not None:
+            reservation = int(ceiling)
+        if (
+            bound_bytes is not None
+            and reservation is not None
+            and int(reservation) < bound_bytes
+        ):
+            raise self._fail(
+                "invalid_request",
+                f"the byte reservation ({reservation}) is below the count bound "
+                f"({bound_bytes} bytes); raise max_bytes or lower the count",
+                correlation,
+            )
+        capture_id = f"cap-{uuid.uuid4().hex[:12]}"
+        metadata = self._capture_metadata(arguments, capture_id, bound, fmt)
+        capture_services.configure_capture(
+            capture_id, metadata=metadata, max_bytes=reservation
+        )
+        task, context = self._session.begin_verb(
+            verb,
+            {
+                "capture_id": capture_id,
+                **{
+                    key: value
+                    for key, value in arguments.items()
+                    if key not in {"device_id", "project", "tags", "notes"}
+                },
+            },
+        )
+        state: dict[str, Any] = {
+            "capture_id": capture_id,
+            "verb": verb,
+            "task": task,
+            "context": context,
+            "watcher": None,
+            "stop_event": asyncio.Event(),
+            "bound_kind": bound_kind,
+            "bound_bytes": bound_bytes,
+            "deadline": deadline,
+            "started_at": metadata["at"],
+            "format": fmt,
+            "interval": arguments.get("sample_interval_s"),
+            "unit": arguments.get("unit"),
+            "metadata": metadata,
+            "device_id": arguments["device_id"],
+            "progress": 0,
+        }
+        self._capture = state
+        state["watcher"] = asyncio.create_task(self._watch_capture(state))
+        # The capture events ride the EXISTING bus (I2c's one-sequence
+        # rule): started at arm time, progress coalesced by the watcher,
+        # stopped at the terminal state — the /events stream and every
+        # watcher surface see the same rows.
+        self.events.publish(
+            "capture_started",
+            {
+                "capture_id": capture_id,
+                "device_id": arguments["device_id"],
+                "bound": bound,
+                "format": fmt,
+            },
+        )
+        return {
+            "capture_id": capture_id,
+            "device_id": arguments["device_id"],
+            "state": "capturing",
+            "bound": bound,
+            "format": fmt,
+        }
+
+    async def await_capture(self) -> dict[str, Any] | None:
+        """Settle the in-flight capture's watcher and return its outcome row
+        (``None`` when no capture is in flight). The deterministic drain the
+        lifecycle tests and the shutdown close-down share."""
+        state = self._capture
+        if state is None:
+            return None
+        return await asyncio.shield(cast("asyncio.Task[dict[str, Any]]", state["watcher"]))
+
+    async def _op_capture_stop(
+        self, arguments: dict[str, Any], correlation: str
+    ) -> dict[str, Any]:
+        capture_id = str(arguments["capture_id"])
+        state = self._capture
+        if state is None or state["capture_id"] != capture_id:
+            raise self._fail(
+                "not_found", f"no capture in flight: {capture_id}", correlation
+            )
+        state["stop_event"].set()
+        timeout = (
+            self._session.verb_timeout_ms(state["verb"]) / 1000
+            + _BOUND_GRACE_S
+            + _STOP_SETTLE_MARGIN_S
+        )
+        try:
+            outcome = await asyncio.wait_for(
+                asyncio.shield(
+                    cast("asyncio.Task[dict[str, Any]]", state["watcher"])
+                ),
+                timeout=timeout,
+            )
+        except TimeoutError as exc:
+            # B-F5's wedge escape: the adapter ignored even task
+            # cancellation. The stop still refuses internal_error — the
+            # operator must learn the adapter never honoured the stop —
+            # but the bench must not stay capture-dead until restart: the
+            # watcher is cancelled, the outcome settles stop_timeout, the
+            # capture slot frees, and capture_stopped fires. Disclosed
+            # residual (fold-refute corrected): the zombie's later writes
+            # are refused at the cancelled context — NOTHING reaches disk —
+            # but the refused flush's bytes stay in the services buffer
+            # (memory, unbounded without a configured ceiling) until the
+            # services object dies; a full detach is I3c's sweep.
+            watcher = cast("asyncio.Task[dict[str, Any]]", state["watcher"])
+            watcher.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await watcher
+            state["task"].cancel()
+            await self._abort_capture(
+                state,
+                "stop_timeout",
+                detail=(
+                    "the adapter ignored the stop and did not honour "
+                    "cancellation; the host settled the outcome after "
+                    f"{timeout:.1f}s"
+                ),
+            )
+            raise self._fail(
+                "internal_error",
+                f"capture {capture_id} did not settle after the stop "
+                "request: the adapter did not honour cancellation (the "
+                "outcome was recorded as stop_timeout and the capture "
+                "slot is free)",
+                correlation,
+            ) from exc
+        manifest = self._published_manifest(capture_id)
+        return {
+            "capture_id": capture_id,
+            "state": outcome["state"],
+            "stop_reason": outcome["stop_reason"],
+            "manifest": manifest,
+            "details": state.get("stop_details"),
+        }
+
+    def _published_manifest(self, capture_id: str) -> dict[str, Any] | None:
+        """The published manifest read from disk, or ``None`` — the stop
+        result's manifest is the artifact's own record, never a copy held
+        in memory."""
+        event = self._library("").root / capture_id
+        path = event / "manifest.json"
+        if not path.is_file():
+            return None
+        try:
+            return dict(json.loads(path.read_text(encoding="utf-8")))
+        except ValueError:
+            return None
+
+    def _row(
+        self,
+        capture_id: str,
+        state_name: str,
+        started_at: str,
+        fmt: str,
+        metadata: dict[str, Any],
+        *,
+        byte_length: int | None,
+        sha256: str | None,
+        stop_reason: str | None,
+        progress_bytes: int | None,
+    ) -> dict[str, Any]:
+        """One capture_list row, exactly the catalogue's closed 13-key set."""
+        return {
+            "capture_id": capture_id,
+            "state": state_name,
+            "started_at": started_at,
+            "format": fmt,
+            "byte_length": byte_length,
+            "sha256": sha256,
+            "surface": metadata.get("surface"),
+            "project": metadata.get("project"),
+            "pinned": bool(metadata.get("pinned", False)),
+            "tags": list(metadata.get("tags", [])),
+            "notes": str(metadata.get("notes", "")),
+            "stop_reason": stop_reason,
+            "progress_bytes": progress_bytes,
+        }
+
+    def _capture_progress(self, state: dict[str, Any]) -> int:
+        services = self._session.services
+        progress = getattr(services, "capture_progress", None)
+        if not callable(progress):
+            return int(state.get("progress", 0))
+        return int(progress(state["capture_id"]))
+
+    async def _op_capture_list(
+        self, arguments: dict[str, Any], correlation: str
+    ) -> dict[str, Any]:
+        library = self._library(correlation)
+        rows: list[dict[str, Any]] = []
+        for stored in library.list_captures():
+            rows.append(
+                self._row(
+                    stored["capture_id"],
+                    "published",
+                    stored["started_at"],
+                    stored["format"],
+                    stored,
+                    byte_length=stored["byte_length"],
+                    sha256=stored["sha256"],
+                    stop_reason=stored["stop_reason"],
+                    progress_bytes=None,
+                )
+            )
+        state = self._capture
+        if state is not None:
+            rows.append(
+                self._row(
+                    state["capture_id"],
+                    "capturing",
+                    state["started_at"],
+                    state["format"],
+                    state["metadata"],
+                    byte_length=None,
+                    sha256=None,
+                    stop_reason=None,
+                    progress_bytes=self._capture_progress(state),
+                )
+            )
+        known = {row["capture_id"] for row in rows}
+        for capture_id, outcome in self._capture_outcomes.items():
+            # Aborted outcomes are SESSION state (ruling 5): listed here,
+            # never served by capture_get — a later publish of the same id
+            # (possible after an abort) replaces the outcome row.
+            if capture_id not in known:
+                rows.append(dict(outcome))
+        rows.sort(
+            key=lambda row: (row["started_at"], row["capture_id"]), reverse=True
+        )
+        return {"captures": rows}
+
+    def _event_dir(self, capture_id: str, correlation: str) -> Path:
+        """The event directory for a published capture id, refused for ids
+        that are not one safe path segment (a hostile id must not name a
+        directory outside the capture root)."""
+        if not capture_id or Path(capture_id).name != capture_id or capture_id in {
+            ".",
+            "..",
+        }:
+            raise self._fail(
+                "not_found", f"no published capture: {capture_id}", correlation
+            )
+        return self._library(correlation).root / capture_id
+
+    async def _op_capture_get(
+        self, arguments: dict[str, Any], correlation: str
+    ) -> dict[str, Any]:
+        capture_id = str(arguments["capture_id"])
+        event = self._event_dir(capture_id, correlation)
+        manifest_path = event / "manifest.json"
+        if not manifest_path.is_file():
+            raise self._fail(
+                "not_found", f"no published capture: {capture_id}", correlation
+            )
+        try:
+            manifest = dict(json.loads(manifest_path.read_text(encoding="utf-8")))
+        except ValueError as exc:
+            raise self._fail(
+                "not_found",
+                f"capture {capture_id} has an unparseable manifest",
+                correlation,
+            ) from exc
+        metadata_path = event / "metadata.json"
+        metadata: dict[str, Any] = {}
+        if metadata_path.is_file():
+            try:
+                loaded = json.loads(metadata_path.read_text(encoding="utf-8"))
+            except ValueError:
+                loaded = None
+            if isinstance(loaded, dict):
+                metadata = loaded
+        return {
+            "capture_id": capture_id,
+            "manifest": manifest,
+            "metadata": metadata,
+        }
+
+    async def _op_capture_series(
+        self, arguments: dict[str, Any], correlation: str
+    ) -> dict[str, Any]:
+        capture_id = str(arguments["capture_id"])
+        event = self._event_dir(capture_id, correlation)
+        manifest_path = event / "manifest.json"
+        if not manifest_path.is_file():
+            raise self._fail(
+                "not_found", f"no published capture: {capture_id}", correlation
+            )
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except ValueError as exc:
+            # The same closed refusal capture_get gives (B-F4): an
+            # unparseable manifest is not a raw JSONDecodeError.
+            raise self._fail(
+                "not_found",
+                f"capture {capture_id} has an unparseable manifest",
+                correlation,
+            ) from exc
+        fmt = str(manifest.get("format", ""))
+        if fmt != "waveform_f64le":
+            raise self._fail(
+                "invalid_request",
+                f"capture_series serves waveform_f64le primaries; use "
+                f"artifact_read for a {fmt or 'unknown'} capture",
+                correlation,
+            )
+        count = int(manifest.get("sample_count", 0))
+        interval = float(manifest.get("sample_interval_s", 0.0))
+        suffix = _PRIMARY_SUFFIXES.get(fmt, ".data")
+        payload = (event / f"{capture_id}{suffix}").read_bytes()[: count * 8]
+        values = struct.unpack(f"<{len(payload) // 8}d", payload)
+        points = [
+            (index * interval, value) for index, value in enumerate(values)
+        ]
+        max_points = int(arguments.get("max_points", 2000))
+        if max_points == 0:
+            if len(points) > _RAW_SAMPLE_CEILING:
+                raise self._fail(
+                    "payload_too_large",
+                    f"raw series serving is refused above "
+                    f"{_RAW_SAMPLE_CEILING} samples ({len(points)}); request "
+                    "a decimated series instead",
+                    correlation,
+                )
+            served: list[tuple[float, float]] = points
+            decimated = False
+        else:
+            # Lazy import: plots.py pulls the ui-html extra at module level
+            # (the A-E contract keeps it out of the CLI import chain).
+            from .plots import decimate_minmax
+
+            served = decimate_minmax(points, columns=max_points)
+            decimated = len(points) > max_points
+        return {
+            "capture_id": capture_id,
+            "format": fmt,
+            "decimated": decimated,
+            "max_points": max_points,
+            "points": [[x, y] for x, y in served],
+        }
+
+    def _stale_row_refusal(
+        self, library: CaptureLibrary, capture_id: str, correlation: str
+    ) -> None:
+        """The index-mediated mutations (annotate, pin) verify the event
+        directory still carries its manifest: an out-of-band deletion can
+        leave a stale row, and a stale row must refuse CLOSED (not_found,
+        never a raw filesystem error) and drop itself from the index
+        (delete-style self-heal, B-F4)."""
+        event = self._event_dir(capture_id, correlation)
+        row = library.get(capture_id)
+        if row is not None:
+            if (event / "manifest.json").is_file():
+                return
+            with contextlib.suppress(Exception):
+                # Delete-style self-heal: the index row AND the session
+                # outcome row both go, exactly as capture_delete drops them.
+                library.remove(capture_id)
+                self._capture_outcomes.pop(capture_id, None)
+        raise self._fail(
+            "not_found", f"no published capture: {capture_id}", correlation
+        )
+
+    async def _op_capture_annotate(
+        self, arguments: dict[str, Any], correlation: str
+    ) -> dict[str, Any]:
+        capture_id = str(arguments["capture_id"])
+        library = self._library(correlation)
+        self._stale_row_refusal(library, capture_id, correlation)
+        library.update_annotation(
+            capture_id,
+            notes=arguments.get("notes"),
+            tags=arguments.get("tags"),
+        )
+        row = library.get(capture_id)
+        assert row is not None
+        return {
+            "capture_id": capture_id,
+            "notes": row["notes"],
+            "tags": row["tags"],
+        }
+
+    async def _op_capture_pin(
+        self, arguments: dict[str, Any], correlation: str, *, pinned: bool = True
+    ) -> dict[str, Any]:
+        capture_id = str(arguments["capture_id"])
+        library = self._library(correlation)
+        self._stale_row_refusal(library, capture_id, correlation)
+        library.set_pinned(capture_id, pinned)
+        return {"capture_id": capture_id, "pinned": pinned}
+
+    async def _op_capture_unpin(
+        self, arguments: dict[str, Any], correlation: str
+    ) -> dict[str, Any]:
+        return await self._op_capture_pin(arguments, correlation, pinned=False)
+
+    async def _op_capture_delete(
+        self, arguments: dict[str, Any], correlation: str
+    ) -> dict[str, Any]:
+        capture_id = str(arguments["capture_id"])
+        state = self._capture
+        if state is not None and state["capture_id"] == capture_id:
+            raise self._fail(
+                "conflict",
+                f"capture {capture_id} is in flight: stop it before deleting",
+                correlation,
+            )
+        library = self._library(correlation)
+        row = library.get(capture_id)
+        if row is None:
+            raise self._fail(
+                "not_found", f"no published capture: {capture_id}", correlation
+            )
+        if row["pinned"]:
+            raise self._fail(
+                "conflict",
+                f"capture {capture_id} is pinned; unpin it before deleting",
+                correlation,
+            )
+        library.remove(capture_id)
+        self._capture_outcomes.pop(capture_id, None)
+        return {"capture_id": capture_id, "deleted": True}
+
+    async def _op_artifact_read(
+        self, arguments: dict[str, Any], correlation: str
+    ) -> dict[str, Any]:
+        capture_id = str(arguments["capture_id"])
+        event = self._event_dir(capture_id, correlation)
+        manifest_path = event / "manifest.json"
+        if not manifest_path.is_file():
+            raise self._fail(
+                "not_found", f"no published capture: {capture_id}", correlation
+            )
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        byte_length = int(manifest.get("byte_length", 0))
+        offset = int(arguments["offset"])
+        length = int(arguments["length"])
+        if offset > byte_length:
+            raise self._fail(
+                "invalid_request",
+                f"offset {offset} is beyond the artifact's end ({byte_length})",
+                correlation,
+            )
+        serve = min(length, byte_length - offset)
+        suffix = _PRIMARY_SUFFIXES.get(str(manifest.get("format", "")), ".data")
+        with (event / f"{capture_id}{suffix}").open("rb") as primary:
+            primary.seek(offset)
+            data = primary.read(serve)
+        return {
+            "capture_id": capture_id,
+            "artifact_id": str(manifest.get("artifact_id", "")),
+            "offset": offset,
+            "length": len(data),
+            "data_base64": base64.b64encode(data).decode("ascii"),
+        }
+
+    def close(self) -> None:
+        """Release host-owned resources: the capture library's root lock
+        (the lifespan close-down's host half — the session's own adapter
+        close is the lifespan's separate call). Idempotent."""
+        library, self._capture_library = self._capture_library, None
+        if library is not None:
+            with contextlib.suppress(Exception):
+                library.close()
+
+    # --- the capture watcher (ruling 1: the host finalises, never the adapter)
+
+    async def _watch_capture(self, state: dict[str, Any]) -> dict[str, Any]:
+        """Poll the adapter task to its terminal state and settle the
+        capture honestly.
+
+        Cooperative adapters return at their bound on their own; this loop
+        is the BACKSTOP: at a reached bound it grants a grace window, then
+        cancels the operation context (the adapter's next transfer/append
+        refuses). ``capture_stop``'s stop event short-circuits the grace —
+        the operator asked. The terminal mapping is the locked ruling:
+        envelope ok → finalise ``completed``; status/dispatch ``unknown`` →
+        abort ``stop_unknown`` (an ambiguous capture is never published,
+        A06); an error envelope → finalise the real bytes
+        ``adapter_error``; an uncaught exception → abort
+        ``adapter_exception`` — with the host's own cancel reason
+        (``stopped``/``bound``) winning over the envelope's class when the
+        host is the one that cancelled. A writer refusal at finalise aborts
+        ``finalise_refused``.
+        """
+        task: asyncio.Task[dict[str, Any]] = state["task"]
+        reason_pending: str | None = None
+        grace_until: float | None = None
+        forced_at: float | None = None
+        # Progress coalescing (SW-26/NFR-Q3's frame budget): at most one
+        # capture_progress row per window, and only when the staged total
+        # actually moved.
+        last_event_at = time.monotonic()
+        last_event_bytes = 0
+        while not task.done():
+            await asyncio.wait({task}, timeout=_CAPTURE_POLL_S)
+            if task.done():
+                break
+            now = time.monotonic()
+            state["progress"] = self._capture_progress(state)
+            if (
+                state["progress"] > last_event_bytes
+                and now - last_event_at >= _PROGRESS_WINDOW_S
+            ):
+                self.events.publish(
+                    "capture_progress",
+                    {
+                        "capture_id": state["capture_id"],
+                        "bytes": state["progress"],
+                    },
+                )
+                last_event_at = now
+                last_event_bytes = state["progress"]
+            if state["stop_event"].is_set() and reason_pending != "stopped":
+                if reason_pending == "bound":
+                    # The operator asked inside the bound grace: their
+                    # reason wins over the armed bound (A-F2/B-F6) — the
+                    # docstring's short-circuit, now true in the code.
+                    grace_until = None
+                reason_pending = "stopped"
+                state["context"].cancel()
+                forced_at = now
+                continue
+            at_bound = (
+                state["bound_bytes"] is not None
+                and state["progress"] >= int(state["bound_bytes"])
+            ) or (
+                state["deadline"] is not None and now >= float(state["deadline"])
+            )
+            if at_bound and reason_pending is None:
+                reason_pending = "bound"
+                grace_until = now + _BOUND_GRACE_S
+                continue
+            if reason_pending == "bound" and grace_until is not None and now > grace_until:
+                state["context"].cancel()
+                forced_at = forced_at if forced_at is not None else now
+            if forced_at is not None and now > forced_at + _STOP_SETTLE_MARGIN_S:
+                # The adapter ignored even context cancellation: the task
+                # itself is cancelled — the outcome is genuinely unknown.
+                task.cancel()
+                forced_at = now  # re-arm so this fires once
+        try:
+            envelope = task.result()
+        except asyncio.CancelledError:
+            state["stop_details"] = {
+                "dispatch_state": None,
+                "message": "the adapter task was cancelled before reporting "
+                "an outcome",
+            }
+            return await self._abort_capture(
+                state,
+                "stop_unknown",
+                detail=state["stop_details"]["message"],
+            )
+        except Exception as exc:  # noqa: BLE001 - the uncaught bucket
+            if reason_pending in ("stopped", "bound"):
+                return await self._finalise_capture(state, reason_pending)
+            return await self._abort_capture(
+                state,
+                "adapter_exception",
+                detail=f"{type(exc).__name__}: {exc}",
+            )
+        status = str(envelope.get("status", ""))
+        dispatch_state = str((envelope.get("error") or {}).get("dispatch_state", ""))
+        if status == "ok":
+            if reason_pending in ("stopped", "bound") and forced_at is not None:
+                # The envelope says ok, but the HOST is the one that pulled
+                # the trigger (B-F2): an adapter that ignored the stop or
+                # blew past its bound and answered ok afterwards publishes
+                # under the host's own cancel reason, never relabelled
+                # "completed". A bound that merely armed while the adapter
+                # finished on its own (forced_at unset) stays completed.
+                return await self._finalise_capture(state, reason_pending)
+            return await self._finalise_capture(state, "completed")
+        if status == "unknown" or dispatch_state == "unknown":
+            error = envelope.get("error") or {}
+            # AR-8: the ambiguity is surfaced VERBATIM — the envelope's own
+            # dispatch_state and message ride the stop result's details.
+            state["stop_details"] = {
+                "dispatch_state": error.get("dispatch_state"),
+                "message": str(error.get("message", "")),
+            }
+            return await self._abort_capture(
+                state,
+                "stop_unknown",
+                detail=state["stop_details"]["message"],
+            )
+        if reason_pending in ("stopped", "bound"):
+            return await self._finalise_capture(state, reason_pending)
+        return await self._finalise_capture(state, "adapter_error")
+
+    def _terminal_context(self, capture_id: str) -> HostOperationContext:
+        """A fresh lifecycle context for the terminal path: the capture's
+        own context may be cancelled (the bound backstop cancelled it), and
+        the writer's tail-flush append honours cancellation — so finalising
+        real bytes must not run under the cancelled context."""
+        return HostOperationContext(
+            f"capture-{capture_id}", timeout_ms=self._session.lifecycle_timeout_ms
+        )
+
+    async def _finalise_capture(
+        self, state: dict[str, Any], reason: str
+    ) -> dict[str, Any]:
+        capture_id = str(state["capture_id"])
+        services = cast("_CaptureCapable", self._session.services)
+        assert services is not None
+        progress = self._capture_progress(state)
+        writer_metadata: dict[str, Any] = {
+            "format": state["format"],
+            "started_at": state["started_at"],
+        }
+        if state["format"] == "waveform_f64le":
+            # Ruling 3: the grid comes from the operator-declared start
+            # arguments; the count is derived from the real staged bytes.
+            writer_metadata["sample_count"] = progress // 8
+            if state.get("interval") is not None:
+                writer_metadata["sample_interval_s"] = state["interval"]
+            if state.get("unit") is not None:
+                writer_metadata["unit"] = state["unit"]
+        try:
+            manifest = await services.artifact_finalise(
+                capture_id, writer_metadata, self._terminal_context(capture_id)
+            )
+        except (ValueError, RuntimeError, TimeoutError, OSError) as exc:
+            # A refused finalise (a zero-byte capture, a partial trailing
+            # sample, a writer refusal, an ENOSPC-class OSError) aborts —
+            # nothing half-published. The detail names the exception class
+            # and errno (A-F1: the OSError is terminal, never a wedge).
+            return await self._abort_capture(
+                state, "finalise_refused", detail=f"{type(exc).__name__}: {exc}"
+            )
+        metadata = dict(state["metadata"])
+        metadata["stop_reason"] = reason
+        with contextlib.suppress(Exception):
+            # The index is acceleration; the disk is the truth. A library
+            # refusal never fails the terminal path.
+            library = self._library("")
+            library.record_published(capture_id, manifest, metadata)
+            library.set_stop_reason(capture_id, reason)
+        row = self._row(
+            capture_id,
+            "published",
+            state["started_at"],
+            state["format"],
+            metadata,
+            byte_length=int(manifest.get("byte_length", 0)),
+            sha256=str(manifest.get("sha256", "")),
+            stop_reason=reason,
+            progress_bytes=None,
+        )
+        self._capture_outcomes[capture_id] = row
+        if self._capture is not None and self._capture["capture_id"] == capture_id:
+            self._capture = None
+        self.events.publish(
+            "capture_stopped",
+            {
+                "capture_id": capture_id,
+                "state": "published",
+                "stop_reason": reason,
+                "byte_length": row["byte_length"],
+            },
+        )
+        return row
+
+    async def _abort_capture(
+        self, state: dict[str, Any], reason: str, detail: str | None = None
+    ) -> dict[str, Any]:
+        """Abort the capture: the services discard staging and REMOVE the
+        un-finalised event directory (a capture that never published has
+        nothing on disk), and the outcome row is session state."""
+        capture_id = str(state["capture_id"])
+        if detail is not None and "stop_details" not in state:
+            # The abort's own reason is terminal evidence too (B-F1): a
+            # detail the caller can read back, never silently discarded.
+            state["stop_details"] = {"dispatch_state": None, "message": detail}
+        services = cast("_CaptureCapable | None", self._session.services)
+        if services is not None:
+            with contextlib.suppress(Exception):
+                await services.artifact_abort(capture_id)
+        row = self._row(
+            capture_id,
+            "aborted",
+            state["started_at"],
+            state["format"],
+            state["metadata"],
+            byte_length=None,
+            sha256=None,
+            stop_reason=reason,
+            progress_bytes=None,
+        )
+        self._capture_outcomes[capture_id] = row
+        if self._capture is not None and self._capture["capture_id"] == capture_id:
+            self._capture = None
+        self.events.publish(
+            "capture_stopped",
+            {
+                "capture_id": capture_id,
+                "state": "aborted",
+                "stop_reason": reason,
+                "byte_length": None,
+            },
+        )
+        return row
 
     # --- adapter envelope handling -----------------------------------------
 

@@ -48,10 +48,22 @@ def seam(plugin) -> StandaloneSeam:
     # mock_plugin_session: the factory reads the CURRENT plugin at connect
     # time (the reload-honest late-bound shape; a closure over the original
     # plugin would keep serving the previous version's script after a
-    # reload swapped it).
+    # reload swapped it). capture_root: the library ops (list/get/series/
+    # annotate/pin/unpin/delete/artifact_read) are transport-independent —
+    # every seam serves them; capture_start itself still needs capture-
+    # capable services (the mock transport's host does not implement them,
+    # so it refuses unavailable there — pinned by the lifecycle tests).
+    import tempfile
+    from pathlib import Path
+
     from benchweave_sdk_server.session import mock_plugin_session
 
-    return StandaloneSeam(mock_plugin_session(plugin), transport_kind="mock")
+    with tempfile.TemporaryDirectory() as tmp:
+        yield StandaloneSeam(
+            mock_plugin_session(plugin),
+            transport_kind="mock",
+            capture_root=Path(tmp),
+        )
 
 
 @pytest.fixture()

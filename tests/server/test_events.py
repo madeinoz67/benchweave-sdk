@@ -90,19 +90,39 @@ def test_refusals_publish_the_refused_class(seam) -> None:
 
 
 def test_every_refusal_family_publishes_the_refused_class(seam) -> None:
-    """FOLD-E: the refused class covers ALL four refusal families a seam
-    exit can take — the unknown operation, the declared-but-deferred
-    operation, the argument-validation refusal, and the adapter-mapped
+    """FOLD-E: the refused class covers every refusal family a seam exit
+    can take — the unknown operation, the handler's own typed refusal
+    (unavailable), the argument-validation refusal, and the adapter-mapped
     refusal. Watching pages must see every refusal, not only the ones
-    that happen to raise inside a handler."""
+    that happen to raise inside a handler. (The pre-I3b fourth family,
+    declared-but-deferred, is VACANT since the I3b flip — nothing defers;
+    it returns the moment a row defers again, and its proof shape is the
+    same seam-exit row pinned here.)"""
     from benchweave_sdk_server.errors import SeamError
 
     # Unknown operation (refused BEFORE any handler exists).
     with pytest.raises(SeamError):
         asyncio.run(seam.call("lease_create", {}))
-    # Declared but deferred (unimplemented).
+    # Handler refusal: capture_start over the mock transport's services
+    # is unavailable naming the gap (the I3b lifecycle's own arm).
     with pytest.raises(SeamError):
-        asyncio.run(seam.call("capture_start", {}))
+        asyncio.run(
+            seam.call(
+                "device_connect", {"device_id": seam.session.device_id}
+            )
+        )
+        asyncio.run(
+            seam.call(
+                "capture_start",
+                {
+                    "device_id": seam.session.device_id,
+                    "format": "waveform_f64le",
+                    "count": 4,
+                    "sample_interval_s": 0.001,
+                    "unit": "V",
+                },
+            )
+        )
     # Argument validation (the schema gate, before the handler).
     with pytest.raises(SeamError):
         asyncio.run(seam.call("events_get", {}))

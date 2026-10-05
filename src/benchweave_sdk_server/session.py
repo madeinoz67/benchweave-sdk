@@ -18,6 +18,7 @@ derived-not-invented bound.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import importlib
 import json
@@ -368,6 +369,11 @@ class PluginSession:
         self._adapter: Adapter | None = None
         self.identity: dict[str, Any] | None = None
         self.connected = False
+        # The services object the connected adapter holds (I3b's capture
+        # lifecycle): minted per connection, retained so the host can drive
+        # the capture members (configure/progress/finalise/abort) on the
+        # SAME object the adapter appends through. None while disconnected.
+        self.services: HostServices | None = None
 
     @property
     def plugin(self) -> LoadedPlugin:
@@ -382,6 +388,12 @@ class PluginSession:
         policies = self._plugin.descriptor.get("operations", {})
         timeouts = [int(row.get("timeout_ms", 0)) for row in policies.values()]
         return max(timeouts) if timeouts else 1000
+
+    @property
+    def lifecycle_timeout_ms(self) -> int:
+        """The strictest declared timeout, for host-minted lifecycle contexts
+        (the capture terminal paths finalise/abort under one)."""
+        return self._lifecycle_timeout_ms()
 
     def _context(self, operation_id: str, timeout_ms: int) -> HostOperationContext:
         return HostOperationContext(operation_id, timeout_ms=timeout_ms)
@@ -429,7 +441,8 @@ class PluginSession:
             context = self._context(
                 f"open-{uuid.uuid4().hex[:8]}", self._lifecycle_timeout_ms()
             )
-            await adapter.open(self._plugin.descriptor, self._services_factory(), context)
+            services = self._services_factory()
+            await adapter.open(self._plugin.descriptor, services, context)
         except RuntimeError:
             raise
         except Exception as exc:
@@ -440,6 +453,7 @@ class PluginSession:
             ) from exc
         self._adapter = adapter
         self.connected = True
+        self.services = services
         try:
             if "identify" in self._plugin.descriptor.get("capabilities", []):
                 envelope = await self.execute("identify", {})
@@ -465,10 +479,31 @@ class PluginSession:
         request = {"operation_id": operation_id, "verb": verb, "arguments": arguments}
         return await self._adapter.execute(request, context)
 
+    def begin_verb(
+        self, verb: str, arguments: dict[str, Any]
+    ) -> tuple[asyncio.Task[dict[str, Any]], HostOperationContext]:
+        """Dispatch one operation envelope WITHOUT awaiting it: the host's
+        capture lifecycle holds the task and the context so its watchdog can
+        cancel the context at the bound while the adapter runs on. The
+        timeout policy is the verb's own declared bound (A02), exactly as
+        :meth:`execute` applies it.
+        """
+        if self._adapter is None or not self.connected:
+            raise RuntimeError("standalone_session_not_open")
+        timeout_ms = self.verb_timeout_ms(verb)
+        operation_id = f"op-{uuid.uuid4().hex[:8]}"
+        context = self._context(operation_id, timeout_ms)
+        request = {"operation_id": operation_id, "verb": verb, "arguments": arguments}
+        task: asyncio.Task[dict[str, Any]] = asyncio.create_task(
+            self._adapter.execute(request, context)
+        )
+        return task, context
+
     async def close(self) -> None:
         """Close the session; tolerates repeated calls (Adapter.close rule)."""
         adapter, self._adapter = self._adapter, None
         self.connected = False
+        self.services = None
         if adapter is not None:
             context = self._context(
                 f"close-{uuid.uuid4().hex[:8]}", self._lifecycle_timeout_ms()

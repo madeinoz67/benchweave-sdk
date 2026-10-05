@@ -73,6 +73,7 @@ def _build_seam(
     unattended: bool = False,
     device: str | None = None,
     open_port: Any = None,
+    capture_root: Any = None,
 ) -> tuple[StandaloneSeam, ScenarioSelection | None]:
     """Compose the seam over one transport (§4.1's composition step).
 
@@ -112,6 +113,7 @@ def _build_seam(
                 transport_kind="mock",
                 unattended=unattended,
                 reload_wrapper=wrap_scenario_plugin,
+                capture_root=capture_root,
             ),
             selection,
         )
@@ -125,7 +127,12 @@ def _build_seam(
             raise SystemExit(2)
         return (
             StandaloneSeam(
-                serial_plugin_session(plugin, device, open_port=open_port),
+                serial_plugin_session(
+                    plugin,
+                    device,
+                    open_port=open_port,
+                    capture_root=capture_root,
+                ),
                 transport_kind="serial",
                 unattended=unattended,
                 # The no-re-probe clause (I3 §3.3): a scan serves the
@@ -135,6 +142,7 @@ def _build_seam(
                 # (cu vs tty, by-id symlinks) do not match and still
                 # re-probe -- the alias-matching follow-up owns that.
                 serial_device_path=device,
+                capture_root=capture_root,
             ),
             None,
         )
@@ -150,6 +158,7 @@ def _build_seam(
             mock_plugin_session(plugin),
             transport_kind=transport,
             unattended=unattended,
+            capture_root=capture_root,
         ),
         None,
     )
@@ -186,6 +195,13 @@ def cli() -> None:
     help="Serial device path (required with --transport serial, refused otherwise).",
 )
 @click.option(
+    "--capture-root",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Directory captures publish under (default: BENCHWEAVE_CAPTURE_DIR, "
+    "then captures/ under the working directory). One host process per root.",
+)
+@click.option(
     "--scenario",
     type=click.Choice(_scenario_ids()),
     default=None,
@@ -206,6 +222,7 @@ def serve(
     no_open: bool,
     transport: str,
     device: str | None,
+    capture_root: Path | None,
     scenario: str | None,
     authoring: bool,
     unattended: bool,
@@ -245,6 +262,7 @@ def serve(
         scenario=scenario,
         unattended=unattended,
         device=device,
+        capture_root=capture_root,
     )
     if seam.session.plugin.load_diagnostic is not None:
         # §4.5: the degraded load BINDS (exit 0) with its diagnostic on

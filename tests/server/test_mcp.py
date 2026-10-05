@@ -94,7 +94,7 @@ def test_host_info_over_mcp(seam) -> None:
         "leases", "policy", "approvals", "procedures", "runs",
     ]
     assert set(data["served_operations"]) == set(catalogue.served_operations())
-    assert "capture_start" in data["deferred_operations"]
+    assert data["deferred_operations"] == []
 
 
 def test_device_flow_over_mcp(seam) -> None:

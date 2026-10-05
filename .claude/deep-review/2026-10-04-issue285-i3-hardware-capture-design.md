@@ -486,3 +486,25 @@ not updated in this fold.
 - capture-id reuse after abort is a same-process guarantee; a crash-left
   event directory reserves the id until the capture root is cleared — the
   orphan sweep belongs to I3c (fold-refute 3).
+
+## Addendum (2026-10-04, I3b refute-fold wave 2)
+
+- AR-8's first sentence ("`capture_stop` surfaces the ambiguity (details
+  carry the envelope's `dispatch_state` verbatim)") claimed a field the
+  shipped slice 3 did not have: the stop result was a closed 4-key set
+  and `_abort_capture` discarded its detail parameter. The result now
+  carries `details: {dispatch_state, message}` — the envelope's values
+  verbatim on the unknown path, the aborting condition's own message on
+  the refused paths, `null` when the outcome carries no ambiguity
+  (refute B-F1). The catalogue row's prose ("raises not_ready") never
+  matched the mechanism either; it now names the abort-and-details path.
+- AR-8's second sentence ("the index row records `stop_unknown`") is
+  corrected by the session-scoped-outcome ruling (ruling 5, stated later
+  in this record): an aborted capture has no event directory and
+  therefore no index row — the outcome row is session state, served by
+  `capture_list` for the session, with `capture_get` answering
+  `not_found`. The sentence stands for published outcomes only.
+- §"Capture lifecycle"'s "progress is the writer's staged byte count" is
+  the shipped ruling 2 stated precisely: the services' flushed + buffered
+  count — a sub-block capture's bytes sit in the buffer until the tail
+  flush at finalise, and the progress rows report them there.

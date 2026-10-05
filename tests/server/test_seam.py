@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from benchweave_sdk_server import catalogue
 from benchweave_sdk_server.errors import SeamError
 from benchweave_sdk_server.seam import StandaloneSeam, sdk_version
 from benchweave_sdk_server.session import PluginSession
@@ -39,9 +40,13 @@ def test_host_info_discloses_the_standalone_truth(seam) -> None:
     assert info["served_operations"] == [
         "host_info", "device_discover", "device_connect", "device_disconnect",
         "device_get", "parameter_read", "parameter_stage", "parameter_apply",
-        "preset_list", "preset_apply", "events_get",
+        "preset_list", "preset_apply",
+        "capture_start", "capture_stop", "capture_list", "capture_get",
+        "capture_series", "capture_annotate",
+        "artifact_read", "events_get",
+        "capture_delete", "capture_pin", "capture_unpin",
     ]
-    assert "capture_start" in info["deferred_operations"]
+    assert info["deferred_operations"] == []
     assert info["plugin"]["package"] == "example_plugin"
     assert len(info["plugin"]["descriptor_sha256"]) == 64
     assert info["transport"] == "mock"
@@ -64,15 +69,13 @@ def test_unknown_operation_is_invalid_request(seam) -> None:
     assert caught.value.correlation_id
 
 
-def test_deferred_operations_refuse_with_the_deferral_reason(seam) -> None:
-    # events_get left this set at I2c (the bus landed); the remaining
-    # deferrals are the I3 capture family.
-    for name in ("capture_start", "artifact_read"):
-        with pytest.raises(SeamError) as caught:
-            call(seam, name, {})
-        assert caught.value.code == "unavailable"
-        assert caught.value.details["reason"] == "increment_deferral"
-        assert caught.value.correlation_id
+def test_capture_rows_are_implemented_and_nothing_defers(seam) -> None:
+    """I3b's flip: the capture family is implemented in the catalogue; the
+    catalogue defers nothing. (The seam-level serve proof is the lifecycle
+    suite's.)"""
+    row = catalogue.spec("capture_start")
+    assert row is not None and row.implemented
+    assert catalogue.deferred_operations() == ()
 
 
 def test_argument_validation_reports_findings(seam) -> None:

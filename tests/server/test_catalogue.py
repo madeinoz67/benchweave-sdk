@@ -10,19 +10,23 @@ from benchweave_sdk.served import vendored_root, verify_vendored_digests
 from benchweave_sdk_server import catalogue
 from benchweave_sdk_server.errors import ERROR_CODES, ERROR_HTTP_STATUS
 
+#: SW-10's closed 18 (in catalogue order) PLUS fork F-2's disclosed delta —
+#: rows 19-21 (capture_delete/capture_pin/capture_unpin after events_get;
+#: SW-56/SW-59 name the capabilities, SW-10's list omits them — the owner
+#: fork is recorded in the I3b design record §7).
 SW10_NAMES = [
     "host_info", "device_discover", "device_connect", "device_disconnect",
     "device_get", "parameter_read", "parameter_stage", "parameter_apply",
     "preset_list", "preset_apply", "capture_start", "capture_stop",
     "capture_list", "capture_get", "capture_series", "capture_annotate",
     "artifact_read", "events_get",
+    "capture_delete", "capture_pin", "capture_unpin",
 ]
 
-SERVED = [
-    "host_info", "device_discover", "device_connect", "device_disconnect",
-    "device_get", "parameter_read", "parameter_stage", "parameter_apply",
-    "preset_list", "preset_apply", "events_get",
-]
+#: I3b's flip: every row is implemented — the capture family serves and
+#: nothing defers (the pre-I3b set kept the capture rows and artifact_read
+#: deferred; the lifecycle is the I3b slices).
+SERVED = SW10_NAMES
 
 
 def vendored_interface_catalog() -> dict:
@@ -38,9 +42,9 @@ def test_catalogue_is_the_closed_sw10_set() -> None:
 
 def test_served_and_deferred_partition_the_catalogue() -> None:
     assert catalogue.served_operations() == tuple(SERVED)
-    deferred = [name for name in SW10_NAMES if name not in SERVED]
-    assert catalogue.deferred_operations() == tuple(deferred)
-    assert len(catalogue.deferred_operations()) == 7
+    # I3b's flip: nothing defers — the closed set serves whole, and the
+    # deferred partition is empty (the pre-I3b pin carried 7 rows).
+    assert catalogue.deferred_operations() == ()
 
 
 def test_implemented_rows_carry_schemas_and_the_closed_code_set() -> None:
