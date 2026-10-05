@@ -67,25 +67,29 @@ def test_invalid_inventory_refuses(tmp_path: Path) -> None:
         verify_ui_assets(copy)
 
 
-def test_tampered_asset_refuses_startup() -> None:
+def test_tampered_asset_refuses_startup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """M2 RED arm: the STARTUP claim — tampered bytes make build_app itself
-    refuse, not a per-request 500 after the shell already served."""
-    import shutil
+    refuse, not a per-request 500 after the shell already served.
+
+    The tampered root is a COPY under tmp_path with ``web.ui_assets_root``
+    pointed at it: the package tree is never mutated. The original arm
+    wrote ``/* tampered */`` into the real ui_assets and restored by
+    rmtree+move — under xdist that window races every concurrent worker's
+    verify (a neighbour's app construction reads the 17-byte file and
+    refuses with this very error), and a crash mid-arm leaves the package
+    tree deleted with only a stray ``ui_assets.backup`` beside it.
+    """
+    copy = tmp_path / "ui_assets"
+    shutil.copytree(ROOT, copy)
+    (copy / "htmx.min.js").write_text("/* tampered */\n")
+    from benchweave_sdk_server import web
+
+    monkeypatch.setattr(web, "ui_assets_root", lambda: copy)
+    with pytest.raises(ValueError, match="standalone_ui_asset_tampered"):
+        build_test_app()
 
 
-    package_root = ROOT.parent
-    backup = package_root.parent / "ui_assets.backup"
-    shutil.copytree(ROOT, backup)
-    try:
-        (ROOT / "htmx.min.js").write_text("/* tampered */\n")
-        with pytest.raises(ValueError, match="standalone_ui_asset_tampered"):
-            build_test_app(package_root)
-    finally:
-        shutil.rmtree(ROOT)
-        shutil.move(str(backup), str(ROOT))
-
-
-def build_test_app(package_root):
+def build_test_app():
     from benchweave_sdk_server import web
     from benchweave_sdk_server.seam import StandaloneSeam
 

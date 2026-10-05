@@ -504,6 +504,7 @@ def test_count_bound_backstop_cancels_a_lingering_adapter(tmp_path: Path) -> Non
     assert outcome["sha256"]
 
 
+@pytest.mark.timing
 def test_a_stop_during_the_bound_grace_wins_over_the_bound(
     tmp_path: Path,
 ) -> None:
