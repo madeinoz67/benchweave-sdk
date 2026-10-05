@@ -160,6 +160,34 @@ def test_help_works_without_the_server_extra(monkeypatch: pytest.MonkeyPatch) ->
     assert "serve" in result.output
 
 
+def test_serve_survives_a_browserless_host(
+    starter_project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The browserless-survival pin, restored SDK-side (review fold F1 on
+    gateway PR #400): a host with no registered browser is headless Linux's
+    ordinary state — webbrowser.open raises webbrowser.Error — and serve
+    must still reach uvicorn and exit cleanly, printing the notice that
+    names the URL. The old gateway arm pinned exactly this for the deleted
+    preview; the standalone host inherited the crash-before-bind when the
+    shim train landed."""
+    import webbrowser
+
+    import uvicorn
+
+    reached: dict[str, bool] = {}
+
+    def refusing(url: str) -> bool:
+        raise webbrowser.Error("no browser registered")
+
+    monkeypatch.setattr(webbrowser, "open", refusing)
+    monkeypatch.setattr(uvicorn, "run", lambda *a, **k: reached.update(run=True))
+    result = CliRunner().invoke(cli, ["serve", str(starter_project)])
+    assert result.exit_code == 0, (result.exit_code, result.output)
+    assert reached.get("run") is True, "serve never reached uvicorn.run"
+    assert "Browser did not open" in result.output
+    assert "http://127.0.0.1:8477" in result.output
+
+
 # --- fold F2: main() returns click's exit codes, never a traceback --------
 
 
