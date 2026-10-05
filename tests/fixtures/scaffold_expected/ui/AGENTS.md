@@ -68,5 +68,5 @@ The directory `.claude/skills/` holds five SDK-managed skills:
 - `AI-GUIDE.md` — the five build-out prompts.
 - `UI-GUIDE.md` — UI authoring; present in projects made with `--with-ui`.
 - Rendered guide for this SDK version (the v-prefixed release tag bucket):
-  https://madeinoz67.github.io/benchweave-sdk/docs/v/v0.7.1/
+  https://sdk.benchweave.dev/docs/v/v0.7.1/
 - Guide source: `user_guide/plugin-sdk.qmd` in the benchweave-sdk repository.

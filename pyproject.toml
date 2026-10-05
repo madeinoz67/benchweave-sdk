@@ -63,8 +63,8 @@ server = [
 scaffold = ["copier>=9.18,<10"]
 
 [project.urls]
-Homepage = "https://madeinoz67.github.io/benchweave-sdk/"
-Documentation = "https://madeinoz67.github.io/benchweave-sdk/docs/"
+Homepage = "https://sdk.benchweave.dev/"
+Documentation = "https://sdk.benchweave.dev/docs/"
 Repository = "https://github.com/madeinoz67/benchweave-sdk"
 Changelog = "https://github.com/madeinoz67/benchweave-sdk/blob/main/CHANGELOG.md"
 

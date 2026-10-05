@@ -34,7 +34,7 @@ An installed SDK can check its vendored standards offline with `benchweave-sdk s
 > [!CAUTION]
 > A template is not qualified firmware or a real instrument driver.
 
-New here? The [getting-started page](https://madeinoz67.github.io/benchweave-sdk/docs/user-guide/getting-started.html) walks these five steps with the full commands and the expected output.
+New here? The [getting-started page](https://sdk.benchweave.dev/docs/user-guide/getting-started.html) walks these five steps with the full commands and the expected output.
 
 1. Install the SDK from PyPI with `uv pip install 'benchweave-sdk[scaffold]'` — the `[scaffold]` extra carries the copier dependency `new` renders through; without it, `new` refuses with `scaffold_extra_absent:` naming the install command. For more options, see [Installation](#installation).
 2. Run `benchweave-sdk new plugins/acme/model100 --package benchweave_acme_model100`. Replace `acme/model100` with your manufacturer and device name. The independent project contains `src/benchweave_acme_model100/` and `tests/`.
@@ -66,7 +66,7 @@ Every record write appends a new file under `records/lifecycle/…`. No command 
 
 The registry uses its own process for its own release. Status documents there are an interim measure. `publish-status` refuses when a baseline already exists, with the prefix `status_present:`. No CLI command signs an EXISTING unsigned baseline. That signature is a maintainer ceremony with the origin-key mint, kept out of band by design. It is not a CLI operation.
 
-The project publishes the versioned documentation site at <https://madeinoz67.github.io/benchweave-sdk/>. Start from the rendered [plugin SDK guide](https://madeinoz67.github.io/benchweave-sdk/docs/user-guide/plugin-sdk.html). The version selector on each docs page switches between the released versions and the current `main` build.
+The project publishes the versioned documentation site at <https://sdk.benchweave.dev/>. Start from the rendered [plugin SDK guide](https://sdk.benchweave.dev/docs/user-guide/plugin-sdk.html). The version selector on each docs page switches between the released versions and the current `main` build.
 
 ## Which checkout do I use?
 
