@@ -60,6 +60,23 @@ written by the sync machinery and read by no gate (the matrix rows use the
 `main_project` floor and `standards[].version`); it self-corrects at the next
 standards sync. Recorded, not blocking.
 
+## Result record — v0.8.0 (2026-10-05)
+
+| # | Surface | Result |
+|---|---------|--------|
+| 1 | README stamp | updated → SDK 0.8.0 (OTDP 0.2.2 / adapter API 1.1 correct-as-is) |
+| 1b | User-guide "current SDK" sentence | n-a — no version-stamped sentence found in `docs/` this release (the wheel filename is a glob since #102); recorded result, not a skipped step |
+| 2 | Website hero status | updated — SDK 0.7.1 → 0.8.0; OTDP 0.2.2 / adapter API 1.1 correct-as-is against the lock's active otdp row |
+| 3 | Docs selector | WALKED TWO-PHASE — phase 1 (this PR): no edit; the selector stays consistent with the current tag set (v0.7.1 latest). Phase 2 rides the tag commit, pushed with the tag in one action: v0.8.0 (latest) + v0.7.1 prior option on both surfaces. |
+| 4 | Compatibility tagline | updated — SDK 0.8.0 against main project `>=0.1.0` (lock floor unchanged; `compatibility.sdk` moved 0.7.1 → 0.8.0 in this PR — the lock-anchor ritual, the #189 pairing shape) |
+| 5 | Standards badges | correct-as-is — all six match the lock's ACTIVE rows (otdp 0.2.2, registry 0.1.2, execution 0.2.0, interface 0.1.0, plugin-ui 0.3.0, plugin-ui-preview 0.2.0); no standards motion since v0.7.1 (`git diff v0.7.1..HEAD -- standards-lock.json --stat` empty) |
+| 6 | `great-docs.yml` versions | PHASE-2 PLAN — the tag commit registers v0.8.0 `latest: true` and demotes v0.7.1 (the ordering constraint: a tag missing itself fails the docs build) |
+| 7 | Contributor window `v0.7.1..HEAD` | empty — every one of the 16 commits in the window is the owner (Stephen Eaton); no bots. Recorded result. |
+| 8 | Gateway `uv.lock` SDK pin | recorded note — moves at the gateway's next lock run; the gateway pairing for this release rides gateway #406 (its submodule pointer re-points at the tag) |
+| 9 | Served-set bump class | n-a — no served-set motion in the window: the lock is byte-identical to v0.7.1's apart from `compatibility.sdk` (the certified-version field); neither stale pattern can fire. |
+
+MINOR class: the window carries new user-visible features (I3b capture lifecycle / SQLite library / SSE capture events, #110; the serial reader ring default 256→512 KiB re-sized for the 3 Mbps class, #119) — not a patch window.
+
 ## Lineage (why this exists)
 
 Found by the v0.0.4 release review (issue #117): the README stamp was re-staled
