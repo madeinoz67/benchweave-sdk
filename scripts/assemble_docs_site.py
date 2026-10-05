@@ -34,7 +34,7 @@ Five assembly-level repairs on top of the tool's own output:
 
 - ``v/latest/``/``v/stable/`` redirect stubs target ``/``, which is wrong for
   a project Pages site hosted under a path prefix; they are rewritten to the
-  prefix derived from ``site_url`` (``/benchweave-sdk/docs/``).
+  prefix derived from ``site_url`` (``/docs/`` on the project domain).
 - Isolated ``--from-repo`` builds install plain ``great-docs`` (no cairosvg),
   so raster favicons silently skip inside those buckets. The full favicon set
   is generated once at the docs root (cairosvg, when importable) and copied
@@ -141,7 +141,7 @@ def yml_version_tags() -> set[str]:
 
 
 def site_path_prefix() -> str:
-    """URL path prefix of the deployed site (e.g. ``/benchweave-sdk/``)."""
+    """URL path prefix of the deployed site (e.g. ``/docs/``)."""
     text = (REPO / "great-docs.yml").read_text(encoding="utf-8")
     m = re.search(r"^site_url:\s*(\S+)", text, re.MULTILINE)
     if not m:
@@ -415,11 +415,10 @@ def add_site_home_link(docs_root: Path) -> None:
 
     The href is depth-relative — one ``../`` per directory below ``docs/`` —
     resolving to the site root: the same target the alias-rewrite derives
-    from ``site_url`` (one level above the ``/docs/`` subpath), never ``/``
-    (wrong: the origin root on a GitHub project-Pages site sits one level
-    above the site). Relative beats the absolute ``/benchweave-sdk/`` form
-    because it also works when the assembled tree is previewed from a plain
-    server root (python -m http.server in site/).
+    from ``site_url`` (one level above the ``/docs/`` subpath). Relative
+    beats the absolute ``/`` form because it also works when the assembled
+    tree is previewed from a plain server root (python -m http.server in
+    site/).
     """
     added = already = 0
     for page in sorted(docs_root.rglob("*.html")):
