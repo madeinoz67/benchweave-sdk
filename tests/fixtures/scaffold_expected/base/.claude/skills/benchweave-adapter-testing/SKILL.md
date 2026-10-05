@@ -52,5 +52,5 @@ full pattern for this project.
 The plugin SDK guide covers this in section "3. Run the checks".
 
 ---
-Maintained by benchweave-sdk 0.7.0; `benchweave-sdk upgrade`
+Maintained by benchweave-sdk 0.7.1; `benchweave-sdk upgrade`
 refreshes this skill.

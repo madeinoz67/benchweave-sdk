@@ -10,6 +10,7 @@
 | # | Surface | Machine truth | Stale pattern |
 |---|---------|---------------|---------------|
 | 1 | README version stamp (baseline line) | `pyproject.toml` `version` | previous release number |
+| 1b | User-guide "current SDK" sentence (`user_guide/plugin-sdk.qmd` intro; the wheel filename is a glob since #102) | `pyproject.toml` `version` | previous release number (observed live two releases late behind the docs deploy lag) |
 | 2 | Website hero status line (`website/index.html`, hero badges) | `pyproject.toml` + the standards lock's ACTIVE otdp row (`OTDP_VERSION` / `ADAPTER_API_VERSION` derive lazily from it — `__init__.py`'s `__getattr__`, #215; multi-row lock: the active row governs, never "the one row") | previous SDK number, OTDP number behind the active row |
 | 3 | Website docs-version selector (options + `(latest)` label) — TWO surfaces: the `website/index.html` static selector AND the `great-docs.yml` `versions` list (retro 2026-09-25 R3: a phase-2 that edits only the yml fails CI Docs — the verifier reads the static selector's label) | `great-docs.yml` `versions` list + `website/index.html` selector options + git tags | previous `(latest)` label on either surface, missing prior-release option |
 | 4 | Website compatibility tagline | `standards-lock.json` `compatibility.main_project` floor + the release's tested pair | previous SDK number against the gateway floor |
