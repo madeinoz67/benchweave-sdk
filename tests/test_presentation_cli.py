@@ -81,8 +81,23 @@ def test_optional_ui_preserves_descriptor_and_adapter(
     run(monkeypatch, "new", ui, "--with-ui")
     base = plain / "src/example_plugin"
     package = ui / "src/example_plugin"
-    for name in ("descriptor.json", "adapter.py", "protocol.py"):
-        assert (base / name).read_bytes() == (package / name).read_bytes()
+    assert (base / "descriptor.json").read_bytes() == (
+        package / "descriptor.json"
+    ).read_bytes()
+    # Issue #394: the --with-ui starter's protocol/adapter carry the drain
+    # idiom over its send_receive script, so those two arms differ by that
+    # addition; the codec surfaces the generated tests script (transaction
+    # and the parsers) are unchanged in both arms, and the base arm stays
+    # the plain starter (byte-pinned separately by the scaffold fixture).
+    base_protocol = (base / "protocol.py").read_text()
+    ui_protocol = (package / "protocol.py").read_text()
+    for surface in ("def transaction(verb):", "def parse_identity(raw):",
+                    "def parse_voltage(raw):"):
+        assert surface in base_protocol and surface in ui_protocol
+    assert "def drain(" in ui_protocol and "def drain(" not in base_protocol
+    ui_adapter = (package / "adapter.py").read_text()
+    assert "await drain(self.services, context)" in ui_adapter
+    assert "drain" not in (base / "adapter.py").read_text()
     assert not (base / "presentation.json").exists()
     assert (package / "ui/manifest.json").is_file()
     check(monkeypatch, package, firmware="1.0.0")

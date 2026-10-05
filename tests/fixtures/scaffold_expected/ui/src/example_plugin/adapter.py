@@ -1,6 +1,6 @@
 """Read-only synthetic OTDP adapter; qualify a real device separately."""
 import math
-from .protocol import transaction, parse_identity, parse_voltage
+from .protocol import transaction, parse_identity, parse_voltage, drain
 
 
 def create_plugin():
@@ -50,6 +50,11 @@ class Plugin:
             remaining()
             await context.mark_dispatch_started()
             dispatched = True
+            if verb == "read":
+                # The drain idiom: unsolicited status frames are consumed
+                # before the read's send, deterministically (the guide's
+                # telemetry-drain pattern).
+                await drain(self.services, context)
             response = await self.services.transfer(transaction(verb), context)
             remaining()
             if verb == "identify":

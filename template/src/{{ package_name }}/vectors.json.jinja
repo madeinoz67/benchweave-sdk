@@ -1,10 +1,19 @@
 {
   "evidence": "synthetic",
+{%- if with_ui %}
+  "transaction_dialect": "send_receive",
+{%- endif %}
   "exchanges": [
     {
       "request": "ID?\n",
       "response": "SDK Example,demo,SIM001,1.0.0\n"
     },
+{%- if with_ui %}
+    {
+      "name": "status",
+      "response": "STATUS OK\n"
+    },
+{%- endif %}
     {
       "request": "V?\n",
       "response": "3.3\n"

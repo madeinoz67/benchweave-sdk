@@ -4,7 +4,7 @@ from importlib.resources import files
 from benchweave_sdk.testing import MockContext, MockHost
 from benchweave_sdk.validation import validate_descriptor, validate_result
 from {{ package_name }}.adapter import create_plugin
-from {{ package_name }}.protocol import transaction
+from {{ package_name }}.protocol import transaction{{ ", probe" if with_ui else "" }}
 
 
 def test_identify_and_read():
@@ -12,6 +12,10 @@ def test_identify_and_read():
         descriptor = json.loads(files("{{ package_name }}").joinpath("descriptor.json").read_text())
         validate_descriptor(descriptor)
         host = MockHost([(transaction("identify"), {"data": b"SDK Example,demo,SIM001,1.0.0\n"}),
+{%- if with_ui %}
+                         (probe(), {"data": b"STATUS OK\n"}),
+                         (probe(), {"data": b""}),
+{%- endif %}
                          (transaction("read"), {"data": b"3.3\n"})])
         plugin = create_plugin()
         context = MockContext("op-1", deadline_monotonic=1.0)
@@ -64,7 +68,8 @@ def test_uncertain_response_after_dispatch():
         responses = ({"data": b"nan\n"}, {"data": b"3.3"}, {"data": b"\xff\n"},
                      ConnectionError("lost"), TimeoutError("expired"), RuntimeError("host"))
         for response in responses:
-            host = MockHost([(transaction("read"), response)])
+            host = MockHost([{%- if with_ui %}(probe(), {"data": b""}),
+                            {% endif %}(transaction("read"), response)])
             plugin = create_plugin()
             context = MockContext("op", deadline_monotonic=1.0)
             await plugin.open({}, host, context)

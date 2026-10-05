@@ -99,6 +99,12 @@ package or standard-library-only for the gateway loader. The SDK's
 `MockHost`/`MockContext` exchanges (see tests/test_plugin.py) are the
 reference pattern for exact-exchange tests.
 
+
+The standalone mock transport serves the grammar `vectors.json` declares
+(`transaction_dialect`; `encoding`; request-less rows are device-initiated
+frames). The SDK user guide's "Mock transports" section states the row
+contract and the mock's bounds.
+
 ## 4. Standalone MCP server (workflow, not shipped machinery)
 
 The SDK ships no MCP server. To use this plugin standalone, write a

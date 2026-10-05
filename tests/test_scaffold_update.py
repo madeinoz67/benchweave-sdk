@@ -257,7 +257,12 @@ def test_update_keeps_the_update_promise(
     updated = _tree(project)
 
     # A1 managed: byte-equal to the current template render.
-    assert updated["AI-GUIDE.md"] == target["template/AI-GUIDE.md"]
+    # The managed guide renders from template/AI-GUIDE.md.jinja (issue
+    # #394 made it template-side), so the expected bytes are the pinned
+    # fixture's render, per arm — the same authority managed_assets use.
+    assert updated["AI-GUIDE.md"] == (
+        FIXTURES / ("ui" if with_ui else "base") / "AI-GUIDE.md"
+    ).read_bytes()
 
     # A1 extension (WS3 R-5d): the managed agent assets ride the same
     # byte-exactness — the update renders them exactly as `new` renders
@@ -371,7 +376,7 @@ def test_wrong_base_provenance_never_silently_loses_author_bytes(tmp_path: Path)
     # A third state A0: the base with a DIFFERENT AI-GUIDE first line, so the
     # pinned base cannot explain the project's AI-GUIDE bytes.
     a0 = dict(base)
-    a0["template/AI-GUIDE.md"] = base["template/AI-GUIDE.md"].replace(
+    a0["template/AI-GUIDE.md.jinja"] = base["template/AI-GUIDE.md.jinja"].replace(
         b"# Build a BenchWeave device plugin with AI", b"# A0 lineage guide"
     )
     repo = tmp_path / "template-repo-a0"
@@ -407,7 +412,7 @@ def test_wrong_base_provenance_never_silently_loses_author_bytes(tmp_path: Path)
     # first line — all three states disagree there.
     guide = project / "AI-GUIDE.md"
     guide.write_bytes(
-        base["template/AI-GUIDE.md"].replace(
+        base["template/AI-GUIDE.md.jinja"].replace(
             b"# Build a BenchWeave device plugin with AI", b"# AUTHOR-localised guide"
         )
     )
@@ -436,14 +441,14 @@ def _upgrade_stage(tmp_path: Path) -> tuple[Path, Path, dict[str, bytes]]:
     # Deltas on three vehicles: the managed AI-GUIDE (never in the skip
     # list — it must MOVE), the exact-name owned README, and the src/**
     # owned adapter seed.
-    target["template/AI-GUIDE.md"] = target["template/AI-GUIDE.md"].replace(
+    target["template/AI-GUIDE.md.jinja"] = target["template/AI-GUIDE.md.jinja"].replace(
         b"# Build a BenchWeave device plugin with AI",
         b"# Build a BenchWeave device plugin with AI v2",
     )
     target["template/README.md"] = base["template/README.md"].replace(
         b"# Device plugin starter", b"# Device plugin starter v2"
     )
-    adapter_key = "template/src/{{ package_name }}/adapter.py"
+    adapter_key = "template/src/{{ package_name }}/adapter.py.jinja"
     target[adapter_key] = target[adapter_key].replace(
         b"def create_plugin():", b"def create_plugin_v2():"
     )
@@ -815,7 +820,7 @@ def test_upgrade_restores_skip_protected_files_the_template_dropped(tmp_path: Pa
     target = dict(_repo_template_members() or {})
     assert target
     del target["template/tests/test_plugin.py.jinja"]
-    del target["template/src/{{ package_name }}/adapter.py"]
+    del target["template/src/{{ package_name }}/adapter.py.jinja"]
     repo = _build_tagged_template_repo(tmp_path, base, target)
     materialized = tmp_path / "materialized-dropped"
     _write_tree(materialized, base)
