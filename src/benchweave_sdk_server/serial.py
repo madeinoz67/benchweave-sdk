@@ -1361,8 +1361,19 @@ async def _confirm_by_identify(
                 link.close()
 
 
-def _device_row(plugin: LoadedPlugin, identity: dict[str, Any]) -> dict[str, Any]:
-    """One _DEVICE_SUMMARY row, schema-verbatim."""
+def _device_row(
+    plugin: LoadedPlugin,
+    identity: dict[str, Any],
+    *,
+    port_path: str | None = None,
+    usb_serial: str | None = None,
+) -> dict[str, Any]:
+    """One _DEVICE_SUMMARY row, schema-verbatim. The endpoint fields
+    (issue #385 §1.2) name the PHYSICAL candidate the row describes:
+    ``port_path`` from the enumerated port object, ``usb_serial`` from its
+    ``serial_number`` (None when the device descriptor carries no iSerial —
+    an honest null, never a fabricated serial). ``None``/``None`` is the
+    no-endpoint spelling (the mock transport's row)."""
     transport = plugin.descriptor.get("transport", {})
     return {
         "id": plugin.device_id,
@@ -1370,6 +1381,8 @@ def _device_row(plugin: LoadedPlugin, identity: dict[str, Any]) -> dict[str, Any
         "model": str(identity.get("model", "")),
         "transport": str(transport.get("type", "")),
         "connection_key": str(transport.get("connection_key", "")),
+        "port_path": port_path,
+        "usb_serial": usb_serial,
     }
 
 
@@ -1401,13 +1414,25 @@ async def discover_serial_devices(
     rows: list[dict[str, Any]] = []
     for port in effective.enumerate_ports():
         name = _port_name(port)
+        # The candidate's own USB serial, read from the enumeration (never
+        # from a port open): None when the device descriptor has no iSerial.
+        usb_serial = getattr(port, "serial_number", None)
         if connected_device is not None and name == connected_device:
-            rows.append(_device_row(plugin, connected_identity or {}))
+            rows.append(
+                _device_row(
+                    plugin,
+                    connected_identity or {},
+                    port_path=name,
+                    usb_serial=usb_serial,
+                )
+            )
             continue
         if hint is not None and not _port_matches(port, hint):
             continue
         answered = await _confirm_by_identify(plugin, port, effective, timeout_ms)
         if answered is None:
             continue
-        rows.append(_device_row(plugin, answered))
+        rows.append(
+            _device_row(plugin, answered, port_path=name, usb_serial=usb_serial)
+        )
     return rows

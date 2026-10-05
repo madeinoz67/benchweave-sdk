@@ -467,6 +467,11 @@ class StandaloneSeam:
                     "model": str(identity.get("model", "")),
                     "transport": str(transport.get("type", "")),
                     "connection_key": str(transport.get("connection_key", "")),
+                    # The no-endpoint spelling (§1.2): the mock transport
+                    # has no physical port — honest nulls, one row shape
+                    # across transports, never a fake path.
+                    "port_path": None,
+                    "usb_serial": None,
                 }
             ]
         }
