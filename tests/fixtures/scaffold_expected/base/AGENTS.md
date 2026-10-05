@@ -1,6 +1,6 @@
 # BenchWeave plugin project — agent guide
 
-This file is maintained by benchweave-sdk 0.7.1. The command
+This file is maintained by benchweave-sdk 0.8.0. The command
 `benchweave-sdk upgrade` refreshes it. If you edit this file, the upgrade writes
 conflict markers. Resolve both sides, then commit.
 
@@ -68,5 +68,5 @@ The directory `.claude/skills/` holds five SDK-managed skills:
 - `AI-GUIDE.md` — the five build-out prompts.
 - `UI-GUIDE.md` — UI authoring; present in projects made with `--with-ui`.
 - Rendered guide for this SDK version (the v-prefixed release tag bucket):
-  https://madeinoz67.github.io/benchweave-sdk/docs/v/v0.7.1/
+  https://sdk.benchweave.dev/docs/v/v0.8.0/
 - Guide source: `user_guide/plugin-sdk.qmd` in the benchweave-sdk repository.

@@ -97,12 +97,12 @@ repo: https://github.com/madeinoz67/benchweave-sdk
 # Canonical address of the deployed docs site. Used for skills-page install
 # commands, .well-known/ discovery, sitemaps, and subdirectory deployments;
 # also sets website.site-url in _quarto.yml.
-site_url: https://madeinoz67.github.io/benchweave-sdk/docs/
+site_url: https://sdk.benchweave.dev/docs/
 seo:
   canonical:
     # Pages live under /docs/ next to the static public site; the tool's
     # auto-detection would canonicalize to the GitHub Pages repo root.
-    base_url: https://madeinoz67.github.io/benchweave-sdk/docs/
+    base_url: https://sdk.benchweave.dev/docs/
 
 # Source Link Configuration
 # -------------------------
@@ -549,9 +549,13 @@ hero:
 # introspecting the package at that git tag; an entry without git_ref renders
 # the current working tree. `prerelease: true` marks the dev bucket.
 versions:
+  - tag: v0.8.0
+    label: v0.8.0
+    latest: true
+    git_ref: v0.8.0
   - tag: v0.7.1
     label: v0.7.1
-    latest: true          # latest stable lives at the docs/ root (landing version; site root is the static site)
+    latest: false          # latest stable lives at the docs/ root (landing version; site root is the static site)
     git_ref: v0.7.1
   - tag: v0.7.0
     label: v0.7.0

@@ -57,8 +57,17 @@ jobs:
         # The browser lane is marker-partitioned (I2a NFR-Q1): its Playwright
         # chromium + axe run in the dedicated browser job below; everywhere
         # else the marker is deselected so a missing browser never reds the
-        # unit lanes.
-        run: uv run pytest -q -m "not browser"
+        # unit lanes. -n auto (issue #402, owner redirect 2026-10-05): the
+        # serial suite outgrew the 15m job ceiling on windows-latest (Tests
+        # step alone >14m35s, killed mid-suite, on a 40-line merge) — a suite
+        # that needs 15 minutes is the defect, so the suite parallelises
+        # rather than the ceiling rising. Timing-marked tests (the AR-2 soak
+        # asserts wall-clock structural bounds) run serial and unloaded after
+        # the parallel leg — the gateway's #247/#280 pattern: order-dependence
+        # and load-sensitivity surface HERE first, at PR time, in every lane.
+        run: |
+          uv run pytest -q -m "not browser and not timing" -n auto
+          uv run pytest -q -m "timing"
 
       - name: Standards self-check
         # lock <-> vendored tree <-> stamps with no bundle: the committed

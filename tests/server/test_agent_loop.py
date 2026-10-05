@@ -15,6 +15,7 @@ import asyncio
 import hashlib
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 from fastmcp import Client
 
@@ -112,6 +113,7 @@ def test_plugin_test_timeout_is_honest(tmp_path) -> None:
 # --- the exit-gate loop (I2-L) -----------------------------------------------------
 
 
+@pytest.mark.timing
 def test_the_agent_completes_patch_reload_and_test(tmp_path) -> None:
     """The PRD §9 exit gate's verbatim clause, driven end to end over MCP
     by an in-process agent loop."""

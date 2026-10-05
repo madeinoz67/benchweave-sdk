@@ -52,8 +52,31 @@ import sys
 from html.parser import HTMLParser
 from pathlib import Path
 
-HREF = re.compile(r'https://madeinoz67\.github\.io/benchweave-sdk/docs/([^\s"\)<>]+)')
 CITED_IN = ("README.md", "CLAUDE.md")
+_REPO = Path(__file__).resolve().parent.parent
+
+
+def citation_pattern(yml: Path | None = None) -> re.Pattern[str]:
+    """The inbound-citation pattern, derived from ``great-docs.yml``'s
+    ``site_url`` — the one configured host — so this check can never
+    disagree with the site the citations target. An earlier revision
+    hard-coded the GitHub Pages host (regex-escaped, so host-form census
+    greps could not see it); when the site moved onto its own domain the
+    literal matched zero citations and the gate passed vacuously. The
+    derivation plus the empty-citation guard in ``main`` close that class.
+    """
+
+    text = (yml or _REPO / "great-docs.yml").read_text(encoding="utf-8")
+    m = re.search(r"^site_url:\s*(\S+)", text, re.MULTILINE)
+    if not m or not m.group(1).rstrip("/").startswith("https://"):
+        raise ValueError(
+            "great-docs.yml site_url is missing or not an https URL — cannot "
+            "derive the citation pattern"
+        )
+    base = m.group(1)
+    if not base.endswith("/"):
+        base += "/"
+    return re.compile(re.escape(base) + r'([^\s"\)<>]+)')
 
 
 def _head_matches_origin_main() -> bool:
@@ -123,20 +146,36 @@ def main(root_text: str = "site/docs") -> int:
     if not sitemap_texts:
         violations.append("no sitemap.xml in the built tree (root or v/dev)")
     strict = _head_matches_origin_main()
-    for source in CITED_IN:
-        text = Path(source).read_text(encoding="utf-8")
-        for cited in sorted(set(HREF.findall(text))):
-            if any(f"/{cited}" in sitemap for sitemap in sitemap_texts):
-                continue
-            if strict:
-                violations.append(
-                    f"{source}: cites docs page {cited!r} absent from every sitemap"
-                )
-            else:
-                print(
-                    f"  context (branch lag): {source} cites {cited!r}; the dev "
-                    "render is origin/main and lags this branch by design"
-                )
+    try:
+        pattern = citation_pattern()
+    except ValueError as exc:
+        violations.append(f"citation gate: {exc}")
+        pattern = None
+    citations: set[str] = set()
+    if pattern is not None:
+        for source in CITED_IN:
+            text = Path(source).read_text(encoding="utf-8")
+            citations.update(pattern.findall(text))
+        if not citations:
+            violations.append(
+                "citation gate: README.md/CLAUDE.md matched no docs citations "
+                "against great-docs.yml site_url — the gate is vacuous (host "
+                "or citation drift; the disarmed-gate class)"
+            )
+    for cited in sorted(citations):
+        if any(f"/{cited}" in sitemap for sitemap in sitemap_texts):
+            continue
+        if strict:
+            violations.append(
+                f"citation gate: docs page {cited!r} cited by README.md/"
+                "CLAUDE.md is absent from every sitemap"
+            )
+        else:
+            print(
+                f"  context (branch lag): docs page {cited!r} is cited but "
+                "absent from the dev sitemap; the dev render is origin/main "
+                "and lags this branch by design"
+            )
 
     if violations:
         print(f"docs_link_check: {len(violations)} violation(s)")
