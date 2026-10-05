@@ -147,6 +147,22 @@ Operational notes: `preview-ui` is an interactive tool. It serves until you inte
 Under the explicitly acknowledged `--allow-network` mode, request bodies have no handler timeout. Only untrusted peers are affected. Do not expose the preview to untrusted peers.
 :::
 
+## Mock transports (offline rehearsal)
+
+The standalone host serves a plugin on a scripted mock transport when you run `serve --transport mock` (the default) or `preview-ui`. The script comes from the plugin's own evidence file, `src/<package>/vectors.json`. The file declares which of two transaction grammars the adapter speaks, and the host serves the matching mock.
+
+**The two grammars.** Declare the grammar with the file-level `transaction_dialect` key. Omit it and the file is a `stream_exchange` script: every row is a `{"request": ..., "response": ...}` pair of strings, and the mock serves whole-dict exchanges — the starter protocol's shape (`ID?\n` in, one line out). Declare `"transaction_dialect": "send_receive"` and the rows script a binary section 8.1 SEND/RECEIVE conversation: each row's strings are frames, the adapter's `stream_send` must match the next scripted request frame exactly, and `stream_receive` is served with the serial backend's exact outcomes (the section "A standalone runtime around the writer" below states them).
+
+**Encoding.** Rows are ASCII by default (a row string's ASCII bytes). Set `"encoding": "hex"` at file level — or on one row — to script binary frames: each string is a hex byte string (`"response": "53544154000a"`). `ascii` refuses a string that is not ASCII; `hex` refuses an odd-length or non-hex string. Both refusals name the row.
+
+**The row contract.** Every row carries a `response`. A row may omit `request`: that row is a response-only row, a device-initiated frame the mock releases to the inbound stream, in row order, when the conversation reaches it. Response-only rows require `transaction_dialect: "send_receive"` — the default dialect cannot script an unsolicited frame. A row may carry a `name`; diagnostics name rows by `name` or by index.
+
+**How selection works.** The host reads the declaration at connect time and builds the matching mock host; nothing else changes. `serve --transport serial` never reads `vectors.json` — the script is rehearsal evidence, not device configuration.
+
+**What the mock can and cannot rehearse.** The `send_receive` mock reproduces the serial backend's RECEIVE outcomes exactly: `exact_bytes` precedence over `termination`, `lf` and `crlf` terminators, the overlong-line discard, the quiet-line `{"data": b""}`, and a partial frame retained across a deadline. It releases unsolicited frames strictly in row order — it cannot rehearse interleavings a real streaming device produces between rows. It does not serve `can_receive`, `can_send`, `i2c_transfer` or `spi_transfer`; a plugin that needs those kinds needs a real transport. The mock's timings are not the device's: the quiet line answers at once (not after the backend's quiet window), and a receive that cannot complete raises the backend's `TimeoutError` without waiting out the deadline.
+
+**The bound, in plain English.** The mock's discipline is exact: when the adapter SENDs a frame that differs from the scripted row's frame, the rehearsal fails loudly, naming the row and both frames — the mock never guesses what the device meant. But the script is only as honest as its rows: a script that does not match the real device proves nothing about the device. Use `--transport serial` and the hardware for interleaving, for non-serial transports, for timing, and for any claim about the device itself.
+
 ## Capture without a gateway (standalone writer)
 
 Plugin and bench development happens on machines that never run the gateway. `benchweave_sdk.capture.StandaloneCaptureWriter` implements the three capture methods that an adapter calls in gateway mode: `artifact_append`, `artifact_finalise` and `artifact_abort`. The writer works over one directory per capture on a local filesystem. It is three of the eight `CaptureServices` members. Device I/O still comes from a transport that a composing runtime supplies.
