@@ -153,8 +153,16 @@ def test_ar2_ten_second_soak_keeps_every_structural_bound(tmp_path: Path) -> Non
             _ctx(),
         )
     )
-    # The producer actually sustained the rate class.
-    assert throughput >= _RATE, f"producer sustained {throughput:.0f} B/s, wanted >= {_RATE}"
+    # The producer actually sustained the rate class. One frame of boundary
+    # grace: produced_bytes is measured over a fixed window while the producer
+    # is rate-limited, so window clipping costs up to ~1 frame of throughput —
+    # observed on a warm windows runner (post-xdist-leg) as 204779.2 B/s vs
+    # the 204800 floor, 208 bytes under: sub-frame scheduling jitter, not a
+    # throughput failure (issue #402). A real producer collapse lands far
+    # below this floor.
+    assert throughput >= _RATE - _FRAME, (
+        f"producer sustained {throughput:.0f} B/s, wanted >= {_RATE - _FRAME}"
+    )
     # Arm 1: the ring stayed within capacity at every checkpoint.
     assert ring_seen <= link.ring_capacity
     # Arm 2: staged bytes == appended bytes (checksum); ring never lost one.
