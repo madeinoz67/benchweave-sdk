@@ -29,7 +29,12 @@ from fastapi.testclient import TestClient
 from benchweave_sdk_server.errors import SeamError
 from benchweave_sdk_server.seam import StandaloneSeam
 from benchweave_sdk_server.security import GuardPolicy, new_token
-from benchweave_sdk_server.session import load_plugin_project, mock_plugin_session
+from benchweave_sdk_server.session import (
+    PluginSession,
+    load_plugin_project,
+    mock_plugin_session,
+    mock_transport_factory,
+)
 from benchweave_sdk_server.web import build_app
 
 FIXTURE = Path(__file__).resolve().parent.parent / "fixtures" / "binary_frames_plugin"
@@ -404,3 +409,30 @@ def test_g_no_write_on_page_load_reconnect_and_preset_selection(tmp_path: Path) 
         )
         client.get(f"/devices/{DEV}")
     assert set(recorder.verbs) <= {"identify", "read"}, recorder.verbs
+
+def test_g_control_the_recorder_hears_a_driven_write(tmp_path: Path) -> None:
+    """The G cell's non-vacuity control (test_nowrite.py's deaf-recorder
+    discipline): a write verb driven through the recorder IS recorded — a
+    deaf recorder would pass the no-write cell for the wrong reason."""
+    import asyncio
+
+    plugin = _plugin()
+    recorder = _VerbRecorder(plugin.adapter_factory())
+    session = PluginSession(
+        replace(plugin, adapter_factory=lambda: recorder),
+        mock_transport_factory(plugin, capture_root=tmp_path),
+    )
+
+    async def run() -> None:
+        await session.connect()
+        # Walk the scripted conversation to the write row: read first.
+        reading = await session.execute("read", {"parameter": "sample_avg"})
+        assert reading["status"] == "ok"
+        envelope = await session.execute(
+            "write", {"parameter": "sample_avg", "value": 3.0}
+        )
+        assert envelope["status"] == "ok"
+        await session.close()
+
+    asyncio.run(run())
+    assert recorder.verbs == ["identify", "read", "write"], recorder.verbs
