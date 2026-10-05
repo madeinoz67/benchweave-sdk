@@ -223,6 +223,31 @@ def test_partial_frame_at_the_deadline_times_out_and_retains() -> None:
     asyncio.run(flow())
 
 
+def test_assert_complete_grows_teeth() -> None:
+    """Lane 1 F4 + critic F5: the inherited assert_complete is vacuously
+    green over the byte-stream host (it reads the exchange deque, which is
+    always empty) — conformance.py:65 consumes it, so a run could certify
+    exhaustion over an un-exhausted script. It must fail on pending rows
+    AND on buffered inbound bytes."""
+
+    async def flow() -> None:
+        unexhausted = _host()  # the full FIXTURE_ROWS script, nothing served
+        with pytest.raises(ConformanceError, match="scripted rows were not consumed"):
+            unexhausted.assert_complete()
+
+        buffered = _host([FrameRow("poll", b"AVG?\n", b"partial-no-terminator")])
+        await _send(buffered, b"AVG?\n")  # response buffered, never received
+        with pytest.raises(ConformanceError, match="bytes remain buffered"):
+            buffered.assert_complete()
+
+        clean = _host([FrameRow("poll", b"AVG?\n", b"2.5\n")])
+        await _send(clean, b"AVG?\n")
+        await _receive(clean)  # row consumed AND inbound drained
+        clean.assert_complete()
+
+    asyncio.run(flow())
+
+
 def test_cycle_plan_pinned_on_the_core_shapes() -> None:
     """The minimal-period plan (controller ruling 1): [i,A,B,A,B] -> head
     [i], unit [A,B]; the odd capture continues at the captured phase; no

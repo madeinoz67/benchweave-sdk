@@ -244,6 +244,20 @@ class ByteStreamMockHost(WriterBackedCaptureServices, MockHost):
         """The number of scripted rows not yet consumed."""
         return len(self._rows)
 
+    def assert_complete(self) -> None:
+        """Fail unless the whole script was consumed AND the inbound stream
+        drained (lane 1 F4 + critic F5: the inherited check read the
+        exchange deque — always empty here — so ``conformance.py``'s
+        lifecycle check certified exhaustion over an un-exhausted script)."""
+        if self._rows:
+            raise ConformanceError(
+                f"{len(self._rows)} scripted rows were not consumed"
+            )
+        if self._inbound:
+            raise ConformanceError(
+                f"{len(self._inbound)} inbound bytes remain buffered"
+            )
+
     def monotonic(self) -> float:
         """The real monotonic clock — deadlines must expire on live time."""
         return time.monotonic()
