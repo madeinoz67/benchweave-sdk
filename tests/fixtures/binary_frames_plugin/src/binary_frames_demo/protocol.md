@@ -1,0 +1,3 @@
+# Synthetic binary frame protocol
+
+An invented protocol (issue #394's plugin class; no real device is claimed). The adapter speaks the generic OTDP section 8.1 `stream_send` / `stream_receive` transactions. Command frames are ASCII text ending in LF: `*IDN?`, `AVG?`, `SA` + float32 LE, `CAP <frames>`. Responses to commands end in LF: the identity line, `OK`, or a 4-byte float32 LE value plus LF. Sample frames are 16 raw bytes (two float64 LE samples) received with `exact_bytes`, no terminator. The device emits an unsolicited 6-byte status frame (`STAT` + NUL + LF) once per poll cycle; the adapter drains received frames until the quiet line before every command. `CAP 64` returns exactly 64 concatenated sample frames. No real device, manufacturer or bench is claimed.

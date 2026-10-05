@@ -1,0 +1,39 @@
+{
+  "contract_version": "0.3.0",
+  "plugin_id": "dev.example.frames-demo",
+  "descriptor_sha256": "39d4364e05821ee899f38dbe9689c84cf43f08d95efb03f07182ced81a8bcc30",
+  "bindings": [
+    {
+      "id": "sample_avg",
+      "kind": "observation",
+      "target_id": "sample_avg"
+    }
+  ],
+  "pages": [
+    {
+      "id": "readings",
+      "title": "Readings",
+      "kind": "readings",
+      "bindings": [
+        "sample_avg"
+      ],
+      "required": true,
+      "plots": [
+        {
+          "kind": "time_series",
+          "binding_id": "sample_avg",
+          "x": "time",
+          "y": [
+            "value"
+          ],
+          "channel_hints": [
+            {
+              "variable_id": "value",
+              "color_role": "muted"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
