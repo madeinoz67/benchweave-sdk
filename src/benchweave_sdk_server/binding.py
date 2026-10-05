@@ -235,6 +235,15 @@ def utc_now() -> str:
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
 
 
+def usb_id_hex(value: int | None) -> str | None:
+    """A USB id as the document's hex-string spelling (``1a86`` — the
+    descriptor's own ``x-standalone-usb-vid`` style); ``None`` passes
+    through, because a candidate without the id constrains nothing."""
+    if value is None:
+        return None
+    return format(int(value), "x")
+
+
 class BindingStore:
     """One ``device-bindings.json``: loaded typed, mutated in memory, and
     written atomically. Rows are unique by ``(plugin_package,

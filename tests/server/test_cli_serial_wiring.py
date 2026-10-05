@@ -110,13 +110,18 @@ def _wired_seam(starter_project: Path) -> tuple[Any, list[str]]:
 
 
 def test_the_cli_serial_seam_carries_the_device_path(starter_project: Path) -> None:
-    """The wiring itself: ``serve --transport serial --device PATH`` must
-    hand the seam the path, or the seam scans with ``connected_device=None``
-    and the no-re-probe clause never fires in production (issue #389:
-    pre-fix this attribute stayed ``None``; only hand-built test seams ever
-    set it)."""
+    """The wiring itself (issue #385's resolver form): ``serve --transport
+    serial --device PATH`` hands the seam the SAME endpoint object the
+    session factory consults — resolve it and you get the path, or the
+    scan's connected short-circuit never fires in production (issue #389:
+    pre-fix the seam carried no path at all; only hand-built test seams
+    ever set it)."""
     seam, _ = _wired_seam(starter_project)
-    assert seam._serial_device_path == _CONNECTED
+    assert seam._serial_endpoint is not None
+    assert seam._serial_endpoint() == _CONNECTED
+    assert seam._serial_endpoint.last_resolution is None, (
+        "nothing has connected; the resolution is unset, not fabricated"
+    )
 
 
 def test_a_scan_through_the_cli_seam_never_reopens_the_connected_port(
@@ -162,11 +167,11 @@ def test_the_mock_and_scenario_branches_carry_no_serial_wiring(
     plain, plain_selection = _build_seam(starter_project)
     assert plain.transport_kind == "mock"
     assert plain_selection is None
-    assert plain._serial_device_path is None
+    assert plain._serial_endpoint is None
     scenario_seam, selection = _build_seam(starter_project, scenario="stale")
     assert scenario_seam.transport_kind == "mock"
     assert selection is not None and selection.current == "stale"
-    assert scenario_seam._serial_device_path is None
+    assert scenario_seam._serial_endpoint is None
 
 
 def test_serial_without_a_device_refuses(starter_project: Path, capsys) -> None:

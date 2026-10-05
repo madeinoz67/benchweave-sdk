@@ -1140,32 +1140,72 @@ class LinkReconfigurator:
     on_link_event: Callable[[dict[str, Any]], None] | None = None
 
 
+class SerialEndpoint:
+    """The session's endpoint source (issue #385 §1.4): consulted AT
+    CONNECT TIME by the services factory, so a rebind changes the next
+    connection's port (the late-bound ``mock_plugin_session`` precedent —
+    the factory reads the endpoint when it runs, never a path baked in at
+    construction). ``last_resolution`` is the path the factory last opened
+    successfully — the one source the discovery short-circuit reads for a
+    connected session, replacing the parallel ``serial_device_path``
+    constructor arg (net deletion of a second source of truth).
+
+    ``source`` is a constant path (the ``--device`` headless form — the
+    binding bypass, byte-compatible with every pre-#385 test) or a callable
+    resolving the path from the binding store
+    (:func:`benchweave_sdk_server.binding.binding_endpoint`), whose
+    ``BindingAbsent``/``BindingStale`` refusals ride ``RuntimeError`` so
+    the session's connect path passes them through unwrapped for the seam
+    to map.
+    """
+
+    def __init__(self, source: str | Callable[[], str]) -> None:
+        if callable(source):
+            self._source = source
+        else:
+            path = str(source)
+            self._source = lambda: path
+        #: The path the last successful open used; None until then. Set by
+        #: the services factory AFTER the opener returns — a resolver that
+        #: names a path the open then refuses never records it.
+        self.last_resolution: str | None = None
+
+    def __call__(self) -> str:
+        return self._source()
+
+
 def serial_plugin_session(
     plugin: LoadedPlugin,
-    device_path: str,
+    endpoint: SerialEndpoint | str | Callable[[], str],
     *,
     open_port: Any = None,
     capture_root: Any = None,
     capture_max_bytes: int | None = None,
 ) -> PluginSession:
-    """A ``PluginSession`` over a serial port: the services factory mints a
-    FRESH link + services per connection (the M1 fold's per-connection
-    precedent — a reconnect starts a new conversation over a new link, and
-    a faulted link never serves a second conversation). ``open_port`` stays
-    injectable so tests never need a real port. ``capture_root`` and
-    ``capture_max_bytes`` are the host's capture configuration — the root
-    the per-capture writers publish under and the configured reservation
-    ceiling (I3b's lifecycle wiring).
+    """A ``PluginSession`` over a serial endpoint: the services factory
+    mints a FRESH link + services per connection (the M1 fold's
+    per-connection precedent — a reconnect starts a new conversation over a
+    new link, and a faulted link never serves a second conversation),
+    reading the endpoint AT CONNECT TIME so a rebind redirects the next
+    connection. A bare string wraps as the constant resolver (the
+    ``--device`` form, byte-compatible with every existing call).
+    ``open_port`` stays injectable so tests never need a real port.
+    ``capture_root`` and ``capture_max_bytes`` are the host's capture
+    configuration — the root the per-capture writers publish under and the
+    configured reservation ceiling (I3b's lifecycle wiring).
 
     The link-control capability (issue #407): the declared allowed set is
     derived HERE, loud and failing at session build (the FOLD-F posture);
     each mint builds the reconfigurator — reading the session's
     ``link_event_publisher`` at MINT time (the late-bound shape, the
     ``cli.py`` factory docstring) — so a reconnect serves the CURRENT
-    publisher, not a stale one."""
+    publisher, not a stale one. The reconfigurator's ``device_path`` is
+    the RESOLVED path of that mint, so a reopen after a rebind targets the
+    port the link actually opened, never a stale one."""
     settings = _serial_settings(plugin)
     max_frame = transport_ceiling(settings)
     opener = open_port or open_serial_port
+    resolver = endpoint if isinstance(endpoint, SerialEndpoint) else SerialEndpoint(endpoint)
     allowed = negotiable_bauds(settings)  # loud at session build
     # The mint ALWAYS carries the baud (the defaulted read — a descriptor
     # whose settings omit it is legal and worked at base): every derived
@@ -1174,10 +1214,12 @@ def serial_plugin_session(
     boot_settings = {**settings, "baud": _boot_baud(settings)}
 
     def factory() -> SerialCaptureServices:
-        transport = opener(device_path, boot_settings)
+        path = resolver()
+        transport = opener(path, boot_settings)
+        resolver.last_resolution = path
         reconfigurator = LinkReconfigurator(
             opener=opener,
-            device_path=device_path,
+            device_path=path,
             boot_settings=dict(boot_settings),
             allowed_bauds=allowed,
             on_link_event=session.link_event_publisher,
