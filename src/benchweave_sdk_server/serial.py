@@ -32,7 +32,12 @@ from typing import Any, Protocol
 from benchweave_sdk.capture import StandaloneCaptureWriter
 from benchweave_sdk.testing import ConformanceError
 
-from .session import LoadedPlugin, PluginSession
+from .session import (
+    TRANSFER_CEILING,
+    LoadedPlugin,
+    PluginSession,
+    transport_ceiling,
+)
 
 _TERMINATORS = {"lf": b"\n", "crlf": b"\r\n"}
 
@@ -129,7 +134,7 @@ class SerialLink:
         transport: Transport,
         *,
         ring_capacity: int = 256 * 1024,
-        transfer_ceiling: int = 64 * 1024,
+        transfer_ceiling: int = TRANSFER_CEILING,
         quiet_s: float = 0.1,
     ) -> None:
         if (
@@ -736,7 +741,7 @@ def serial_plugin_session(
     the per-capture writers publish under and the configured reservation
     ceiling (I3b's lifecycle wiring)."""
     settings = _serial_settings(plugin)
-    max_frame = int(settings.get("max_frame_bytes", 0)) or 4096
+    max_frame = transport_ceiling(settings)
     opener = open_port or open_serial_port
 
     def factory() -> SerialCaptureServices:
@@ -862,7 +867,7 @@ async def _confirm_by_identify(
         transport = hooks.open_port(_port_name(port), _serial_settings(plugin))
         link = SerialLink(transport)
         services = SerialCaptureServices(
-            link, max_frame_bytes=int(_serial_settings(plugin).get("max_frame_bytes", 0)) or 4096
+            link, max_frame_bytes=transport_ceiling(_serial_settings(plugin))
         )
         adapter = plugin.adapter_factory() if plugin.adapter_factory else None
         if adapter is None:

@@ -68,8 +68,10 @@ class _MockLeg:
 
     name = "bytestream_mock"
 
-    def __init__(self, rows: list[FrameRow]) -> None:
-        self._host = ByteStreamMockHost(rows, max_frame_bytes=_MAX_FRAME)
+    def __init__(
+        self, rows: list[FrameRow], *, max_frame_bytes: int = _MAX_FRAME
+    ) -> None:
+        self._host = ByteStreamMockHost(rows, max_frame_bytes=max_frame_bytes)
 
     async def transfer(self, transaction: dict[str, Any], context: Any) -> dict[str, Any]:
         return await self._host.transfer(transaction, context)
@@ -88,10 +90,12 @@ class _SerialLeg:
 
     name = "serial_backend"
 
-    def __init__(self, replies: dict[bytes, bytes]) -> None:
+    def __init__(
+        self, replies: dict[bytes, bytes], *, max_frame_bytes: int = _MAX_FRAME
+    ) -> None:
         self._port = _ReplyPort(replies)
         self._link = SerialLink(self._port, quiet_s=0.05)
-        self._services = SerialCaptureServices(self._link, max_frame_bytes=_MAX_FRAME)
+        self._services = SerialCaptureServices(self._link, max_frame_bytes=max_frame_bytes)
 
     async def transfer(self, transaction: dict[str, Any], context: Any) -> dict[str, Any]:
         return await self._services.transfer(transaction, context)
@@ -280,6 +284,75 @@ def test_e6_partial_frame_at_the_deadline_is_retained(leg: Any) -> None:
                 await surface.feed(b"\n")
                 reply = await surface.transfer(_receive(), follow)
             assert reply == {"data": b"3.3\n"}
+        finally:
+            await surface.close()
+
+    asyncio.run(flow())
+
+
+# --- ruling 3: the silent-descriptor ceiling is shared, not minted ----------
+
+
+def test_ceiling_resolution_is_one_definition() -> None:
+    """``transport_ceiling``: the descriptor's declared bound, the session
+    fallback 4096 when silent (the serial session's own — the mock minted
+    128), clamped by the backend's 64 KiB transfer ceiling."""
+    from benchweave_sdk_server.session import transport_ceiling
+
+    assert transport_ceiling({"max_frame_bytes": 70000}) == 65536
+    assert transport_ceiling({"max_frame_bytes": 128}) == 128
+    assert transport_ceiling({}) == 4096
+    assert transport_ceiling({"max_frame_bytes": 0}) == 4096
+
+
+def test_p2_a_70000_descriptor_refuses_66000_identically(leg: Any) -> None:
+    """Lane 1's P2: descriptor max_frame_bytes 70000 + max_bytes 66000 —
+    BOTH hosts clamp to the backend's 64 KiB ceiling and refuse with the
+    same message (the mock served it before the fold)."""
+
+    async def flow() -> None:
+        from benchweave_sdk_server.session import transport_ceiling
+
+        ceiling = transport_ceiling({"max_frame_bytes": 70000})
+        surface = (
+            leg([FrameRow("cmd", CMD, b"x\n")], max_frame_bytes=ceiling)
+            if leg is _MockLeg
+            else leg({CMD: b"x\n"}, max_frame_bytes=ceiling)
+        )
+        try:
+            context = _context()
+            await context.mark_dispatch_started()
+            with pytest.raises(ValueError, match="max_bytes must be 1..65536"):
+                await surface.transfer(_exchange(CMD, max_bytes=66000), context)
+        finally:
+            await surface.close()
+
+    asyncio.run(flow())
+
+
+def test_f4_a_silent_descriptor_verdicts_identically(leg: Any) -> None:
+    """Critic F4: a silent descriptor — one resolution, identical verdicts
+    on both hosts (the mock minted 128, the serial session 4096)."""
+
+    async def flow() -> None:
+        from benchweave_sdk_server.session import transport_ceiling
+
+        ceiling = transport_ceiling({})
+        assert ceiling == 4096
+        surface = (
+            leg([FrameRow("cmd", CMD, b"x" * 3999 + b"\n")], max_frame_bytes=ceiling)
+            if leg is _MockLeg
+            else leg({CMD: b"x" * 3999 + b"\n"}, max_frame_bytes=ceiling)
+        )
+        try:
+            context = _context()
+            await context.mark_dispatch_started()
+            reply = await surface.transfer(_exchange(CMD, max_bytes=4000), context)
+            assert len(reply["data"]) == 4000
+            refusal_context = _context()
+            await refusal_context.mark_dispatch_started()
+            with pytest.raises(ValueError, match="max_bytes must be 1..4096"):
+                await surface.transfer(_exchange(CMD, max_bytes=5000), refusal_context)
         finally:
             await surface.close()
 

@@ -138,6 +138,28 @@ class LoadedPlugin:
         return self.project_root / "src" / self.package
 
 
+#: The session-level per-receive ceiling when the descriptor is silent —
+#: the serial session's own fallback (controller ruling 3, the fold: the
+#: mock had minted 128; one resolution, both hosts).
+SESSION_RECEIVE_CEILING = 4096
+
+#: The backend link's default transfer ceiling — the descriptor bound never
+#: exceeds it on either host (the serial link's constructor default is this
+#: same constant, imported from here: one definition).
+TRANSFER_CEILING = 64 * 1024
+
+
+def transport_ceiling(settings: dict[str, Any]) -> int:
+    """The per-receive ceiling both hosts clamp to: the descriptor's
+    declared ``max_frame_bytes``, the session fallback
+    :data:`SESSION_RECEIVE_CEILING` when silent, clamped by the backend's
+    :data:`TRANSFER_CEILING` (A02: the plugin's declared bound is the
+    bound — and a declared bound above the link's own ceiling is still
+    bounded by the link)."""
+    declared = int(settings.get("max_frame_bytes", 0)) or SESSION_RECEIVE_CEILING
+    return min(declared, TRANSFER_CEILING)
+
+
 #: The vectors.json dialect vocabulary (issue #394's owner ruling (a)):
 #: ``stream_exchange`` is the omitted-key default — today's behaviour,
 #: byte-for-byte — and ``send_receive`` scripts binary §8.1 SEND/RECEIVE
@@ -419,7 +441,7 @@ def mock_transport_factory(
     dialect = vectors_script(plugin).dialect
     if dialect == "send_receive":
         settings = plugin.descriptor.get("transport", {}).get("settings", {})
-        max_frame = int(settings.get("max_frame_bytes", 0)) or 128
+        max_frame = transport_ceiling(settings)
         rows = frame_script(plugin)
         establishment, cycle, rotate = _cycle_plan(rows)
         return lambda: ByteStreamMockHost(
