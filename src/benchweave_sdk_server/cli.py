@@ -135,6 +135,13 @@ def _build_seam(
                 ),
                 transport_kind="serial",
                 unattended=unattended,
+                # The no-re-probe clause (I3 §3.3): a scan serves the
+                # candidate whose enumerated name byte-equals this path from
+                # the session's identity instead of re-opening the live port
+                # (issue #389). Alias spellings of the same physical port
+                # (cu vs tty, by-id symlinks) do not match and still
+                # re-probe -- the alias-matching follow-up owns that.
+                serial_device_path=device,
                 capture_root=capture_root,
             ),
             None,
