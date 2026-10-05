@@ -242,6 +242,7 @@ def test_close_joins_the_reader_and_closes_the_transport_once() -> None:
         link.write(b"x")
 
 
+@pytest.mark.timing
 def test_a_closed_link_drains_complete_frames_and_refuses_a_partial_fast() -> None:
     """Closed-link semantics (FOLD-H), stated exactly by the docstring:
     drain-then-refuse — buffered COMPLETE frames still deliver (evidence
