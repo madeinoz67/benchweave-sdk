@@ -2,7 +2,7 @@
 
 ## Using the SDK
 
-Building a plugin? Start with the [five-step workflow](README.md#five-steps) — install (with the `[scaffold]` extra; `new` renders through copier) → `new` → `check` → `build` → `inventory`. First time here? `user_guide/getting-started.qmd` walks the same steps as a numbered, runnable sequence with the expected output at each step (rendered: <https://madeinoz67.github.io/benchweave-sdk/docs/user-guide/getting-started.html>). Everything below is architecture and contributor doctrine.
+Building a plugin? Start with the [five-step workflow](README.md#five-steps) — install (with the `[scaffold]` extra; `new` renders through copier) → `new` → `check` → `build` → `inventory`. First time here? `user_guide/getting-started.qmd` walks the same steps as a numbered, runnable sequence with the expected output at each step (rendered: <https://sdk.benchweave.dev/docs/user-guide/getting-started.html>). Everything below is architecture and contributor doctrine.
 
 ## MANDATORY: Use Gortex MCP tools instead of Read/Grep/Glob
 

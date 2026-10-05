@@ -334,7 +334,7 @@ def test_the_versioned_docs_url_uses_the_tag_prefixed_bucket() -> None:
     by the bare version. A rendered ``docs/v/0.6.0/`` URL is a dead link in
     every generated project."""
     agents = (TEMPLATE / "AGENTS.md.jinja").read_text(encoding="utf-8")
-    assert "https://madeinoz67.github.io/benchweave-sdk/docs/v/v{{ sdk_version }}/" in agents, (
+    assert "https://sdk.benchweave.dev/docs/v/v{{ sdk_version }}/" in agents, (
         "the docs URL must name the v-prefixed tag bucket, not the bare version"
     )
 

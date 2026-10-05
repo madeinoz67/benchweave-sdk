@@ -83,7 +83,7 @@ PAGES = (
 README = REPO / "README.md"
 GREAT_DOCS_YML = REPO / "great-docs.yml"
 CITED_GETTING_STARTED = (
-    "https://madeinoz67.github.io/benchweave-sdk/docs/user-guide/getting-started.html"
+    "https://sdk.benchweave.dev/docs/user-guide/getting-started.html"
 )
 TEMPLATE_DESCRIPTOR = REPO / "template" / "src" / "{{ package_name }}" / "descriptor.json.jinja"
 
