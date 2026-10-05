@@ -332,12 +332,11 @@ class ByteStreamMockHost(WriterBackedCaptureServices, MockHost):
             return b""
         raise TimeoutError("receive deadline expired; a partial frame stays buffered")
 
-    def _receive(self, transaction: dict[str, Any]) -> bytes:
+    def _receive(self, bounds: tuple[int, bytes, int]) -> bytes:
+        """Serve one receive from the inbound stream under pre-validated
+        bounds (the ladder validated them before any state change)."""
         self._advance()
-        max_bytes, terminator, exact = _stream_receive_bounds(
-            transaction, self._ceiling
-        )
-        return self._serve_receive(max_bytes, terminator, exact)
+        return self._serve_receive(*bounds)
 
     async def transfer(
         self, transaction: dict[str, Any], context: OperationContext
@@ -347,17 +346,28 @@ class ByteStreamMockHost(WriterBackedCaptureServices, MockHost):
             raise ValueError(
                 f"not a section 8.1 stream transaction: {sorted(transaction)}"
             )
+        # The backend's own ladder (critic F2, lane 1 F9 — refuse before ANY
+        # state change): grammar, then the receive bounds, then the payload
+        # type, then liveness, the closed transport, the dispatch marker —
+        # and only then is a row consumed, a byte buffered or a transfer
+        # recorded. A refused transaction leaves the conversation untouched,
+        # so the corrected retry hits the row it should.
+        bounds: tuple[int, bytes, int] = (0, b"", 0)
+        if kind != "stream_send":
+            bounds = _stream_receive_bounds(transaction, self._ceiling)
+        if kind != "stream_receive" and not isinstance(transaction["data"], bytes):
+            raise ValueError("data must be bytes")
         self._check(context)
         if self.closed:
             raise ConnectionError("Transport closed")
         if kind != "stream_receive" and not getattr(context, "dispatched", False):
             raise ConformanceError("Transmission needs a dispatch marker")
         if kind == "stream_receive":
-            data = self._receive(transaction)
+            data = self._receive(bounds)
             self.transfers.append(deepcopy(transaction))
             return {"data": data}
         self._send_frame(transaction["data"])
         self.transfers.append(deepcopy(transaction))
         if kind == "stream_send":
             return {}
-        return {"data": self._receive(transaction)}
+        return {"data": self._receive(bounds)}

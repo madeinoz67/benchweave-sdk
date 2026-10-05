@@ -290,6 +290,62 @@ def test_e6_partial_frame_at_the_deadline_is_retained(leg: Any) -> None:
     asyncio.run(flow())
 
 
+# --- F2/F9: the validation ladder — refuse before any state change ----------
+
+
+def test_f2_refused_exchange_leaves_the_conversation_untouched(leg: Any) -> None:
+    """Critic F2 (MEDIUM): a stream_exchange with invalid bounds must leave
+    the conversation untouched — no row consumed, no response buffered,
+    nothing recorded — matching the backend's validate-before-IO ladder.
+    The refused exchange then RETRIES successfully (lane probe: the mock
+    consumed the row first, so the retry hit the wrong row)."""
+
+    async def flow() -> None:
+        surface = (
+            leg([FrameRow("poll", CMD, b"ok\n"), FrameRow("poll2", b"NEXT\n", b"2\n")])
+            if leg is _MockLeg
+            else leg({CMD: b"ok\n", b"NEXT\n": b"2\n"})
+        )
+        try:
+            context = _context()
+            await context.mark_dispatch_started()
+            with pytest.raises(ValueError, match="max_bytes must be 1..128"):
+                await surface.transfer(_exchange(CMD, max_bytes=10_000), context)
+            retry = _context()
+            await retry.mark_dispatch_started()
+            assert await surface.transfer(_exchange(CMD), retry) == {"data": b"ok\n"}
+            nxt = _context()
+            await nxt.mark_dispatch_started()
+            assert await surface.transfer(_exchange(b"NEXT\n"), nxt) == {"data": b"2\n"}
+        finally:
+            await surface.close()
+
+    asyncio.run(flow())
+
+
+def test_f9_invalid_bounds_outrank_the_expired_context(leg: Any) -> None:
+    """Lane 1 F9: bounds validate before liveness — an expired context with
+    an invalid max_bytes is a ValueError on both hosts, not the mock's
+    TimeoutError."""
+
+    async def flow() -> None:
+        surface = (
+            leg([FrameRow("poll", CMD, b"ok\n")])
+            if leg is _MockLeg
+            else leg({CMD: b"ok\n"})
+        )
+        try:
+            context = _context()
+            context.deadline_monotonic = time.monotonic() - 1.0
+            await context.mark_dispatch_started()
+            with pytest.raises(ValueError, match="max_bytes must be 1..128"):
+                await surface.transfer(_exchange(CMD, max_bytes=10_000), context)
+        finally:
+            await surface.close()
+
+    asyncio.run(flow())
+
+
 # --- ruling 3: the silent-descriptor ceiling is shared, not minted ----------
 
 
