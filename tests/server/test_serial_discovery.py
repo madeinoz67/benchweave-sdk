@@ -64,12 +64,23 @@ class LoopbackPort:
 
 
 class CandidatePort:
-    """A list_ports-shaped candidate: ``device`` plus USB identity."""
+    """A list_ports-shaped candidate: ``device`` plus USB identity.
 
-    def __init__(self, device: str, vid: int | None = None, pid: int | None = None) -> None:
+    ``serial_number`` models ``ListPortInfo``'s own field (None when the
+    device descriptor carries no iSerial — the CH343G-class open fact).
+    """
+
+    def __init__(
+        self,
+        device: str,
+        vid: int | None = None,
+        pid: int | None = None,
+        serial_number: str | None = None,
+    ) -> None:
         self.device = device
         self.vid = vid
         self.pid = pid
+        self.serial_number = serial_number
 
 
 _MATCHING = b"SDK Example,demo,SIM001,1.0.0\n"
@@ -99,8 +110,8 @@ def _scan_fixture(tmp_path: Path) -> dict[str, Any]:
         "/dev/silent": silent,
     }
     candidates = [
-        CandidatePort("/dev/match-a", vid=0x1A86, pid=0x7523),
-        CandidatePort("/dev/match-b", vid=0x1A86, pid=0x7523),
+        CandidatePort("/dev/match-a", vid=0x1A86, pid=0x7523, serial_number="SER-A"),
+        CandidatePort("/dev/match-b", vid=0x1A86, pid=0x7523, serial_number="SER-B"),
         CandidatePort("/dev/foreign", vid=0x1A86, pid=0x0002),
         CandidatePort("/dev/silent", vid=0x1A86, pid=0x0003),
         CandidatePort("/dev/other-vendor", vid=0x10C4, pid=0xEA60),
@@ -147,6 +158,22 @@ def test_ar4_discovery_returns_exactly_the_two_matching_candidates(tmp_path: Pat
     )
 
 
+def test_rows_carry_the_endpoint_fields(tmp_path: Path) -> None:
+    """Issue #385 §1.2: a discovery row names its PHYSICAL endpoint —
+    ``port_path`` always, ``usb_serial`` when the candidate's descriptor
+    carries an iSerial (None when it does not — an honest null, never a
+    fabricated serial). Two identical boards were previously two
+    indistinguishable rows the operator could not act on."""
+    fx = _scan_fixture(tmp_path)
+    from benchweave_sdk_server.serial import discover_serial_devices
+
+    devices = asyncio.run(
+        discover_serial_devices(fx["plugin"], hooks=fx["hooks"])
+    )
+    assert [row["port_path"] for row in devices] == ["/dev/match-a", "/dev/match-b"]
+    assert [row["usb_serial"] for row in devices] == ["SER-A", "SER-B"]
+
+
 def test_a_silent_or_foreign_port_is_omitted_not_reported(tmp_path: Path) -> None:
     fx = _scan_fixture(tmp_path)
     from benchweave_sdk_server.serial import discover_serial_devices
@@ -178,6 +205,50 @@ def test_the_connected_sessions_port_is_served_without_reprobing(tmp_path: Path)
     assert fx["opened"].count("/dev/match-a") == 0, (
         "the connected port is never re-probed"
     )
+    # §1.2: the connected row is served with the CONNECTED candidate's own
+    # endpoint — the operator sees which physical row their session is on.
+    assert devices[0]["port_path"] == "/dev/match-a"
+    assert devices[0]["usb_serial"] == "SER-A"
+
+
+def test_a_candidate_without_a_usb_serial_serves_an_honest_null(tmp_path: Path) -> None:
+    """A bridge whose device descriptor carries no iSerial (pyserial's
+    ``serial_number`` is None) serves ``usb_serial: null`` — honest null,
+    never a fabricated serial or an empty string."""
+    project = tmp_path / "proj"
+    from benchweave_sdk.scaffold import create_project
+    from benchweave_sdk_server.serial import SerialPortHooks, discover_serial_devices
+
+    create_project(project, "example_plugin")
+    plugin = load_plugin_project(project)
+    port = LoopbackPort(replies={b"ID?\n": _MATCHING})
+    hooks = SerialPortHooks(
+        enumerate_ports=lambda: [CandidatePort("/dev/no-serial", vid=0x1A86, pid=0x7523)],
+        open_port=lambda device, settings: port,
+    )
+    devices = asyncio.run(discover_serial_devices(plugin, hooks=hooks))
+    assert [row["usb_serial"] for row in devices] == [None]
+    assert [row["port_path"] for row in devices] == ["/dev/no-serial"]
+
+
+def test_the_mock_transports_row_is_an_honest_null_endpoint(seam) -> None:
+    """The mock branch has no endpoint at all: its single row carries
+    ``port_path``/``usb_serial`` null — the one row shape holds across
+    transports (§1.2), and the nulls are honest, never a fake path."""
+    devices = asyncio.run(seam.call("device_discover"))["devices"]
+    # The row echoes the DESCRIPTOR's declared transport (the scaffold
+    # declares serial) — the serving transport is host_info's business.
+    assert devices == [
+        {
+            "id": "example_device",
+            "manufacturer": "SDK Example",
+            "model": "demo",
+            "transport": "serial",
+            "connection_key": "example_device",
+            "port_path": None,
+            "usb_serial": None,
+        }
+    ]
 
 
 def _serial_app(tmp_path: Path) -> tuple[Any, ...]:
