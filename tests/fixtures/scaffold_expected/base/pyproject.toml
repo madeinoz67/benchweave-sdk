@@ -7,6 +7,6 @@ version = "0.1.0"
 requires-python = ">=3.13"
 dependencies = []
 [project.optional-dependencies]
-test = ["benchweave-sdk==0.6.0", "pytest>=8.0"]
+test = ["benchweave-sdk==0.7.1", "pytest>=8.0"]
 [tool.hatch.build.targets.wheel]
 packages = ["src/example_plugin"]

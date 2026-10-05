@@ -51,5 +51,5 @@ The plugin SDK guide covers this in section "Capture without a gateway
 (standalone writer)".
 
 ---
-Maintained by benchweave-sdk 0.6.0; `benchweave-sdk upgrade`
+Maintained by benchweave-sdk 0.7.1; `benchweave-sdk upgrade`
 refreshes this skill.

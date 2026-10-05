@@ -171,6 +171,13 @@ def test_under_padded_pin_matches_the_normalized_installed_version(
     parts = __version__.split("+")[0].split(".")
     if len(parts) < 3:
         pytest.skip("installed release already minimal; the padding case is unprovable")
+    if parts[2] != "0":
+        pytest.skip(
+            f"padding appends .0, so the under-padded pin means {parts[0]}.{parts[1]}.0 — "
+            f"a genuinely different version from the installed {__version__} "
+            "(first non-zero-patch release exposed this); the case is provable "
+            "only when the patch digit is 0"
+        )
     project = _pin_project(tmp_path, ".".join(parts[:2]))
     assert run("doctor", project) == 0
     out = capsys.readouterr().out

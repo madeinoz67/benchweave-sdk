@@ -555,9 +555,11 @@ versions:
     git_ref: v0.7.1
   - tag: v0.7.0
     label: v0.7.0
+    latest: false
     git_ref: v0.7.0
   - tag: v0.6.0
     label: v0.6.0
+    latest: false
     git_ref: v0.6.0
   - tag: v0.4.1
     label: v0.4.1
