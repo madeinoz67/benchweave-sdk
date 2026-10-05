@@ -13,12 +13,31 @@
     <dt>device</dt><dd><code>{{ device.id }}</code></dd>
     <dt>transport</dt><dd>{{ device.transport }}</dd>
     <dt>connection key</dt><dd><code>{{ device.connection_key }}</code></dd>
+    {%- if scan_available and device.port_path %}
+    {# The endpoint fields (#385 §1.2): the physical candidate this row names. #}
+    <dt>port</dt><dd><code>{{ device.port_path }}</code></dd>
+    <dt>USB serial</dt><dd>{{ device.usb_serial or "—" }}</dd>
+    {%- endif %}
     <dt>state</dt>
     <dd>
       {%- if connected %}<span class="state state-connected">connected</span>
       {%- else %}<span class="state state-disconnected">disconnected</span>{% endif -%}
     </dd>
   </dl>
+  {%- if scan_available and device.port_path %}
+  {# The pick flow (#385 §1.5): each confirmed candidate carries its Bind
+     action; the bound candidate carries the marker instead. #}
+  {%- if binding and binding.port_path == device.port_path %}
+  <p><span class="state state-connected">bound endpoint</span></p>
+  {%- else %}
+  <form method="post" action="/devices/{{ device.id }}/bind"
+        hx-post="/devices/{{ device.id }}/bind"
+        hx-headers='{"X-CSRF-Token": "{{ csrf_token }}"}'>
+    <input type="hidden" name="port_path" value="{{ device.port_path }}">
+    <button type="submit">Bind this port</button>
+  </form>
+  {%- endif %}
+  {%- endif %}
   <p><a class="action" href="/devices/{{ device.id }}">Open device page</a></p>
   {% if has_presentation %}
   <h3>Presentation pages</h3>
@@ -42,11 +61,27 @@
     <p><strong>Scan refused</strong> — {{ scan_error.code }}: {{ scan_error.message }}</p>
   </div>
   {% endif %}
-  {% if not devices %}
+  {% if binding_error %}
+  <div class="notice notice-refused" role="alert">
+    <p><strong>Bind refused</strong> — {{ binding_error.code }}: {{ binding_error.message }}</p>
+  </div>
+  {% endif %}
+  {% if binding %}
+  <div class="notice">
+    <p><strong>Bound endpoint</strong> — {{ binding.endpoint_kind }}:
+      <code>{{ binding.port_path }}</code>{% if binding.usb_serial %} (USB serial <code>{{ binding.usb_serial }}</code>){% endif %},
+      bound {{ binding.bound_at }}.</p>
+    <form method="post" action="/devices/{{ plugin.device_id }}/unbind"
+          hx-post="/devices/{{ plugin.device_id }}/unbind"
+          hx-headers='{"X-CSRF-Token": "{{ csrf_token }}"}'>
+      <button type="submit">Unbind</button>
+    </form>
+  </div>
+  {% else %}
   <p class="hint">
-    No devices listed yet. A scan opens candidate ports and asks each for its
-    identity; nothing else is transmitted, and loading this page transmits
-    nothing.
+    No endpoint is bound yet. A scan opens candidate ports and asks each for
+    its identity; nothing else is transmitted, and loading this page
+    transmits nothing. Pick a listed port to bind it to this host.
   </p>
   {% endif %}
   <form method="post" action="/discover"
