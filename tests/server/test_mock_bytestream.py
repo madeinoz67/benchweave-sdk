@@ -281,6 +281,49 @@ def test_b2_response_only_row_under_the_default_dialect_is_typed(tmp_path: Path)
     assert "KeyError" not in message
 
 
+# --- ruling 2: the default dialect restores today's coercion ---------------
+
+
+def test_default_dialect_coerces_numeric_rows_as_base_does(tmp_path: Path) -> None:
+    """Lane 1's compat break, pinned: numeric rows (``{"request": 42}``)
+    connected and rehearsed at the merge base through ``str()`` coercion;
+    the branch had refused them. The default dialect coerces non-string
+    payloads exactly as ``mock_exchanges`` does today — the strict string
+    requirement (and its typed refusal) applies only under
+    ``send_receive``, where hex/ascii decoding needs strings."""
+    from benchweave_sdk.scaffold import create_project
+
+    project = tmp_path / "starter"
+    create_project(project, "example_plugin")
+    vectors = project / "src" / "example_plugin" / "vectors.json"
+    document = json.loads(vectors.read_text())
+    document["exchanges"] = [
+        {"request": "ID?\n", "response": "SDK Example,demo,SIM001,1.0.0\n"},
+        {"request": 42, "response": 55},
+    ]
+    vectors.write_text(json.dumps(document, indent=2) + "\n")
+    protocol = project / "src" / "example_plugin" / "protocol.py"
+    patched = protocol.read_text().replace(
+        'b"ID?\\n" if verb == "identify" else b"V?\\n"',
+        'b"ID?\\n" if verb == "identify" else b"42"',
+    )
+    # The coerced numeric response carries no trailing newline
+    # (str(55) is b"55"); the starter's parser expects one — the cell's
+    # parse accepts any nonempty frame.
+    patched = patched.replace("not raw.endswith(b\"\\n\")", "not raw")
+    protocol.write_text(patched)
+    plugin = load_plugin_project(project)
+    seam = _seam(plugin)
+    assert call(seam, "device_connect", {"device_id": "example_device"}) == {
+        "device_id": "example_device",
+        "connected": True,
+    }
+    reading = call(
+        seam, "parameter_read", {"device_id": "example_device", "parameter": "voltage"}
+    )
+    assert reading["value"] == 55.0
+
+
 # --- family D: the refusal taxonomy through the typed connect seam (4 cells) -
 
 

@@ -177,9 +177,25 @@ class VectorsScript:
     frames: list[FrameRow]
 
 
-def _decode_payload(text: Any, encoding: str, row_name: str, path: Path) -> bytes:
-    """Decode one row payload under its encoding; typed refusals name the row."""
+def _decode_payload(
+    text: Any, encoding: str, row_name: str, path: Path, *, coerce: bool
+) -> bytes:
+    """Decode one row payload under its encoding; typed refusals name the row.
+
+    ``coerce`` is the default dialect's compat mode (controller ruling 2,
+    the fold): under ``stream_exchange`` with ASCII payloads, non-string
+    payloads coerce through ``str()`` exactly as the merge base's
+    ``mock_exchanges`` did — numeric rows (``{"request": 42}``) rehearsed
+    at base and must keep rehearsing. The strict string requirement (and
+    its typed refusal) applies only where hex/ascii decoding needs a
+    string: the ``send_receive`` dialect, or any row that overrides its
+    encoding to hex.
+    """
     if not isinstance(text, str):
+        if coerce:
+            # Byte-for-byte the merge base's expression, UnicodeEncodeError
+            # included (the connect seam wraps it, as it always did).
+            return str(text).encode("ascii")
         raise PluginLoadError(
             f"standalone_vectors_row_shape: row {row_name}: payload is not a string "
             f"in {path}"
@@ -233,6 +249,7 @@ def vectors_script(plugin: LoadedPlugin) -> VectorsScript:
         raise PluginLoadError(
             f"standalone_transport_script: no exchanges in {path}"
         )
+    coerce = dialect == "stream_exchange" and encoding == "ascii"
     frames: list[FrameRow] = []
     for index, row in enumerate(rows):
         name = str(index)
@@ -253,6 +270,7 @@ def vectors_script(plugin: LoadedPlugin) -> VectorsScript:
                 f"standalone_vectors_encoding_unknown: {row_encoding!r} (expected "
                 f'"ascii" or "hex") for row {name} in {path}'
             )
+        coerce_row = coerce and row_encoding == "ascii"
         has_request = "request" in row
         has_response = "response" in row
         if not has_request and not has_response:
@@ -262,13 +280,17 @@ def vectors_script(plugin: LoadedPlugin) -> VectorsScript:
             )
         request: bytes | None = None
         if has_request:
-            request = _decode_payload(row["request"], row_encoding, name, path)
+            request = _decode_payload(
+                row["request"], row_encoding, name, path, coerce=coerce_row
+            )
         if not has_response:
             raise PluginLoadError(
                 f"standalone_vectors_row_shape: row {name}: carries no response "
                 f"in {path}"
             )
-        response = _decode_payload(row["response"], row_encoding, name, path)
+        response = _decode_payload(
+            row["response"], row_encoding, name, path, coerce=coerce_row
+        )
         if has_request is False and dialect != "send_receive":
             raise PluginLoadError(
                 f'standalone_vectors_row_unscriptable: row {name} is '
