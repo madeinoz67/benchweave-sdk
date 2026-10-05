@@ -256,7 +256,18 @@ def serve(
     if not no_open:
         import webbrowser
 
-        webbrowser.open(f"http://{host}:{port}")
+        # A host with no registered browser is headless Linux's ordinary
+        # state — webbrowser.open RAISES webbrowser.Error there, which used
+        # to crash serve before uvicorn ran (crash-before-bind; the old SDK
+        # preview carried this same guard, and the old gateway arm pinned
+        # it). Degrade to the notice: the server is the point, not the
+        # browser (review fold F1 on gateway PR #400).
+        try:
+            opened = webbrowser.open(f"http://{host}:{port}")
+        except webbrowser.Error:
+            opened = False
+        if not opened:
+            click.echo(f"Browser did not open; use http://{host}:{port}", err=True)
     uvicorn.run(app, host=host, port=port, log_level="warning")
 
 
