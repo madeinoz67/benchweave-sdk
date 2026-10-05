@@ -74,6 +74,7 @@ def _build_seam(
     device: str | None = None,
     open_port: Any = None,
     capture_root: Any = None,
+    bindings: Path | None = None,
 ) -> tuple[StandaloneSeam, ScenarioSelection | None]:
     """Compose the seam over one transport (§4.1's composition step).
 
@@ -87,14 +88,18 @@ def _build_seam(
     late-bound ``mock_plugin_session`` shape) so a reload's reconnect
     speaks the new plugin's own script; scenario mode additionally hands
     the seam the scenario wrapper so a reload re-binds the scenario
-    adapter over the reloaded project.
+    adapter over the reloaded project. The serial branch composes ONE
+    ``SerialEndpoint`` (issue #385 §1.4) shared by the session factory and
+    the seam, and opens the binding store HERE — a malformed
+    ``device-bindings.json`` refuses serve construction with the prefixed
+    message and exit 2, never a mid-request traceback.
     """
     from .scenarios import (
         ScenarioSelection,
         scenario_session,
         wrap_scenario_plugin,
     )
-    from .serial import serial_plugin_session
+    from .serial import SerialEndpoint, serial_plugin_session
     from .session import mock_plugin_session
 
     plugin = _load(project)
@@ -125,23 +130,36 @@ def _build_seam(
                 err=True,
             )
             raise SystemExit(2)
+        from .binding import BindingStore, bindings_path
+
+        try:
+            store = BindingStore.open(bindings_path(bindings))
+        except ValueError as exc:
+            click.echo(str(exc), err=True)
+            raise SystemExit(2) from exc
+        # The --device form is the constant endpoint (the binding bypass,
+        # §1.6): the store is loaded and validated but never consulted for
+        # resolution, and never modified.
+        endpoint = SerialEndpoint(device)
         return (
             StandaloneSeam(
                 serial_plugin_session(
                     plugin,
-                    device,
+                    endpoint,
                     open_port=open_port,
                     capture_root=capture_root,
                 ),
                 transport_kind="serial",
                 unattended=unattended,
-                # The no-re-probe clause (I3 §3.3): a scan serves the
-                # candidate whose enumerated name byte-equals this path from
-                # the session's identity instead of re-opening the live port
-                # (issue #389). Alias spellings of the same physical port
-                # (cu vs tty, by-id symlinks) do not match and still
-                # re-probe -- the alias-matching follow-up owns that.
-                serial_device_path=device,
+                serial_ports=None,
+                # The no-re-probe clause (I3 §3.3, issue #389) now flows
+                # from the endpoint's last_resolution — the path the live
+                # session actually opened. Alias spellings of the same
+                # physical port (cu vs tty, by-id symlinks) do not match
+                # and still re-probe — the alias-matching follow-up owns
+                # that.
+                serial_endpoint=endpoint,
+                bindings=store,
                 capture_root=capture_root,
             ),
             None,

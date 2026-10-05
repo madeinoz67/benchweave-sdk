@@ -254,15 +254,19 @@ def test_the_mock_transports_row_is_an_honest_null_endpoint(seam) -> None:
 def _serial_app(tmp_path: Path) -> tuple[Any, ...]:
     """A serial-transport app over the AR-4 fixture (TestClient + policy)."""
     fx = _scan_fixture(tmp_path)
-    from benchweave_sdk_server.serial import serial_plugin_session
+    from benchweave_sdk_server.serial import SerialEndpoint, serial_plugin_session
     from benchweave_sdk_server.web import build_app
 
-    session = serial_plugin_session(fx["plugin"], "/dev/match-a")
+    # The resolver form (issue #385): ONE endpoint object feeds both the
+    # session factory and the seam — the connected short-circuit reads the
+    # resolver's last_resolution, never a second source of truth.
+    endpoint = SerialEndpoint("/dev/match-a")
+    session = serial_plugin_session(fx["plugin"], endpoint)
     seam = StandaloneSeam(
         session,
         transport_kind="serial",
         serial_ports=fx["hooks"],
-        serial_device_path="/dev/match-a",
+        serial_endpoint=endpoint,
     )
     policy = GuardPolicy.complete(
         bound_host="127.0.0.1",
@@ -278,15 +282,16 @@ def _serial_app_with_hooks(tmp_path: Path, hooks: Any) -> tuple[Any, ...]:
     """A serial-transport app over the AR-4 fixture with EXPLICIT hooks
     (the fold's failure-injection seam)."""
     fx = _scan_fixture(tmp_path)
-    from benchweave_sdk_server.serial import serial_plugin_session
+    from benchweave_sdk_server.serial import SerialEndpoint, serial_plugin_session
     from benchweave_sdk_server.web import build_app
 
-    session = serial_plugin_session(fx["plugin"], "/dev/match-a")
+    endpoint = SerialEndpoint("/dev/match-a")
+    session = serial_plugin_session(fx["plugin"], endpoint)
     seam = StandaloneSeam(
         session,
         transport_kind="serial",
         serial_ports=hooks,
-        serial_device_path="/dev/match-a",
+        serial_endpoint=endpoint,
     )
     policy = GuardPolicy.complete(
         bound_host="127.0.0.1",
