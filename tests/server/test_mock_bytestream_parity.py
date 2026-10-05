@@ -246,12 +246,11 @@ def test_e5_a_quiet_line_answers_empty_not_an_error(leg: Any) -> None:
             else leg({})
         )
         try:
-            started = time.monotonic()
             reply = await surface.transfer(_receive(), _context(timeout_ms=2000))
             assert reply == {"data": b""}
-            # Outcome-only (R6): generous sanity bound, no duration assert —
-            # the backend answers after its quiet window, the mock at once.
-            assert time.monotonic() - started < 1.5
+            # Outcome-only (R6, resident L1): no wall-clock assert at all —
+            # the record's own §1.5 rules timing asserts out; the backend
+            # answers after its quiet window, the mock at once.
         finally:
             await surface.close()
 

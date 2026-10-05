@@ -451,7 +451,7 @@ def test_g_no_write_on_page_load_reconnect_and_preset_selection(tmp_path: Path) 
             follow_redirects=False,
         )
         client.get(f"/devices/{DEV}")
-    assert set(recorder.verbs) <= {"identify", "read"}, recorder.verbs
+    assert set(recorder.verbs) == {"identify", "read"}, recorder.verbs
 
 def test_g_control_the_recorder_hears_a_driven_write(tmp_path: Path) -> None:
     """The G cell's non-vacuity control (test_nowrite.py's deaf-recorder
