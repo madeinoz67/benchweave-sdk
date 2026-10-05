@@ -217,17 +217,23 @@ def _add_html_routes(
         never null."""
         return await seam.call(operation, arguments, surface="ui")
 
-    @app.get("/", response_class=HTMLResponse)
-    async def index(request: Request) -> Response:
+    async def _index_response(
+        request: Request,
+        *,
+        scan_error: dict[str, Any] | None = None,
+        binding_error: dict[str, Any] | None = None,
+    ) -> Response:
+        """The index page's ONE rendering path: the GET view, a refused
+        scan and a refused bind/unbind all render here, so a refusal is
+        never a silent redirect back (the M1 fold's render-the-refusal
+        idiom, carried onto the pick flow)."""
         if seam.transport_kind == "serial":
             # NFR-O3: a page load never transmits — GET serves the LAST
             # discovery result (host state, initially empty with a scan
             # prompt); scanning is the explicit POST below.
             devices = seam.discovery_cache or []
-            scan_error = None
         else:
             devices = (await seam.call("device_discover"))["devices"]
-            scan_error = None
         return _TEMPLATES.TemplateResponse(
             request=request,
             name="index.html",
@@ -238,8 +244,14 @@ def _add_html_routes(
                 has_presentation=pres().available,
                 scan_available=seam.transport_kind == "serial",
                 scan_error=scan_error,
+                binding_error=binding_error,
+                binding=seam.binding_row,
             ),
         )
+
+    @app.get("/", response_class=HTMLResponse)
+    async def index(request: Request) -> Response:
+        return await _index_response(request)
 
     @app.post("/discover")
     async def discover_route(request: Request) -> Response:
@@ -251,36 +263,16 @@ def _add_html_routes(
         try:
             await seam.call("device_discover")
         except SeamError as exc:
-            devices = seam.discovery_cache or []
-            return _TEMPLATES.TemplateResponse(
-                request=request,
-                name="index.html",
-                context=shared(
-                    devices=devices,
-                    connected=seam.session.connected,
-                    pages=pres().pages,
-                    has_presentation=pres().available,
-                    scan_available=True,
-                    scan_error={"code": exc.code, "message": exc.message},
-                ),
+            return await _index_response(
+                request, scan_error={"code": exc.code, "message": exc.message}
             )
         except (RuntimeError, ValueError, OSError) as exc:
             # The scan's failure classes that raise before any SeamError
             # exists (FOLD-E) render the same typed scan-refused row; the
             # seam maps them for REST and MCP too, so this arm is the
             # route's own defense, not the only reader.
-            devices = seam.discovery_cache or []
-            return _TEMPLATES.TemplateResponse(
-                request=request,
-                name="index.html",
-                context=shared(
-                    devices=devices,
-                    connected=seam.session.connected,
-                    pages=pres().pages,
-                    has_presentation=pres().available,
-                    scan_available=True,
-                    scan_error={"code": "not_ready", "message": str(exc)},
-                ),
+            return await _index_response(
+                request, scan_error={"code": "not_ready", "message": str(exc)}
             )
         return RedirectResponse(url="/", status_code=303)
 
@@ -635,9 +627,17 @@ def _add_html_routes(
             await _ui_call("device_connect", {"device_id": device_id})
         except SeamError as exc:
             # The M1 fold: a refused connect RENDERS its refusal — the
-            # operator never gets the silent prompt back instead.
+            # operator never gets the silent prompt back instead. The
+            # binding reasons ride the error row so the device page can
+            # offer the scan-and-re-pick action beside them (#385 §1.4).
             return await _render_device(
-                request, device_id, action_error={"code": exc.code, "message": exc.message}
+                request,
+                device_id,
+                action_error={
+                    "code": exc.code,
+                    "message": exc.message,
+                    "reason": exc.details.get("reason"),
+                },
             )
         return _redirect()
 
@@ -829,6 +829,43 @@ def _add_html_routes(
                     action_error={"code": "invalid_request", "message": str(exc)},
                 )
             return _redirect()
+
+    if seam.transport_kind == "serial":
+
+        @app.post("/devices/{device_id}/bind")
+        async def bind_endpoint(request: Request, device_id: str) -> Response:
+            """The operator's endpoint pick (issue #385 §1.5): a HOST-side
+            route over the seam's bind, not a catalogue operation (the
+            scenario-select precedent, D-B1) — UI-only and CSRF'd
+            deliberately, so a bearer-holding agent cannot silently move
+            the physical endpoint subsequent writes hit. Binding transmits
+            nothing: the pick records what the scan already confirmed."""
+            if device_id != seam.session.device_id:
+                return HTMLResponse("not found", status_code=404)
+            form = await request.form()
+            try:
+                await seam.bind_device(str(form.get("port_path", "")))
+            except SeamError as exc:
+                return await _index_response(
+                    request,
+                    binding_error={"code": exc.code, "message": exc.message},
+                )
+            return RedirectResponse(url="/", status_code=303)
+
+        @app.post("/devices/{device_id}/unbind")
+        async def unbind_endpoint(request: Request, device_id: str) -> Response:
+            """Remove the endpoint binding — the same host-state posture
+            and the same conflict-while-connected guard as bind."""
+            if device_id != seam.session.device_id:
+                return HTMLResponse("not found", status_code=404)
+            try:
+                await seam.unbind_device()
+            except SeamError as exc:
+                return await _index_response(
+                    request,
+                    binding_error={"code": exc.code, "message": exc.message},
+                )
+            return RedirectResponse(url="/", status_code=303)
 
 
 #: The event kinds whose SSE payload is a human advisory rather than the

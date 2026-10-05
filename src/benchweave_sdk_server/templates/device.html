@@ -11,6 +11,10 @@
 <div class="notice notice-refused" role="alert">
   <p><strong>{{ action_label or "Connect refused" }}</strong> — {{ action_error.code }}: {{ action_error.message }}{% if action_error.adapter %} (device answered {{ action_error.adapter.code }} / {{ action_error.adapter.dispatch_state }}){% endif %}</p>
 </div>
+{% if action_error.get("reason") in ("binding_absent", "binding_stale") %}
+{# The binding refusals offer the way out (#385 §1.4): the scan-and-pick flow. #}
+<p><a class="action" href="/">Scan and re-pick the endpoint</a></p>
+{% endif %}
 {% endif %}
 <div class="actions">
   {% if connected %}
