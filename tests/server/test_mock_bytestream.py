@@ -120,9 +120,31 @@ def test_a2_parameter_read(tmp_path: Path) -> None:
     assert reading["quality"] == "valid"
 
 
+async def _walk_head(seam: StandaloneSeam) -> None:
+    """Walk the fixture's scripted head in order: identify (the connect),
+    the read, the write triad. Cells that continue the conversation past
+    the head (capture, the poll cycle) start from here — the script is
+    linear and demand-ordered."""
+    await seam.call("device_connect", {"device_id": DEV})
+    reading = await seam.call(
+        "parameter_read", {"device_id": DEV, "parameter": "sample_avg"}
+    )
+    assert reading["value"] == 2.5
+    await seam.call(
+        "parameter_stage",
+        {"device_id": DEV, "parameter": "sample_avg", "value": 3.0},
+    )
+    applied = await seam.call("parameter_apply", {"device_id": DEV})
+    assert applied["applied"][0]["value"] == 3.0
+
+
 def test_a3_write_stage_apply_readback(tmp_path: Path) -> None:
     seam = _seam(_plugin())
     call(seam, "device_connect", {"device_id": DEV})
+    # The fixture's scripted conversation walks identify, read, then the
+    # write triad; this read is that conversation's poll step.
+    first = call(seam, "parameter_read", {"device_id": DEV, "parameter": "sample_avg"})
+    assert first["value"] == 2.5
     staged = call(
         seam, "parameter_stage",
         {"device_id": DEV, "parameter": "sample_avg", "value": 3.0},
@@ -139,21 +161,35 @@ def test_a4_bounded_capture_serves_the_declared_count(tmp_path: Path) -> None:
     import asyncio
 
     seam = _capture_seam(_plugin(), tmp_path)
-    call(seam, "device_connect", {"device_id": DEV})
-    started = call(
-        seam,
-        "capture_start",
-        {
-            "device_id": DEV,
-            "format": "waveform_f64le",
-            "count": 128,
-            "sample_interval_s": 0.001,
-            "unit": "V",
-        },
+
+    async def scenario() -> dict:
+        # One loop for the whole capture: the watcher task the host arms at
+        # capture_start must outlive the call (a loop per call would cancel
+        # it at each exit — the lifecycle suite's single-scenario shape).
+        await seam.call("device_connect", {"device_id": DEV})
+        await seam.call(
+            "parameter_read", {"device_id": DEV, "parameter": "sample_avg"}
         )
-    assert started["state"] == "capturing"
-    assert started["bound"] == {"kind": "count", "count": 128, "bytes": 1024}
-    outcome = asyncio.run(seam.await_capture())
+        await seam.call(
+            "parameter_stage",
+            {"device_id": DEV, "parameter": "sample_avg", "value": 3.0},
+        )
+        await seam.call("parameter_apply", {"device_id": DEV})
+        started = await seam.call(
+            "capture_start",
+            {
+                "device_id": DEV,
+                "format": "waveform_f64le",
+                "count": 128,
+                "sample_interval_s": 0.001,
+                "unit": "V",
+            },
+        )
+        assert started["state"] == "capturing"
+        assert started["bound"] == {"kind": "count", "count": 128, "bytes": 1024}
+        return await seam.await_capture()
+
+    outcome = asyncio.run(scenario())
     assert outcome["state"] == "published"
     assert outcome["stop_reason"] == "completed"
     assert outcome["byte_length"] == 1024
@@ -168,21 +204,48 @@ def test_a4_bounded_capture_serves_the_declared_count(tmp_path: Path) -> None:
 
 
 def test_a5_reconnect_respeaks_the_establishment_head(tmp_path: Path) -> None:
-    seam = _seam(_plugin())
-    call(seam, "device_connect", {"device_id": DEV})
-    reading = call(seam, "parameter_read", {"device_id": DEV, "parameter": "sample_avg"})
-    assert reading["value"] == 2.5
-    # One poll cycle past the head — the response-only status row releases,
-    # the tail recycles, and reads keep answering.
-    for _ in range(3):
-        reading = call(seam, "parameter_read", {"device_id": DEV, "parameter": "sample_avg"})
+    import asyncio
+
+    seam = _capture_seam(_plugin(), tmp_path)
+
+    async def scenario() -> None:
+        await _walk_head(seam)
+        started = await seam.call(
+            "capture_start",
+            {
+                "device_id": DEV,
+                "format": "waveform_f64le",
+                "count": 128,
+                "sample_interval_s": 0.001,
+                "unit": "V",
+            },
+        )
+        assert started["state"] == "capturing"
+        outcome = await seam.await_capture()
+        assert outcome["state"] == "published"
+        # Polls past the capture row: the response-only status row releases,
+        # the tail recycles, and reads keep answering.
+        for _ in range(3):
+            reading = await seam.call(
+                "parameter_read", {"device_id": DEV, "parameter": "sample_avg"}
+            )
+            assert reading["value"] == 2.5
+        assert (
+            await seam.call("device_disconnect", {"device_id": DEV})
+        )["connected"] is False
+        # The M1-fold shape: the reconnect's services are minted fresh and
+        # the new conversation starts at the establishment head again.
+        assert (
+            await seam.call("device_connect", {"device_id": DEV})
+        )["connected"] is True
+        identity = await seam.call("device_get", {"device_id": DEV})
+        assert identity["model"] == "frames-demo"
+        reading = await seam.call(
+            "parameter_read", {"device_id": DEV, "parameter": "sample_avg"}
+        )
         assert reading["value"] == 2.5
-    assert call(seam, "device_disconnect", {"device_id": DEV})["connected"] is False
-    assert call(seam, "device_connect", {"device_id": DEV})["connected"] is True
-    identity = call(seam, "device_get", {"device_id": DEV})
-    assert identity["model"] == "frames-demo"
-    reading = call(seam, "parameter_read", {"device_id": DEV, "parameter": "sample_avg"})
-    assert reading["value"] == 2.5
+
+    asyncio.run(scenario())
 
 
 # --- family B: response-only rows on both dialects (2 cells; B1 host-level) --

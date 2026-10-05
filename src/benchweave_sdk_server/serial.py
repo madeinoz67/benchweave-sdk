@@ -58,6 +58,33 @@ _JOIN_TIMEOUT_S = 5.0
 _IDLE_POLL_S = 0.005
 
 
+def _stream_receive_bounds(t: dict[str, Any], ceiling: int) -> tuple[int, bytes, int]:
+    """The section 8.1 receive bounds against one ceiling, the shared
+    definition the serial backend and the byte-stream mock both validate
+    through (issue #394: outcome parity is pinned, not hoped — one
+    definition cannot drift). The A02 clamp: the ceiling itself is
+    ``min(transfer_ceiling, descriptor max_frame_bytes)`` — the plugin's
+    own declared bound governs."""
+    max_bytes = t["max_bytes"]
+    termination = t["termination"]
+    exact = t["exact_bytes"]
+    if (
+        not isinstance(max_bytes, int)
+        or isinstance(max_bytes, bool)
+        or not 1 <= max_bytes <= ceiling
+    ):
+        raise ValueError(f"max_bytes must be 1..{ceiling}")
+    if termination not in _TERMINATORS:  # serial has no "eom"
+        raise ValueError("termination must be 'lf' or 'crlf' on a serial port")
+    if exact is not None and (
+        not isinstance(exact, int)
+        or isinstance(exact, bool)
+        or not 0 <= exact <= max_bytes
+    ):
+        raise ValueError("exact_bytes must be None or 0..max_bytes")
+    return max_bytes, _TERMINATORS[termination], exact or 0
+
+
 class Transport(Protocol):
     """pyserial's surface, injectable so tests never need a real port.
 
@@ -308,53 +335,31 @@ class SerialLink:
             self._transport.close()
 
 
-class SerialCaptureServices:
-    """All eight CaptureServices members over one serial link.
+class WriterBackedCaptureServices:
+    """The five capture members over per-capture :class:`StandaloneCaptureWriter`
+    instances with block-buffered appends.
 
-    Productises the guide's ``SerialStandaloneHost`` (whose docstring and
-    cells this class mirrors): the transport side validates the GENERIC
-    OTDP section 8.1 stream transactions exactly as the guide does — strict
-    field sets, only ``lf``/``crlf`` terminators on serial, ``eom`` refused,
-    ``exact_bytes`` precedence, the quiet-line ``{"data": b""}`` after the
-    quiet window, and unfinished receives staying buffered across
-    deadlines — through the link's reader-thread ring. The three capture
-    members delegate to a PER-CAPTURE :class:`StandaloneCaptureWriter`
-    (one capture in flight per writer instance; a finalised or aborted
-    capture retires its writer, so a long-lived host captures repeatedly)
-    with block-buffered appends: buffered bytes flush to the writer at
-    64 KiB, at finalise, and abort discards them, so a streaming adapter's
-    per-frame appends cannot explode the writer's one-file-per-chunk
-    staging; the manifest digest is computed by the writer over flushed
-    bytes only. ``record_evidence`` appends JSON lines, the host's own
-    ``at``/``operation_id`` fields winning over a caller's (the guide's
-    shape, unchanged). Real clocks throughout.
+    Issue #394: extracted verbatim from :class:`SerialCaptureServices` so the
+    byte-stream mock host serves the SAME capture lifecycle the serial
+    backend does — one definition, two hosts. One capture in flight per
+    writer instance; a finalised or aborted capture retires its writer, so a
+    long-lived host captures repeatedly. Buffered bytes flush to the writer
+    at 64 KiB, at finalise, and abort discards them, so a streaming
+    adapter's per-frame appends cannot explode the writer's one-file-per-chunk
+    staging; the manifest digest is computed by the writer over flushed bytes
+    only.
     """
 
     _BLOCK = 64 * 1024
 
     def __init__(
         self,
-        link: SerialLink,
         *,
-        max_frame_bytes: int,
         capture_root: Any = None,
-        evidence_path: Any = None,
         capture_max_bytes: int | None = None,
     ) -> None:
-        if (
-            not isinstance(max_frame_bytes, int)
-            or isinstance(max_frame_bytes, bool)
-            or max_frame_bytes < 1
-        ):
-            raise ValueError(
-                "standalone_serial_frame: max_frame_bytes must be a positive integer"
-            )
         self._capture_max_bytes = capture_max_bytes
-        self._link = link
-        self._max_frame_bytes = max_frame_bytes
-        self._ceiling = min(link.transfer_ceiling, max_frame_bytes)
         self._capture_root = capture_root
-        self._evidence_path = evidence_path
         self._writers: dict[str, StandaloneCaptureWriter] = {}
         self._buffers: dict[str, bytearray] = {}
         self._flushed: dict[str, int] = {}
@@ -365,106 +370,6 @@ class SerialCaptureServices:
         self._reservations: dict[str, int] = {}
         self._capture_meta: dict[str, dict[str, Any]] = {}
         self._meta_written: set[str] = set()
-        self.evidence: list[dict[str, Any]] = []
-
-    @property
-    def link(self) -> SerialLink:
-        """The underlying link (the host's own close path uses it)."""
-        return self._link
-
-    # clocks
-    def monotonic(self) -> float:
-        """The real monotonic clock — deadlines must expire on live time."""
-        return time.monotonic()
-
-    def utc_now(self) -> str:
-        """The real UTC now, in the SDK stamp's ISO-8601 ``Z`` shape."""
-        return datetime.now(UTC).isoformat().replace("+00:00", "Z")
-
-    # transport (OTDP section 8.1 stream transactions)
-    def _live(self, context: Any) -> None:
-        if context.is_cancelled() or self.monotonic() >= context.deadline_monotonic:
-            raise TimeoutError("operation cancelled or expired")
-
-    def _receive_bounds(self, t: dict[str, Any]) -> tuple[int, bytes, int]:
-        """The receive bounds with the A02 clamp: the per-receive ceiling is
-        ``min(transfer_ceiling, descriptor max_frame_bytes)`` — the plugin's
-        own declared bound governs."""
-        max_bytes = t["max_bytes"]
-        termination = t["termination"]
-        exact = t["exact_bytes"]
-        if (
-            not isinstance(max_bytes, int)
-            or isinstance(max_bytes, bool)
-            or not 1 <= max_bytes <= self._ceiling
-        ):
-            raise ValueError(f"max_bytes must be 1..{self._ceiling}")
-        if termination not in _TERMINATORS:  # serial has no "eom"
-            raise ValueError("termination must be 'lf' or 'crlf' on a serial port")
-        if exact is not None and (
-            not isinstance(exact, int)
-            or isinstance(exact, bool)
-            or not 0 <= exact <= max_bytes
-        ):
-            raise ValueError("exact_bytes must be None or 0..max_bytes")
-        return max_bytes, _TERMINATORS[termination], exact or 0
-
-    async def transfer(self, transaction: dict[str, Any], context: Any) -> dict[str, Any]:
-        """One bounded exchange over the link, the guide's §8.1 discipline:
-        grammar first (refused before any I/O), then the context liveness,
-        then the write (short counts refuse), then the receive through the
-        link's ring with the context's remaining deadline."""
-        kind = transaction.get("kind")
-        if kind not in _FIELDS or set(transaction) != _FIELDS[kind]:
-            raise ValueError(
-                f"not a section 8.1 stream transaction: {sorted(transaction)}"
-            )
-        max_bytes, terminator, exact = 0, b"", 0
-        if kind != "stream_send":
-            max_bytes, terminator, exact = self._receive_bounds(transaction)
-        if kind != "stream_receive" and not isinstance(transaction["data"], bytes):
-            raise ValueError("data must be bytes")
-        self._live(context)
-        if kind != "stream_receive" and not getattr(context, "dispatched", False):
-            # The mock's discipline on the real backend (A06): a transmit
-            # happens only under a dispatch marker — honest dispatch_state
-            # reporting is a conformance requirement, not a mock luxury.
-            # The tolerance is getattr, matching the mock's own read of
-            # minimal contexts (a context without the attribute refuses,
-            # the same as one whose marker was never set).
-            raise ConformanceError("Transmission needs a dispatch marker")
-        if kind != "stream_receive":
-            data = transaction["data"]
-            try:
-                sent = await asyncio.to_thread(self._link.write, data)
-            except OSError as error:
-                raise ConnectionError(f"serial write failed: {error}") from error
-            if sent is not None and sent != len(data):
-                raise ConnectionError(f"serial write reported {sent} of {len(data)} bytes")
-            if kind == "stream_send":
-                return {}
-        received = await asyncio.to_thread(
-            self._link.take,
-            max_bytes=max_bytes,
-            terminator=terminator,
-            exact=exact,
-            deadline=context.deadline_monotonic,
-        )
-        return {"data": received}
-
-    async def close_transport(self, context: Any) -> None:
-        """Close the link; tolerant of repeated calls (Adapter.close rule)."""
-        self._link.close()
-
-    async def record_evidence(self, entry: dict[str, Any], context: Any) -> None:
-        """Append one evidence entry as a JSON line; the host's own ``at``
-        and ``operation_id`` fields win over a caller's (the guide's shape,
-        unchanged)."""
-        record = {**entry, "at": self.utc_now(), "operation_id": context.operation_id}
-        self.evidence.append(record)
-        if self._evidence_path is not None:
-            with self._evidence_path.open("a", encoding="utf-8") as stream:
-                stream.write(json.dumps(record, sort_keys=True) + "\n")
 
     # capture: per-capture writers with block-buffered appends
 
@@ -649,6 +554,129 @@ class SerialCaptureServices:
             if event is not None and not (event / "manifest.json").exists():
                 shutil.rmtree(event, ignore_errors=True)
 
+
+class SerialCaptureServices(WriterBackedCaptureServices):
+    """All eight CaptureServices members over one serial link.
+
+    Productises the guide's ``SerialStandaloneHost`` (whose docstring and
+    cells this class mirrors): the transport side validates the GENERIC
+    OTDP section 8.1 stream transactions exactly as the guide does — strict
+    field sets, only ``lf``/``crlf`` terminators on serial, ``eom`` refused,
+    ``exact_bytes`` precedence, the quiet-line ``{"data": b""}`` after the
+    quiet window, and unfinished receives staying buffered across
+    deadlines — through the link's reader-thread ring. The five capture
+    members are inherited from :class:`WriterBackedCaptureServices`.
+    ``record_evidence`` appends JSON lines, the host's own
+    ``at``/``operation_id`` fields winning over a caller's (the guide's
+    shape, unchanged). Real clocks throughout.
+    """
+
+    def __init__(
+        self,
+        link: SerialLink,
+        *,
+        max_frame_bytes: int,
+        capture_root: Any = None,
+        evidence_path: Any = None,
+        capture_max_bytes: int | None = None,
+    ) -> None:
+        if (
+            not isinstance(max_frame_bytes, int)
+            or isinstance(max_frame_bytes, bool)
+            or max_frame_bytes < 1
+        ):
+            raise ValueError(
+                "standalone_serial_frame: max_frame_bytes must be a positive integer"
+            )
+        super().__init__(
+            capture_root=capture_root, capture_max_bytes=capture_max_bytes
+        )
+        self._link = link
+        self._max_frame_bytes = max_frame_bytes
+        self._ceiling = min(link.transfer_ceiling, max_frame_bytes)
+        self._evidence_path = evidence_path
+        self.evidence: list[dict[str, Any]] = []
+
+    @property
+    def link(self) -> SerialLink:
+        """The underlying link (the host's own close path uses it)."""
+        return self._link
+
+    # clocks
+    def monotonic(self) -> float:
+        """The real monotonic clock — deadlines must expire on live time."""
+        return time.monotonic()
+
+    def utc_now(self) -> str:
+        """The real UTC now, in the SDK stamp's ISO-8601 ``Z`` shape."""
+        return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+    # transport (OTDP section 8.1 stream transactions)
+    def _live(self, context: Any) -> None:
+        if context.is_cancelled() or self.monotonic() >= context.deadline_monotonic:
+            raise TimeoutError("operation cancelled or expired")
+
+    def _receive_bounds(self, t: dict[str, Any]) -> tuple[int, bytes, int]:
+        """The receive bounds against this link's clamped ceiling (the
+        shared ``_stream_receive_bounds`` definition — see its docstring)."""
+        return _stream_receive_bounds(t, self._ceiling)
+
+    async def transfer(self, transaction: dict[str, Any], context: Any) -> dict[str, Any]:
+        """One bounded exchange over the link, the guide's §8.1 discipline:
+        grammar first (refused before any I/O), then the context liveness,
+        then the write (short counts refuse), then the receive through the
+        link's ring with the context's remaining deadline."""
+        kind = transaction.get("kind")
+        if kind not in _FIELDS or set(transaction) != _FIELDS[kind]:
+            raise ValueError(
+                f"not a section 8.1 stream transaction: {sorted(transaction)}"
+            )
+        max_bytes, terminator, exact = 0, b"", 0
+        if kind != "stream_send":
+            max_bytes, terminator, exact = self._receive_bounds(transaction)
+        if kind != "stream_receive" and not isinstance(transaction["data"], bytes):
+            raise ValueError("data must be bytes")
+        self._live(context)
+        if kind != "stream_receive" and not getattr(context, "dispatched", False):
+            # The mock's discipline on the real backend (A06): a transmit
+            # happens only under a dispatch marker — honest dispatch_state
+            # reporting is a conformance requirement, not a mock luxury.
+            # The tolerance is getattr, matching the mock's own read of
+            # minimal contexts (a context without the attribute refuses,
+            # the same as one whose marker was never set).
+            raise ConformanceError("Transmission needs a dispatch marker")
+        if kind != "stream_receive":
+            data = transaction["data"]
+            try:
+                sent = await asyncio.to_thread(self._link.write, data)
+            except OSError as error:
+                raise ConnectionError(f"serial write failed: {error}") from error
+            if sent is not None and sent != len(data):
+                raise ConnectionError(f"serial write reported {sent} of {len(data)} bytes")
+            if kind == "stream_send":
+                return {}
+        received = await asyncio.to_thread(
+            self._link.take,
+            max_bytes=max_bytes,
+            terminator=terminator,
+            exact=exact,
+            deadline=context.deadline_monotonic,
+        )
+        return {"data": received}
+
+    async def close_transport(self, context: Any) -> None:
+        """Close the link; tolerant of repeated calls (Adapter.close rule)."""
+        self._link.close()
+
+    async def record_evidence(self, entry: dict[str, Any], context: Any) -> None:
+        """Append one evidence entry as a JSON line; the host's own ``at``
+        and ``operation_id`` fields win over a caller's (the guide's shape,
+        unchanged)."""
+        record = {**entry, "at": self.utc_now(), "operation_id": context.operation_id}
+        self.evidence.append(record)
+        if self._evidence_path is not None:
+            with self._evidence_path.open("a", encoding="utf-8") as stream:
+                stream.write(json.dumps(record, sort_keys=True) + "\n")
 
 def _serial_settings(plugin: Any) -> dict[str, Any]:
     """The descriptor's transport settings (the serial knobs the opener uses)."""

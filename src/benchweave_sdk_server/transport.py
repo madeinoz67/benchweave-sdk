@@ -16,6 +16,11 @@ and changes exactly those two things:
 Everything else — exact-dict matching, dispatch-marker enforcement,
 ``ConformanceError`` on mismatch, evidence recording — is inherited
 unchanged from the tested SDK class. The SDK file itself is untouched.
+
+:class:`ByteStreamMockHost` (issue #394) is the demand-driven sibling for
+binary §8.1 SEND/RECEIVE plugins: the same recycle/clock posture with frame
+semantics and the serial backend's exact RECEIVE outcomes, one
+``_stream_receive_bounds`` definition shared with it.
 """
 
 from __future__ import annotations
@@ -27,7 +32,10 @@ from datetime import UTC, datetime
 from typing import Any
 
 from benchweave_sdk.interfaces import OperationContext
-from benchweave_sdk.testing import MockHost
+from benchweave_sdk.testing import ConformanceError, MockHost
+
+from .serial import _FIELDS, WriterBackedCaptureServices, _stream_receive_bounds
+from .session import FrameRow
 
 
 class LoopingMockHost(MockHost):
@@ -114,3 +122,214 @@ class LoopingMockHost(MockHost):
             self._script = deepcopy(self._cycle)
             self._plays += 1
         return await super().transfer(transaction, context)
+
+
+class ByteStreamMockHost(WriterBackedCaptureServices, MockHost):
+    """A demand-driven frame-script host for binary §8.1 SEND/RECEIVE
+    plugins (issue #394).
+
+    ``LoopingMockHost``'s sibling: the same real-clock overrides, the same
+    establishment/tail-recycle semantics (``cycles``/``establishment``/
+    ``_plays``), the same inherited ``close_transport``, evidence recording
+    and honest-exhaustion posture — with ``transfer`` replaced by frame
+    semantics and the capture members served by the SAME
+    ``WriterBackedCaptureServices`` base the serial backend uses (one
+    capture lifecycle, two hosts).
+
+    The script is ordered :class:`FrameRow`\\s. Response-only rows
+    (``request is None`` — device-initiated frames) release their bytes to
+    the inbound stream in ROW ORDER: whenever the oldest unconsumed row is
+    response-only, its bytes are appended and the row consumed, repeating
+    until a request-bearing row is at the head (the advance rule; a receive
+    against a pending request row answers the quiet line, exactly as on
+    real hardware). A ``stream_send`` must match the head request-bearing
+    row's frame exactly — a genuine adapter/script disagreement is a
+    ``ConformanceError`` carrying the row key and both frames hex-rendered
+    (the exact-match discipline at frame granularity; the one-line format
+    is API, STD-4). ``stream_receive`` serves the inbound stream with the
+    serial backend's exact OUTCOMES (not timings — the quiet line answers
+    immediately, not after the 100 ms window; a receive that cannot
+    complete raises the backend's ``TimeoutError`` with the partial bytes
+    retained): positive ``exact_bytes`` pops exactly N when buffered,
+    otherwise the terminator is searched within the first ``max_bytes``
+    (found: returned including the terminator; ``max_bytes`` filled without
+    one: those bytes are DISCARDED and ``ValueError`` raised — an
+    incomplete frame is never returned as complete). Bounds validate
+    through the shared ``_stream_receive_bounds``; field sets through the
+    shared ``_FIELDS`` — one definition for backend and mock, refused
+    identically on both.
+
+    Parameters
+    ----------
+    rows
+        The scripted :class:`FrameRow`\\s, in demand order (establishment
+        first).
+    cycles, establishment
+        :class:`LoopingMockHost`'s exact recycle parameters.
+    max_frame_bytes
+        The descriptor's own frame bound — the receive ceiling (A02: the
+        plugin's declared bound is the bound).
+    capture_root, capture_max_bytes
+        The capture configuration threaded through
+        :class:`WriterBackedCaptureServices`.
+    """
+
+    def __init__(
+        self,
+        rows: list[FrameRow],
+        *,
+        cycles: int | None = None,
+        establishment: int = 1,
+        max_frame_bytes: int = 128,
+        capture_root: Any = None,
+        capture_max_bytes: int | None = None,
+    ) -> None:
+        WriterBackedCaptureServices.__init__(
+            self, capture_root=capture_root, capture_max_bytes=capture_max_bytes
+        )
+        MockHost.__init__(self, [])
+        if cycles is not None and cycles < 1:
+            raise ValueError("standalone_transport_cycles: cycles must be >= 1 or None")
+        if establishment < 0 or establishment > len(rows):
+            raise ValueError(
+                "standalone_transport_establishment: must index into the script"
+            )
+        if (
+            not isinstance(max_frame_bytes, int)
+            or isinstance(max_frame_bytes, bool)
+            or max_frame_bytes < 1
+        ):
+            raise ValueError(
+                "standalone_transport_frame: max_frame_bytes must be a positive integer"
+            )
+        original = list(rows)
+        if len(original) > establishment:
+            self._cycle = deque(original[establishment:])
+        else:
+            self._cycle = deque(original)
+        self._rows = deque(original)
+        self._cycles = cycles
+        self._plays = 1
+        self._ceiling = max_frame_bytes
+        self._inbound = bytearray()
+
+    @property
+    def plays(self) -> int:
+        """How many times the poll cycle has been made available so far."""
+        return self._plays
+
+    @property
+    def pending(self) -> int:
+        """The number of scripted rows not yet consumed."""
+        return len(self._rows)
+
+    def monotonic(self) -> float:
+        """The real monotonic clock — deadlines must expire on live time."""
+        return time.monotonic()
+
+    def utc_now(self) -> str:
+        """The real UTC now, in the SDK stamp's ISO-8601 ``Z`` shape."""
+        return datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+    def _check(self, context: OperationContext) -> None:
+        # Judge cancellation and expiry on the same real clock the deadlines
+        # are minted on (LoopingMockHost's override, verbatim).
+        if context.is_cancelled() or time.monotonic() >= context.deadline_monotonic:
+            raise TimeoutError("Operation cancelled or expired")
+
+    def _may_recycle(self) -> bool:
+        return self._cycles is None or self._plays < self._cycles
+
+    def _advance(self) -> None:
+        """Release leading response-only rows to the inbound stream, row
+        order, recycling the tail AT MOST ONCE per advance (the bound: an
+        all-response-only cycle with unlimited cycles would otherwise
+        release forever; one recycle per demand keeps the release finite
+        while a receive still drains a whole unsolicited burst)."""
+        recycled = False
+        while True:
+            while self._rows and self._rows[0].request is None:
+                self._inbound += self._rows.popleft().response
+            if self._rows or recycled or not self._may_recycle():
+                return
+            self._rows = deque(self._cycle)
+            self._plays += 1
+            recycled = True
+
+    def _pop(self, count: int) -> bytes:
+        out = bytes(self._inbound[:count])
+        del self._inbound[:count]
+        return out
+
+    def _send_frame(self, data: Any) -> None:
+        """Match one command frame against the head request-bearing row."""
+        if not isinstance(data, bytes):
+            raise ValueError("data must be bytes")
+        self._advance()
+        if not self._rows:
+            raise ConformanceError("Unexpected transfer: no scripted exchange remains")
+        row = self._rows[0]
+        if row.request is None:
+            # Unreachable after _advance released every leading
+            # response-only row; the guard keeps the invariant local.
+            raise ConformanceError("Unexpected transfer: no scripted exchange remains")
+        if data != row.request:
+            raise ConformanceError(
+                f"frame mismatch at row {row.name}: "
+                f"expected {row.request.hex()}, got {data.hex()}"
+            )
+        self._rows.popleft()
+        self._inbound += row.response
+
+    def _serve_receive(
+        self, max_bytes: int, terminator: bytes, exact: int
+    ) -> bytes:
+        """The inbound stream under the backend's exact receive outcomes:
+        exact precedence, terminator search within ``max_bytes``, the
+        discard+ValueError on an overlong unterminated run, the quiet-line
+        ``b""`` on an empty stream, and the retained-partial TimeoutError
+        (raised immediately — the outcome the backend reaches at the
+        deadline; nothing can arrive during this call)."""
+        if exact:
+            if len(self._inbound) >= exact:
+                return self._pop(exact)
+        else:
+            end = self._inbound[:max_bytes].find(terminator)
+            if end >= 0:
+                return self._pop(end + len(terminator))
+            if len(self._inbound) >= max_bytes:
+                del self._inbound[:max_bytes]
+                raise ValueError(f"no terminator within {max_bytes} bytes")
+        if not self._inbound:
+            return b""
+        raise TimeoutError("receive deadline expired; a partial frame stays buffered")
+
+    def _receive(self, transaction: dict[str, Any]) -> bytes:
+        self._advance()
+        max_bytes, terminator, exact = _stream_receive_bounds(
+            transaction, self._ceiling
+        )
+        return self._serve_receive(max_bytes, terminator, exact)
+
+    async def transfer(
+        self, transaction: dict[str, Any], context: OperationContext
+    ) -> dict[str, Any]:
+        kind = transaction.get("kind")
+        if kind not in _FIELDS or set(transaction) != _FIELDS[kind]:
+            raise ValueError(
+                f"not a section 8.1 stream transaction: {sorted(transaction)}"
+            )
+        self._check(context)
+        if self.closed:
+            raise ConnectionError("Transport closed")
+        if kind != "stream_receive" and not getattr(context, "dispatched", False):
+            raise ConformanceError("Transmission needs a dispatch marker")
+        if kind == "stream_receive":
+            data = self._receive(transaction)
+            self.transfers.append(deepcopy(transaction))
+            return {"data": data}
+        self._send_frame(transaction["data"])
+        self.transfers.append(deepcopy(transaction))
+        if kind == "stream_send":
+            return {}
+        return {"data": self._receive(transaction)}
