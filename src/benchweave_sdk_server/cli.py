@@ -155,7 +155,7 @@ def _build_seam(
         raise SystemExit(2)
     return (
         StandaloneSeam(
-            mock_plugin_session(plugin),
+            mock_plugin_session(plugin, capture_root=capture_root),
             transport_kind=transport,
             unattended=unattended,
             capture_root=capture_root,

@@ -60,6 +60,13 @@ plugin source package. A preset is configuration, not a retained measurement.
 > standard-library-only for the current gateway loader. Run the synthetic
 > identify/read example before replacing it.
 
+
+Declare the transaction dialect in `vectors.json` with the
+`transaction_dialect` key. Use `"encoding": "hex"` for binary frames. A
+row without a request is a device-initiated frame. The "Mock transports"
+section of the SDK user guide states the row contract and what the mock
+can and cannot rehearse.
+
 ## 3. Demonstrate behaviour
 
 > Extend the exact-exchange tests for supported operations, wrong correlation,

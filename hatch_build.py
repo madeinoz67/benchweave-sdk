@@ -18,7 +18,7 @@ STAMP_NAME = "_GENERATED.txt"
 SCAFFOLD_REQUIRED = (
     "copier.yml",
     "template/.copier-answers.yml.jinja",
-    "template/AI-GUIDE.md",
+    "template/AI-GUIDE.md.jinja",
 )
 
 

@@ -138,6 +138,192 @@ class LoadedPlugin:
         return self.project_root / "src" / self.package
 
 
+#: The session-level per-receive ceiling when the descriptor is silent —
+#: the serial session's own fallback (controller ruling 3, the fold: the
+#: mock had minted 128; one resolution, both hosts).
+SESSION_RECEIVE_CEILING = 4096
+
+#: The backend link's default transfer ceiling — the descriptor bound never
+#: exceeds it on either host (the serial link's constructor default is this
+#: same constant, imported from here: one definition).
+TRANSFER_CEILING = 64 * 1024
+
+
+def transport_ceiling(settings: dict[str, Any]) -> int:
+    """The per-receive ceiling both hosts clamp to: the descriptor's
+    declared ``max_frame_bytes``, the session fallback
+    :data:`SESSION_RECEIVE_CEILING` when silent, clamped by the backend's
+    :data:`TRANSFER_CEILING` (A02: the plugin's declared bound is the
+    bound — and a declared bound above the link's own ceiling is still
+    bounded by the link)."""
+    declared = int(settings.get("max_frame_bytes", 0)) or SESSION_RECEIVE_CEILING
+    return min(declared, TRANSFER_CEILING)
+
+
+#: The vectors.json dialect vocabulary (issue #394's owner ruling (a)):
+#: ``stream_exchange`` is the omitted-key default — today's behaviour,
+#: byte-for-byte — and ``send_receive`` scripts binary §8.1 SEND/RECEIVE
+#: conversations, request-less rows valid (device-initiated frames).
+_DIALECTS = ("stream_exchange", "send_receive")
+
+#: The payload encoding vocabulary: ``ascii`` (a row string's ASCII bytes —
+#: today's behaviour) and ``hex`` (``bytes.fromhex``).
+_ENCODINGS = ("ascii", "hex")
+
+
+@dataclass(frozen=True, slots=True)
+class FrameRow:
+    """One decoded vectors.json row of a ``send_receive`` script.
+
+    ``request`` is ``None`` on a response-only row (a device-initiated
+    frame, released to the inbound stream in row order); ``name`` is the
+    row's declared name or its index, echoed in diagnostics.
+    """
+
+    name: str
+    request: bytes | None
+    response: bytes
+
+
+@dataclass(frozen=True, slots=True)
+class VectorsScript:
+    """The validated, decoded vectors.json script (parsed once).
+
+    ``frames`` carries every row decoded to bytes under the file's (or the
+    row's) declared encoding; ``mock_exchanges`` (the ``stream_exchange``
+    dialect) and ``frame_script`` (``send_receive``) both derive from it.
+    """
+
+    dialect: str
+    encoding: str
+    frames: list[FrameRow]
+
+
+def _decode_payload(
+    text: Any, encoding: str, row_name: str, path: Path, *, coerce: bool
+) -> bytes:
+    """Decode one row payload under its encoding; typed refusals name the row.
+
+    ``coerce`` is the default dialect's compat mode (controller ruling 2,
+    the fold): under ``stream_exchange`` with ASCII payloads, non-string
+    payloads coerce through ``str()`` exactly as the merge base's
+    ``mock_exchanges`` did — numeric rows (``{"request": 42}``) rehearsed
+    at base and must keep rehearsing. The strict string requirement (and
+    its typed refusal) applies only where hex/ascii decoding needs a
+    string: the ``send_receive`` dialect, or any row that overrides its
+    encoding to hex.
+    """
+    if not isinstance(text, str):
+        if coerce:
+            # Byte-for-byte the merge base's expression, UnicodeEncodeError
+            # included (the connect seam wraps it, as it always did).
+            return str(text).encode("ascii")
+        raise PluginLoadError(
+            f"standalone_vectors_row_shape: row {row_name}: payload is not a string "
+            f"in {path}"
+        )
+    if encoding == "ascii":
+        try:
+            return text.encode("ascii")
+        except UnicodeEncodeError as exc:
+            raise PluginLoadError(
+                f"standalone_vectors_encoding_invalid: row {row_name}: string is "
+                f"not ASCII ({text!r}) in {path}"
+            ) from exc
+    try:
+        return bytes.fromhex(text)
+    except ValueError as exc:
+        raise PluginLoadError(
+            f"standalone_vectors_encoding_invalid: row {row_name}: not a hex byte "
+            f"string ({text!r}) in {path}"
+        ) from exc
+
+
+def vectors_script(plugin: LoadedPlugin) -> VectorsScript:
+    """Parse and decode the plugin's vectors.json once (issue #394, ruling (a)).
+
+    The declaration is additive: ``transaction_dialect`` (file level,
+    default ``stream_exchange`` — today's behaviour) and ``encoding`` (file
+    level with a per-row override, default ``ascii``). Every scripting
+    problem refuses with a ``standalone_vectors_*:`` prefix naming the row —
+    a :class:`PluginLoadError` the connect path maps to a typed ``not_ready``
+    (the seam ``standalone_transport_script:`` already rides), never a raw
+    ``KeyError``.
+    """
+    path = plugin.package_dir / "vectors.json"
+    vectors = json.loads(read_file(path))
+    if not isinstance(vectors, dict):
+        raise PluginLoadError(f"standalone_vectors_row_shape: not an object in {path}")
+    dialect = vectors.get("transaction_dialect", "stream_exchange")
+    if dialect not in _DIALECTS:
+        raise PluginLoadError(
+            f"standalone_vectors_dialect_unknown: {dialect!r} (expected "
+            f'"stream_exchange" or "send_receive") in {path}'
+        )
+    encoding = vectors.get("encoding", "ascii")
+    if encoding not in _ENCODINGS:
+        raise PluginLoadError(
+            f"standalone_vectors_encoding_unknown: {encoding!r} (expected "
+            f'"ascii" or "hex") at file level in {path}'
+        )
+    rows = vectors.get("exchanges", [])
+    if not isinstance(rows, list) or not rows:
+        raise PluginLoadError(
+            f"standalone_transport_script: no exchanges in {path}"
+        )
+    coerce = dialect == "stream_exchange" and encoding == "ascii"
+    frames: list[FrameRow] = []
+    for index, row in enumerate(rows):
+        name = str(index)
+        if not isinstance(row, dict):
+            raise PluginLoadError(
+                f"standalone_vectors_row_shape: row {name}: not an object in {path}"
+            )
+        if "name" in row:
+            if not isinstance(row["name"], str) or not row["name"]:
+                raise PluginLoadError(
+                    f"standalone_vectors_row_shape: row {name}: name is not a "
+                    f"non-empty string in {path}"
+                )
+            name = row["name"]
+        row_encoding = row.get("encoding", encoding)
+        if row_encoding not in _ENCODINGS:
+            raise PluginLoadError(
+                f"standalone_vectors_encoding_unknown: {row_encoding!r} (expected "
+                f'"ascii" or "hex") for row {name} in {path}'
+            )
+        coerce_row = coerce and row_encoding == "ascii"
+        has_request = "request" in row
+        has_response = "response" in row
+        if not has_request and not has_response:
+            raise PluginLoadError(
+                f"standalone_vectors_row_shape: row {name}: carries neither "
+                f"request nor response in {path}"
+            )
+        request: bytes | None = None
+        if has_request:
+            request = _decode_payload(
+                row["request"], row_encoding, name, path, coerce=coerce_row
+            )
+        if not has_response:
+            raise PluginLoadError(
+                f"standalone_vectors_row_shape: row {name}: carries no response "
+                f"in {path}"
+            )
+        response = _decode_payload(
+            row["response"], row_encoding, name, path, coerce=coerce_row
+        )
+        if has_request is False and dialect != "send_receive":
+            raise PluginLoadError(
+                f'standalone_vectors_row_unscriptable: row {name} is '
+                f'response-only; response-only rows require '
+                f'transaction_dialect: "send_receive" (declared '
+                f"{dialect!r}) in {path}"
+            )
+        frames.append(FrameRow(name=name, request=request, response=response))
+    return VectorsScript(dialect=dialect, encoding=encoding, frames=frames)
+
+
 def mock_exchanges(
     plugin: LoadedPlugin,
 ) -> list[tuple[dict[str, Any], dict[str, Any] | Exception]]:
@@ -150,25 +336,149 @@ def mock_exchanges(
     transaction shape is the scaffold protocol's own (``stream_exchange``,
     LF termination); a plugin whose adapter speaks a different shape will
     fail the mock's exact-match discipline honestly (R7's accepted bound).
+
+    Since issue #394 the rows parse through :func:`vectors_script`, so a
+    response-only row under this (the default) dialect refuses with the
+    typed ``standalone_vectors_row_unscriptable:`` instead of today's raw
+    ``KeyError: 'request'``.
     """
-    vectors = json.loads(read_file(plugin.package_dir / "vectors.json"))
+    script_doc = vectors_script(plugin)
     settings = plugin.descriptor.get("transport", {}).get("settings", {})
     max_bytes = int(settings.get("max_frame_bytes", 0)) or 128
     script: list[tuple[dict[str, Any], dict[str, Any] | Exception]] = []
-    for row in vectors.get("exchanges", []):
+    for row in script_doc.frames:
+        if row.request is None:
+            # Reachable only on a direct call over a send_receive-declaring
+            # file (the selector routes those to frame_script): this
+            # constructor scripts exchanges, and an exchange needs a request.
+            raise PluginLoadError(
+                f"standalone_vectors_row_unscriptable: row {row.name} is "
+                f"response-only and cannot script a stream_exchange in "
+                f"{plugin.package_dir / 'vectors.json'}"
+            )
         transaction = {
             "kind": "stream_exchange",
-            "data": str(row["request"]).encode("ascii"),
+            "data": row.request,
             "max_bytes": max_bytes,
             "termination": "lf",
             "exact_bytes": None,
         }
-        script.append((transaction, {"data": str(row["response"]).encode("ascii")}))
+        script.append((transaction, {"data": row.response}))
     if not script:
         raise PluginLoadError(
             f"standalone_transport_script: no exchanges in {plugin.package_dir / 'vectors.json'}"
         )
     return script
+
+
+def frame_script(plugin: LoadedPlugin) -> list[FrameRow]:
+    """The ``send_receive`` frame script: ordered decoded rows (issue #394).
+
+    Request-bearing rows script one command frame and its response bytes;
+    response-only rows script device-initiated frames released in row
+    order. Parsed through :func:`vectors_script`, so the refusal family is
+    the same typed ``standalone_vectors_*:`` set.
+    """
+    return vectors_script(plugin).frames
+
+
+def _cycle_plan(rows: list[FrameRow]) -> tuple[int, list[FrameRow], int]:
+    """The minimal-period cycle plan for a ``send_receive`` script:
+    ``(establishment, cycle unit, rotate)``.
+
+    The cycle unit is the SHORTEST suffix-unit that, repeated from the
+    establishment boundary, regenerates the captured tail exactly, with at
+    least TWO full units of evidence and at least one request-bearing row
+    in the unit (a cycle that can never accept a command is not a poll
+    cycle). Ties on unit length resolve to the earliest boundary. A capture
+    that ended mid-unit continues at the captured phase: the restored unit
+    is rotated by ``len(tail) % len(unit)``. No derivable unit — a
+    truncated capture, or a script whose responses VARY across occurrences
+    of the same request (any measured reading: the polled value differs
+    each cycle) — falls back to ``LoopingMockHost``'s own rule: an
+    establishment head of one, the whole tail the cycle, replayed in
+    captured order (the guide says capture at least two full poll cycles;
+    a truncated capture is ambiguous evidence). The establishment may be
+    empty (boundary 0) when the whole script is the repeating unit —
+    ``LoopingMockHost``'s establishment=0 precedent.
+    """
+    n = len(rows)
+    # Conversation identity, precomputed once: the (request, response) byte
+    # pairs — never the diagnostic row names ("poll-1" and "poll-2" are the
+    # same cycle step).
+    shapes = [(row.request, row.response) for row in rows]
+    # next_request[i]: the first request-bearing row at or after i (n when
+    # none) — one O(n) suffix walk that makes the request-bearing-in-unit
+    # guard O(1) per boundary (round 3's closure; the per-boundary any()
+    # was the residual cubic the confirmation pass handed back: a script
+    # with one establishment request and a long unsolicited tail paid
+    # ~2.6M any() calls at n=3200).
+    next_request = [n] * (n + 1)
+    for i in range(n - 1, -1, -1):
+        next_request[i] = i if rows[i].request is not None else next_request[i + 1]
+    # One early-exit pass per candidate period (the fold-refute lane's Fix 2:
+    # the old scan materialised the full tail for EVERY (p, e) candidate —
+    # cubic, ~150 s at n=2000 on the synchronous connect path). The suffix
+    # from e is p-periodic exactly when no i >= e+p violates
+    # shapes[i] == shapes[i-p]; the LAST violating i bounds the earliest
+    # valid boundary, so each period costs O(n) and the whole scan O(n^2)
+    # with no per-candidate allocation. Tie rules preserved: periods ascend
+    # (minimal wins), boundaries ascend from the earliest valid e.
+    #
+    # The boundary loop opens at max(earliest, first_request - p + 1): a
+    # window [e, e+p) contains the first request-bearing row only from
+    # that boundary, so earlier ones fail the guard by construction (an
+    # all-response-only script, where no window can ever qualify, walks
+    # the range at O(1) per boundary — never the old per-window scan).
+    first_request = next_request[0] if rows else n
+    for p in range(1, n // 2 + 1):
+        last_violation = -1
+        for i in range(p, n):
+            if shapes[i] != shapes[i - p]:
+                last_violation = i
+        earliest = max(0, last_violation - p + 1)
+        for e in range(
+            max(earliest, first_request - p + 1), n - 2 * p + 1
+        ):
+            if next_request[e] >= e + p:
+                continue
+            unit = rows[e : e + p]
+            return e, list(unit), (n - e) % p
+    cycle = rows[1:] if len(rows) > 1 else list(rows)
+    return 1, cycle, 0
+
+
+def mock_transport_factory(
+    plugin: LoadedPlugin, *, capture_root: Any = None
+) -> Callable[[], HostServices]:
+    """The dialect selector (issue #394): which mock host serves the plugin.
+
+    ``stream_exchange`` (the omitted-key default) builds the
+    :class:`LoopingMockHost` over :func:`mock_exchanges` — today's host,
+    byte-for-byte. ``send_receive`` builds the :class:`ByteStreamMockHost`
+    over :func:`frame_script` with the descriptor's own frame bound. The
+    factory is returned LATE-BOUND on ``plugin`` exactly as
+    :func:`mock_plugin_session` is: call it at connect time against the
+    session's CURRENT plugin so a reload's reconnect speaks the reloaded
+    plugin's own script (the M1-fold closure shape).
+    """
+    from .transport import ByteStreamMockHost, LoopingMockHost
+
+    dialect = vectors_script(plugin).dialect
+    if dialect == "send_receive":
+        settings = plugin.descriptor.get("transport", {}).get("settings", {})
+        max_frame = transport_ceiling(settings)
+        rows = frame_script(plugin)
+        establishment, cycle, rotate = _cycle_plan(rows)
+        return lambda: ByteStreamMockHost(
+            rows,
+            establishment=establishment,
+            cycle=cycle,
+            cycle_rotate=rotate,
+            max_frame_bytes=max_frame,
+            capture_root=capture_root,
+        )
+    return lambda: LoopingMockHost(mock_exchanges(plugin))
 
 
 def _evict_foreign_package(package: str, src: Path) -> None:
@@ -301,16 +611,25 @@ def load_plugin_project(project_root: Path) -> LoadedPlugin:
     )
 
 
-def mock_plugin_session(plugin: LoadedPlugin) -> PluginSession:
+def mock_plugin_session(
+    plugin: LoadedPlugin, *, capture_root: Any = None
+) -> PluginSession:
     """A session whose mock factory derives its script from the CURRENT
     plugin at connect time — a reload swaps the loaded plugin and the next
     connection speaks the new plugin's own vectors (a closure over the
     ORIGINAL plugin would keep serving the previous version's script; the
-    late-bound ``session.plugin`` read cannot go stale)."""
-    from .transport import LoopingMockHost
+    late-bound ``session.plugin`` read cannot go stale).
 
+    Since issue #394 the factory is the dialect selector
+    (:func:`mock_transport_factory`): the plugin's own vectors.json
+    declaration picks the exchange host or the byte-stream host.
+    ``capture_root`` is the host's capture configuration, threaded the same
+    way ``serial_plugin_session`` threads it (the byte-stream host serves
+    the capture lifecycle over it).
+    """
     session: PluginSession = PluginSession(
-        plugin, lambda: LoopingMockHost(mock_exchanges(session.plugin))
+        plugin,
+        lambda: mock_transport_factory(session.plugin, capture_root=capture_root)(),
     )
     return session
 

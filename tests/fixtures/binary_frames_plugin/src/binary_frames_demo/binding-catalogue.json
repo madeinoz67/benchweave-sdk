@@ -1,0 +1,27 @@
+{
+  "contract_version": "0.3.0",
+  "descriptor_sha256": "39d4364e05821ee899f38dbe9689c84cf43f08d95efb03f07182ced81a8bcc30",
+  "targets": [
+    {
+      "id": "sample_avg",
+      "kind": "observation",
+      "parameter_id": "sample_avg",
+      "variables": [
+        {
+          "id": "time",
+          "type": "number",
+          "unit": "s",
+          "shape": "scalar",
+          "axis_role": "receipt_time"
+        },
+        {
+          "id": "value",
+          "type": "number",
+          "unit": "V",
+          "shape": "scalar",
+          "axis_role": "value"
+        }
+      ]
+    }
+  ]
+}

@@ -1,9 +1,14 @@
 {
   "evidence": "synthetic",
+  "transaction_dialect": "send_receive",
   "exchanges": [
     {
       "request": "ID?\n",
       "response": "SDK Example,demo,SIM001,1.0.0\n"
+    },
+    {
+      "name": "status",
+      "response": "STATUS OK\n"
     },
     {
       "request": "V?\n",

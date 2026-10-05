@@ -1,0 +1,134 @@
+{
+  "otdp_version": "0.2.2",
+  "descriptor_version": "0.1.0",
+  "id": "dev.example.frames-demo",
+  "display_name": "Binary frames demo plugin",
+  "description": "Simulated binary frame protocol; not hardware qualified.",
+  "identity": {
+    "strategy": "adapter",
+    "manufacturer": "BenchWeave Labs",
+    "model": "frames-demo",
+    "firmware_policy": "listed",
+    "supported_firmware": [
+      "1.0.0"
+    ]
+  },
+  "integration": {
+    "mode": "adapter",
+    "adapter": {
+      "entry_point": "binary_frames_demo.adapter:create_plugin",
+      "api_version": "1.1",
+      "version": "0.1.0",
+      "dependencies": [],
+      "permissions": [
+        "scoped_transport"
+      ]
+    }
+  },
+  "transport": {
+    "type": "serial",
+    "connection_key": "frames_dev",
+    "settings": {
+      "baud": 115200,
+      "data_bits": 8,
+      "parity": "none",
+      "stop_bits": 1,
+      "rtscts": false,
+      "max_frame_bytes": 128
+    }
+  },
+  "capabilities": [
+    "identify",
+    "read",
+    "write",
+    "capture"
+  ],
+  "operations": {
+    "identify": {
+      "timeout_ms": 1000,
+      "side_effect": "none",
+      "retry": "never",
+      "cancellable": true,
+      "completion": "acknowledged"
+    },
+    "read": {
+      "timeout_ms": 1000,
+      "side_effect": "none",
+      "retry": "never",
+      "cancellable": true,
+      "completion": "acknowledged"
+    },
+    "write": {
+      "timeout_ms": 1000,
+      "side_effect": "state_change",
+      "retry": "never",
+      "cancellable": true,
+      "completion": "readback"
+    },
+    "capture": {
+      "timeout_ms": 5000,
+      "side_effect": "state_change",
+      "retry": "never",
+      "cancellable": true,
+      "completion": "acknowledged"
+    }
+  },
+  "capture_formats": [
+    "waveform_f64le",
+    "raw_binary"
+  ],
+  "capture_limits": {
+    "max_samples": 100000,
+    "max_bytes": 16777216
+  },
+  "parameters": [
+    {
+      "name": "sample_avg",
+      "description": "Synthetic average-sample setpoint",
+      "type": "float",
+      "access": "rw",
+      "semantic": "setpoint",
+      "unit": "V",
+      "range": [
+        0.0,
+        5.0
+      ],
+      "hazard_class": "unknown",
+      "binding": {
+        "kind": "adapter",
+        "key": "sample_avg"
+      },
+      "read_policy": {
+        "max_age_ms": 2000,
+        "destructive": false
+      },
+      "write_policy": {
+        "effect": "setting",
+        "completion": "readback",
+        "retry": "never",
+        "verification_parameter": "sample_avg",
+        "settling_timeout_ms": 100
+      }
+    }
+  ],
+  "required_features": [
+    "otdp.core/0.1.0",
+    "otdp.adapter/0.1.0"
+  ],
+  "provenance": {
+    "sources": [
+      {
+        "title": "SDK synthetic binary frame protocol",
+        "reference": "protocol.md",
+        "revision": "0.1.0"
+      }
+    ],
+    "test_vectors": [
+      {
+        "id": "example",
+        "path": "vectors.json",
+        "purpose": "Synthetic binary identify/read/write/capture exchanges"
+      }
+    ]
+  }
+}

@@ -5,6 +5,21 @@ import math
 def transaction(verb):
     return {"kind": "stream_exchange", "data": b"ID?\n" if verb == "identify" else b"V?\n",
             "max_bytes": 128, "termination": "lf", "exact_bytes": None}
+def probe():
+    """One drain receive: a quiet-line probe, not a command."""
+    return {"kind": "stream_receive", "max_bytes": 128,
+            "termination": "lf", "exact_bytes": None}
+
+
+async def drain(services, context):
+    """Receive until the quiet line: unsolicited status frames are consumed
+    deterministically before the next command is sent (the guide's
+    telemetry-drain pattern; the SDK guide's "Mock transports" section
+    states the row contract and the mock's bounds)."""
+    while True:
+        reply = await services.transfer(probe(), context)
+        if reply["data"] == b"":
+            return
 
 
 def parse_identity(raw):

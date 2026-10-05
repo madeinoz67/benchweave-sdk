@@ -1,0 +1,23 @@
+{
+  "contract_version": "0.3.0",
+  "id": "steady",
+  "title": "Steady sample average",
+  "revision": "1.0.0",
+  "plugin_id": "dev.example.frames-demo",
+  "profile_ids": [],
+  "supported_firmware": [
+    "1.0.0"
+  ],
+  "settings_schema": {
+    "id": "urn:dev.example:frames-demo:settings:1.0.0",
+    "sha256": "3ca656b98149f5a40026f16d9c74206f03c560672913ca06f9c8eb3c074a3d00"
+  },
+  "settings": {
+    "sample_avg": 3.0
+  },
+  "provenance": {
+    "author": "BenchWeave Labs",
+    "revision": "1.0.0",
+    "evidence": "synthetic"
+  }
+}

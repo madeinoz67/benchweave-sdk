@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:dev.example:frames-demo:settings:1.0.0",
+  "title": "Binary frames demo settings",
+  "type": "object",
+  "properties": {
+    "sample_avg": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 5.0
+    }
+  },
+  "required": [
+    "sample_avg"
+  ],
+  "additionalProperties": false
+}
