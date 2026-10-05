@@ -334,7 +334,7 @@ def test_r1_fifty_poll_cycles_repeat_the_exact_frame_sequence() -> None:
 
 def test_the_fixture_script_recycles_its_poll_tail_not_its_head(tmp_path: Path) -> None:
     from benchweave_sdk_server.session import (
-        _cycle_start,
+        _cycle_plan,
         frame_script,
         load_plugin_project,
     )
@@ -343,5 +343,7 @@ def test_the_fixture_script_recycles_its_poll_tail_not_its_head(tmp_path: Path) 
         Path(__file__).resolve().parent.parent / "fixtures" / "binary_frames_plugin"
     )
     rows = frame_script(plugin)
-    assert _cycle_start(rows) == 5, "head = identify..capture; cycle = poll+status"
+    establishment, unit, rotate = _cycle_plan(rows)
+    assert (establishment, rotate) == (5, 0), "head = identify..capture"
+    assert [row.name for row in unit] == ["poll", "status"]
     del tmp_path  # the cell needs no capture root

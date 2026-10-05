@@ -338,26 +338,44 @@ def frame_script(plugin: LoadedPlugin) -> list[FrameRow]:
     return vectors_script(plugin).frames
 
 
-def _cycle_start(rows: list[FrameRow]) -> int:
-    """The establishment head's length for a ``send_receive`` script.
+def _cycle_plan(rows: list[FrameRow]) -> tuple[int, list[FrameRow], int]:
+    """The minimal-period cycle plan for a ``send_receive`` script:
+    ``(establishment, cycle unit, rotate)``.
 
-    The poll cycle starts at the LAST row whose request frame repeats an
-    earlier row's: a request already answered earlier in the script is a
-    poll repeat, so the conversation before that row plays once and the
-    cycle from it repeats (the fixture's commission-then-poll shape). A
-    script with no repeated requests keeps ``LoopingMockHost``'s default
-    head of one — the identify-first conversation — so every existing
-    script recycles exactly as it does today.
+    The cycle unit is the SHORTEST suffix-unit that, repeated from the
+    establishment boundary, regenerates the captured tail exactly, with at
+    least TWO full units of evidence and at least one request-bearing row
+    in the unit (a cycle that can never accept a command is not a poll
+    cycle). Ties on unit length resolve to the earliest boundary. A capture
+    that ended mid-unit continues at the captured phase: the restored unit
+    is rotated by ``len(tail) % len(unit)``. No derivable period — a
+    truncated capture — falls back to ``LoopingMockHost``'s own rule: an
+    establishment head of one, the whole tail the cycle, replayed in
+    captured order (the guide says capture at least two full poll cycles;
+    a truncated capture is ambiguous evidence). The establishment may be
+    empty (boundary 0) when the whole script is the repeating unit —
+    ``LoopingMockHost``'s establishment=0 precedent.
     """
-    seen: set[bytes] = set()
-    last_repeat = 0
-    for index, row in enumerate(rows):
-        if row.request is not None:
-            if row.request in seen:
-                last_repeat = index
-            else:
-                seen.add(row.request)
-    return last_repeat or 1
+    n = len(rows)
+    for p in range(1, n // 2 + 1):
+        for e in range(0, n - 2 * p + 1):
+            unit = rows[e : e + p]
+            if not any(row.request is not None for row in unit):
+                continue
+            tail = rows[e:]
+            # The regeneration check compares CONVERSATION identity — the
+            # (request, response) byte pairs — never the diagnostic row
+            # names: "poll-1" and "poll-2" are the same cycle step.
+            def shape(row: FrameRow) -> tuple[bytes | None, bytes]:
+                return (row.request, row.response)
+
+            if [shape(unit[index % p]) for index in range(len(tail))] != [
+                shape(row) for row in tail
+            ]:
+                continue
+            return e, list(unit), (n - e) % p
+    cycle = rows[1:] if len(rows) > 1 else list(rows)
+    return 1, cycle, 0
 
 
 def mock_transport_factory(
@@ -381,9 +399,12 @@ def mock_transport_factory(
         settings = plugin.descriptor.get("transport", {}).get("settings", {})
         max_frame = int(settings.get("max_frame_bytes", 0)) or 128
         rows = frame_script(plugin)
+        establishment, cycle, rotate = _cycle_plan(rows)
         return lambda: ByteStreamMockHost(
             rows,
-            establishment=_cycle_start(rows),
+            establishment=establishment,
+            cycle=cycle,
+            cycle_rotate=rotate,
             max_frame_bytes=max_frame,
             capture_root=capture_root,
         )

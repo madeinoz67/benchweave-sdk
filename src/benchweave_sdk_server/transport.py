@@ -136,14 +136,16 @@ class ByteStreamMockHost(WriterBackedCaptureServices, MockHost):
     ``WriterBackedCaptureServices`` base the serial backend uses (one
     capture lifecycle, two hosts).
 
-    The script is ordered :class:`FrameRow`\\s. Response-only rows
-    (``request is None`` — device-initiated frames) release their bytes to
-    the inbound stream in ROW ORDER: whenever the oldest unconsumed row is
-    response-only, its bytes are appended and the row consumed, repeating
-    until a request-bearing row is at the head (the advance rule; a receive
-    against a pending request row answers the quiet line, exactly as on
-    real hardware). A ``stream_send`` must match the head request-bearing
-    row's frame exactly — a genuine adapter/script disagreement is a
+    The script is ordered :class:`FrameRow`\\s under a minimal-period
+    cycle plan (see :func:`benchweave_sdk_server.session._cycle_plan`): the
+    captured rows play once, then the shortest repeating unit restores —
+    ROTATED to the phase the capture ended on — when the next command
+    arrives. Response-only rows (``request is None`` — device-initiated
+    frames) release their bytes to the inbound stream in ROW ORDER, ONCE
+    per cycle: a receive never re-arms the tail, so a drain returns the
+    burst and then the quiet line (a receive against a pending request row
+    is a quiet line, exactly as on real hardware). A ``stream_send`` must
+    match the head request-bearing row's frame exactly — a genuine adapter/script disagreement is a
     ``ConformanceError`` carrying the row key and both frames hex-rendered
     (the exact-match discipline at frame granularity; the one-line format
     is API, STD-4). ``stream_receive`` serves the inbound stream with the
@@ -180,6 +182,8 @@ class ByteStreamMockHost(WriterBackedCaptureServices, MockHost):
         *,
         cycles: int | None = None,
         establishment: int = 1,
+        cycle: list[FrameRow] | None = None,
+        cycle_rotate: int = 0,
         max_frame_bytes: int = 128,
         capture_root: Any = None,
         capture_max_bytes: int | None = None,
@@ -203,13 +207,30 @@ class ByteStreamMockHost(WriterBackedCaptureServices, MockHost):
                 "standalone_transport_frame: max_frame_bytes must be a positive integer"
             )
         original = list(rows)
-        if len(original) > establishment:
-            self._cycle = deque(original[establishment:])
+        if cycle is not None:
+            if cycle_rotate < 0 or cycle_rotate >= max(len(cycle), 1):
+                raise ValueError(
+                    "standalone_transport_cycle_rotate: must index into the cycle unit"
+                )
+            self._cycle = deque(cycle)
+            self._rotate = cycle_rotate
         else:
-            self._cycle = deque(original)
+            # No explicit unit: LoopingMockHost's own derivation — the tail
+            # after the establishment head (the single-row rule included).
+            if len(original) > establishment:
+                self._cycle = deque(original[establishment:])
+            else:
+                self._cycle = deque(original)
+            self._rotate = 0
         self._rows = deque(original)
         self._cycles = cycles
         self._plays = 1
+        # Release-once arming (the fold's F3/F7 rule): the captured rows
+        # are the first availability; a restore re-arms only when a
+        # REQUEST-BEARING row is consumed, so an unsolicited burst releases
+        # once per cycle and a drain quiets — never re-releasing per
+        # receive (the measured hot spin).
+        self._armed = True
         self._ceiling = max_frame_bytes
         self._inbound = bytearray()
 
@@ -241,20 +262,24 @@ class ByteStreamMockHost(WriterBackedCaptureServices, MockHost):
         return self._cycles is None or self._plays < self._cycles
 
     def _advance(self) -> None:
-        """Release leading response-only rows to the inbound stream, row
-        order, recycling the tail AT MOST ONCE per advance (the bound: an
-        all-response-only cycle with unlimited cycles would otherwise
-        release forever; one recycle per demand keeps the release finite
-        while a receive still drains a whole unsolicited burst)."""
-        recycled = False
-        while True:
-            while self._rows and self._rows[0].request is None:
-                self._inbound += self._rows.popleft().response
-            if self._rows or recycled or not self._may_recycle():
-                return
-            self._rows = deque(self._cycle)
-            self._plays += 1
-            recycled = True
+        """Release leading response-only rows to the inbound stream, in row
+        order. Never recycles: response-only bytes release ONCE per cycle
+        (a receive cannot re-arm the tail — the recycle happens in the send
+        path, on request-bearing consumption, so a drain quiets after the
+        burst exactly as a recorded backend burst does)."""
+        while self._rows and self._rows[0].request is None:
+            self._inbound += self._rows.popleft().response
+
+    def _recycle_if_armed(self) -> None:
+        """Restore the cycle unit — ROTATED to the captured phase — but
+        only when a request-bearing row was consumed since the last
+        restore (the arming rule) and the cycle budget allows it."""
+        if self._rows or not self._armed or not self._may_recycle():
+            return
+        unit = list(self._cycle)
+        self._rows = deque(unit[self._rotate :] + unit[: self._rotate])
+        self._plays += 1
+        self._armed = False
 
     def _pop(self, count: int) -> bytes:
         out = bytes(self._inbound[:count])
@@ -265,6 +290,8 @@ class ByteStreamMockHost(WriterBackedCaptureServices, MockHost):
         """Match one command frame against the head request-bearing row."""
         if not isinstance(data, bytes):
             raise ValueError("data must be bytes")
+        self._advance()
+        self._recycle_if_armed()
         self._advance()
         if not self._rows:
             raise ConformanceError("Unexpected transfer: no scripted exchange remains")
@@ -280,6 +307,7 @@ class ByteStreamMockHost(WriterBackedCaptureServices, MockHost):
             )
         self._rows.popleft()
         self._inbound += row.response
+        self._armed = True
 
     def _serve_receive(
         self, max_bytes: int, terminator: bytes, exact: int

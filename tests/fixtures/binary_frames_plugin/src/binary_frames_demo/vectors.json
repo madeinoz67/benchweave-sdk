@@ -36,6 +36,15 @@
     {
       "name": "status",
       "response": "53544154000a"
+    },
+    {
+      "name": "poll",
+      "request": "4156473f0a",
+      "response": "000020400a"
+    },
+    {
+      "name": "status",
+      "response": "53544154000a"
     }
   ]
 }

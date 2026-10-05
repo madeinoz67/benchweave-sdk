@@ -22,7 +22,6 @@ from benchweave_sdk.testing import ConformanceError
 from benchweave_sdk_server.session import (
     FrameRow,
     HostOperationContext,
-    _cycle_start,
     frame_script,
     load_plugin_project,
     mock_transport_factory,
@@ -224,18 +223,25 @@ def test_partial_frame_at_the_deadline_times_out_and_retains() -> None:
     asyncio.run(flow())
 
 
-def test_cycle_start_derivation() -> None:
-    """No repeated requests → today's head of one; a repeated request marks
-    the poll cycle's start at its LAST occurrence."""
-    one_shot = [FrameRow("identify", b"A\n", b"x\n"), FrameRow("read", b"B?\n", b"y\n")]
-    assert _cycle_start(one_shot) == 1
-    assert _cycle_start(list(FIXTURE_ROWS)) == 4  # head: identify..readback
-    ui_starter = [
-        FrameRow("identify", b"ID?\n", b"x\n"),
-        FrameRow("status", None, b"STAT\n"),
-        FrameRow("read", b"V?\n", b"y\n"),
+def test_cycle_plan_pinned_on_the_core_shapes() -> None:
+    """The minimal-period plan (controller ruling 1): [i,A,B,A,B] -> head
+    [i], unit [A,B]; the odd capture continues at the captured phase; no
+    period evidence -> LoopingMockHost's head-of-one fallback. The full
+    derivation battery lives in test_mock_bytestream_cycle.py."""
+    from benchweave_sdk_server.session import _cycle_plan
+
+    pair = [
+        FrameRow("i", b"I?\n", b"x\n"),
+        FrameRow("a0", b"A?\n", b"y\n"),
+        FrameRow("b0", b"B?\n", b"z\n"),
+        FrameRow("a1", b"A?\n", b"y\n"),
+        FrameRow("b1", b"B?\n", b"z\n"),
     ]
-    assert _cycle_start(ui_starter) == 1
+    establishment, unit, rotate = _cycle_plan(pair)
+    assert (establishment, rotate) == (1, 0)
+    assert [row.request for row in unit] == [b"A?\n", b"B?\n"]
+    one_shot = [FrameRow("identify", b"A\n", b"x\n"), FrameRow("read", b"B?\n", b"y\n")]
+    assert _cycle_plan(one_shot)[0] == 1
 
 
 def test_the_selector_builds_the_byte_stream_host_for_the_fixture() -> None:
@@ -248,7 +254,7 @@ def test_the_selector_builds_the_byte_stream_host_for_the_fixture() -> None:
     host = factory()
     assert isinstance(host, ByteStreamMockHost)
     assert not isinstance(host, LoopingMockHost)
-    assert host.pending == 7
+    assert host.pending == 9
     assert host.plays == 1
     # The default dialect keeps today's host: the scaffold's starter.
     from benchweave_sdk.scaffold import create_project
@@ -266,10 +272,12 @@ def test_frame_script_decodes_the_fixture_rows() -> None:
     )
     rows = frame_script(plugin)
     assert [row.name for row in rows] == [
-        "identify", "read", "write", "readback", "capture", "poll", "status",
+        "identify", "read", "write", "readback", "capture",
+        "poll", "status", "poll", "status",
     ]
     assert rows[0].request == b"*IDN?\n"
     assert rows[0].response == b"BenchWeave Labs,frames-demo,SIM-BF1,1.0.0\n"
     assert rows[-1].request is None
     assert rows[-1].response == b"STAT\x00\n"
     assert len(rows[4].response) == 1024
+    assert rows[6].response == rows[8].response  # two captured poll cycles

@@ -47,6 +47,14 @@ async def _send(host: ByteStreamMockHost, data: bytes) -> bytes:
     return reply["data"]
 
 
+async def _send_only(host: ByteStreamMockHost, data: bytes) -> None:
+    """One command frame, no ack receive — for silent-ack commands whose
+    response burst shares the stream (the drain collects it)."""
+    context = _context()
+    await context.mark_dispatch_started()
+    await host.transfer({"kind": "stream_send", "data": data}, context)
+
+
 async def _drain(host: ByteStreamMockHost, bound: int = 64) -> list[bytes]:
     """Drain until the quiet line, BOUNDED: a drain that never quiets (the
     hot spin the fold targets) fails the bound instead of hanging."""
@@ -203,7 +211,7 @@ def test_p4_drain_returns_the_burst_once_then_quiets() -> None:
 
     async def flow() -> None:
         host = _served_host(rows)
-        await _send(host, b"GO\n")
+        await _send_only(host, b"GO\n")
         assert await _drain(host) == [b"S1\n", b"S2\n"]
         assert await _drain(host) == [], "a second drain must stay quiet"
 
@@ -225,7 +233,7 @@ def test_release_once_keeps_the_command_cycle_serviceable() -> None:
         ]
         host = _served_host(rows)
         for _ in range(3):
-            await _send(host, b"GO\n")
+            await _send_only(host, b"GO\n")
             assert await _drain(host) == [b"S1\n"]
             assert await _drain(host) == []
 
