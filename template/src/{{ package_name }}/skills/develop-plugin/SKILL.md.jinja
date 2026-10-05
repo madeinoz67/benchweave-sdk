@@ -100,10 +100,11 @@ package or standard-library-only for the gateway loader. The SDK's
 reference pattern for exact-exchange tests.
 {% if with_ui %}
 
-The standalone mock transport serves the grammar `vectors.json` declares
-(`transaction_dialect`; `encoding`; request-less rows are device-initiated
-frames). The SDK user guide's "Mock transports" section states the row
-contract and the mock's bounds.
+The standalone mock transport serves the transaction dialect that
+`vectors.json` declares. The keys are `transaction_dialect` and
+`encoding`. A row without a request is a device-initiated frame. The
+"Mock transports" section of the SDK user guide states the row contract
+and what the mock can and cannot rehearse.
 {% endif %}
 ## 4. Standalone MCP server (workflow, not shipped machinery)
 

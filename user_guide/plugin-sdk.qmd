@@ -149,19 +149,35 @@ Under the explicitly acknowledged `--allow-network` mode, request bodies have no
 
 ## Mock transports (offline rehearsal)
 
-The standalone host serves a plugin on a scripted mock transport when you run `serve --transport mock` (the default) or `preview-ui`. The script comes from the plugin's own evidence file, `src/<package>/vectors.json`. The file declares which of two transaction grammars the adapter speaks, and the host serves the matching mock.
+The standalone host serves a plugin on a scripted mock transport when you run `serve --transport mock` or `preview-ui`. For `serve`, the `mock` transport is the default. The script comes from the evidence file of the plugin, `src/<package>/vectors.json`. The file declares which of the two transaction dialects the adapter uses. The host serves the mock that matches the dialect.
 
-**The two grammars.** Declare the grammar with the file-level `transaction_dialect` key. Omit it and the file is a `stream_exchange` script: every row is a `{"request": ..., "response": ...}` pair of strings, and the mock serves whole-dict exchanges — the starter protocol's shape (`ID?\n` in, one line out). Declare `"transaction_dialect": "send_receive"` and the rows script a binary section 8.1 SEND/RECEIVE conversation: each row's strings are frames, the adapter's `stream_send` must match the next scripted request frame exactly, and `stream_receive` is served with the serial backend's exact outcomes (the section "A standalone runtime around the writer" below states them).
+**The two dialects.** Declare the dialect with the file-level `transaction_dialect` key. If you omit the key, the file is a `stream_exchange` script. Every row is a `{"request": ..., "response": ...}` pair of strings. The mock serves whole-dict exchanges. This is the shape of the starter protocol. The request is `ID?\n` and the response is one line.
 
-**Encoding.** Rows are ASCII by default (a row string's ASCII bytes). Set `"encoding": "hex"` at file level — or on one row — to script binary frames: each string is a hex byte string (`"response": "53544154000a"`). `ascii` refuses a string that is not ASCII; `hex` refuses an odd-length or non-hex string. Both refusals name the row.
+If you declare `"transaction_dialect": "send_receive"`, the rows form a binary section 8.1 SEND/RECEIVE conversation. The strings of each row are frames. The `stream_send` of the adapter must match the next scripted request frame exactly. The mock serves `stream_receive` with the exact outcomes of the serial backend. The section "A standalone runtime around the writer" below states these outcomes.
 
-**The row contract.** Every row carries a `response`. A row may omit `request`: that row is a response-only row, a device-initiated frame the mock releases to the inbound stream, in row order, when the conversation reaches it. Response-only rows require `transaction_dialect: "send_receive"` — the default dialect cannot script an unsolicited frame. A row may carry a `name`; diagnostics name rows by `name` or by index.
+**Encoding.** By default, the bytes of a row are the ASCII bytes of the row string. Set `"encoding": "hex"` at file level, or on one row, for binary frames. A string is then a hex byte string, for example `"response": "53544154000a"`. The `ascii` encoding refuses a string that is not ASCII. The `hex` encoding refuses an odd-length string or a non-hex string. Both refusals give the row.
 
-**How selection works.** The host reads the declaration at connect time and builds the matching mock host; nothing else changes. `serve --transport serial` never reads `vectors.json` — the script is rehearsal evidence, not device configuration.
+**The row contract.** Every row carries a `response`. A row without `request` is a response-only row. A response-only row is a device-initiated frame that the mock releases to the inbound stream. The release happens in row order, when the conversation reaches the row. Response-only rows need `transaction_dialect: "send_receive"`. The default dialect cannot contain an unsolicited frame.
 
-**What the mock can and cannot rehearse.** The `send_receive` mock reproduces the serial backend's RECEIVE outcomes exactly: `exact_bytes` precedence over `termination`, `lf` and `crlf` terminators, the overlong-line discard, the quiet-line `{"data": b""}`, and a partial frame retained across a deadline. It releases unsolicited frames strictly in row order — it cannot rehearse interleavings a real streaming device produces between rows. It does not serve `can_receive`, `can_send`, `i2c_transfer` or `spi_transfer`; a plugin that needs those kinds needs a real transport. The mock's timings are not the device's: the quiet line answers at once (not after the backend's quiet window), and a receive that cannot complete raises the backend's `TimeoutError` without waiting out the deadline.
+A row can also carry a `name`. Diagnostics refer to a row by its `name` or by its index.
 
-**The bound, in plain English.** The mock's discipline is exact: when the adapter SENDs a frame that differs from the scripted row's frame, the rehearsal fails loudly, naming the row and both frames — the mock never guesses what the device meant. But the script is only as honest as its rows: a script that does not match the real device proves nothing about the device. Use `--transport serial` and the hardware for interleaving, for non-serial transports, for timing, and for any claim about the device itself.
+**How selection works.** The host reads the declaration at connect time and builds the matching mock host. Nothing else changes. `serve --transport serial` never reads `vectors.json`. The script is rehearsal evidence, not device configuration.
+
+**How the script loops.** The mock detects a repeating unit from the captured rows. The rows before the first full unit are the establishment. The mock serves these rows once. The unit then serves every later cycle in captured order.
+
+A capture needs at least two full units of evidence. A truncated capture is a capture from which no unit can be derived. Such a capture then obeys the plain tail rule. Under this rule, row 0 is the establishment. The whole tail becomes the cycle. The cycle repeats in captured order on every restore.
+
+A repeating unit must contain at least one row with a `request`. A response-only row releases once per cycle pass. A captured burst drains once. Then the line goes quiet. When the adapter consumes a row with a `request`, the cycle re-arms.
+
+**What the mock can and cannot rehearse.** The `send_receive` mock reproduces exactly the RECEIVE outcomes of the serial backend: `exact_bytes` precedence over `termination`, the `lf` and `crlf` terminators, the overlong-line discard, the quiet-line `{"data": b""}`, and a partial frame retained across a deadline. The mock releases unsolicited frames strictly in row order. The mock cannot rehearse the interleaving that a real streaming device produces between rows. The mock does not serve `can_receive`, `can_send`, `i2c_transfer` or `spi_transfer`. A plugin that needs those kinds needs a real transport.
+
+The timings of the mock are not the timings of the device. The quiet line answers at once, not after the quiet window of the backend. A receive that cannot complete raises the `TimeoutError` of the backend at once. The mock does not wait until the deadline.
+
+For this reason, a rehearsal proves the command flow, not the timing budget. A capture that fits its `timeout_ms` on the mock proves nothing about the hardware budget. Budget-fit evidence needs `--transport serial` and the device.
+
+**The bound, in simple words.** The discipline of the mock is exact. When a frame that the adapter SENDs differs from the frame of the scripted row, the rehearsal fails. The failure gives the row and both frames. The mock never guesses what the device meant.
+
+But a script can prove only what its rows record. A script that does not match the real device proves nothing about the device. Use `--transport serial` and the hardware for interleaving, for non-serial transports, for timing, and for any claim about the device.
 
 ## Capture without a gateway (standalone writer)
 

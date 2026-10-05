@@ -61,10 +61,11 @@ plugin source package. A preset is configuration, not a retained measurement.
 > identify/read example before replacing it.
 
 
-Declare the transaction grammar in `vectors.json` (`transaction_dialect`;
-`"encoding": "hex"` for binary frames; rows without a request are
-device-initiated). The SDK user guide's "Mock transports" section states
-the row contract and what the mock can and cannot rehearse.
+Declare the transaction dialect in `vectors.json` with the
+`transaction_dialect` key. Use `"encoding": "hex"` for binary frames. A
+row without a request is a device-initiated frame. The "Mock transports"
+section of the SDK user guide states the row contract and what the mock
+can and cannot rehearse.
 
 ## 3. Demonstrate behaviour
 
