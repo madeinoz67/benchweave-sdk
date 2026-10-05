@@ -2,7 +2,7 @@
 
 The fork's reader-thread link, generalised: constructor configuration with
 the 3 Mbps-class defaults (#393: 512 KiB ring — at the 3 Mbps byte rate of
-375 kB/s that is >= 1.4 s of buffering, >= 2.6 s at the legacy 200 kB/s —
+300 kB/s that is >= 1.7 s of buffering, >= 2.6 s at the legacy 200 kB/s —
 a 64 KiB transfer ceiling, a 100 ms quiet line), oldest-byte drop on
 overflow, complete receives only, faults that wake every waiter, and a
 close that joins the reader. Every test runs over an in-process loopback
@@ -82,7 +82,7 @@ def _take(link: SerialLink, **overrides: Any) -> bytes:
 def test_constructor_configures_the_fork_constants_and_refuses_bad_values() -> None:
     port = LoopbackPort()
     link = _link(port)
-    # 512 KiB (issue #393): >= 1.4 s at the 3 Mbps byte rate (375 kB/s),
+    # 512 KiB (issue #393): >= 1.7 s at the 3 Mbps byte rate (300 kB/s),
     # >= 2.6 s at the legacy 200 kB/s — the negotiation-critical pre-switch
     # rate keeps more than a second of headroom.
     assert link.ring_capacity == 512 * 1024

@@ -5,7 +5,7 @@ Productises the user guide's ``SerialStandaloneHost`` example
 writer"; that example stays the copy-into-your-project form and is pinned
 by ``tests/test_guide_serial_host.py``), adding the fork's reader-thread
 link, re-sized for the 3 Mbps class by #393: a 512 KiB reader ring
-(>= 1.4 s at the 3 Mbps byte rate of 375 kB/s, >= 2.6 s at the legacy
+(>= 1.7 s at the 3 Mbps byte rate of 300 kB/s, >= 2.6 s at the legacy
 200 kB/s), a 64 KiB transfer ceiling, a 100 ms quiet line. The transport
 speaks the GENERIC OTDP section 8.1 stream kinds exactly as the guide's
 example does; no custom serial provider grammar exists on this backend,
@@ -92,9 +92,10 @@ class SerialLink:
         (:class:`Transport`).
     ring_capacity, transfer_ceiling, quiet_s
         Constructor configuration with the 3 Mbps-class defaults (#393:
-        512 KiB, 64 KiB, 100 ms). The 512 KiB ring is >= 1.4 s of buffering
-        at the 3 Mbps byte rate (375 kB/s) and >= 2.6 s at the legacy
-        2 Mbps byte rate (200 kB/s), so a stalled consumer keeps more than
+        512 KiB, 64 KiB, 100 ms). The 512 KiB ring is >= 1.7 s of buffering
+        at the 3 Mbps byte rate (300 kB/s: 3,000,000 baud 8N1 carries
+        10 bit-times per byte) and >= 2.6 s at the legacy 2 Mbps byte
+        rate (200 kB/s), so a stalled consumer keeps more than
         a full negotiation window of the wire while the parser catches up.
         The services clamp the per-receive ceiling with the descriptor's
         ``max_frame_bytes`` — the plugin's own declared bound governs
@@ -105,10 +106,11 @@ class SerialLink:
         self,
         transport: Transport,
         *,
-        # 512 KiB (issue #393): >= 1.4 s of buffering at the 3 Mbps byte
-        # rate (375 kB/s: 3_000_000 baud 8N1 = 375_000 B/s), >= 2.6 s at
-        # the legacy 2 Mbps byte rate (200 kB/s). The fork's 256 KiB value
-        # gave only 0.68 s at 3 Mbps — under one negotiation window.
+        # 512 KiB (issue #393): >= 1.7 s of buffering at the 3 Mbps byte
+        # rate (300 kB/s: 3_000_000 baud 8N1 carries 10 bit-times per
+        # byte), >= 2.6 s at the legacy 2 Mbps byte rate (200 kB/s). The
+        # fork's 256 KiB value gave 0.87 s at 3 Mbps — under one
+        # negotiation window.
         ring_capacity: int = 512 * 1024,
         transfer_ceiling: int = 64 * 1024,
         quiet_s: float = 0.1,

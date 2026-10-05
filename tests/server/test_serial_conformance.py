@@ -272,6 +272,13 @@ def _build_pty(link_config: dict[str, Any] | None = None) -> tuple[Any, int]:
         os.close(master_fd)
         os.close(slave_fd)
         pytest.skip("pyserial unavailable")
+    except Exception:
+        # Fold S5: any OTHER port-open failure must not leak the pair (or
+        # a half-built far end) — close both fds; the drain thread does
+        # not exist yet (it starts in _PtyFarEnd, after this block).
+        os.close(master_fd)
+        os.close(slave_fd)
+        raise
     return _Backend("pty", _PtyFarEnd(master_fd), host_port, **(link_config or {})), slave_fd
 
 
@@ -387,10 +394,23 @@ def _cell_c02(backend: _Backend) -> None:
     assert quiet == b"", "the link must survive a short-write refusal"
 
 
+def _await_ring_nonempty(backend: _Backend, timeout_s: float = 5.0) -> None:
+    """Gate on OBSERVED state, not margins (fold S1): poll until the
+    delivered bytes are visibly inside the link's ring. A nonempty ring
+    can never quiet-answer, so the cells below are race-free by
+    construction — under any machine load."""
+    deadline = time.monotonic() + timeout_s
+    while backend.link.ring_length() == 0:
+        if time.monotonic() >= deadline:
+            raise AssertionError("delivered bytes never reached the link ring")
+        time.sleep(0.002)
+
+
 # C03 a frame the line pauses inside is kept until complete.
 def _cell_c03(backend: _Backend) -> None:
     ctx = _ctx_marked(timeout_s=0.3)
     backend.deliver(b"he")
+    _await_ring_nonempty(backend)  # a nonempty ring cannot quiet-answer
     interrupted = None
     try:
         _rx(backend.services, ctx, max_bytes=8)
@@ -404,26 +424,42 @@ def _cell_c03(backend: _Backend) -> None:
 
 # C04 a reply after a quiet read still completes (the fork cell's
 # script-order shape: the quiet read answers, THEN the reply, THEN the
-# completing receive — no wall-clock race with the quiet window).
+# completing receive — gated on the ring, not on margins).
 def _cell_c04(backend: _Backend) -> None:
     quiet = _rx(backend.services, _ctx_marked())
     assert quiet == b"", "nothing queued: the quiet answer"
     backend.deliver(b"late\n")
+    _await_ring_nonempty(backend)
     got = _rx(backend.services, _ctx_marked())
     assert got == b"late\n", f"a reply after quiet must complete: {got!r}"
 
 
-# C05 no reply by the deadline: the quiet answer, after the quiet window.
+# C05 no reply by the deadline: the quiet answer. The window-honoring
+# property itself is discriminated by the OUTCOME-mode controls below
+# (M2-outcome and quiet-inflation) — a timing floor here false-reds on
+# clean code at machine load (the fold's measured 25 ms floor breach).
 def _cell_c05(services: Any) -> None:
-    started = time.monotonic()
     got = _rx(services, _ctx_marked())
-    elapsed = time.monotonic() - started
     assert got == b"", "an empty line answers quiet"
-    assert elapsed >= 0.5 * _QUIET_S, (
-        f"the quiet answer must wait the quiet window (mutant M2's instant "
-        f"answer fails here); elapsed={elapsed:.3f}s"
-    )
-    assert elapsed < _DEADLINE_S, "the quiet answer must not wait out the deadline"
+
+
+# C13 the crlf terminator contract (fold S2): a crlf-declared receive
+# must NOT frame on a bare \n — the discriminator payload carries a bare
+# newline BEFORE the pair, so a crlf->\n alias frames early and returns
+# different bytes (the fold lane's escape mutant).
+def _cell_c13(backend: _Backend) -> None:
+    ctx = _ctx_marked(timeout_s=0.3)
+    backend.deliver(b"a\nb")
+    _await_ring_nonempty(backend)
+    interrupted = None
+    try:
+        _rx(backend.services, ctx, max_bytes=8, termination="crlf")
+    except TimeoutError:
+        interrupted = True
+    assert interrupted is not None, "a bare \\n must not frame a crlf receive"
+    backend.deliver(b"\r\n")
+    got = _rx(backend.services, _ctx_marked(), max_bytes=8, termination="crlf")
+    assert got == b"a\nb\r\n", f"the declared terminator must frame: {got!r}"
 
 
 # C06 an expired context never transmits.
@@ -490,8 +526,11 @@ def _cell_c09(backend: _Backend) -> None:
     assert second == b"ACK\n", f"the straggler must stay buffered: {second!r}"
 
 
-# C10 the ceiling refuses by name: max_bytes above the A02 clamp.
-def _cell_c10(services: Any) -> None:
+# C10 the ceiling refuses by name: max_bytes above the A02 clamp — and
+# the at-boundary receive (max_bytes == the clamp) is LEGAL (fold S3:
+# a `<=` -> `<` mutant at the bound must fail this cell).
+def _cell_c10(backend: Any) -> None:
+    services = backend.services if isinstance(backend, _Backend) else backend
     refused = None
     try:
         _rx(services, _ctx_marked(), max_bytes=4096)
@@ -499,6 +538,18 @@ def _cell_c10(services: Any) -> None:
         refused = str(exc)
     assert refused is not None, "max_bytes above the ceiling must refuse"
     assert "1..256" in refused, f"the refusal must name the ceiling: {refused!r}"
+    # The at-boundary arm needs deliverable bytes (the services must be a
+    # backend's); on a bare services the arm is skipped (disclosed).
+    backend_ok = backend if isinstance(backend, _Backend) else None
+    if backend_ok is None:
+        return
+    backend_ok.deliver(b"\xaa" * 256)
+    _await_ring_nonempty(backend_ok)
+    deadline = time.monotonic() + 5
+    while backend_ok.link.ring_length() < 256 and time.monotonic() < deadline:
+        time.sleep(0.002)
+    got = _rx(backend_ok.services, _ctx_marked(), max_bytes=256, exact_bytes=256)
+    assert got == b"\xaa" * 256, "an at-boundary receive is legal"
 
 
 # C11 ring-overflow gap visibility: drops counted, tail kept, ring bounded.
@@ -587,7 +638,12 @@ def test_c09_interleaved_data_inside_a_reply_is_buffered(backend: Any) -> None:
 
 
 def test_c10_ceiling_refuses_by_name(backend: Any) -> None:
-    _cell_c10(backend.services)
+    _cell_c10(backend)
+
+
+
+def test_c13_crlf_terminator_contract(backend: Any) -> None:
+    _cell_c13(backend)
 
 
 def test_c11_ring_overflow_gap_visibility() -> None:
@@ -712,12 +768,79 @@ def test_mutant_m1_ring_drops_newest_fails_c11() -> None:
 
 
 def test_mutant_m2_quiet_wait_removed_fails_c05() -> None:
+    """Outcome-mode discrimination (fold S1, load-immune): quiet_s=5.0
+    exceeds the context deadline of 1.0 s, so real code raises
+    TimeoutError while the instant-answer mutant returns b"" — the
+    assertion is on the exception type, never on wall-clock margins."""
+
+    def _body(services: Any) -> None:
+        refused = None
+        try:
+            got = _rx(services, _ctx_marked(timeout_s=1.0))
+        except TimeoutError:
+            refused = True
+        assert refused is not None, (
+            f"with quiet_s > the deadline the receive must time out, "
+            f"never answer quiet: got {got!r}"
+        )
+
     port = _ScriptedPort()
-    link = _MutantLinkQuietRemoved(port, quiet_s=_QUIET_S)
+    link = _MutantLinkQuietRemoved(port, quiet_s=5.0)
     services = SerialCaptureServices(link, max_frame_bytes=256)
     try:
-        with pytest.raises(AssertionError, match="must wait the quiet window"):
-            _cell_c05(services)
+        with pytest.raises(AssertionError, match="must time out"):
+            _body(services)
+    finally:
+        link.close()
+
+
+class _MutantQuietInflated(SerialLink):
+    """M4 (fold S3): the configured quiet window is honored 4x too long.
+
+    The quiet window the caller SET is remembered; ``take`` sees the
+    inflated value through the property override.
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        self._quiet_configured = kwargs.get("quiet_s", 0.1)
+        super().__init__(*args, **kwargs)
+
+    @property
+    def _quiet_s(self) -> float:
+        return self._quiet_configured * 4  # type: ignore[has-type]
+
+    @_quiet_s.setter
+    def _quiet_s(self, value: float) -> None:
+        self._quiet_configured = value
+
+
+def test_mutant_m4_quiet_inflated_fails_the_window_cell() -> None:
+    """Outcome-mode discrimination of quiet-window inflation: the
+    configured window is 0.4 s, the context deadline 0.8 s — real code
+    answers b"" within the deadline; a 4x-inflated window (1.6 s)
+    exceeds it and raises TimeoutError. Both margins are 2x, so
+    scheduler noise cannot flip either outcome."""
+
+    def _body(services: Any) -> None:
+        got = None
+        try:
+            got = _rx(services, _ctx_marked(timeout_s=0.8))
+        except TimeoutError as exc:
+            raise AssertionError(
+                "with the configured 0.4 s window under a 0.8 s deadline the "
+                f"receive must answer quiet, never time out: {exc}"
+            ) from exc
+        assert got == b"", (
+            f"with the configured 0.4 s window under a 0.8 s deadline the "
+            f"receive must answer quiet, never time out: got {got!r}"
+        )
+
+    port = _ScriptedPort()
+    link = _MutantQuietInflated(port, quiet_s=0.4)
+    services = SerialCaptureServices(link, max_frame_bytes=256)
+    try:
+        with pytest.raises(AssertionError, match="must answer quiet"):
+            _body(services)
     finally:
         link.close()
 
