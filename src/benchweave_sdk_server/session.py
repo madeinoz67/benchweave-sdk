@@ -407,6 +407,15 @@ def _cycle_plan(rows: list[FrameRow]) -> tuple[int, list[FrameRow], int]:
     # pairs — never the diagnostic row names ("poll-1" and "poll-2" are the
     # same cycle step).
     shapes = [(row.request, row.response) for row in rows]
+    # next_request[i]: the first request-bearing row at or after i (n when
+    # none) — one O(n) suffix walk that makes the request-bearing-in-unit
+    # guard O(1) per boundary (round 3's closure; the per-boundary any()
+    # was the residual cubic the confirmation pass handed back: a script
+    # with one establishment request and a long unsolicited tail paid
+    # ~2.6M any() calls at n=3200).
+    next_request = [n] * (n + 1)
+    for i in range(n - 1, -1, -1):
+        next_request[i] = i if rows[i].request is not None else next_request[i + 1]
     # One early-exit pass per candidate period (the fold-refute lane's Fix 2:
     # the old scan materialised the full tail for EVERY (p, e) candidate —
     # cubic, ~150 s at n=2000 on the synchronous connect path). The suffix
@@ -415,16 +424,25 @@ def _cycle_plan(rows: list[FrameRow]) -> tuple[int, list[FrameRow], int]:
     # valid boundary, so each period costs O(n) and the whole scan O(n^2)
     # with no per-candidate allocation. Tie rules preserved: periods ascend
     # (minimal wins), boundaries ascend from the earliest valid e.
+    #
+    # The boundary loop opens at max(earliest, first_request - p + 1): a
+    # window [e, e+p) contains the first request-bearing row only from
+    # that boundary, so earlier ones fail the guard by construction (an
+    # all-response-only script, where no window can ever qualify, walks
+    # the range at O(1) per boundary — never the old per-window scan).
+    first_request = next_request[0] if rows else n
     for p in range(1, n // 2 + 1):
         last_violation = -1
         for i in range(p, n):
             if shapes[i] != shapes[i - p]:
                 last_violation = i
         earliest = max(0, last_violation - p + 1)
-        for e in range(earliest, n - 2 * p + 1):
-            unit = rows[e : e + p]
-            if not any(row.request is not None for row in unit):
+        for e in range(
+            max(earliest, first_request - p + 1), n - 2 * p + 1
+        ):
+            if next_request[e] >= e + p:
                 continue
+            unit = rows[e : e + p]
             return e, list(unit), (n - e) % p
     cycle = rows[1:] if len(rows) > 1 else list(rows)
     return 1, cycle, 0

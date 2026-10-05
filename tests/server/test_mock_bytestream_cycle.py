@@ -270,6 +270,53 @@ def test_exhaustion_still_fails_honestly_under_the_plan() -> None:
     asyncio.run(flow())
 
 
+def test_all_response_only_plan_connects_within_a_generous_deadline(
+    tmp_path: Path,
+) -> None:
+    """Round-3 residual: an all-response-only script (a legal unsolicited
+    stream capture — every row a beacon) left the e-loop scanning its full
+    boundary range for every candidate period, because no unit can contain
+    a request-bearing row: cubic again (36.6s at n=3200, measured). The
+    O(1) closure skips boundaries a unit window cannot reach the first
+    request-bearing row from. Deadline-outcome form: a 3200-row beacon
+    script connects within a 10s operation deadline or it does not."""
+    import asyncio
+    import json
+    import shutil
+    import time as _time
+
+    from benchweave_sdk_server.session import (
+        load_plugin_project,
+        mock_plugin_session,
+    )
+
+    root = tmp_path / "proj"
+    shutil.copytree(
+        Path(__file__).resolve().parent.parent / "fixtures" / "binary_frames_plugin",
+        root,
+    )
+    rows = [
+        {
+            "name": "identify",
+            "request": "2a49444e3f0a",
+            "response": IDENTIFY_HEX,
+        }
+    ]
+    for index in range(3199):
+        rows.append({"name": f"s{index}", "response": "53544154000a"})
+    vectors = root / "src" / "binary_frames_demo" / "vectors.json"
+    document = json.loads(vectors.read_text())
+    document["exchanges"] = rows
+    vectors.write_text(json.dumps(document, indent=2) + "\n")
+
+    session = mock_plugin_session(load_plugin_project(root))
+    deadline = _time.monotonic() + 10.0
+    asyncio.run(session.connect())
+    assert _time.monotonic() < deadline, (
+        "the all-response-only cycle-plan scan did not meet a 10s deadline"
+    )
+
+
 def test_no_period_plan_connects_within_a_generous_deadline(
     tmp_path: Path,
 ) -> None:
