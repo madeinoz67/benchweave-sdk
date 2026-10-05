@@ -21,7 +21,14 @@ jobs:
         # already runs there, so the unit suite should too.
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    # 25 (2026-10-05): the Windows leg's serial pytest burned the whole 15m
+    # ceiling on main (Tests step alone >14m35s, killed mid-suite) six minutes
+    # after an identical tree ran green at 10m51s total — GitHub Windows
+    # capacity variance, not suite growth (#116 was 40 lines). The ceiling
+    # exists to catch hangs, not to police suite speed; 25m keeps ~2x median
+    # headroom on the slowest runner. ubuntu/macos medians (3m/4.5m) keep
+    # their effective margin under the same ceiling.
+    timeout-minutes: 25
     defaults:
       run:
         # bash on every OS. pwsh, the Windows default, reports only the LAST
