@@ -17,6 +17,8 @@ import threading
 import time
 from pathlib import Path
 
+import pytest
+
 from benchweave_sdk_server.serial import SerialCaptureServices, SerialLink
 from benchweave_sdk_server.session import HostOperationContext
 
@@ -86,6 +88,7 @@ def _ctx(timeout_s: float = 5.0) -> HostOperationContext:
     return HostOperationContext(f"soak-{time.monotonic_ns()}", timeout_ms=int(timeout_s * 1000))
 
 
+@pytest.mark.timing
 def test_ar2_ten_second_soak_keeps_every_structural_bound(tmp_path: Path) -> None:
     port = FeedPort()
     link = SerialLink(port, quiet_s=0.1)
