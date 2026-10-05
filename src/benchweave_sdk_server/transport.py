@@ -35,7 +35,7 @@ from benchweave_sdk.interfaces import OperationContext
 from benchweave_sdk.testing import ConformanceError, MockHost
 
 from .serial import _FIELDS, WriterBackedCaptureServices, _stream_receive_bounds
-from .session import FrameRow
+from .session import TRANSFER_CEILING, FrameRow
 
 
 class LoopingMockHost(MockHost):
@@ -231,7 +231,10 @@ class ByteStreamMockHost(WriterBackedCaptureServices, MockHost):
         # once per cycle and a drain quiets — never re-releasing per
         # receive (the measured hot spin).
         self._armed = True
-        self._ceiling = max_frame_bytes
+        # The backend's own clamp (fold-refute NIT): a direct
+        # construction cannot mint a ceiling above the shared 64 KiB
+        # transfer ceiling SerialCaptureServices clamps to.
+        self._ceiling = min(max_frame_bytes, TRANSFER_CEILING)
         self._inbound = bytearray()
 
     @property
@@ -396,8 +399,22 @@ class ByteStreamMockHost(WriterBackedCaptureServices, MockHost):
             # refuse outright (the link's own closed-write posture).
             if kind != "stream_receive":
                 raise ConnectionError("Transport closed")
+            # The backend's order (fold-refute cell A): the resync-discard
+            # runs BEFORE the closed refusal — an overlong terminator-free
+            # run discards max_bytes bytes and raises the resync ValueError
+            # with the remainder retained, closed transport or not.
+            max_bytes, terminator, exact = bounds
+            if (
+                not exact
+                and len(self._inbound) >= max_bytes
+                and self._inbound[:max_bytes].find(terminator) < 0
+            ):
+                del self._inbound[:max_bytes]
+                raise ValueError(f"no terminator within {max_bytes} bytes")
             frame = self._complete_from_inbound(bounds)
             if frame is None:
+                if not self._inbound:
+                    raise ConnectionError("Transport closed")
                 raise ConnectionError(
                     "Transport closed with a partial frame buffered"
                 )

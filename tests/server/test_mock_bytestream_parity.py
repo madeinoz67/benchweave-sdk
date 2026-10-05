@@ -467,6 +467,42 @@ def test_f4_a_silent_descriptor_verdicts_identically(leg: Any) -> None:
     asyncio.run(flow())
 
 
+def test_f3_close_path_overlong_discards_before_the_closed_refusal(
+    leg: Any,
+) -> None:
+    """Fold-refute cell A: SerialLink.take runs the resync-discard BEFORE
+    the closed-link refusal — a closed transport with a 26-byte
+    terminator-free run and max_bytes=8 discards 8 bytes and raises
+    ValueError with 18 retained. The mock raised ConnectionError with
+    nothing discarded: same exception class, same retained count on both
+    legs now."""
+
+    async def flow() -> None:
+        run = b"GARBAGE_NO_TERM_1234567890"  # 26 bytes, no terminator
+        surface = (
+            leg([FrameRow("poll", CMD, run)])
+            if leg is _MockLeg
+            else leg({CMD: run})
+        )
+        try:
+            context = _context()
+            await context.mark_dispatch_started()
+            await surface.transfer(
+                {"kind": "stream_send", "data": CMD}, context
+            )
+            await surface.close()
+            with pytest.raises(ValueError, match="no terminator within 8 bytes"):
+                await surface.transfer(_receive(max_bytes=8), _context())
+            if leg is _MockLeg:
+                assert len(surface._host._inbound) == 18
+            else:
+                assert surface._link.ring_length() == 18
+        finally:
+            await surface.close()
+
+    asyncio.run(flow())
+
+
 # --- R1: the recycle soak over the mock (≥50 cycles, exact sequence) ---------
 
 

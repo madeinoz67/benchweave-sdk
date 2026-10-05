@@ -165,7 +165,7 @@ A row can also carry a `name`. Diagnostics refer to a row by its `name` or by it
 
 **How the script loops.** The mock detects a repeating unit from the captured rows. The rows before the first full unit are the establishment. The mock serves these rows once. The unit then serves every later cycle in captured order.
 
-A capture needs at least two full units of evidence. A truncated capture is a capture from which no unit can be derived. Such a capture then obeys the plain tail rule. Under this rule, row 0 is the establishment. The whole tail becomes the cycle. The cycle repeats in captured order on every restore.
+A capture needs at least two full units of evidence. A capture with no derivable unit is not an error. Two causes are usual. A truncated capture is one cause. A polled value that varies across occurrences of the same request is another cause. Such a capture then obeys the plain tail rule. Under this rule, row 0 is the establishment. The whole tail becomes the cycle. The cycle repeats in captured order on every restore.
 
 A repeating unit must contain at least one row with a `request`. A response-only row releases once per cycle pass. A captured burst drains once. Then the line goes quiet. When the adapter consumes a row with a `request`, the cycle re-arms.
 

@@ -392,8 +392,10 @@ def _cycle_plan(rows: list[FrameRow]) -> tuple[int, list[FrameRow], int]:
     in the unit (a cycle that can never accept a command is not a poll
     cycle). Ties on unit length resolve to the earliest boundary. A capture
     that ended mid-unit continues at the captured phase: the restored unit
-    is rotated by ``len(tail) % len(unit)``. No derivable period — a
-    truncated capture — falls back to ``LoopingMockHost``'s own rule: an
+    is rotated by ``len(tail) % len(unit)``. No derivable unit — a
+    truncated capture, or a script whose responses VARY across occurrences
+    of the same request (any measured reading: the polled value differs
+    each cycle) — falls back to ``LoopingMockHost``'s own rule: an
     establishment head of one, the whole tail the cycle, replayed in
     captured order (the guide says capture at least two full poll cycles;
     a truncated capture is ambiguous evidence). The establishment may be
@@ -401,21 +403,27 @@ def _cycle_plan(rows: list[FrameRow]) -> tuple[int, list[FrameRow], int]:
     ``LoopingMockHost``'s establishment=0 precedent.
     """
     n = len(rows)
+    # Conversation identity, precomputed once: the (request, response) byte
+    # pairs — never the diagnostic row names ("poll-1" and "poll-2" are the
+    # same cycle step).
+    shapes = [(row.request, row.response) for row in rows]
+    # One early-exit pass per candidate period (the fold-refute lane's Fix 2:
+    # the old scan materialised the full tail for EVERY (p, e) candidate —
+    # cubic, ~150 s at n=2000 on the synchronous connect path). The suffix
+    # from e is p-periodic exactly when no i >= e+p violates
+    # shapes[i] == shapes[i-p]; the LAST violating i bounds the earliest
+    # valid boundary, so each period costs O(n) and the whole scan O(n^2)
+    # with no per-candidate allocation. Tie rules preserved: periods ascend
+    # (minimal wins), boundaries ascend from the earliest valid e.
     for p in range(1, n // 2 + 1):
-        for e in range(0, n - 2 * p + 1):
+        last_violation = -1
+        for i in range(p, n):
+            if shapes[i] != shapes[i - p]:
+                last_violation = i
+        earliest = max(0, last_violation - p + 1)
+        for e in range(earliest, n - 2 * p + 1):
             unit = rows[e : e + p]
             if not any(row.request is not None for row in unit):
-                continue
-            tail = rows[e:]
-            # The regeneration check compares CONVERSATION identity — the
-            # (request, response) byte pairs — never the diagnostic row
-            # names: "poll-1" and "poll-2" are the same cycle step.
-            def shape(row: FrameRow) -> tuple[bytes | None, bytes]:
-                return (row.request, row.response)
-
-            if [shape(unit[index % p]) for index in range(len(tail))] != [
-                shape(row) for row in tail
-            ]:
                 continue
             return e, list(unit), (n - e) % p
     cycle = rows[1:] if len(rows) > 1 else list(rows)

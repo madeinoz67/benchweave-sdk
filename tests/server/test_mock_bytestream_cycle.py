@@ -19,12 +19,18 @@ after the burst instead of re-releasing it forever.
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 import pytest
 
 from benchweave_sdk.testing import ConformanceError
 from benchweave_sdk_server.session import FrameRow, HostOperationContext
 from benchweave_sdk_server.transport import ByteStreamMockHost
+
+IDENTIFY_HEX = (
+    "42656e63685765617665204c6162732c6672616d65732d64656d6f2c"
+    "53494d2d4246312c312e302e300a"
+)
 
 
 def _context(timeout_ms: int = 1000) -> HostOperationContext:
@@ -262,6 +268,59 @@ def test_exhaustion_still_fails_honestly_under_the_plan() -> None:
             await _send(host, b"A?\n")
 
     asyncio.run(flow())
+
+
+def test_no_period_plan_connects_within_a_generous_deadline(
+    tmp_path: Path,
+) -> None:
+    """Fold-refute Fix 2: the fallback scan was cubic on the connect path
+    (no early exit — every candidate materialised the full tail). A
+    no-period script — same request, responses that VARY across
+    occurrences, the ordinary shape of any measured reading — of ~2000
+    rows must still connect well inside a generous operation deadline.
+    Deadline-outcome form (the record's sanctioned instrument): the
+    connect either meets the deadline or it does not — no duration band."""
+    import json
+    import shutil
+    import time as _time
+
+    from benchweave_sdk_server.session import mock_plugin_session
+
+    root = tmp_path / "proj"
+    shutil.copytree(
+        Path(__file__).resolve().parent.parent / "fixtures" / "binary_frames_plugin",
+        root,
+    )
+    rows = [
+        {
+            "name": "identify",
+            "request": "2a49444e3f0a",
+            "response": IDENTIFY_HEX,
+        }
+    ]
+    for index in range(1999):
+        rows.append(
+            {
+                "name": f"p{index}",
+                "request": "4156473f0a",
+                "response": f"{index}.5\n".encode().hex(),
+            }
+        )
+    vectors = root / "src" / "binary_frames_demo" / "vectors.json"
+    document = json.loads(vectors.read_text())
+    document["exchanges"] = rows
+    vectors.write_text(json.dumps(document, indent=2) + "\n")
+
+    import asyncio
+
+    from benchweave_sdk_server.session import load_plugin_project
+
+    session = mock_plugin_session(load_plugin_project(root))
+    deadline = _time.monotonic() + 5.0
+    asyncio.run(session.connect())
+    assert _time.monotonic() < deadline, (
+        "the cycle-plan scan did not meet a 5s operation deadline"
+    )
 
 
 # --- the plan derivation, pinned ---------------------------------------------

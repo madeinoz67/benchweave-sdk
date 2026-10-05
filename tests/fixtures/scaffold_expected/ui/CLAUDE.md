@@ -19,9 +19,10 @@ Before each command, the adapter drains received frames until the
 quiet line.
 
 Capture at least TWO full poll cycles. The repeating unit is detected
-from the capture. A truncated capture repeats the captured order on
-every restore. A drain returns the captured burst once per cycle, and
-then the quiet line.
+from the capture. A capture with no derivable unit repeats the captured
+order on every restore — truncated, or with polled values that vary
+across occurrences of the same request. A drain returns the captured
+burst once per cycle, and then the quiet line.
 
 Rehearse offline before you use the hardware. Run
 `benchweave-sdk-server serve . --transport mock`. Then connect, read,
