@@ -332,6 +332,22 @@ class ByteStreamMockHost(WriterBackedCaptureServices, MockHost):
             return b""
         raise TimeoutError("receive deadline expired; a partial frame stays buffered")
 
+    def _complete_from_inbound(
+        self, bounds: tuple[int, bytes, int]
+    ) -> bytes | None:
+        """One COMPLETE frame off the inbound stream, or None when nothing
+        complete is buffered (the closed-path rule — no discards, no quiet
+        line, the offending run stays buffered)."""
+        max_bytes, terminator, exact = bounds
+        if exact:
+            if len(self._inbound) >= exact:
+                return self._pop(exact)
+            return None
+        end = self._inbound[:max_bytes].find(terminator)
+        if end >= 0:
+            return self._pop(end + len(terminator))
+        return None
+
     def _receive(self, bounds: tuple[int, bytes, int]) -> bytes:
         """Serve one receive from the inbound stream under pre-validated
         bounds (the ladder validated them before any state change)."""
@@ -359,7 +375,20 @@ class ByteStreamMockHost(WriterBackedCaptureServices, MockHost):
             raise ValueError("data must be bytes")
         self._check(context)
         if self.closed:
-            raise ConnectionError("Transport closed")
+            # Closed-path parity with SerialLink.take (critic F3 = lane 1
+            # F8): evidence already received is real — a buffered COMPLETE
+            # frame still delivers; a partial can never complete on a dead
+            # reader, so it refuses instead of burning the deadline. Writes
+            # refuse outright (the link's own closed-write posture).
+            if kind != "stream_receive":
+                raise ConnectionError("Transport closed")
+            frame = self._complete_from_inbound(bounds)
+            if frame is None:
+                raise ConnectionError(
+                    "Transport closed with a partial frame buffered"
+                )
+            self.transfers.append(deepcopy(transaction))
+            return {"data": frame}
         if kind != "stream_receive" and not getattr(context, "dispatched", False):
             raise ConformanceError("Transmission needs a dispatch marker")
         if kind == "stream_receive":

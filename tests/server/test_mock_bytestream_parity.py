@@ -290,6 +290,59 @@ def test_e6_partial_frame_at_the_deadline_is_retained(leg: Any) -> None:
     asyncio.run(flow())
 
 
+# --- F3: close-path receive parity (critic F3 = lane 1 F8) -------------------
+
+
+def test_f3_close_path_delivers_a_buffered_complete_frame(leg: Any) -> None:
+    """SerialLink.take delivers a buffered COMPLETE frame after close; the
+    mock refused unconditionally. Both hosts deliver."""
+
+    async def flow() -> None:
+        surface = (
+            leg([FrameRow("poll", CMD, b"ok\n")])
+            if leg is _MockLeg
+            else leg({CMD: b"ok\n"})
+        )
+        try:
+            context = _context()
+            await context.mark_dispatch_started()
+            await surface.transfer(
+                {"kind": "stream_send", "data": CMD}, context
+            )
+            await surface.close()
+            reply = await surface.transfer(_receive(), _context())
+            assert reply == {"data": b"ok\n"}
+        finally:
+            await surface.close()
+
+    asyncio.run(flow())
+
+
+def test_f3_close_path_refuses_a_partial_frame(leg: Any) -> None:
+    """A partial frame can never complete on a dead reader: both hosts
+    refuse with ConnectionError instead of burning the deadline."""
+
+    async def flow() -> None:
+        surface = (
+            leg([FrameRow("poll", CMD, b"ok")])
+            if leg is _MockLeg
+            else leg({CMD: b"ok"})
+        )
+        try:
+            context = _context()
+            await context.mark_dispatch_started()
+            await surface.transfer(
+                {"kind": "stream_send", "data": CMD}, context
+            )
+            await surface.close()
+            with pytest.raises(ConnectionError):
+                await surface.transfer(_receive(), _context())
+        finally:
+            await surface.close()
+
+    asyncio.run(flow())
+
+
 # --- F2/F9: the validation ladder — refuse before any state change ----------
 
 
