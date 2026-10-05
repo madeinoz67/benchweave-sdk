@@ -75,6 +75,7 @@ def _build_seam(
     open_port: Any = None,
     capture_root: Any = None,
     bindings: Path | None = None,
+    serial_hooks: Any = None,
 ) -> tuple[StandaloneSeam, ScenarioSelection | None]:
     """Compose the seam over one transport (§4.1's composition step).
 
@@ -92,7 +93,12 @@ def _build_seam(
     ``SerialEndpoint`` (issue #385 §1.4) shared by the session factory and
     the seam, and opens the binding store HERE — a malformed
     ``device-bindings.json`` refuses serve construction with the prefixed
-    message and exit 2, never a mid-request traceback.
+    message and exit 2, never a mid-request traceback. ``--device`` is the
+    headless/scripted CONSTANT endpoint (the binding bypass, §1.6);
+    without it the endpoint is binding-backed and the host serves
+    binding-pending until the operator picks. ``serial_hooks`` is the
+    test-injection axis for discovery + resolution enumeration (the
+    ``open_port`` sibling).
     """
     from .scenarios import (
         ScenarioSelection,
@@ -123,24 +129,37 @@ def _build_seam(
             selection,
         )
     if transport == "serial":
-        if not device:  # absent OR empty — "" is a missing path, not a path
-            click.echo(
-                "standalone_transport_serial_device_required: --transport serial "
-                "requires --device <path>",
-                err=True,
-            )
-            raise SystemExit(2)
-        from .binding import BindingStore, bindings_path
+        from .binding import BindingStore, binding_endpoint, bindings_path
 
         try:
             store = BindingStore.open(bindings_path(bindings))
         except ValueError as exc:
             click.echo(str(exc), err=True)
             raise SystemExit(2) from exc
-        # The --device form is the constant endpoint (the binding bypass,
-        # §1.6): the store is loaded and validated but never consulted for
-        # resolution, and never modified.
-        endpoint = SerialEndpoint(device)
+        hooks = serial_hooks
+        enumerate_ports = (
+            hooks.enumerate_ports
+            if hooks is not None
+            else None  # the resolver's default: pyserial's own enumeration
+        )
+        if device:
+            # The --device form is the constant endpoint (the binding
+            # bypass, §1.6): the store is loaded and validated but never
+            # consulted for resolution, and never modified.
+            endpoint = SerialEndpoint(device)
+        else:
+            # F-385-2 (adopted): serve starts BINDING-PENDING — the
+            # refusal moved to connect time (``binding_absent``) so the UI
+            # can render the pick; a stored binding resolves straight away.
+            if enumerate_ports is None:
+                from .serial import _pyserial_enumerate
+
+                enumerate_ports = _pyserial_enumerate
+            endpoint = SerialEndpoint(
+                binding_endpoint(
+                    store, plugin.package, plugin.device_id, enumerate_ports
+                )
+            )
         return (
             StandaloneSeam(
                 serial_plugin_session(
@@ -151,7 +170,7 @@ def _build_seam(
                 ),
                 transport_kind="serial",
                 unattended=unattended,
-                serial_ports=None,
+                serial_ports=hooks,
                 # The no-re-probe clause (I3 §3.3, issue #389) now flows
                 # from the endpoint's last_resolution — the path the live
                 # session actually opened. Alias spellings of the same
@@ -210,7 +229,23 @@ def cli() -> None:
 @click.option(
     "--device",
     default=None,
-    help="Serial device path (required with --transport serial, refused otherwise).",
+    help=(
+        "Serial device path: the headless constant endpoint (the binding "
+        "bypass). Without it, a serial host serves binding-pending until an "
+        "endpoint is picked in the UI, or a stored binding resolves. "
+        "Refused on non-serial transports."
+    ),
+)
+@click.option(
+    "--bindings",
+    type=click.Path(path_type=Path),
+    default=None,
+    help=(
+        "The device-bindings document (default: "
+        "BENCHWEAVE_STANDALONE_BINDINGS, then device-bindings.json under "
+        "the working directory). One row per plugin and connection key; "
+        "validated at startup."
+    ),
 )
 @click.option(
     "--capture-root",
@@ -240,6 +275,7 @@ def serve(
     no_open: bool,
     transport: str,
     device: str | None,
+    bindings: Path | None,
     capture_root: Path | None,
     scenario: str | None,
     authoring: bool,
@@ -280,6 +316,7 @@ def serve(
         scenario=scenario,
         unattended=unattended,
         device=device,
+        bindings=bindings,
         capture_root=capture_root,
     )
     if seam.session.plugin.load_diagnostic is not None:
