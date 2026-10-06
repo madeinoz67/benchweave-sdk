@@ -89,8 +89,11 @@ def _website(version: str) -> str:
 
 
 def _lock(version: str) -> str:
+    # compact, like the lock file actually ships (single line, no space
+    # after the colon) — the replay arm caught the spaced shape matching 0
     return json.dumps(
-        {"compatibility": {"main_project": ">=0.1.0", "sdk": version}, "standards": []}
+        {"compatibility": {"main_project": ">=0.1.0", "sdk": version}, "standards": []},
+        separators=(",", ":"),
     )
 
 

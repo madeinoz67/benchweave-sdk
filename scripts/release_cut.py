@@ -114,7 +114,9 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
         LOCK,
         "substitution",
         "the lock anchor (matrix rows 4/9) — the v0.8.0 walk commit",
-        (('"sdk": "{v}"', 1),),
+        # compact JSON: the lock file ships single-line, no space after the
+        # colon (the section-9 replay caught the spaced pattern matching 0)
+        (('"sdk":"{v}"', 1),),
     ),
     DeclaredSurface(
         FIXTURES,
