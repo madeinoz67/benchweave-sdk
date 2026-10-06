@@ -655,7 +655,7 @@ def cmd_cut(repo: Path, version: str, *, force: bool) -> int:
         raise
 
     print(
-        f"release-cut: staged v{version} (from v{prev_tag}). Occurrence-validated: "
+        f"release-cut: staged v{version} (from {prev_tag}). Occurrence-validated: "
         f"{len(backup)} substitution/derived files rewritten, fixtures regenerated, "
         f"anchor checked, matrix scaffold appended, phase-2 patch + plan staged at "
         f"{RELEASE_DIR}/. NO commit, NO tag, NO push — the operator commits, "
