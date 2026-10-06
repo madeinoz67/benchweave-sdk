@@ -141,6 +141,37 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
 )
 
 
+# The vendored standards corpus is byte-frozen and copy-never-move (the
+# gateway's GOVERNANCE; the SDK's vendored tree is its mirror): a release
+# cut never writes there, so the registry cannot declare it.
+CORPUS_PATH_PREFIXES = (
+    "standards/",
+    "src/benchweave_sdk/standards/",
+    "benchweave_sdk/standards/",
+)
+
+
+def assert_no_corpus_paths(
+    surfaces: tuple[DeclaredSurface, ...] | None = None,
+) -> None:
+    surfaces = DECLARED_SURFACES if surfaces is None else surfaces
+    """The loader assertion (governor F1): any DECLARED_SURFACES path under
+    the vendored standards corpus refuses the load loudly. The check runs
+    before every mode — the class is structurally impossible, not merely
+    untested."""
+    for surface in surfaces:
+        normalized = surface.path.rstrip("/")
+        if any(
+            normalized == prefix.rstrip("/") or normalized.startswith(prefix)
+            for prefix in CORPUS_PATH_PREFIXES
+        ):
+            raise ReleaseCutError(
+                f"corpus_path_refused: {surface.path!r} is under the vendored "
+                "standards corpus — the corpus is byte-frozen and "
+                "copy-never-move; a release cut never writes there"
+            )
+
+
 @dataclass
 class CutPlan:
     """The machine-readable plan S3's preflight consumes (plan.json)."""
@@ -574,10 +605,14 @@ def cmd_cut(repo: Path, version: str, *, force: bool) -> int:
         # pyproject — refresh the env first, or the fixtures are re-pinned at
         # the OLD version while the post-cut byte-parity render (post-reinstall)
         # says NEW (the section-9 replay caught it: 'b'8' != b'7'').
-        # --extra test --extra server: the repo's documented gate env — a
-        # bare sync would DROP the test extra (pytest lives there, not in dev)
+        # The same three extras the CI sdk job syncs (test, server, scaffold):
+        # a bare sync would DROP the test extra (pytest lives there, not in
+        # dev), and a scaffold-less env cannot render the fixture regen.
         refresh = run_command(
-            ["uv", "sync", "--locked", "--extra", "test", "--extra", "server"],
+            [
+                "uv", "sync", "--locked",
+                "--extra", "test", "--extra", "server", "--extra", "scaffold",
+            ],
             cwd=repo,
         )
         if refresh.returncode != 0:
@@ -802,6 +837,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--repo", type=Path, default=Path.cwd(), help="repository root")
     args = parser.parse_args(argv)
+    try:
+        assert_no_corpus_paths()
+    except ReleaseCutError as exc:
+        print(f"release-cut: {exc}", file=sys.stderr)
+        return EXIT_FAIL
     repo = args.repo.resolve()
     if args.verify:
         return cmd_verify(repo)

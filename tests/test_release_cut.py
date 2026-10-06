@@ -11,8 +11,10 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -201,10 +203,11 @@ def cut_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def test_registry_names_exactly_the_declared_version_surfaces() -> None:
-    """The declared-surface registry IS the census: the six substitution
-    surfaces of the v0.8.0 walk commit, the fixture regen, the matrix
-    scaffold and the phase-2 pair — set-equal, so an unregistered
-    bump-sensitive surface is visible as a registry diff."""
+    """The declared-surface registry IS the census: six substitution
+    patterns across five files (the website file carries the hero and the
+    tagline patterns in one row), one regen, one derived and two phase-2
+    rows — set-equal, so an unregistered bump-sensitive surface is visible
+    as a registry diff."""
     drift = _load()
     pairs = sorted((s.path, s.kind) for s in drift.DECLARED_SURFACES)
     assert pairs == [
@@ -258,7 +261,7 @@ def test_validate_flags_a_missing_declared_file() -> None:
 # --- substitutions --------------------------------------------------------------
 
 
-def test_substitutions_move_all_six_surfaces_old_to_new() -> None:
+def test_substitutions_move_all_six_patterns_old_to_new() -> None:
     drift = _load()
     texts = {path: text for path, text in MINI_TREE.items()}
     moved = drift.apply_substitutions(texts, OLD, NEW)
@@ -614,6 +617,101 @@ def test_matrix_scaffold_pre_fills_every_row_and_guesses_no_class() -> None:
     # D7: the tool never guesses MINOR/PATCH — no class verdict in the scaffold.
     assert "MINOR class:" not in scaffold
     assert "PATCH class:" not in scaffold
+
+
+# --- governor fold wave: F1 corpus-path refusal, F2 matrix-vs-registry, NIT gate pins ---
+
+
+def test_registry_cannot_declare_corpus_paths() -> None:
+    """F1: the vendored standards corpus is byte-frozen and copy-never-move;
+    a corpus-path registration is a structural-impossibility class and the
+    loader refuses it loudly (the planted registration here names a real
+    corpus-layout path)."""
+    drift = _load()
+    planted = (
+        *drift.DECLARED_SURFACES,
+        drift.DeclaredSurface(
+            "src/benchweave_sdk/standards/otdp/0.2.2/otdp-runtime.schema.json",
+            "substitution",
+            "planted corpus row — must be refused",
+            (('"version": "{v}"', 1),),
+        ),
+    )
+    with pytest.raises(drift.ReleaseCutError, match="corpus_path_refused"):
+        drift.assert_no_corpus_paths(planted)
+
+
+def test_main_refuses_a_corpus_path_registration(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    """F1 end to end: main() runs the loader assertion before anything
+    else, so a planted corpus row refuses every mode."""
+    drift = _load()
+    repo = _mini_repo(tmp_path)
+    planted = (
+        *drift.DECLARED_SURFACES,
+        drift.DeclaredSurface(
+            "standards/execution/0.2.0/procedure.schema.json",
+            "substitution",
+            "planted corpus row — must be refused",
+            (),
+        ),
+    )
+    monkeypatch.setattr(drift, "DECLARED_SURFACES", planted)
+    assert drift.main(["--verify", "--repo", str(repo)]) == 1
+    assert "corpus_path_refused" in capsys.readouterr().err
+
+
+def test_env_refresh_syncs_the_ci_sdk_job_extras(monkeypatch: pytest.MonkeyPatch) -> None:
+    """NIT F4b: the cut's env refresh must sync the SAME extras the CI sdk
+    job does (test, server, scaffold) — a bare refresh drops the scaffold
+    extra and the next fixture render (copier) fails on the missing
+    module."""
+    drift = _load()
+    captured: list[list[str]] = []
+
+    def _spy(cmd: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
+        captured.append(cmd)
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(drift, "run_command", _spy)
+    repo = _mini_repo(Path(tempfile.mkdtemp()))
+    drift.main([NEW, "--repo", str(repo)])
+    syncs = [cmd for cmd in captured if "sync" in cmd]
+    assert syncs, f"the env-refresh sync never ran; commands seen: {captured}"
+    for extra in ("test", "server", "scaffold"):
+        assert extra in syncs[0], syncs[0]
+
+
+def test_matrix_test_surfaces_match_the_registry() -> None:
+    """F2: the matrix's Test-surfaces prose set is regenerable from the
+    mechanism (G4): each T-row is either DECLARED in the registry or
+    classified by the prose itself (T3 = a procedure docstring, T4 = inert
+    by design) — and the arm fails if the prose and the registry drift
+    apart in either direction."""
+    drift = _load()
+    matrix = (ROOT / "docs" / "internal" / "release-review-matrix.md").read_text(
+        encoding="utf-8"
+    )
+    section = matrix[matrix.find("## Test surfaces"):]
+    section = section[: section.find("\n## ", 1)]
+    rows = re.findall(r"^\| (T\d+) \| ([^|]+) \|", section, re.M)
+    by_id = {row_id: surface.strip() for row_id, surface in rows}
+    assert set(by_id) == {"T1", "T2", "T3", "T4"}, by_id
+    regen_paths = {
+        surface.path for surface in drift.DECLARED_SURFACES if surface.kind == "regen"
+    }
+    # T1/T2 are the two fixture arms — declared as the one regen surface
+    assert "scaffold_expected" in by_id["T1"] and "scaffold_expected" in by_id["T2"]
+    assert regen_paths == {"tests/fixtures/scaffold_expected"}
+    # T3 is the copier test's docstring — a procedure pointer, not a surface
+    assert "test_scaffold_copier.py" in by_id["T3"]
+    assert "test_scaffold_copier.py" not in {s.path for s in drift.DECLARED_SURFACES}
+    # T4 is inert BY DESIGN — the prose says so, and the registry agrees
+    assert "test_scaffold_update" in by_id["T4"]
+    assert "test_scaffold_update" not in {s.path for s in drift.DECLARED_SURFACES}
 
 
 # --- the Makefile wrapper ----------------------------------------------------------------
