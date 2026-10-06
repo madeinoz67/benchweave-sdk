@@ -663,14 +663,17 @@ class StandaloneSeam:
         and the observation ring all address it), and
         ``invalid_request`` with ``standalone_binding_pick_unconfirmed:``
         for a path the confirmed discovery cache never carried (a
-        hand-crafted form cannot bind an unconfirmed or foreign port), and
-        with ``standalone_binding_pick_vanished:`` for a confirmed pick
-        whose port the LIVE enumeration no longer carries (it unplugged
-        between the scan and the click — stale evidence, never a row to
-        write). Chooses the discriminator the bench's own evidence
-        supported (§1.3), writes the store atomically, publishes
-        ``device_bound``. Binding transmits NOTHING — the identify exchange
-        happened at scan time; this only records."""
+        hand-crafted form cannot bind an unconfirmed or foreign port), with
+        ``standalone_binding_pick_vanished:`` for a confirmed pick whose
+        port the LIVE enumeration no longer carries (it unplugged between
+        the scan and the click — stale evidence, never a row to write), and
+        with ``standalone_binding_pick_changed:`` for a pick whose path a
+        DIFFERENT serial now occupies (the re-occupied path — the scan
+        row's serial must hold live at the picked path). Chooses the
+        discriminator the bench's own evidence supported (§1.3), writes the
+        store atomically, publishes ``device_bound``. Binding transmits
+        NOTHING — the identify exchange happened at scan time; this only
+        records."""
         correlation = self._correlation(None)
         # Under the op mutex for the whole guarded body (fold wave 2, lane
         # A F2): the conflict-while-connected guard and the pick's evidence
@@ -718,15 +721,42 @@ class StandaloneSeam:
         # (the cache still carries the serial, the live count is the twin
         # alone) and the connect opened the NEVER-CONFIRMED twin.
         live_candidates = self._enumerate_ports()
-        if str(port_path) not in {
-            _port_name(candidate) for candidate in live_candidates
-        }:
+        picked_live = next(
+            (
+                candidate
+                for candidate in live_candidates
+                if _port_name(candidate) == str(port_path)
+            ),
+            None,
+        )
+        if picked_live is None:
             raise self._fail(
                 "invalid_request",
                 f"standalone_binding_pick_vanished: {port_path} is no longer "
                 "present; scan for devices, then pick one of the listed ports",
                 correlation,
             )
+        # The serial-evidence cross-check (fold wave 3, delta F1): the
+        # re-occupied path. The path is live but a DIFFERENT unit may hold
+        # it now — the unfixed seam bound path-keyed on the OLD scan's
+        # identity and the connect established on the re-occupant (whether
+        # or not a serial-claiming twin kept the row's serial live
+        # elsewhere). When the scan row carries a serial, that serial must
+        # hold live AT THE PICKED PATH; a row with no serial has no serial
+        # evidence to contradict and keeps plain path-keyed semantics.
+        serial = picked.get("usb_serial")
+        if serial is not None:
+            live_raw = getattr(picked_live, "serial_number", None)
+            live_serial = str(live_raw) if live_raw else "no serial"
+            if live_serial != str(serial):
+                raise self._fail(
+                    "invalid_request",
+                    f"standalone_binding_pick_changed: {port_path} carried USB "
+                    f"serial {str(serial)!r} at scan time and carries "
+                    f"{live_serial!r} now; scan for devices, then pick one "
+                    "of the listed ports",
+                    correlation,
+                )
         # The discriminator (§1.3, fold wave 1 M1): usb_serial keying only
         # when the LIVE enumeration carries the picked serial exactly once
         # — the same population resolve matches over, so a twin that
@@ -739,8 +769,9 @@ class StandaloneSeam:
         # adds the closing conjunct — the unique live carrier must BE the
         # picked port — so with the picked path guaranteed live, the vid/pid
         # conjuncts always derive from the picked port itself (never
-        # dropped, never sourced from a foreign port).
-        serial = picked.get("usb_serial")
+        # dropped, never sourced from a foreign port); with wave 3's
+        # serial-evidence check passed, the picked port is itself in the
+        # counted population whenever the row carried a serial.
         live_with_serial = [
             candidate
             for candidate in live_candidates
