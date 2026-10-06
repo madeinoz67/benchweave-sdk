@@ -553,18 +553,24 @@ def cmd_cut(repo: Path, version: str, *, force: bool) -> int:
         and (repo / surface.path).is_file()
     }
     fixture_backup = _snapshot_dir(repo / FIXTURES)
+    release_dir = repo / RELEASE_DIR
 
     def _restore() -> None:
         for relative, content in backup.items():
             (repo / relative).write_bytes(content)
         _restore_dir(repo / FIXTURES, fixture_backup)
+        for emitted in (
+            release_dir / f"phase2-v{version}.patch",
+            release_dir / "plan.json",
+        ):
+            emitted.unlink(missing_ok=True)
 
     try:
         moved = apply_substitutions(texts, current, version)
         for path, text in moved.items():
             (repo / path).write_text(text, encoding="utf-8")
 
-        regenerate_fixtures(repo, version)
+        regenerate_fixtures(repo / FIXTURES, version)
 
         anchor = run_command(
             ["uv", "run", "benchweave-sdk", "sync-standards", "--check"], cwd=repo
@@ -600,7 +606,6 @@ def cmd_cut(repo: Path, version: str, *, force: bool) -> int:
                 f"phase2_wrong_file_set: the staged patch touches {sorted(touched)}, "
                 f"expected exactly {sorted(PHASE2_FILES)} — refused"
             )
-        release_dir = repo / RELEASE_DIR
         release_dir.mkdir(exist_ok=True)
         (release_dir / f"phase2-v{version}.patch").write_text(patch, encoding="utf-8")
         plan = CutPlan(
