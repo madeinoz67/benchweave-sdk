@@ -1276,3 +1276,55 @@ def test_a_mid_run_log_failure_keeps_prior_rows_on_the_cli(
         capture_id for capture_id, _rule, _n in GOLDEN[:2]
     ]
     assert all(row["trigger"] == "cli" for row in rows)
+
+
+# --- fold wave 2 (lane 2): unreadable sidecars keep their rows visible -------
+
+
+def test_rows_with_unreadable_sidecars_stay_under_the_device_filter(
+    tmp_path: Path,
+) -> None:
+    """The route's claim ("a row whose sidecar cannot be read stays") was
+    false as coded: an absent or unparseable metadata.json reads as an
+    EMPTY dict, so the device comparison silently mismatched and the row
+    DISAPPEARED under any device filter — a deletion-from-view with no
+    positive evidence. The fix makes the code match the claim (the safer
+    direction): a row that names no device is kept under every filter."""
+    from fastapi.testclient import TestClient
+
+    _seam, app, _policy = _captures_app(tmp_path)
+    root = tmp_path / "captures"
+    (root / "cap-alpha" / "metadata.json").write_text(
+        "{ not json", encoding="utf-8"
+    )  # the corrupt sidecar
+    (root / "cap-bravo" / "metadata.json").unlink()  # the deleted sidecar
+    with TestClient(app, base_url="http://127.0.0.1:8477") as client:
+        matched = client.get("/captures", params={"device": _DEVICE_ID})
+        other = client.get("/captures", params={"device": "no-such-device"})
+    body = matched.text
+    assert "cap-alpha" in body
+    assert "cap-bravo" in body
+    body = other.text
+    assert "cap-alpha" in body
+    assert "cap-bravo" in body
+    # A row that DOES name the device is still filtered honestly.
+    assert "cap-delta" not in body
+
+
+def test_a_rules_host_evaluation_arms_the_root_lock(tmp_path: Path) -> None:
+    """The disclosed lockfile posture (the design record's risk 5): a
+    rules-bearing host's first evaluation constructs the library and TAKES
+    the root lock even with zero captures — so a second serve or library
+    over the same root refuses exactly as designed (one writer per root)."""
+    from test_capture_lifecycle import _host
+
+    root = tmp_path / "captures"
+    _write_corpus(root)
+    config = load_config(_rules_file(tmp_path))
+    host = _host(tmp_path, mode="ok", retention=config)
+    assert not (root / "library.lock").exists()
+    host.run_retention_once(now=NOW, clock=NOW.timestamp())
+    assert (root / "library.lock").exists()
+    with pytest.raises(RuntimeError) as caught:
+        CaptureLibrary(root)
+    assert "standalone_library_locked" in str(caught.value)

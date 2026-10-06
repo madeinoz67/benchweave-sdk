@@ -995,9 +995,12 @@ def _add_html_routes(
         if device:
             # SW-49's device filter reads metadata.json per row at render:
             # the FILE is the authority, the index has no device column and
-            # this slice does not widen it (disclosed). A row whose sidecar
-            # cannot be read stays — an unreadable filter field never hides
-            # a capture.
+            # this slice does not widen it (disclosed). A row that NAMES NO
+            # DEVICE — sidecar absent, unparseable (it reads as an empty
+            # dict) or refused — stays under every filter: a row must never
+            # disappear from view without positive evidence that it does
+            # not match (the fold wave's row 2 — the keep-on-unreadable
+            # claim, now true as coded).
             kept: list[dict[str, Any]] = []
             for row in shown:
                 try:
@@ -1008,7 +1011,8 @@ def _add_html_routes(
                     kept.append(row)
                     continue
                 metadata = fetched.get("metadata") or {}
-                if str((metadata.get("device") or {}).get("id") or "") == device:
+                device_of_row = str((metadata.get("device") or {}).get("id") or "")
+                if not device_of_row or device_of_row == device:
                     kept.append(row)
             shown = kept
         rules = seam.retention.rules if seam.retention is not None else ()

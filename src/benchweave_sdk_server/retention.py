@@ -237,7 +237,7 @@ def _bytes_of(row: dict[str, Any]) -> int:
 
 def _newest_first(row: dict[str, Any]) -> tuple[datetime, str]:
     """The newest-first sort key (started_at desc, capture_id desc as the
-    tiebreak — a row that cannot be age-ordered sorts as the oldest)."""
+    tiebreak)."""
     return (
         _started_at(row) or datetime.min.replace(tzinfo=UTC),
         str(row["capture_id"]),
@@ -289,8 +289,11 @@ def plan(
 ) -> list[PlannedRemoval]:
     """The deterministic removal plan over the library's rows.
 
-    Eligibility: not pinned, not in flight. Rows come from the library, so
-    ``published`` is already guaranteed (the manifest exists). A row
+    Eligibility: not pinned, not in flight, and age-orderable — a row whose
+    ``started_at`` cannot be parsed is never selected (deletion needs
+    positive evidence), so it cannot appear in a plan. Rows come from the
+    library, so ``published`` is already guaranteed (the manifest exists).
+    A row
     selected by several rules is attributed to the FIRST selecting rule in
     evaluation order (rules sorted by id) — the golden set is unambiguous.
     The result is sorted by capture_id.

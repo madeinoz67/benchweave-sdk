@@ -476,13 +476,20 @@ def mcp(project: Path, authoring: bool, unattended: bool) -> None:
 
     seam, _ = _build_seam(project, unattended=unattended)
     server = build_mcp(seam, authoring=authoring)
-    server.run()
-    # NFR-O1's close-down, stdio shape: server.run() owned — and closed —
-    # its event loop, so the settle runs in a FRESH loop (a watcher that
-    # died with that loop is aborted directly, nothing half-published),
-    # then the host's own resources release (the library's root lock).
-    asyncio.run(seam.settle_capture_for_shutdown())
-    seam.close()
+    try:
+        server.run()
+    finally:
+        # NFR-O1's close-down runs on EVERY exit from run() — the clean
+        # return AND the interrupt paths (SIGINT raises KeyboardInterrupt
+        # out of run(), which click surfaces as Abort; without this
+        # finally the settle and the root lock's release never execute
+        # and the guide's "through an interrupt ... settled honestly"
+        # claim is false). The settle needs its own FRESH loop here:
+        # server.run() owned — and closed — its event loop, so a watcher
+        # that died with it is aborted directly, nothing half-published.
+        # The interrupt itself propagates after this block.
+        asyncio.run(seam.settle_capture_for_shutdown())
+        seam.close()
 
 
 @cli.command()

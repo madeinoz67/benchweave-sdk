@@ -1135,7 +1135,7 @@ def test_lifespan_exit_settles_an_in_flight_capture(tmp_path: Path) -> None:
             "/v1/capture_start", json=_start(count=4000), headers=headers
         )
         capture_id = started.json()["data"]["capture_id"]
-        assert (tmp_path / "captures" / capture_id).exists() or True
+        assert host.in_flight_capture_id == capture_id  # the settle's premise
     # The lifespan's finally settled the capture before releasing anything.
     root = tmp_path / "captures"
     outcomes = dict(host._capture_outcomes)
@@ -1237,3 +1237,90 @@ def test_settle_returns_none_with_no_capture_in_flight(tmp_path: Path) -> None:
         return await host.settle_capture_for_shutdown()
 
     assert asyncio.run(settle()) is None
+
+
+# --- fold wave 2 (lane 2): the stdio close-down runs on EVERY exit path ------
+
+
+def _mcp_interrupt_scenario(tmp_path: Path, *, interrupt: bool):
+    """Drive the mcp command with a scripted server: run() arms a capture
+    (its loop owning — and closing — the watcher, the stdio shape) and
+    then either returns normally or raises KeyboardInterrupt the way
+    SIGINT unwinds out of run(). Returns (host, invoke-result)."""
+    from click.testing import CliRunner
+
+    import benchweave_sdk_server.cli as cli_module
+    from benchweave_sdk_server.cli import cli as server_cli
+
+    host = _host(tmp_path, mode="slow")
+    project_root = tmp_path / "proj"  # _host already scaffolded this one
+
+    class FakeServer:
+        def run(self) -> None:
+            async def arm() -> str:
+                await _connected(host)
+                started = await host.call("capture_start", _start(count=4000))
+                return str(started["capture_id"])
+
+            asyncio.run(arm())
+            if interrupt:
+                raise KeyboardInterrupt
+
+    def fake_build(seam, authoring=False):  # type: ignore[no-untyped-def]
+        assert seam is host
+        return FakeServer()
+
+    original_build_seam = cli_module._build_seam
+    import benchweave_sdk_server.mcp as mcp_module
+
+    original_build_mcp = mcp_module.build_mcp
+    cli_module._build_seam = lambda *args, **kwargs: (host, None)  # type: ignore[assignment]
+    mcp_module.build_mcp = fake_build  # type: ignore[assignment]
+    escaped: list[BaseException] = []
+    try:
+        # No runner wrapping: the KeyboardInterrupt must be observable RAW
+        # (click's standalone mode would re-cast it as Abort/SystemExit(1)).
+        result = CliRunner().invoke(
+            server_cli,
+            ["mcp", str(project_root)],
+            standalone_mode=False,
+            catch_exceptions=False,
+        )
+    except BaseException as exc:  # noqa: BLE001 - the interrupt under test
+        escaped.append(exc)
+        result = None
+    finally:
+        cli_module._build_seam = original_build_seam  # type: ignore[assignment]
+        mcp_module.build_mcp = original_build_mcp  # type: ignore[assignment]
+    return host, (escaped[0] if escaped else result)
+
+
+def test_the_mcp_entry_settles_an_in_flight_capture_on_interrupt(
+    tmp_path: Path,
+) -> None:
+    """NFR-O1's close-down must run on EVERY exit from server.run() — the
+    clean return AND the interrupt paths. SIGINT raises KeyboardInterrupt
+    out of run(); without a try/finally the settle and the root lock's
+    release never execute, and the guide's claim ("on exit, through an
+    interrupt or a terminal close, a capture in flight is settled
+    honestly") is false. The interrupt propagates AFTER the cleanup."""
+    from click.exceptions import Abort
+
+    host, outcome = _mcp_interrupt_scenario(tmp_path, interrupt=True)
+    # click re-casts a KeyboardInterrupt out of run() to its Abort idiom;
+    # either surface means the interrupt propagated AFTER the cleanup.
+    assert isinstance(outcome, (KeyboardInterrupt, Abort))
+    assert host.in_flight_capture_id is None  # the slot freed
+    assert any(host._capture_outcomes.values())  # the settle outcome exists
+    assert not (tmp_path / "captures" / "library.lock").exists()
+
+
+def test_the_mcp_entry_settles_on_a_clean_return(tmp_path: Path) -> None:
+    """The clean-return arm (kept green): run() returning normally settles
+    the capture and releases the root the same way."""
+    host, outcome = _mcp_interrupt_scenario(tmp_path, interrupt=False)
+    assert not isinstance(outcome, BaseException)
+    assert outcome.exit_code == 0
+    assert host.in_flight_capture_id is None
+    assert any(host._capture_outcomes.values())
+    assert not (tmp_path / "captures" / "library.lock").exists()
