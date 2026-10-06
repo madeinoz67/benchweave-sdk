@@ -570,6 +570,21 @@ def cmd_cut(repo: Path, version: str, *, force: bool) -> int:
         for path, text in moved.items():
             (repo / path).write_text(text, encoding="utf-8")
 
+        # The render stamps the INSTALLED dist-info version, not the edited
+        # pyproject — refresh the env first, or the fixtures are re-pinned at
+        # the OLD version while the post-cut byte-parity render (post-reinstall)
+        # says NEW (the section-9 replay caught it: 'b'8' != b'7'').
+        # --extra test --extra server: the repo's documented gate env — a
+        # bare sync would DROP the test extra (pytest lives there, not in dev)
+        refresh = run_command(
+            ["uv", "sync", "--locked", "--extra", "test", "--extra", "server"],
+            cwd=repo,
+        )
+        if refresh.returncode != 0:
+            raise ReleaseCutError(
+                "env_refresh_failed: uv sync --locked red after the substitutions:\n"
+                f"{refresh.stdout}\n{refresh.stderr}"
+            )
         regenerate_fixtures(repo / FIXTURES, version)
 
         anchor = run_command(
