@@ -48,6 +48,7 @@ from .binding import BindingAbsent, BindingStale
 from .errors import SeamError
 from .events import EventBus
 from .library import CaptureLibrary
+from .retention import record
 from .session import (
     HostOperationContext,
     PluginLoadError,
@@ -2088,6 +2089,23 @@ class StandaloneSeam:
                 correlation,
             )
         library.remove(capture_id)
+        # Ruling 9 (I3b): a manual delete never bypasses the retention log.
+        # The recorder row names the capture, the manifest's own recorded
+        # digest (the index row's sha256 — the log row and the capture's
+        # record named the same bytes), rule manual-delete, and the
+        # dispatch surface's trigger (delete-<surface>, defaulting rest —
+        # the closed refusal paths' surface discipline).
+        record(
+            library.root,
+            [
+                {
+                    "capture_id": capture_id,
+                    "sha256": row["sha256"],
+                    "rule": "manual-delete",
+                }
+            ],
+            trigger=f"delete-{_SURFACE.get() or 'rest'}",
+        )
         self._capture_outcomes.pop(capture_id, None)
         return {"capture_id": capture_id, "deleted": True}
 

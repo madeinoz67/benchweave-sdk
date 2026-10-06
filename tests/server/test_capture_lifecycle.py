@@ -961,5 +961,10 @@ def test_reload_refuses_while_a_capture_is_in_flight(tmp_path: Path) -> None:
         assert "conflict" in str(caught.value.code)
         assert "capture is in flight" in str(caught.value.message)
         await host.call("capture_stop", {"capture_id": started["capture_id"]})
+        # AR-12's second half: once the capture settles, the same reload
+        # proceeds — the guard read the live slot, and the watcher cleared
+        # it at the terminal state.
+        reloaded = await host.reload_plugin(source="test")
+        assert reloaded["status"] == "reloaded"
 
     asyncio.run(scenario())

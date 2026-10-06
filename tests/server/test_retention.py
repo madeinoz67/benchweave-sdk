@@ -545,3 +545,78 @@ def test_quota_latch_zero_cap_is_above_only_with_bytes() -> None:
     assert latch.crossings([QuotaUsage("zero-cap", 1, 0)]) == [
         QuotaUsage("zero-cap", 1, 0)
     ]
+
+
+# --- capture_delete + the recorder (SW-59, I3b ruling 9) ----------------------
+
+
+def _publish_one(tmp_path: Path, *, count: int = 4) -> tuple[Any, str, str]:
+    """Run one real capture to publication over the loopback fixture;
+    returns (host, capture_id, the manifest's recorded digest)."""
+    import asyncio
+
+    from test_capture_lifecycle import _connected, _host, _start
+
+    host = _host(tmp_path, mode="ok")
+
+    async def scenario() -> tuple[str, str]:
+        await _connected(host)
+        started = await host.call("capture_start", _start(count=count))
+        outcome = await host.await_capture()
+        return str(started["capture_id"]), str(outcome["sha256"])
+
+    capture_id, digest = asyncio.run(scenario())
+    return host, capture_id, digest
+
+
+def test_capture_delete_appends_its_recorder_row(tmp_path: Path) -> None:
+    """Ruling 9's reuse: a manual delete never bypasses the log — after the
+    directory and index row go, one retention.log row names the capture,
+    the manifest's own recorded digest, rule manual-delete and the
+    dispatch surface's trigger (delete-<surface>, defaulting rest)."""
+    import asyncio
+
+    host, capture_id, digest = _publish_one(tmp_path)
+
+    async def scenario() -> None:
+        await host.call(
+            "capture_delete", {"capture_id": capture_id}, surface="ui"
+        )
+
+    asyncio.run(scenario())
+    assert not (tmp_path / "captures" / capture_id).exists()
+    rows = [
+        json.loads(line)
+        for line in (tmp_path / "captures" / "retention.log")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert rows == [
+        {
+            "capture_id": capture_id,
+            "sha256": digest,
+            "rule": "manual-delete",
+            "at": rows[0]["at"],
+            "trigger": "delete-ui",
+        }
+    ]
+
+
+def test_capture_delete_trigger_defaults_to_rest(tmp_path: Path) -> None:
+    """A dispatch with no surface (the internal/test path) records the
+    closed set's default, rest — never a null trigger."""
+    import asyncio
+
+    host, capture_id, _digest = _publish_one(tmp_path)
+
+    async def scenario() -> None:
+        await host.call("capture_delete", {"capture_id": capture_id})
+
+    asyncio.run(scenario())
+    rows = [
+        json.loads(line)
+        for line in (tmp_path / "captures" / "retention.log")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert rows and rows[0]["trigger"] == "delete-rest"
