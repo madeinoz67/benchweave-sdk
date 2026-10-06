@@ -218,6 +218,20 @@ def test_registry_names_exactly_the_declared_version_surfaces() -> None:
         ("website/index.html", "phase2"),
         ("website/index.html", "substitution"),
     ]
+    # PATTERN-level census (the m1 lesson): a removed PATTERN is invisible to
+    # the runtime cut (the tool cannot see what it does not declare) and to
+    # a path-level census — the pattern set itself is the pinned surface.
+    by_path = {}
+    for surface in drift.DECLARED_SURFACES:
+        by_path.setdefault(surface.path, []).extend(
+            template for template, _expected in surface.patterns
+        )
+    assert sorted(by_path["website/index.html"]) == [
+        "</span> SDK {v} ·",
+        "Compatibility: SDK {v} against",
+    ]
+    assert by_path["pyproject.toml"] == ['version = "{v}"']
+    assert by_path["standards-lock.json"] == ['"sdk":"{v}"']
 
 
 def test_occurrence_mismatch_names_file_pattern_and_counts() -> None:
