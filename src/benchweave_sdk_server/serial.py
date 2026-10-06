@@ -21,7 +21,11 @@ bauds``, A02 — the author's declaration, not a host constant) and fails
 closed to {boot}-only when the declaration is absent. Boot settings
 never change under a switch: the reopen settings are literally
 ``{**boot_settings, "baud": N}`` and the closed field set admits no
-other key.
+other key. A closed session has no link to reconfigure: a switch past
+``close_transport`` refuses typed (``standalone_serial_reconfigure_closed``),
+and a close landing DURING a swap is honored in the post-opener window
+-- the produced transport closes and the failed row publishes, never a
+reconfigured-after-close.
 """
 
 from __future__ import annotations
@@ -236,10 +240,14 @@ class SerialLink:
     def receive_depth(self) -> int:
         """The receives currently parked on this link (issue #407).
 
-        The reconfigure busy guard's fact source: while it reads above
-        zero, a receive is in flight and a line reset would cut it
-        mid-conversation. Incremented at :meth:`take` entry under the
-        ring condition, decremented in its ``finally``."""
+        The reconfigure busy guard's fact source: a receive that has
+        STARTED -- the worker's first instruction has run -- is visible
+        here. The visibility claim is bounded at worker-start, not at
+        dispatch: a transfer and a reconfigure dispatched in the same
+        event-loop tick can pass under the guard (it reads 0 before the
+        worker increments), and the parked receive then unwinds through
+        the closing link with typed outcomes -- no corruption, but the
+        window is real and disclosed rather than claimed away."""
         return self._receive_depth
 
     @property
@@ -682,6 +690,11 @@ class SerialCaptureServices(WriterBackedCaptureServices):
         # concurrent switches queue; the loser's swap closes the winner's
         # link through the normal old.close() path.
         self._reconfigure_lock = asyncio.Lock()
+        # The session's own close fact (wave-3): close_transport sets it,
+        # and the swap re-checks it inside its critical section and again
+        # in the post-opener window -- a close racing a swap must never
+        # let the swap rebind a live link onto a closed session.
+        self._transport_closed = False
 
     @property
     def link(self) -> SerialLink:
@@ -751,7 +764,12 @@ class SerialCaptureServices(WriterBackedCaptureServices):
         return {"data": received}
 
     async def close_transport(self, context: Any) -> None:
-        """Close the link; tolerant of repeated calls (Adapter.close rule)."""
+        """Close the link; tolerant of repeated calls (Adapter.close rule).
+
+        Marks the session closed FIRST: a swap in flight re-checks this
+        fact in its post-opener window and refuses to rebind a live link
+        onto a closed session (wave-3 R1)."""
+        self._transport_closed = True
         self._link.close()
 
     async def record_evidence(self, entry: dict[str, Any], context: Any) -> None:
@@ -857,7 +875,6 @@ class SerialCaptureServices(WriterBackedCaptureServices):
                 "standalone_serial_reconfigure_not_configured: this serial "
                 "session carries no link reconfigurator"
             )
-        from_baud = _boot_baud(self._link_settings or {})
         # One swap at a time: the lock is held across the guard re-checks,
         # the close, the opener and the rebind, so two concurrent switches
         # serialize — the loser closes the winner's link through the normal
@@ -870,6 +887,18 @@ class SerialCaptureServices(WriterBackedCaptureServices):
             # swap whose deadline expired while waiting refuses before
             # any I/O (the C06/C07 posture).
             self._live(context)
+            # from_baud is the CURRENT link's baud, read under the lock
+            # (wave-3 R4): a twin queued behind a switch must publish the
+            # true transition, never a stale pre-switch baud.
+            from_baud = _boot_baud(self._link_settings or {})
+            # A closed session has no link to reconfigure (wave-3 R3): a
+            # stale services reference must not mint a live link past a
+            # close.
+            if self._transport_closed:
+                raise ConnectionError(
+                    "standalone_serial_reconfigure_closed: the transport "
+                    "is closed; there is no link to reconfigure"
+                )
             if baud not in self._reconfigurator.allowed_bauds:
                 self._publish_link_event(
                     "reconfigure_refused",
@@ -951,6 +980,26 @@ class SerialCaptureServices(WriterBackedCaptureServices):
                 if isinstance(exc, Exception):
                     raise ConnectionError(f"serial reopen failed: {exc}") from exc
                 raise
+            # A close that landed while the host sat inside the reopen:
+            # the produced transport closes, the failed row publishes
+            # (never a reconfigured row after a close), and the member
+            # answers typed -- the swap must not rebind a live link onto
+            # a closed session (wave-3 R1).
+            if self._transport_closed:
+                with contextlib.suppress(Exception):
+                    transport.close()
+                self._publish_link_event(
+                    "reconfigure_failed",
+                    from_baud,
+                    baud,
+                    context,
+                    reason="the session closed during the reopen",
+                )
+                raise ConnectionError(
+                    "standalone_serial_reconfigure_closed: the transport "
+                    "closed during the reopen; the opened port is closed "
+                    "(no serving link)"
+                )
             # The deadline is re-checked AFTER the opener too: a reopen
             # that outlived its context answers TimeoutError, never
             # success — and the transport it opened closes (a port opened
