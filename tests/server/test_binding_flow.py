@@ -191,6 +191,44 @@ def test_null_serials_bind_port_path_keyed(tmp_path: Path) -> None:
     assert row["endpoint_kind"] == "port_path"
 
 
+def test_a_live_duplicate_serial_outside_the_cache_keys_on_the_path(
+    tmp_path: Path,
+) -> None:
+    """Review fold M1: the discriminator's duplicate population is the LIVE
+    enumeration the resolver will use, never only the confirmed cache — a
+    twin that appeared after the scan (or was scan-invisible while busy)
+    must not arm serial keying that resolve would immediately refuse as
+    ambiguous: the busy-twin dead-end."""
+    fx = _binding_app(tmp_path)
+    asyncio.run(fx["seam"].call("device_discover"))
+    fx["candidates"].append(UsbCandidate("/dev/late-twin", serial_number="SER-B"))
+    asyncio.run(fx["seam"].bind_device(_B))
+    row = fx["store"].get(fx["plugin"].package, fx["plugin"].device_id)
+    assert row is not None
+    assert row["endpoint_kind"] == "port_path", (
+        "a serial the live enumeration carries twice keys on the path, "
+        "even when the cache saw it once"
+    )
+
+
+def test_a_cache_duplicate_whose_live_twin_vanished_keys_on_serial(
+    tmp_path: Path,
+) -> None:
+    """Fold wave 1, M1's refinement: the discriminator counts the LIVE
+    enumeration — exactly the population resolve matches over. A scan-time
+    duplicate whose port has since vanished no longer forces path keying:
+    the live enumeration is the truth resolve will consult, and the pick
+    keys on the serial."""
+    fx = _binding_app(tmp_path, serials=("X", "X"))
+    asyncio.run(fx["seam"].call("device_discover"))
+    fx["candidates"].remove(fx["candidates"][0])  # the twin left after the scan
+    asyncio.run(fx["seam"].bind_device(_B))
+    row = fx["store"].get(fx["plugin"].package, fx["plugin"].device_id)
+    assert row is not None
+    assert row["endpoint_kind"] == "usb_serial"
+    assert row["usb_serial"] == "X"
+
+
 # --- AR-A: instance-keyed binding (THE core claim) ---------------------------
 
 
