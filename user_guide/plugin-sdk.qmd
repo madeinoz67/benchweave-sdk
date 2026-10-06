@@ -402,6 +402,25 @@ result = await plugin.execute({"operation_id": "bench-1", "verb": "read",
 
 Give each operation its own `BenchContext`. The adapter checks `operation_id` against the request. `tests/test_guide_serial_host.py` executes the first block above and drives a freshly scaffolded plugin through it, so the example cannot drift from the SDK or from the generated adapter.
 
+### Reconfigure the serial link at runtime
+
+Some devices switch their line speed without a reconnect. The descriptor declares this with `x-negotiated-bauds` under `transport.settings`. The value is a list of baud rates the adapter may switch to. The boot baud is always allowed. Without the declaration, every switch refuses. The capability is opt-in by design.
+
+The host checks the declaration when the session builds. A malformed value stops the build with a clear error. The host adds no range rules. Which baud rates a bench may use is the descriptor author's decision.
+
+The serial host in the SDK server serves this capability. An adapter detects it with `hasattr(services, "reconfigure_link")`. A host without the capability hands adapters plain `HostServices`. One switch request carries exactly `{"baud": <int>}`. Parity, stop bits, data bits and flow control stay at their boot settings. A request with any other field refuses.
+
+A switch is one bounded attempt:
+
+1. The host refuses the request while a receive is in flight.
+2. The host closes the old link. The old ring dies with it. Bytes that arrived at the old baud are not frames at the new one, so the new link starts empty.
+3. The host reopens the port at the boot settings, with the new baud in place.
+4. The host returns the applied settings. This read-back is the proof.
+
+The host never retries a failed switch. A failed reopen leaves no serving link and raises `ConnectionError`. The adapter may then request the boot baud as its own explicit step. That is the adapter's move.
+
+`host_info` and `device_get` carry a `link` block on the serial transport: the current baud, the boot baud, and whether any switch is negotiable. The block is `null` on other transports and before a connection. The event stream carries the `link` family. Each event says what happened (`reconfigured`, `reconfigure_refused` or `reconfigure_failed`), both baud rates, and the operation id.
+
 ## 4. Review compatibility and deployment
 
 Use the [AI device integration reviewer](https://github.com/madeinoz67/benchweave/blob/main/docs/ai-device-reviewer.md) (main repository) with the exact revision and test evidence. Its SDK maintenance checklist covers public interfaces, contracts, generated projects, mocks, gateway compatibility and release artefacts.

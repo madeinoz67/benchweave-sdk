@@ -178,6 +178,12 @@ class StandaloneSeam:
         self._transport_kind = transport_kind
         self._serial_ports = serial_ports
         self._serial_device_path = serial_device_path
+        if transport_kind == "serial":
+            # The link family's one publisher (issue #407): the seam is the
+            # only publisher by construction (events.py), so the session's
+            # serial services get the CALLBACK, not the bus — the factory
+            # reads it at mint time (the late-bound shape).
+            session.link_event_publisher = self._publish_link_event
         self._capture_root = capture_root
         self._capture: Any | None = None
         self._capture_outcomes: dict[str, dict[str, Any]] = {}
@@ -274,6 +280,27 @@ class StandaloneSeam:
 
     def _correlation(self, supplied: str | None) -> str:
         return supplied or f"bws-{uuid.uuid4().hex[:12]}"
+
+    def _publish_link_event(self, data: dict[str, Any]) -> None:
+        """The ``link`` family's one publisher (issue #407): the serial
+        services' callback, publishing the closed link state machine onto
+        the bus — the same sequence REST, SSE and MCP serve."""
+        self.events.publish("link", data)
+
+    def _link_state(self) -> dict[str, Any] | None:
+        """The live link block for ``host_info``/``device_get`` (issue
+        #407): from the session's services when serial AND connected,
+        ``None`` on every other transport and before a connection. The
+        capability read is the member check (the Protocol's own
+        posture) — mock and scenario services carry no ``link_state``."""
+        if self._transport_kind != "serial" or not self._session.connected:
+            return None
+        services = self._session.services
+        getter = getattr(services, "link_state", None)
+        if getter is None:
+            return None
+        state: dict[str, Any] | None = getter()
+        return state
 
     def _refuse_degraded(self, correlation: str) -> None:
         """Device operations answer ``not_ready`` on a degraded load (§4.5):
@@ -395,6 +422,7 @@ class StandaloneSeam:
             },
             "transport": self._transport_kind,
             "sdk_version": sdk_version(),
+            "link": self._link_state(),
             "presentation": {
                 "features": sorted(SUPPORTED_FEATURES),
                 "panels": sorted(SUPPORTED_PANELS),
@@ -497,7 +525,14 @@ class StandaloneSeam:
             raise self._fail(
                 "not_ready", "device identity not established", correlation
             )
-        return dict(self._session.identity)
+        # The link block overlays the established identity additively
+        # (issue #407, F3): the device panel is where an operator looks.
+        # An adapter-reported ``link`` key WINS — the host's block fills
+        # the gap only when the adapter did not report its own.
+        result = dict(self._session.identity)
+        if "link" not in result:
+            result["link"] = self._link_state()
+        return result
 
     async def _op_parameter_read(
         self, arguments: dict[str, Any], correlation: str

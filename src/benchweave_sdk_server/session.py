@@ -693,6 +693,13 @@ class PluginSession:
         # the capture members (configure/progress/finalise/abort) on the
         # SAME object the adapter appends through. None while disconnected.
         self.services: HostServices | None = None
+        # The link-event callback (issue #407): set by the host layer (the
+        # seam, serial kind only) before any connection mints services; the
+        # serial session factory reads it at MINT time (the late-bound
+        # shape — cli.py's docstring) and threads it into each services
+        # object, so link events ride the seam bus. None = no publisher;
+        # the services publish nothing.
+        self.link_event_publisher: Callable[[dict[str, Any]], None] | None = None
 
     @property
     def plugin(self) -> LoadedPlugin:
