@@ -13,6 +13,8 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -80,6 +82,47 @@ class UsbCandidate:
         self.serial_number = serial_number
 
 
+class _ParkingGate:
+    """Arms-on-demand adapter-open parking (fold wave 2, lane A F2): the
+    in-flight connect window. Discovery probes run BEFORE the arm pass
+    straight through, so the scan that seeds the bind is unaffected; the
+    armed window parks exactly the connect's ``open`` until released."""
+
+    def __init__(self) -> None:
+        self._armed = False
+        self._release = asyncio.Event()
+
+    def arm(self) -> None:
+        self._armed = True
+
+    def release(self) -> None:
+        self._release.set()
+
+    async def park_if_armed(self) -> None:
+        if self._armed:
+            await self._release.wait()
+
+
+class _ParkingAdapter:
+    """An adapter double whose ``open`` parks on the gate (nothing in the
+    adapter contract forbids awaits in ``open``); everything else delegates
+    to the scaffold adapter."""
+
+    def __init__(self, inner: Any, gate: _ParkingGate) -> None:
+        self._inner = inner
+        self._gate = gate
+
+    async def open(self, descriptor: Any, services: Any, context: Any) -> None:
+        await self._gate.park_if_armed()
+        return await self._inner.open(descriptor, services, context)
+
+    async def execute(self, request: Any, context: Any) -> dict[str, Any]:
+        return await self._inner.execute(request, context)
+
+    async def close(self, context: Any) -> None:
+        return await self._inner.close(context)
+
+
 _MATCHING = b"SDK Example,demo,SIM001,1.0.0\n"
 _A = "/dev/match-a"
 _B = "/dev/match-b"
@@ -90,11 +133,14 @@ def _binding_app(
     tmp_path: Path,
     *,
     serials: tuple[str | None, str | None] = ("SER-A", "SER-B"),
+    open_gate: _ParkingGate | None = None,
 ) -> dict[str, Any]:
     """A serial seam over a binding-backed endpoint (two matching boards).
 
     The candidates list is mutable: a test re-enumerates by editing it (the
     enumerate closure reads it live), modelling unplug/replug.
+    ``open_gate`` swaps the adapter factory for the parking double (the
+    in-flight-connect window, fold wave 2 lane A F2).
     """
     from benchweave_sdk.scaffold import create_project
     from benchweave_sdk_server.binding import binding_endpoint
@@ -107,6 +153,12 @@ def _binding_app(
     project = tmp_path / "proj"
     create_project(project, "example_plugin")
     plugin = load_plugin_project(project)
+    if open_gate is not None:
+        factory = plugin.adapter_factory
+        plugin = replace(
+            plugin,
+            adapter_factory=lambda: _ParkingAdapter(factory(), open_gate),
+        )
     ports = {
         _A: LoopbackPort(replies={b"ID?\n": _MATCHING}),
         _B: LoopbackPort(replies={b"ID?\n": _MATCHING}),
@@ -227,6 +279,59 @@ def test_a_cache_duplicate_whose_live_twin_vanished_keys_on_serial(
     assert row is not None
     assert row["endpoint_kind"] == "usb_serial"
     assert row["usb_serial"] == "X"
+
+
+def test_a_vanished_pick_with_no_twin_refuses_and_writes_nothing(
+    tmp_path: Path,
+) -> None:
+    """Fold wave 2, lane A F1's milder face: the picked port unplugged
+    between the scan and the click, nothing replaced it. The confirmed
+    cache still carries the row, so the pick-unconfirmed check passes —
+    the bind must cross-check the pick against the LIVE enumeration and
+    refuse, never write a row for a dead path."""
+    fx = _binding_app(tmp_path)
+    asyncio.run(fx["seam"].call("device_discover"))
+    fx["candidates"].remove(fx["candidates"][1])  # B left after the scan
+    with pytest.raises(SeamError) as raised:
+        asyncio.run(fx["seam"].bind_device(_B))
+    assert raised.value.code == "invalid_request"
+    assert "standalone_binding_pick_vanished:" in raised.value.message
+    assert _B in raised.value.message
+    assert fx["store"].get(fx["plugin"].package, fx["plugin"].device_id) is None
+    assert not (fx["tmp_path"] / "device-bindings.json").exists(), (
+        "a refused bind writes no document"
+    )
+
+
+def test_a_vanished_pick_with_a_serial_claiming_twin_opens_nothing(
+    tmp_path: Path,
+) -> None:
+    """Fold wave 2, lane A F1's executed trigger: B unplugged after the
+    scan and a foreign-class twin claiming SER-B appeared elsewhere. The
+    cache cross-check passes and the live serial count is 1 (the twin), so
+    the unfixed discriminator arms serial keying off the twin — the
+    connect then opens a NEVER-CONFIRMED port. The bind must refuse on the
+    picked path's live presence, and the twin must receive zero frames."""
+    fx = _binding_app(tmp_path)
+    asyncio.run(fx["seam"].call("device_discover"))
+    fx["candidates"].remove(fx["candidates"][1])  # B left after the scan
+    twin = "/dev/foreign-twin"
+    twin_port = LoopbackPort(replies={b"ID?\n": _MATCHING})
+    fx["ports"][twin] = twin_port
+    fx["candidates"].append(
+        UsbCandidate(twin, vid=0x0403, pid=0x6001, serial_number="SER-B")
+    )
+    with pytest.raises(SeamError) as raised:
+        asyncio.run(fx["seam"].bind_device(_B))
+    assert raised.value.code == "invalid_request"
+    assert "standalone_binding_pick_vanished:" in raised.value.message
+    # Nothing is bound, so the connect refuses binding_absent — the twin is
+    # never opened and receives zero frames.
+    with pytest.raises(SeamError) as connect_refusal:
+        asyncio.run(fx["seam"].call("device_connect", {"device_id": "example_device"}))
+    assert connect_refusal.value.details["reason"] == "binding_absent"
+    assert twin not in fx["opened"], "the never-confirmed twin is never opened"
+    assert twin_port.written == [], "the never-confirmed twin receives zero frames"
 
 
 # --- AR-A: instance-keyed binding (THE core claim) ---------------------------
@@ -532,3 +637,94 @@ def test_bind_publishes_device_bound(tmp_path: Path) -> None:
     asyncio.run(fx["seam"].bind_device(_B))
     published = [row for row in fx["seam"].events.after(last) if row["kind"] == "device_bound"]
     assert published and published[0]["data"]["port_path"] == _B
+
+
+# --- fold wave 2: the guards must see an in-flight connect ---------------------
+
+
+async def _await_open_count(fx: dict[str, Any], path: str, count: int) -> None:
+    """Rendezvous with the connect's factory open: once ``path`` was opened
+    ``count`` times the connect sits inside the parked adapter ``open`` (the
+    only await left before establish)."""
+    deadline = time.monotonic() + 5.0
+    while fx["opened"].count(path) < count:
+        if time.monotonic() > deadline:
+            raise AssertionError(f"{path} was not opened {count}x in time")
+        await asyncio.sleep(0.01)
+
+
+def test_a_bind_during_an_in_flight_connect_refuses_conflict(
+    tmp_path: Path,
+) -> None:
+    """Fold wave 2, lane A F2: an adapter ``open`` that parks is the
+    in-flight connect window — the port is open on the wire while
+    ``connected`` is still False. The bind conflict guard must see the
+    window: the unguarded seam reads connected=False and the bind LANDS,
+    leaving the live session on a different endpoint than the store
+    records."""
+    gate = _ParkingGate()
+    fx = _binding_app(tmp_path, open_gate=gate)
+    _bind_b(fx)
+    store_path = fx["tmp_path"] / "device-bindings.json"
+    before = store_path.read_bytes()
+
+    async def scenario() -> dict[str, Any]:
+        baseline = fx["opened"].count(_B)
+        gate.arm()
+        connect_task = asyncio.create_task(
+            fx["seam"].call("device_connect", {"device_id": "example_device"})
+        )
+        await _await_open_count(fx, _B, baseline + 1)
+        bind_task = asyncio.create_task(fx["seam"].bind_device(_A))
+        await asyncio.sleep(0.05)  # the bind has run, or is queued on the seam
+        gate.release()
+        connected = await connect_task
+        with pytest.raises(SeamError) as raised:
+            await bind_task
+        assert raised.value.code == "conflict"
+        return connected
+
+    connected = asyncio.run(scenario())
+    assert connected["connected"] is True
+    assert store_path.read_bytes() == before, "the refused bind wrote nothing"
+    row = fx["store"].get(fx["plugin"].package, fx["plugin"].device_id)
+    assert row is not None and row["port_path"] == _B, "the live endpoint stands"
+
+
+def test_a_discover_during_an_in_flight_connect_never_reopens_the_port(
+    tmp_path: Path,
+) -> None:
+    """Fold wave 2, lane A F2's other face: the scan's confirm-by-identify
+    OPENS candidate ports. During an in-flight connect the unguarded
+    short-circuit reads connected=False and the scan re-opens the port the
+    connecting session just opened — a double-open on the wire. The guarded
+    scan waits for the connect, then serves the connected row from session
+    identity."""
+    gate = _ParkingGate()
+    fx = _binding_app(tmp_path, open_gate=gate)
+    _bind_b(fx)
+
+    async def scenario() -> tuple[list[dict[str, Any]], int]:
+        baseline = fx["opened"].count(_B)
+        gate.arm()
+        connect_task = asyncio.create_task(
+            fx["seam"].call("device_connect", {"device_id": "example_device"})
+        )
+        await _await_open_count(fx, _B, baseline + 1)
+        discover_task = asyncio.create_task(fx["seam"].call("device_discover"))
+        await asyncio.sleep(0.05)  # the scan is in flight against the parked connect
+        gate.release()
+        connected = await connect_task
+        devices = await discover_task
+        assert connected["connected"] is True
+        return devices["devices"], baseline
+
+    rows, baseline = asyncio.run(scenario())
+    # Exactly ONE open of the bound port beyond the seeding scan's probe:
+    # the connect's own. The unguarded seam re-opened it for the scan's
+    # identify probe while the connect was still in flight.
+    assert fx["opened"].count(_B) == baseline + 1, (
+        "the connecting port is never re-opened by a scan"
+    )
+    connected_row = next(row for row in rows if row["port_path"] == _B)
+    assert connected_row["usb_serial"] == "SER-B"
