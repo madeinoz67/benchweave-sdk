@@ -9,3 +9,9 @@
 # global line reddens here instead of on a Windows CI lane.
 template/** text eol=lf
 tests/fixtures/scaffold_expected/** text eol=lf
+# The phase-2 patch's two surfaces (issue #408): the patch is generated
+# from the checked-out bytes and must apply to the checked-out bytes, so
+# these must be LF on every OS — text SET (not auto) removes the
+# auto-detection ambiguity the Windows runner's global autocrlf exploits.
+great-docs.yml text eol=lf
+website/** text eol=lf
