@@ -337,8 +337,10 @@ def test_r6_a_failed_reconfigure_leaves_no_link_and_never_retries() -> None:
                 _ctx(),
             )
         )
-    asyncio.run(services.close_transport(_ctx()))  # safe on the no-link posture
-
+    # close_transport is safe on the no-link posture — but the CALLER'S
+    # fallback move is proven on a session that was never closed (the
+    # record's fallback story; a reconfigure after a CLOSE refuses typed
+    # per the wave-3 law, pinned by the folds file's R3 cell)
     services._reconfigurator = LinkReconfigurator(
         opener=opener,
         device_path="/dev/fake0",
@@ -349,6 +351,7 @@ def test_r6_a_failed_reconfigure_leaves_no_link_and_never_retries() -> None:
     applied = asyncio.run(services.reconfigure_link({"baud": 115200}, _ctx()))
     assert applied == {**_DECLARED, "baud": 115200}
     assert services.link.reader_alive(), "the explicit fallback restores a link"
+    asyncio.run(services.close_transport(_ctx()))  # safe, and last
 
 
 def test_r7_link_events_carry_the_closed_shape_and_vocabulary() -> None:

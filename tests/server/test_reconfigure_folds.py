@@ -11,6 +11,7 @@ fails is impossible by construction.
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -108,6 +109,12 @@ def test_f2a_concurrent_reconfigures_never_orphan_a_transport() -> None:
     def opener(device: str, settings: dict[str, Any]) -> _SwitchPort:
         port = _SwitchPort(settings)
         opened_ports.append(port)
+        # the planted delay keeps both to_thread futures genuinely
+        # pending at the twins' awaits — without it the futures resolve
+        # before each twin suspends, gather runs them sequentially, the
+        # lock is never contended, and a no-op-lock mutant passes the
+        # whole suite (wave-3 R2)
+        time.sleep(0.05)
         return port
 
     services = _services_from_opener(opener)
@@ -146,6 +153,7 @@ def test_f2b_a_connection_error_answer_means_no_serving_link() -> None:
         attempts.append(int(settings["baud"]))
         if len(attempts) > 2:  # boot + first twin succeed; the second raises
             raise OSError("device vanished on the second reopen")
+        time.sleep(0.05)  # wave-3 R2: keep both futures pending at their awaits
         return _SwitchPort(settings)
 
     services = _services_from_opener(flaky_opener)
@@ -350,3 +358,144 @@ def test_w2_the_post_close_recheck_refuses_before_any_io() -> None:
         "the post-close recheck refuses BEFORE the reopen — no opener call"
     )
     assert services.link_state() is None, "no serving link (LOW1's law)"
+
+
+def test_w3_close_during_a_swap_never_orphans_the_produced_transport() -> None:
+    """Wave-3 R1: close_transport racing an in-flight swap must not let
+    the swap rebind a live link onto a closed session — the produced
+    transport closes, the failed row publishes (never a reconfigured row
+    after close), and the member answers typed. Pre-fix the swap
+    rebound a live link after close, published ``reconfigured``, and
+    nothing ever closed the new link (session.close drops the services
+    reference first -- fd + daemon reader leak forever)."""
+    swap_started = threading.Event()
+    release = threading.Event()
+
+    opens: list[int] = []
+    produced: list[_SwitchPort] = []
+
+    def gated(device: str, settings: dict[str, Any]) -> _SwitchPort:
+        opens.append(1)
+        if len(opens) == 1:  # the boot open behaves and signals nothing
+            return _SwitchPort(settings)
+        port = _SwitchPort(settings)
+        produced.append(port)
+        swap_started.set()  # only the SWAP'S open signals
+        release.wait(5.0)
+        return port
+
+    events: list[dict[str, Any]] = []
+    link = SerialLink(gated("/dev/fake0", _DECLARED))
+    services = SerialCaptureServices(
+        link,
+        max_frame_bytes=4096,
+        reconfigurator=LinkReconfigurator(
+            opener=gated,
+            device_path="/dev/fake0",
+            boot_settings=dict(_DECLARED),
+            allowed_bauds=negotiable_bauds(_DECLARED),
+            on_link_event=events.append,
+        ),
+    )
+    boot_port = link._transport  # noqa: SLF001 - test seam
+
+    async def scenario() -> None:
+        context = HostOperationContext("cell-w3-r1", timeout_ms=10000)
+        task = asyncio.create_task(
+            services.reconfigure_link({"baud": _TARGET}, context)
+        )
+        limit = time.monotonic() + 5.0
+        while not swap_started.is_set():
+            assert time.monotonic() < limit, "the reopen never started"
+            await asyncio.sleep(0.001)
+        await services.close_transport(
+            HostOperationContext("cell-w3-close", timeout_ms=5000)
+        )
+        release.set()
+        with pytest.raises(
+            ConnectionError, match="standalone_serial_reconfigure_closed"
+        ):
+            await task
+
+    asyncio.run(scenario())
+    assert [row["event"] for row in events] == ["reconfigure_failed"], (
+        "a close during the swap is a failed row -- never "
+        "reconfigured-after-close"
+    )
+    assert "closed" in events[0]["reason"]
+    assert boot_port.closes == 1
+    assert produced and produced[0].closes == 1, (
+        "the produced transport closes -- no orphan"
+    )
+    assert services.link_state() is None
+    with pytest.raises(ConnectionError):
+        asyncio.run(
+            services.transfer(
+                {"kind": "stream_receive", "max_bytes": 8, "termination": "lf",
+                 "exact_bytes": None},
+                HostOperationContext("cell-w3-r1-check", timeout_ms=5000),
+            )
+        )
+
+
+def test_w3_reconfigure_after_close_refuses_typed() -> None:
+    """Wave-3 R3: a reconfigure on a closed session refuses typed — a
+    stale services reference must not mint a live link and a live-looking
+    link_state block (which bypassed LOW1's null posture). Pre-fix the
+    swap SUCCEEDED past a close."""
+    opens: list[int] = []
+
+    def opener(device: str, settings: dict[str, Any]) -> _SwitchPort:
+        opens.append(1)
+        return _SwitchPort(settings)
+
+    events: list[dict[str, Any]] = []
+    services = _services_from_opener(opener, events=events)
+    asyncio.run(services.close_transport(HostOperationContext("cell-w3-close", timeout_ms=5000)))
+    with pytest.raises(
+        ConnectionError, match="standalone_serial_reconfigure_closed"
+    ):
+        asyncio.run(services.reconfigure_link({"baud": _TARGET}, _fold_ctx()))
+    assert events == [], "a refusal on a closed session publishes no applied row"
+    assert services.link_state() is None
+
+
+def test_w3_from_baud_reads_the_current_link_inside_the_swap() -> None:
+    """Wave-3 R4: ``from_baud`` is read INSIDE the swap's critical
+    section — a twin queued behind a switch publishes the TRUE
+    transition (3M -> boot), never a stale boot -> boot row. Pre-fix the
+    read sat before the lock: with a planted opener delay making the
+    interleave reachable, the queued twin published a false
+    transition."""
+    attempts: list[int] = []
+
+    def delayed_opener(device: str, settings: dict[str, Any]) -> _SwitchPort:
+        attempts.append(int(settings["baud"]))
+        time.sleep(0.05)  # the planted interleave: both futures in flight
+        return _SwitchPort(settings)
+
+    events: list[dict[str, Any]] = []
+    services = _services_from_opener(delayed_opener, events=events)
+
+    async def scenario() -> list[BaseException]:
+        context = HostOperationContext("cell-w3-r4", timeout_ms=10000)
+        return list(
+            await asyncio.gather(
+                services.reconfigure_link({"baud": _TARGET}, context),
+                services.reconfigure_link({"baud": 115200}, context),
+                return_exceptions=True,
+            )
+        )
+
+    outcomes = asyncio.run(scenario())
+    assert not any(isinstance(row, BaseException) for row in outcomes), (
+        f"both switches apply, serialized: {outcomes}"
+    )
+    transitions = [
+        (row["from_baud"], row["to_baud"])
+        for row in events
+        if row["event"] == "reconfigured"
+    ]
+    assert transitions == [(115200, _TARGET), (_TARGET, 115200)], (
+        f"the queued twin publishes the TRUE current-baud transition: {transitions}"
+    )
