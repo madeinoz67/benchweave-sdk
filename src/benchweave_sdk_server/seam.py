@@ -181,7 +181,6 @@ class StandaloneSeam:
         self._session = session
         self._transport_kind = transport_kind
         self._serial_ports = serial_ports
-        self._serial_device_path = serial_device_path
         if transport_kind == "serial":
             # The link family's one publisher (issue #407): the seam is the
             # only publisher by construction (events.py), so the session's
