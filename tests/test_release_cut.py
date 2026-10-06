@@ -619,6 +619,138 @@ def test_matrix_scaffold_pre_fills_every_row_and_guesses_no_class() -> None:
     assert "PATCH class:" not in scaffold
 
 
+# --- wave 3 (referee): F3 patch-content verify, F5 weakening arms, F6 BaseException restore ---
+
+
+def test_verify_red_when_the_staged_patch_is_doctored(cut_env: Path) -> None:
+    """F3: --verify must CONTENT-validate the staged patch, not just its
+    shape — the referee's repro: delete the old selector option instead of
+    demoting it (same file set), and the old --verify passed it into a
+    shipping orphaned bucket. The recomputed-expected-patch comparison is
+    the fix; this arm is its RED."""
+    drift = _load()
+    assert drift.main([NEW, "--repo", str(cut_env)]) == 0
+    patch = cut_env / ".release" / f"phase2-v{NEW}.patch"
+    raw = patch.read_text(encoding="utf-8")
+    # Doctor WELL-FORMEDLY: the demoted prior option is DELETED (the
+    # referee's orphaning shape) and the hunk header's +count adjusted so
+    # the diff still applies cleanly — shape checks pass, content lies.
+    lines = raw.splitlines(keepends=True)
+    prior_line = f'+          <option value="docs/v/v{OLD}/">v{OLD}</option>\n'
+    drop = next(i for i, line in enumerate(lines) if line == prior_line)
+    del lines[drop]
+    for i, line in enumerate(lines):
+        m = re.match(r"@@ -(\d+),(\d+) \+(\d+),(\d+) @@", line)
+        if m and int(m.group(4)) > 0 and drop - i < 20:
+            lines[i] = (
+                f"@@ -{m.group(1)},{m.group(2)} +{m.group(3)},{int(m.group(4)) - 1} @@\n"
+            )
+            break
+    doctored = "".join(lines)
+    assert doctored != raw
+    patch.write_text(doctored, encoding="utf-8")
+    # the doctored patch is a VALID diff: git apply --check accepts it
+    apply_check = subprocess.run(
+        ["git", "-C", str(cut_env), "apply", "--check", str(patch)],
+        capture_output=True, text=True, check=False,
+    )
+    assert apply_check.returncode == 0, (
+        "the doctored patch must be a valid, applicable diff for this arm to "
+        f"isolate the content check: {apply_check.stderr}"
+    )
+    assert drift.main(["--verify", "--repo", str(cut_env)]) == 1
+
+
+def test_verify_red_when_the_staged_patch_is_truncated(cut_env: Path) -> None:
+    """F3's second shape: a patch missing an entire hunk (the m8 class at
+    PR time). Backstop arm — the file-set check already catches this shape
+    (the hunk removal drops a header); it stays as the regression pin."""
+    drift = _load()
+    assert drift.main([NEW, "--repo", str(cut_env)]) == 0
+    patch = cut_env / ".release" / f"phase2-v{NEW}.patch"
+    raw = patch.read_text(encoding="utf-8")
+    i = raw.find("--- a/website/index.html")
+    (cut_env / ".release" / f"phase2-v{NEW}.patch").write_text(raw[:i], encoding="utf-8")
+    assert drift.main(["--verify", "--repo", str(cut_env)]) == 1
+
+
+def test_registry_weakening_is_detected_per_surface(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F5: pattern WEAKENING (dropping the uv.lock anchor; shortening the
+    README pattern) must red the census — the registry's pattern set is
+    pinned for ALL five substitution surfaces, and each weakening shape is
+    asserted detected by the same comparison the census arm uses."""
+    drift = _load()
+
+    def problems_for(registry) -> list[str]:
+        """The census comparison all F5 arms share: the full expected
+        pattern map per substitution surface vs the registry's."""
+        expected = {
+            "pyproject.toml": ['version = "{v}"'],
+            "uv.lock": ['name = "benchweave-sdk"\nversion = "{v}"'],
+            "README.md": ["SDK {v}, OTDP"],
+            "website/index.html": ["</span> SDK {v} ·", "Compatibility: SDK {v} against"],
+            "standards-lock.json": ['"sdk":"{v}"'],
+        }
+        got = {}
+        for surface in registry:
+            got.setdefault(surface.path, []).extend(
+                template for template, _expected in surface.patterns
+            )
+        problems = []
+        for path in sorted(set(expected) | set(got)):
+            if sorted(expected.get(path, [])) != sorted(got.get(path, [])):
+                problems.append(f"{path}: pattern set drifted: {got.get(path, [])}")
+        return problems
+
+    problems = problems_for(drift.DECLARED_SURFACES)
+    assert problems == [], problems
+    # weakening 1: the uv.lock anchor pattern dropped
+    weakened1 = tuple(
+        s for s in drift.DECLARED_SURFACES if s.path != "uv.lock"
+    ) + (drift.DeclaredSurface("uv.lock", "substitution", "weakened", ()),)
+    assert problems_for(weakened1), "dropping the uv.lock anchor passed the census"
+    # weakening 2: the README pattern shortened (still matches, count 1)
+    weakened2 = tuple(
+        s
+        if s.path != "README.md"
+        else drift.DeclaredSurface(
+            "README.md", "substitution", "weakened", (("SDK {v}", 1),)
+        )
+        for s in drift.DECLARED_SURFACES
+    )
+    assert problems_for(weakened2), "the shortened README pattern passed the census"
+
+
+def test_cut_restores_on_keyboard_interrupt(tmp_path: Path) -> None:
+    """F6: rollback is BaseException-wide — a KeyboardInterrupt mid-cut
+    (after the substitutions, before the smoke) must still restore the
+    tree; the old Exception-only rollback left files dirty (referee
+    repro'd)."""
+    repo = _mini_repo(tmp_path)
+
+    import importlib.util as _ilu
+
+    spec = _ilu.spec_from_file_location("rc_f6", SCRIPT)
+    module = _ilu.module_from_spec(spec)
+    sys.modules["rc_f6"] = module
+    spec.loader.exec_module(module)
+
+    def _interrupt(root, version):
+        raise KeyboardInterrupt()
+
+    ok = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+    module.run_command = lambda cmd, *, cwd: ok
+    module.regenerate_fixtures = _interrupt
+    before = {p: (repo / p).read_bytes() for p in MINI_TREE}
+    with pytest.raises(KeyboardInterrupt):
+        module.main([NEW, "--repo", str(repo)])
+    for path, content in before.items():
+        assert (repo / path).read_bytes() == content, path
+    assert not (repo / ".release").exists()
+
+
 # --- governor fold wave: F1 corpus-path refusal, F2 matrix-vs-registry, NIT gate pins ---
 
 

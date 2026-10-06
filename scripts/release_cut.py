@@ -685,7 +685,9 @@ def cmd_cut(repo: Path, version: str, *, force: bool) -> int:
                 "post_cut_pytest_failed: the byte-parity suite is red on the cut "
                 f"tree — the regen did not sweep everything:\n{smoke.stdout}\n{smoke.stderr}"
             )
-    except Exception:
+    except BaseException:
+        # BaseException, not Exception: a KeyboardInterrupt mid-cut must
+        # still restore (the referee repro'd the dirty-tree leak).
         _restore()
         raise
 
@@ -747,6 +749,8 @@ def cmd_verify(repo: Path) -> int:
         )
     else:
         patch = patch_path.read_text(encoding="utf-8")
+        great_docs_raw = (repo / GREAT_DOCS).read_text(encoding="utf-8")
+        selector_raw = (repo / WEBSITE).read_text(encoding="utf-8")
         touched = patch_paths(patch)
         if touched != set(PHASE2_FILES):
             failures.append(
@@ -764,6 +768,25 @@ def cmd_verify(repo: Path) -> int:
                 "merge and tag?) — regenerate with release-cut --phase2-only:\n"
                 f"{apply_check.stderr.strip()}"
             )
+        # Content validation (F3): the staged patch must be byte-equal to
+        # what build_phase2 computes from THIS tree — a well-formed doctored
+        # patch (same file set, applies cleanly, demotes nothing) passes the
+        # shape checks and would ship an orphaned surface. difflib is
+        # deterministic, so byte-equality is the exact recomputation.
+        try:
+            new_docs, new_selector = build_phase2(great_docs_raw, selector_raw, version)
+            expected_patch = unified_patch(GREAT_DOCS, great_docs_raw, new_docs) + (
+                unified_patch(WEBSITE, selector_raw, new_selector)
+            )
+        except ReleaseCutError as exc:
+            failures.append(f"patch_recompute_refused: {exc}")
+        else:
+            if patch != expected_patch:
+                failures.append(
+                    "patch_diverges: the staged patch is not what build_phase2 "
+                    "computes from this tree — doctored or stale; regenerate "
+                    "with release-cut --phase2-only, never hand-edit"
+                )
 
     if failures:
         print(
