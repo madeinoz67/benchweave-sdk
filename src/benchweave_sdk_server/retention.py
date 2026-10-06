@@ -337,6 +337,69 @@ def quota_usages(
     ]
 
 
+# --- the next-effect projection (SW-49) -------------------------------------------
+
+
+def next_effects(
+    rules: Iterable[RetentionRule],
+    rows: Iterable[dict[str, Any]],
+    *,
+    now: datetime,
+    in_flight_ids: Iterable[str] = frozenset(),
+) -> dict[str, dict[str, str]]:
+    """Per-capture next-retention labels over the SAME evaluator
+    :func:`plan` runs — one implementation, never a second one beside it.
+
+    A row the plan selects now is ``prunable now by <rule>`` (the first
+    selecting rule, plan's own attribution). Otherwise the first applying
+    AGE rule names the date it will select (``<rule> at <date>``), else the
+    first applying count/bytes rule reads ``eligible under <rule>``, else
+    ``kept`` — as do pinned rows, in-flight rows and rows whose
+    ``started_at`` cannot be parsed (the evaluator's keep-by-default).
+    """
+    all_rows = list(rows)
+    armed = frozenset(in_flight_ids)
+    removals = {
+        removal.capture_id: removal.rule_id
+        for removal in plan(rules, all_rows, now=now, in_flight_ids=armed)
+    }
+    effects: dict[str, dict[str, str]] = {}
+    for row in all_rows:
+        capture_id = str(row.get("capture_id"))
+        if capture_id in removals:
+            effects[capture_id] = {"label": f"prunable now by {removals[capture_id]}"}
+            continue
+        started = _started_at(row)
+        if row.get("pinned") or capture_id in armed or started is None:
+            effects[capture_id] = {"label": "kept"}
+            continue
+        age_at: datetime | None = None
+        age_rule: str | None = None
+        eligible_under: str | None = None
+        for rule in sorted(rules, key=lambda rule: rule.id):
+            if not _applies(rule, row):
+                continue
+            if rule.max_age_d is not None:
+                # The earliest applying age rule's date — the soonest
+                # future effect is the informative one, and an age rule
+                # outranks a count/bytes "eligible" (a dated effect is a
+                # stronger answer than a cohort-dependent one).
+                at = started + timedelta(seconds=rule.max_age_d * _DAY_S)
+                if age_at is None or at < age_at:
+                    age_at, age_rule = at, rule.id
+            elif eligible_under is None:
+                eligible_under = rule.id
+        if age_rule is not None:
+            effects[capture_id] = {
+                "label": f"{age_rule} at {age_at.date().isoformat() if age_at else ''}"
+            }
+        elif eligible_under is not None:
+            effects[capture_id] = {"label": f"eligible under {eligible_under}"}
+        else:
+            effects[capture_id] = {"label": "kept"}
+    return effects
+
+
 # --- the recorder ---------------------------------------------------------------
 
 

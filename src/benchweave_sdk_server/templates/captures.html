@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Captures — standalone{% endblock %}
+{% block content %}
+<h1>Captures</h1>
+<p class="hint">Every capture under this host's capture root. The last column shows what the configured retention rules do next. A pinned capture is never removed by a rule.</p>
+<section class="panel">
+  <h2>Filters</h2>
+  <form method="get" action="/captures">
+    <label for="f-project">Project</label>
+    <input id="f-project" name="project" value="{{ filters.project }}">
+    <label for="f-source">Source</label>
+    <select id="f-source" name="source">
+      <option value=""></option>
+      {%- for surface in ["ui", "rest", "mcp"] %}
+      <option value="{{ surface }}"{% if filters.source == surface %} selected{% endif %}>{{ surface }}</option>
+      {%- endfor %}
+    </select>
+    <label for="f-tag">Tag</label>
+    <input id="f-tag" name="tag" value="{{ filters.tag }}">
+    <label for="f-device">Device</label>
+    <input id="f-device" name="device" value="{{ filters.device }}">
+    <label for="f-q">Search id or notes</label>
+    <input id="f-q" name="q" value="{{ filters.q }}">
+    <button type="submit">Apply filters</button>
+  </form>
+</section>
+<section class="panel">
+  <table>
+    <thead>
+      <tr>
+        <th>Capture</th><th>Started</th><th>Format</th><th>Bytes</th>
+        <th>Source</th><th>Project</th><th>Tags</th><th>Pinned</th>
+        <th>Stopped</th><th>Next retention effect</th><th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {%- for row in rows %}
+      <tr>
+        <td><code>{{ row.capture_id }}</code></td>
+        <td>{{ row.started_at }}</td>
+        <td>{{ row.format }}</td>
+        <td>{% if row.byte_length is not none %}{{ row.byte_length }}{% else %}—{% endif %}</td>
+        <td>{{ row.surface or "—" }}</td>
+        <td>{{ row.project or "—" }}</td>
+        <td>{{ row.tags | join(", ") }}</td>
+        <td>{% if row.pinned %}yes{% else %}no{% endif %}</td>
+        <td>{{ row.stop_reason or (row.state if row.state == "capturing" else "—") }}</td>
+        <td>{{ effects[row.capture_id].label if row.capture_id in effects else "kept" }}</td>
+        <td>
+          {% if row.pinned %}
+          <form method="post" action="/captures/{{ row.capture_id }}/unpin"
+                hx-post="/captures/{{ row.capture_id }}/unpin"
+                hx-headers='{"X-CSRF-Token": "{{ csrf_token }}"}'>
+            <button type="submit">Unpin</button>
+          </form>
+          {% else %}
+          <form method="post" action="/captures/{{ row.capture_id }}/pin"
+                hx-post="/captures/{{ row.capture_id }}/pin"
+                hx-headers='{"X-CSRF-Token": "{{ csrf_token }}"}'>
+            <button type="submit">Pin</button>
+          </form>
+          <a href="/captures/{{ row.capture_id }}/delete">Delete</a>
+          {% endif %}
+        </td>
+      </tr>
+      {%- endfor %}
+      {%- if not rows %}
+      <tr><td colspan="11">No captures match the filters.</td></tr>
+      {%- endif %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

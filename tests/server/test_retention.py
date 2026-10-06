@@ -803,3 +803,199 @@ def test_the_lifespan_cancels_the_scheduler_and_releases_the_root(
             _time.sleep(0.05)
     # Exit cancelled the scheduler and released the root lock.
     assert not (tmp_path / "captures" / "library.lock").exists()
+
+
+# --- the next-effect projection (SW-49: the SAME evaluator, per capture) ------
+
+
+def test_next_effects_label_every_corpus_row(tmp_path: Path) -> None:
+    """The captures page's per-row projection over plan()'s own components:
+    selected now -> prunable now by the first selecting rule; an applying
+    age rule -> the computed date; an applying count/bytes rule -> eligible
+    under the first such rule; pinned, in-flight, unparseable or unruled ->
+    kept."""
+    from benchweave_sdk_server.retention import next_effects
+
+    root = tmp_path / "captures"
+    _write_corpus(root)
+    config = load_config(_rules_file(tmp_path))
+    effects = next_effects(config.rules, _rows(root), now=NOW)
+    assert effects["cap-alpha"]["label"] == "prunable now by a-mcp-aging"
+    assert effects["cap-charlie"]["label"] == "prunable now by a-mcp-aging"
+    assert effects["cap-lima"]["label"] == "prunable now by b-tunnel-keep-5"
+    # bravo: mcp, 10 days old — the age rule applies and selects at day 40.
+    assert effects["cap-bravo"]["label"] == (
+        "a-mcp-aging at " + (NOW + timedelta(days=20)).date().isoformat()
+    )
+    # delta: wind-tunnel, inside the kept five — the count rule applies.
+    assert effects["cap-delta"]["label"] == "eligible under b-tunnel-keep-5"
+    # juliet: kept by the boundary rule; the first applying rule is the
+    # global cap (id order c before d).
+    assert effects["cap-juliet"]["label"] == "eligible under c-global-cap"
+    assert effects["cap-hotel"]["label"] == "kept"  # pinned
+    assert effects["cap-india"]["label"] == "kept"  # pinned
+    assert effects["cap-mangle"]["label"] == "kept"  # unparseable started_at
+
+
+def test_next_effects_keep_everything_without_rules(tmp_path: Path) -> None:
+    from benchweave_sdk_server.retention import next_effects
+
+    root = tmp_path / "captures"
+    _write_corpus(root)
+    effects = next_effects((), _rows(root), now=NOW)
+    assert all(row["label"] == "kept" for row in effects.values())
+
+
+def test_next_effects_keep_the_armed_capture(tmp_path: Path) -> None:
+    from benchweave_sdk_server.retention import next_effects
+
+    root = tmp_path / "captures"
+    _write_corpus(root)
+    config = load_config(_rules_file(tmp_path))
+    effects = next_effects(
+        config.rules, _rows(root), now=NOW, in_flight_ids={"cap-golf"}
+    )
+    assert effects["cap-golf"]["label"] == "kept"
+
+
+# --- the captures page (SW-49) -------------------------------------------------
+
+_DEVICE_ID = "fixture-bench-1"
+
+
+def _write_corpus_device_aware(root: Path) -> None:
+    """The corpus with a device id in every row's metadata (SW-49's device
+    filter reads the file — the index has no device column)."""
+    _write_corpus(root)
+    for capture_id, _surface, _project, _age, _n, _pinned in CORPUS:
+        metadata_path = root / capture_id / "metadata.json"
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        metadata["device"] = {"id": _DEVICE_ID}
+        metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+
+
+def _captures_app(tmp_path: Path, *, rules: bool = True):
+    """A mock-transport host over the corpus with the app built on it."""
+    from benchweave_sdk.scaffold import create_project
+    from benchweave_sdk_server.seam import StandaloneSeam
+    from benchweave_sdk_server.security import GuardPolicy, new_token
+    from benchweave_sdk_server.session import load_plugin_project, mock_plugin_session
+    from benchweave_sdk_server.web import build_app
+
+    root = tmp_path / "captures"
+    _write_corpus_device_aware(root)
+    project_root = tmp_path / "proj"
+    create_project(project_root, "pagecheck_plugin")
+    loaded = load_plugin_project(project_root)
+    retention = load_config(_rules_file(tmp_path)) if rules else None
+    seam = StandaloneSeam(
+        mock_plugin_session(loaded),
+        transport_kind="mock",
+        capture_root=root,
+        retention=retention,
+    )
+    policy = GuardPolicy.complete(
+        bound_host="127.0.0.1",
+        bound_port=8477,
+        bearer_token=new_token(),
+        csrf_token=new_token(),
+    )
+    return seam, build_app(seam, policy=policy), policy
+
+
+def test_captures_page_renders_rows_and_effects(tmp_path: Path) -> None:
+    from fastapi.testclient import TestClient
+
+    _seam, app, _policy = _captures_app(tmp_path)
+    with TestClient(app, base_url="http://127.0.0.1:8477") as client:
+        response = client.get("/captures")
+    assert response.status_code == 200
+    body = response.text
+    assert "cap-alpha" in body
+    assert "prunable now by a-mcp-aging" in body
+    assert "cap-hotel" in body  # pinned, still rendered
+    assert "wind-tunnel" in body
+
+
+def test_captures_page_filters(tmp_path: Path) -> None:
+    from fastapi.testclient import TestClient
+
+    _seam, app, _policy = _captures_app(tmp_path)
+    with TestClient(app, base_url="http://127.0.0.1:8477") as client:
+        by_project = client.get("/captures", params={"project": "wind-tunnel"})
+        by_source = client.get("/captures", params={"source": "mcp"})
+        by_device = client.get("/captures", params={"device": _DEVICE_ID})
+        by_device_miss = client.get("/captures", params={"device": "no-such"})
+        by_query = client.get("/captures", params={"q": "cap-alpha"})
+    body = by_project.text
+    assert "cap-delta" in body and "cap-bravo" not in body
+    body = by_source.text
+    assert "cap-alpha" in body and "cap-delta" not in body
+    assert "cap-delta" in by_device.text  # the device filter matches all
+    assert "cap-alpha" not in by_device_miss.text
+    assert "cap-alpha" in by_query.text and "cap-bravo" not in by_query.text
+
+
+def test_delete_confirm_names_the_capture(tmp_path: Path) -> None:
+    from fastapi.testclient import TestClient
+
+    _seam, app, _policy = _captures_app(tmp_path)
+    with TestClient(app, base_url="http://127.0.0.1:8477") as client:
+        response = client.get("/captures/cap-delta/delete")
+        missing = client.get("/captures/cap-nothere/delete")
+    assert response.status_code == 200
+    body = response.text
+    assert "cap-delta" in body
+    assert "300" in body  # the size, named at confirmation (SW-59)
+    assert "wind-tunnel" in body  # the project, named at confirmation
+    assert missing.status_code == 404
+
+
+def test_delete_post_dispatches_ui_and_records_delete_ui(tmp_path: Path) -> None:
+    """AR-13's end-to-end pin: the HTML route's delete dispatches
+    capture_delete with the UI surface — the recorder row's trigger is
+    delete-ui (the dispatch layer's own identity, SW-34/ruling 9)."""
+    from fastapi.testclient import TestClient
+
+    _seam, app, policy = _captures_app(tmp_path)
+    with TestClient(app, base_url="http://127.0.0.1:8477") as client:
+        response = client.post(
+            "/captures/cap-delta/delete",
+            headers={"x-csrf-token": policy.csrf_token},
+            follow_redirects=False,
+        )
+    assert response.status_code == 303
+    assert response.headers["location"] == "/captures"
+    assert not (tmp_path / "captures" / "cap-delta").exists()
+    log_rows = [
+        json.loads(line)
+        for line in (tmp_path / "captures" / "retention.log")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert [row["trigger"] for row in log_rows] == ["delete-ui"]
+    assert log_rows[0]["rule"] == "manual-delete"
+    assert log_rows[0]["capture_id"] == "cap-delta"
+
+
+def test_pin_and_unpin_forms_round_trip(tmp_path: Path) -> None:
+    import asyncio
+
+    from fastapi.testclient import TestClient
+
+    seam, app, policy = _captures_app(tmp_path)
+    with TestClient(app, base_url="http://127.0.0.1:8477") as client:
+        pinned = client.post(
+            "/captures/cap-echo/pin",
+            headers={"x-csrf-token": policy.csrf_token},
+            follow_redirects=False,
+        )
+        assert pinned.status_code == 303
+        unpinned = client.post(
+            "/captures/cap-echo/unpin",
+            headers={"x-csrf-token": policy.csrf_token},
+            follow_redirects=False,
+        )
+        assert unpinned.status_code == 303
+    row = asyncio.run(seam.call("capture_get", {"capture_id": "cap-echo"}))
+    assert row["metadata"]["pinned"] is False

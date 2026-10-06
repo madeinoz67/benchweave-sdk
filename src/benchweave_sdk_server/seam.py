@@ -2335,6 +2335,15 @@ class StandaloneSeam:
         with one (the in-host schedule and the storage guard both read it)."""
         return self._retention
 
+    @property
+    def in_flight_capture_id(self) -> str | None:
+        """The armed capture's id, when one is in flight (the captures
+        page's next-effect projection excludes it — SW-51's host-state
+        rule, made visible read-only)."""
+        if self._capture is None:
+            return None
+        return str(self._capture["capture_id"])
+
     def run_retention_once(
         self,
         *,

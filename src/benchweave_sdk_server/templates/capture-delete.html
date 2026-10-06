@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Delete capture — standalone{% endblock %}
+{% block content %}
+<h1>Delete capture</h1>
+<div class="notice notice-refused" role="alert">
+  <p><strong>This action deletes the capture data.</strong> It cannot be undone. The removal is written to the retention log.</p>
+</div>
+<section class="panel">
+  <h2>Confirm</h2>
+  <dl>
+    <dt>capture</dt><dd><code>{{ row.capture_id }}</code></dd>
+    <dt>size</dt><dd>{{ row.byte_length }} bytes</dd>
+    <dt>project</dt><dd>{{ row.project or "—" }}</dd>
+    <dt>format</dt><dd>{{ row.format }}</dd>
+  </dl>
+  <form method="post" action="/captures/{{ row.capture_id }}/delete"
+        hx-post="/captures/{{ row.capture_id }}/delete"
+        hx-headers='{"X-CSRF-Token": "{{ csrf_token }}"}'>
+    <button type="submit">Delete this capture</button>
+  </form>
+  <p><a href="/captures">Do not delete — go back to the library</a></p>
+</section>
+{% endblock %}
