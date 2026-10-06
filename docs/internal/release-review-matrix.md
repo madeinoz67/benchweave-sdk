@@ -39,6 +39,18 @@ enforcement: an unregistered bump-sensitive surface is by construction one
 release-cut does not sweep (the mutation arms in the design record's §9
 prove the tripwire catches exactly that).
 
+## The PR-time preflight (issue #408 S3)
+
+A release PR (one carrying `.release/plan.json`) is rehearsed by the
+`release-preflight` workflow before merge: `release_cut.py --verify`
+(occurrence + anchor parity, staged-patch applicability), the standards
+self-check, `uv build`, the tags↔pyproject parity check, and the PHASE-2
+REHEARSAL — the staged patch applied, committed and tagged locally, and
+the real docs assembly run against the local repo so `verify_tree`
+proves the new bucket, the selector honesty and the `(latest)` label
+before any tag exists. A non-release PR degrades to a fast notice (the
+always-run posture; never a skipped job).
+
 ## The ordering constraint (row 6 is a pre-tag step)
 
 The registration of the new version in `great-docs.yml` must land **before

@@ -1,0 +1,101 @@
+# The release-PR preflight (issue #408 S3): a green release PR means the
+# tree that will be tagged passes build, parity, anchor AND — via the
+# rehearsal — registration, so the tag commit is registration-only. The
+# ordering class (a tag missing itself builds zero docs buckets) dies
+# here, rehearsed before the tag exists. Disclosed residual (design §5.2):
+# the preflight proves the STAGED patch is sufficient, not that the
+# operator applies exactly it at tag time — the tag-time docs build
+# remains the backstop.
+name: release-preflight
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    name: Release-PR preflight (verify + build + tag rehearsal)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # full history: release_tags() reads LOCAL tags, and the rehearsal
+          # creates the new tag locally — the isolated builds fetch per-tag
+          # refs from --repo-url (the local path), so every prior tag's ref
+          # must exist here.
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: "3.13"
+
+      # ALWAYS RUNS, never condition-skipped (the GitHub skipped-required-
+      # check constraint — a skipped job stays Pending and blocks merge):
+      # a non-release PR degrades to a fast notice, exactly like the
+      # declared-pin lane's annotation posture.
+      - name: Detect a release PR
+        run: |
+          if [ ! -f .release/plan.json ]; then
+            echo "::notice::not a release PR (.release/plan.json absent) — preflight is a no-op"
+            exit 0
+          fi
+          VERSION="$(python3 -c "import json; print(json.load(open('.release/plan.json'))['version'])")"
+          echo "RELEASE_VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Sync the project environment
+        if: env.RELEASE_VERSION != ''
+        run: uv sync --locked --extra test --extra server
+
+      # (1) occurrence parity, anchor parity (the v0.7.0 class dies here),
+      # staged-patch applicability, patch-surface assertion.
+      - name: release-cut --verify
+        if: env.RELEASE_VERSION != ''
+        run: uv run python scripts/release_cut.py --verify
+
+      # (2) lock <-> vendored tree <-> marker mirror, at PR time.
+      - name: Standards self-check
+        if: env.RELEASE_VERSION != ''
+        run: uv run benchweave-sdk sync-standards --check
+
+      # (3) hatch_build's vendored-tree-vs-lock verification rides the build.
+      - name: Build wheel and sdist
+        if: env.RELEASE_VERSION != ''
+        run: uv build
+
+      # (4) the tags<->pyproject parity the publish job enforces at tag
+      # time, proven against the tag that WILL be cut.
+      - name: Tag/version parity
+        if: env.RELEASE_VERSION != ''
+        run: uv run python scripts/verify_release_tag.py "v$RELEASE_VERSION" --pyproject pyproject.toml
+
+      # (5) the phase-2 rehearsal: apply the staged patch, commit and tag
+      # locally, and run the REAL assembly entry point against the local
+      # repo (--repo-url "$PWD" is load-bearing: the simulated tag exists
+      # only locally; release_tags() reads local tags). The assembly's own
+      # verify_tree asserts the new bucket, the selector honesty and the
+      # (latest) label — the exact tag-time behavior, rehearsed.
+      - name: Rehearse the tag commit (phase-2)
+        if: env.RELEASE_VERSION != ''
+        run: |
+          set -euo pipefail
+          git config user.name "release-preflight"
+          git config user.email "preflight@runner.invalid"
+          git apply .release/phase2-v"$RELEASE_VERSION".patch
+          git add -A
+          git commit -q -m "chore(release): the v$RELEASE_VERSION self-registration (preflight rehearsal)"
+          git tag "v$RELEASE_VERSION"
+          uv run python scripts/assemble_docs_site.py --repo-url "$PWD" --dest "$RUNNER_TEMP/site"
+
+      # (6) the simulated tag commit is registration-only, structurally:
+      # its changed-file set equals the staged patch's.
+      - name: Assert the rehearsal commit is registration-only
+        if: env.RELEASE_VERSION != ''
+        run: |
+          set -euo pipefail
+          diff <(git diff-tree --no-commit-id --name-only -r HEAD | sort) \
+               <(grep '^+++ b/' .release/phase2-v"$RELEASE_VERSION".patch \
+                 | sed 's|^+++ b/||' | sort)
+          echo "rehearsal commit touches exactly the staged patch's files"
