@@ -877,6 +877,49 @@ def test_matrix_test_surfaces_match_the_registry() -> None:
     assert "test_scaffold_update" not in {s.path for s in drift.DECLARED_SURFACES}
 
 
+# --- wave 3: the preflight workflow artifact (F1/F2) ---------------------------
+
+
+def test_preflight_workflow_installs_great_docs_and_owns_a_main_head() -> None:
+    """The rehearsal's two DOA defects, pinned at the artifact layer (the
+    workflow YAML is what CI executes; these lines are its load-bearing
+    minimum):
+
+    F1 — assemble_docs_site resolves the great-docs CLI via PATH; docs.yml
+    installs it explicitly (``uv pip install "great-docs[svg]==0.17.0"``)
+    and the preflight must carry the SAME pinned install, or step 5 dies
+    with command-not-found (the referee's reproduction).
+
+    F2 — the rehearsal runs the dev bucket with --branch main against
+    --repo-url "$PWD"; a pull_request checkout is a DETACHED merge ref
+    with zero refs/heads, and git clone advertises heads+tags only, so the
+    dev build dies ("Remote branch main not found") unless the rehearsal
+    first creates a local main head at the checkout."""
+    workflow = (ROOT / ".github" / "workflows" / "release-preflight.yml").read_text(
+        encoding="utf-8"
+    )
+    docs_workflow = (ROOT / ".github" / "workflows" / "docs.yml").read_text(
+        encoding="utf-8"
+    )
+    pin = re.search(r'uv pip install "great-docs\[svg\]==(\S+)"', docs_workflow)
+    assert pin is not None, "docs.yml's great-docs pin line moved — re-point this arm"
+    assert f'uv pip install "great-docs[svg]=={pin.group(1)}"' in workflow, (
+        "the preflight never installs the great-docs CLI (F1: assemble_docs_site "
+        "resolves it via PATH; step 5 dies command-not-found)"
+    )
+    branch_main = re.search(
+        r"git branch main\s+HEAD", workflow
+    ) or re.search(r"git checkout -b main", workflow)
+    assert branch_main is not None, (
+        "the rehearsal never creates a local main head (F2: the pull_request "
+        "checkout is detached; the dev bucket's --branch main clone dies)"
+    )
+    # the branch must exist BEFORE the assembly step runs
+    assert workflow.index("git branch main") < workflow.index(
+        "assemble_docs_site.py"
+    ), "the local main head must be created before the assembly"
+
+
 # --- the Makefile wrapper ----------------------------------------------------------------
 
 

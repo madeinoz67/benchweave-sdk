@@ -49,6 +49,13 @@ jobs:
         if: env.RELEASE_VERSION != ''
         run: uv sync --locked --extra test --extra server
 
+      # The rehearsal's assembly resolves the great-docs CLI via PATH —
+      # without this step step 5 dies command-not-found (docs.yml installs
+      # the same pinned form; the pin moves with that line).
+      - name: Install the pinned great-docs CLI
+        if: env.RELEASE_VERSION != ''
+        run: uv pip install "great-docs[svg]==0.17.0"
+
       # (1) occurrence parity, anchor parity (the v0.7.0 class dies here),
       # staged-patch applicability, patch-surface assertion.
       - name: release-cut --verify
@@ -87,6 +94,12 @@ jobs:
           git add -A
           git commit -q -m "chore(release): the v$RELEASE_VERSION self-registration (preflight rehearsal)"
           git tag "v$RELEASE_VERSION"
+          # The dev bucket builds --branch main from --repo-url "$PWD": a
+          # pull_request checkout is a DETACHED merge ref with zero
+          # refs/heads, and git clone advertises heads+tags only — without
+          # a local main head the dev build dies ("Remote branch main not
+          # found"). Create it at the rehearsal commit.
+          git branch main HEAD
           uv run python scripts/assemble_docs_site.py --repo-url "$PWD" --dest "$RUNNER_TEMP/site"
 
       # (6) the simulated tag commit is registration-only, structurally:
