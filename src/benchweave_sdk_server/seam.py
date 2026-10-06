@@ -49,7 +49,14 @@ from .binding import BindingAbsent, BindingStale
 from .errors import SeamError
 from .events import EventBus
 from .library import CaptureLibrary
-from .retention import RetentionConfig, record
+from .retention import (
+    QuotaLatch,
+    RetentionConfig,
+    plan,
+    quota_usages,
+    record,
+    sweep_plan,
+)
 from .session import (
     HostOperationContext,
     PluginLoadError,
@@ -226,6 +233,9 @@ class StandaloneSeam:
         # a hardcoded reserve would impose one bench's storage policy on
         # every bench; the reserve is commissioned configuration).
         self._retention = retention
+        # The schedule's quota latch: edge-triggered per max_bytes rule,
+        # created with the first scheduled evaluation (host state).
+        self._quota_latch: QuotaLatch | None = None
         self._capture: Any | None = None
         self._capture_outcomes: dict[str, dict[str, Any]] = {}
         # The capture library (I3b slice 2) is LAZY: constructed on the
@@ -1836,6 +1846,76 @@ class StandaloneSeam:
             return None
         return await asyncio.shield(cast("asyncio.Task[dict[str, Any]]", state["watcher"]))
 
+    async def settle_capture_for_shutdown(self) -> dict[str, Any] | None:
+        """NFR-O1's close-down: settle the in-flight capture honestly at
+        host exit. ``None`` when no capture is in flight.
+
+        Same-loop callers (the web lifespan's finally): set the stop event
+        and await the shielded watcher with ``_op_capture_stop``'s own
+        timeout computation (verb timeout + bound grace + settle margin);
+        on ``TimeoutError`` run the B-F5 escape verbatim (cancel watcher and
+        task, abort ``stop_timeout``). A caller on a FRESH loop (the stdio
+        entry, whose ``server.run()`` owned — and closed — the watcher's
+        loop): the watcher is dead and cannot be awaited, so the capture is
+        aborted DIRECTLY — staging discarded, the event directory removed,
+        outcome ``host_shutdown`` (no half-written primary). Exceptions are
+        suppressed into the outcome row: shutdown completes, honestly
+        labelled, and this method never raises into a close-down path.
+        """
+        state = self._capture
+        if state is None:
+            return None
+        watcher = cast("asyncio.Task[dict[str, Any]]", state["watcher"])
+        try:
+            if watcher.cancelled() or watcher.get_loop() is not asyncio.get_running_loop():
+                # The dead-loop shapes: a watcher cancelled by its own
+                # loop's shutdown, or one whose loop is gone (the stdio
+                # entry's server.run() closed it) — either way it can
+                # never settle the capture, so the capture is aborted
+                # directly with nothing half-published.
+                return await self._abort_capture(
+                    state,
+                    "host_shutdown",
+                    detail=(
+                        "the host exited under this capture; its watcher's "
+                        "event loop is gone, so the capture is aborted with "
+                        "nothing half-published"
+                    ),
+                )
+            if watcher.done():
+                # The watcher already settled but the slot was not cleared
+                # (a pathological terminal path): adopt its outcome.
+                return watcher.result()
+            state["stop_event"].set()
+            timeout = (
+                self._session.verb_timeout_ms(state["verb"]) / 1000
+                + _BOUND_GRACE_S
+                + _STOP_SETTLE_MARGIN_S
+            )
+            try:
+                return await asyncio.wait_for(asyncio.shield(watcher), timeout=timeout)
+            except TimeoutError:
+                # B-F5 verbatim: the adapter ignored even cancellation.
+                watcher.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await watcher
+                state["task"].cancel()
+                return await self._abort_capture(
+                    state,
+                    "stop_timeout",
+                    detail=(
+                        "the adapter ignored the shutdown stop and did not "
+                        "honour cancellation; the host settled the outcome "
+                        f"after {timeout:.1f}s"
+                    ),
+                )
+        except Exception as exc:  # noqa: BLE001 - shutdown must complete
+            with contextlib.suppress(Exception):
+                return await self._abort_capture(
+                    state, "shutdown_error", detail=f"{type(exc).__name__}: {exc}"
+                )
+            return None
+
     async def _op_capture_stop(
         self, arguments: dict[str, Any], correlation: str
     ) -> dict[str, Any]:
@@ -2246,6 +2326,133 @@ class StandaloneSeam:
         if library is not None:
             with contextlib.suppress(Exception):
                 library.close()
+
+    # --- the retention schedule (I3c, SW-57) ---------------------------------
+
+    @property
+    def retention(self) -> RetentionConfig | None:
+        """The loaded retention configuration, when the host was started
+        with one (the in-host schedule and the storage guard both read it)."""
+        return self._retention
+
+    def run_retention_once(
+        self,
+        *,
+        now: datetime | None = None,
+        clock: float | None = None,
+    ) -> dict[str, Any]:
+        """One scheduled evaluation: the plan over the seam's OWN library
+        (the lazy ``_library("")`` — same lock, same process), the armed
+        capture excluded, every removal directory-plus-index-row via
+        ``library.remove`` with its recorder row (trigger ``scheduled``),
+        then the sweep with its rows (trigger ``sweep``), then ONE
+        ``retention_pruned`` bus event per run (count, bytes, per-rule
+        breakdown) and the quota latch's rising-edge ``retention_quota``
+        events — quota usage is measured over the rows that REMAIN after
+        the removals (the number the next evaluation will act on).
+
+        Library mutation is synchronous sqlite with no await points, so a
+        scheduler tick cannot interleave a half-``remove``.
+        """
+        if self._retention is None or not self._retention.rules:
+            return {"count": 0, "bytes": 0, "by_rule": {}}
+        moment = now if now is not None else datetime.now(UTC)
+        moment_clock = clock if clock is not None else time.time()
+        library = self._library("")
+        rows = library.list_captures()
+        in_flight: set[str] = set()
+        if self._capture is not None:
+            in_flight.add(str(self._capture["capture_id"]))
+        removals = plan(
+            self._retention.rules, rows, now=moment, in_flight_ids=in_flight
+        )
+        by_id = {str(row["capture_id"]): row for row in rows}
+        for removal in removals:
+            library.remove(removal.capture_id)
+        root = library.root
+        if removals:
+            record(
+                root,
+                [
+                    {
+                        "capture_id": removal.capture_id,
+                        "sha256": by_id[removal.capture_id]["sha256"],
+                        "rule": removal.rule_id,
+                    }
+                    for removal in removals
+                ],
+                trigger="scheduled",
+            )
+        swept = sweep_plan(
+            root,
+            now=moment_clock,
+            grace_s=self._retention.orphan_grace_s,
+            in_flight_ids=in_flight,
+        )
+        for name in swept:
+            shutil.rmtree(root / name)
+        if swept:
+            record(
+                root,
+                [
+                    {"capture_id": name, "sha256": None, "rule": "orphan-sweep"}
+                    for name in swept
+                ],
+                trigger="sweep",
+            )
+        by_rule: dict[str, int] = {}
+        for removal in removals:
+            by_rule[removal.rule_id] = by_rule.get(removal.rule_id, 0) + 1
+        if swept:
+            by_rule["orphan-sweep"] = len(swept)
+        payload = {
+            "count": len(removals) + len(swept),
+            "bytes": sum(removal.bytes for removal in removals),
+            "by_rule": by_rule,
+        }
+        # The bus stays one sequence, seam-only publisher (I2c's rule).
+        self.events.publish("retention_pruned", payload)
+        if self._quota_latch is None:
+            self._quota_latch = QuotaLatch()
+        removed_ids = {removal.capture_id for removal in removals}
+        remaining = [
+            row for row in rows if str(row["capture_id"]) not in removed_ids
+        ]
+        for usage in self._quota_latch.crossings(
+            quota_usages(self._retention.rules, remaining, in_flight_ids=in_flight)
+        ):
+            self.events.publish(
+                "retention_quota",
+                {
+                    "rule_id": usage.rule_id,
+                    "used_bytes": usage.used_bytes,
+                    "cap_bytes": usage.cap_bytes,
+                    "fraction": QuotaLatch.fraction(usage),
+                },
+            )
+        return payload
+
+    async def retention_scheduler_loop(self) -> None:
+        """The in-host schedule (SW-57): one asyncio task on host state,
+        started by the web lifespan when the rules document names rules.
+
+        Sleeps FIRST — a host that just started does not prune before its
+        first interval elapses (the library rebuild just ran) — then
+        evaluates every ``interval_s`` (the 86400 s default when the key
+        is absent) until cancelled. A failing tick never kills the loop
+        (suppressed; the next interval retries): the schedule is an
+        operational concern, not a protective envelope.
+        """
+        assert self._retention is not None and self._retention.rules
+        interval = (
+            self._retention.interval_s
+            if self._retention.interval_s is not None
+            else 86400.0
+        )
+        while True:
+            await asyncio.sleep(interval)
+            with contextlib.suppress(Exception):
+                self.run_retention_once()
 
     # --- the capture watcher (ruling 1: the host finalises, never the adapter)
 

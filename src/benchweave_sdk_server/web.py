@@ -105,16 +105,25 @@ def build_app(
     @asynccontextmanager
     async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         # FastMCP's http_app lifespan must run on the host app (the gateway
-        # composition precedent): initialize 500s without it. On shutdown the
-        # adapter's quiet path runs (NFR-O1) — close is idempotent-tolerant.
+        # composition precedent): initialize 500s without it. On shutdown,
+        # NFR-O1's close-down runs in order: the retention schedule stops
+        # first (it is a writer over the library), then the in-flight
+        # capture settles honestly, then the adapter's quiet path (close is
+        # idempotent-tolerant), then the host's own resources.
+        scheduler: asyncio.Task[None] | None = None
+        if seam.retention is not None and seam.retention.rules:
+            scheduler = asyncio.create_task(seam.retention_scheduler_loop())
         async with mcp_app.lifespan(app):
             try:
                 yield
             finally:
+                if scheduler is not None:
+                    scheduler.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await scheduler
+                await seam.settle_capture_for_shutdown()
                 await seam.session.close()
-                # The host's own resources: the capture library's root lock
-                # (NFR-O1's close-down shape; I3c extends this to settle an
-                # in-flight capture first).
+                # The host's own resources: the capture library's root lock.
                 seam.close()
 
     app = FastAPI(title="BenchWeave SDK server", lifespan=_lifespan)

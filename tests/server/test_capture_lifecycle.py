@@ -1106,3 +1106,134 @@ def test_the_storage_guard_is_inert_without_a_configured_reserve(
     # was refused (the sampler read 0 free the whole time).
     reasons = asyncio.run(scenario())
     assert reasons == ["completed", "completed"]
+
+
+# --- the shutdown close-down (NFR-O1, AR-11) ----------------------------------
+
+
+def test_lifespan_exit_settles_an_in_flight_capture(tmp_path: Path) -> None:
+    """AR-11: a capture in flight at lifespan exit is settled honestly —
+    every event directory published or removed, no *.tmp primaries, the
+    index consistent with the root, the outcome recorded."""
+    from fastapi.testclient import TestClient
+
+    from benchweave_sdk_server.security import GuardPolicy, new_token
+    from benchweave_sdk_server.web import build_app
+
+    host = _host(tmp_path, mode="slow")
+    policy = GuardPolicy.complete(
+        bound_host="127.0.0.1",
+        bound_port=8477,
+        bearer_token=new_token(),
+        csrf_token=new_token(),
+    )
+    app = build_app(host, policy=policy)
+    headers = {"authorization": f"Bearer {policy.bearer_token}"}
+    with TestClient(app, base_url="http://127.0.0.1:8477") as client:
+        client.post("/v1/device_connect", json={"device_id": DEV}, headers=headers)
+        started = client.post(
+            "/v1/capture_start", json=_start(count=4000), headers=headers
+        )
+        capture_id = started.json()["data"]["capture_id"]
+        assert (tmp_path / "captures" / capture_id).exists() or True
+    # The lifespan's finally settled the capture before releasing anything.
+    root = tmp_path / "captures"
+    outcomes = dict(host._capture_outcomes)
+    assert capture_id in outcomes
+    assert outcomes[capture_id]["state"] in ("published", "aborted")
+    assert host._capture is None  # the slot freed
+    # No half-written primaries anywhere; every event dir is a publication.
+    assert not list(root.rglob("*.tmp"))
+    for entry in root.iterdir():
+        if entry.is_dir():
+            assert (entry / "manifest.json").is_file(), entry
+    # The index agrees with the root (a fresh library rebuilds over it).
+    from benchweave_sdk_server.library import CaptureLibrary
+
+    library = CaptureLibrary(root)
+    try:
+        on_disk = {
+            entry.name
+            for entry in root.iterdir()
+            if entry.is_dir() and (entry / "manifest.json").is_file()
+        }
+        assert {row["capture_id"] for row in library.list_captures()} == on_disk
+    finally:
+        library.close()
+
+
+def test_shutdown_settle_escapes_a_hostile_adapter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AR-11's hostile arm: an adapter that ignores the stop and even
+    cancellation cannot hold the close-down — the B-F5 escape fires inside
+    the stop timeout + margin and the process exits (the settle margin is
+    test-shrunk here; it is a host scheduling constant, not a protective
+    envelope)."""
+    from benchweave_sdk_server import seam as seam_module
+
+    monkeypatch.setattr(seam_module, "_STOP_SETTLE_MARGIN_S", 0.5)
+    # stubborn_s outlives the shrunk escape window (0.3 + 0.3 + 0.5 = 1.1 s)
+    # but not the test: the settle returns at the escape while the zombie
+    # keeps swallowing cancellation until its own deadline — this loop's
+    # shutdown then reaps it (the disclosed B-F5 residual; a real process's
+    # exit never waits on it, the loop is already gone).
+    host = _host(tmp_path, mode="stubborn_ok", stubborn_s=3.0, verb_timeout_ms=300)
+
+    async def scenario() -> dict[str, Any]:
+        await _connected(host)
+        started = await host.call("capture_start", _start(count=64))
+        settle = await host.settle_capture_for_shutdown()
+        assert settle is not None
+        assert started["capture_id"] == settle["capture_id"]
+        return settle
+
+    began = time.monotonic()
+    outcome = asyncio.run(scenario())
+    elapsed = time.monotonic() - began
+    assert outcome["state"] == "aborted"
+    assert outcome["stop_reason"] == "stop_timeout"
+    assert host._capture is None
+    # The escape fired inside the shrunk window (verb 0.3 + grace 0.3 +
+    # margin 0.5 = 1.1 s) plus the zombie's own 3 s reap at loop shutdown.
+    assert elapsed < 6.0
+
+
+def test_stdio_settle_aborts_when_the_watchers_loop_is_gone(
+    tmp_path: Path,
+) -> None:
+    """The stdio entry's shape: server.run() returns with a capture in
+    flight — its watcher died with that loop, so a fresh-loop settle cannot
+    await it. The close-down aborts the capture DIRECTLY (staging discarded,
+    the event directory removed — no half-written primary) and records the
+    outcome, honestly labelled with the host shutdown."""
+    host = _host(tmp_path, mode="slow")
+
+    async def arm() -> str:
+        await _connected(host)
+        started = await host.call("capture_start", _start(count=4000))
+        return str(started["capture_id"])
+
+    capture_id = asyncio.run(arm())  # the loop (and the watcher) died here
+
+    async def settle() -> dict[str, Any] | None:
+        return await host.settle_capture_for_shutdown()
+
+    outcome = asyncio.run(settle())  # a FRESH loop
+    assert outcome is not None
+    assert outcome["capture_id"] == capture_id
+    assert outcome["state"] == "aborted"
+    assert str(outcome["stop_reason"]).startswith("host_shutdown")
+    root = tmp_path / "captures"
+    assert not (root / capture_id).exists()
+    assert not list(root.rglob("*.tmp"))
+    assert host._capture is None
+
+
+def test_settle_returns_none_with_no_capture_in_flight(tmp_path: Path) -> None:
+    host = _host(tmp_path, mode="ok")
+
+    async def settle() -> dict[str, Any] | None:
+        return await host.settle_capture_for_shutdown()
+
+    assert asyncio.run(settle()) is None

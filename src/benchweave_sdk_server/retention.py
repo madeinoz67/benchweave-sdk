@@ -304,6 +304,39 @@ def plan(
     )
 
 
+# --- the quota usage (the schedule's input) ----------------------------------------
+
+
+def quota_usages(
+    rules: Iterable[RetentionRule],
+    rows: Iterable[dict[str, Any]],
+    *,
+    in_flight_ids: Iterable[str] = frozenset(),
+) -> list[QuotaUsage]:
+    """One usage per ``max_bytes`` rule: the summed byte_length of the
+    rule's applicable eligible rows — the same eligibility and
+    applicability :func:`plan` runs on (one implementation, not a second
+    one beside it)."""
+    all_rows = list(rows)
+    armed = frozenset(in_flight_ids)
+    candidates = [
+        row
+        for row in all_rows
+        if not row.get("pinned")
+        and str(row.get("capture_id")) not in armed
+        and _started_at(row) is not None
+    ]
+    return [
+        QuotaUsage(
+            rule.id,
+            sum(_bytes_of(row) for row in candidates if _applies(rule, row)),
+            int(rule.max_bytes),
+        )
+        for rule in sorted(rules, key=lambda rule: rule.id)
+        if rule.max_bytes is not None
+    ]
+
+
 # --- the recorder ---------------------------------------------------------------
 
 

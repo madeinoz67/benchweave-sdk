@@ -620,3 +620,186 @@ def test_capture_delete_trigger_defaults_to_rest(tmp_path: Path) -> None:
         .splitlines()
     ]
     assert rows and rows[0]["trigger"] == "delete-rest"
+
+
+# --- the in-host schedule (SW-57: run, event, quota, loop) --------------------
+
+
+def _scheduled_host(tmp_path: Path) -> Any:
+    """A capture-capable host over the golden corpus with the rules armed."""
+    from test_capture_lifecycle import _host
+
+    _write_corpus(tmp_path / "captures")
+    config = load_config(_rules_file(tmp_path))
+    return _host(tmp_path, mode="ok", retention=config)
+
+
+def _kinds(host: Any, kind: str) -> list[dict[str, Any]]:
+    import asyncio
+
+    events = asyncio.run(host.call("events_get", {"after_id": 0}))["events"]
+    return [event for event in events if event["kind"] == kind]
+
+
+def test_scheduled_run_prunes_records_and_publishes_one_event(
+    tmp_path: Path,
+) -> None:
+    """One scheduled evaluation: the golden set removed through the seam's
+    own library, recorder rows trigger scheduled, and exactly ONE
+    retention_pruned event (count, bytes, per-rule breakdown) on the bus."""
+    host = _scheduled_host(tmp_path)
+    payload = host.run_retention_once(now=NOW, clock=NOW.timestamp())
+    assert payload == {
+        "count": 5,
+        "bytes": 730,
+        "by_rule": {"a-mcp-aging": 2, "b-tunnel-keep-5": 1, "c-global-cap": 2},
+    }
+    pruned = _kinds(host, "retention_pruned")
+    assert len(pruned) == 1
+    assert pruned[0]["data"] == payload
+    assert not any(
+        (tmp_path / "captures" / row[0]).exists() for row in GOLDEN
+    )
+    log_rows = [
+        json.loads(line)
+        for line in (tmp_path / "captures" / "retention.log")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert [(row["capture_id"], row["rule"]) for row in log_rows] == [
+        (capture_id, rule_id) for capture_id, rule_id, _ in GOLDEN
+    ]
+    assert all(row["trigger"] == "scheduled" for row in log_rows)
+
+
+def test_quota_events_fire_once_through_the_scheduler(tmp_path: Path) -> None:
+    """The rising-edge latch through the live path: run one fires the two
+    rules at or above 0.8 of their caps (the global cap sits exactly at its
+    1500 B cap after pruning — the boundary posture; the shelf-a boundary
+    rule at 750/750); the second, unchanged evaluation fires NOTHING (the
+    latch holds; exactly-once per rising crossing)."""
+    host = _scheduled_host(tmp_path)
+    host.run_retention_once(now=NOW, clock=NOW.timestamp())
+    first = _kinds(host, "retention_quota")
+    assert {row["data"]["rule_id"] for row in first} == {
+        "c-global-cap",
+        "d-boundary",
+    }
+    global_row = next(
+        row for row in first if row["data"]["rule_id"] == "c-global-cap"
+    )
+    assert global_row["data"] == {
+        "rule_id": "c-global-cap",
+        "used_bytes": 1500,
+        "cap_bytes": 1500,
+        "fraction": 1.0,
+    }
+    host.run_retention_once(now=NOW, clock=NOW.timestamp())
+    assert _kinds(host, "retention_quota") == first  # nothing new fired
+
+
+def test_scheduled_run_excludes_the_armed_capture(tmp_path: Path) -> None:
+    """The seam-level AR-9(e) control: the armed capture is passed as
+    in-flight — a capture mid-run is never a removal candidate."""
+    host = _scheduled_host(tmp_path)
+    host._capture = {"capture_id": "cap-golf"}
+    payload = host.run_retention_once(now=NOW, clock=NOW.timestamp())
+    removed = {
+        capture_id
+        for capture_id, _, _ in GOLDEN
+        if not (tmp_path / "captures" / capture_id).exists()
+    }
+    assert "cap-golf" not in removed
+    assert (tmp_path / "captures" / "cap-golf").is_dir()
+    assert payload["count"] == 4
+    host._capture = None
+
+
+def test_the_scheduler_loop_evaluates_on_the_interval(tmp_path: Path) -> None:
+    """The lifespan's task shape: sleep first, then evaluate every
+    interval_s — a fast interval prunes and publishes without any caller
+    but the loop itself, and cancellation stops it."""
+    import asyncio
+
+    from benchweave_sdk_server.retention import RetentionConfig, load_config
+
+    _write_corpus(tmp_path / "captures")
+    config = load_config(_rules_file(tmp_path))
+    from test_capture_lifecycle import _host
+
+    host = _host(
+        tmp_path,
+        mode="ok",
+        retention=RetentionConfig(
+            interval_s=0.05, rules=config.rules
+        ),
+    )
+
+    async def scenario() -> bool:
+        task = asyncio.create_task(host.retention_scheduler_loop())
+        published = False
+        for _ in range(100):  # up to ~5 s of polling
+            await asyncio.sleep(0.05)
+            if any(
+                event["kind"] == "retention_pruned"
+                for event in host.events.after(0)
+            ):
+                published = True
+                break
+        task.cancel()
+        with contextlib_suppress():
+            await task
+        return published
+
+    def contextlib_suppress():  # tiny local helper, no import shadowing
+        import contextlib
+
+        return contextlib.suppress(asyncio.CancelledError)
+
+    assert asyncio.run(scenario())
+    assert not any(
+        (tmp_path / "captures" / row[0]).exists() for row in GOLDEN
+    )
+
+
+def test_the_lifespan_cancels_the_scheduler_and_releases_the_root(
+    tmp_path: Path,
+) -> None:
+    """With rules armed and a fast interval, the app's lifespan starts the
+    schedule and its exit cancels the task and releases the library lock —
+    the close-down composes with the schedule live."""
+    from fastapi.testclient import TestClient
+    from test_capture_lifecycle import _host
+
+    from benchweave_sdk_server.retention import RetentionConfig, load_config
+    from benchweave_sdk_server.security import GuardPolicy, new_token
+    from benchweave_sdk_server.web import build_app
+
+    _write_corpus(tmp_path / "captures")
+    config = load_config(_rules_file(tmp_path))
+    host = _host(
+        tmp_path,
+        mode="ok",
+        retention=RetentionConfig(interval_s=0.05, rules=config.rules),
+    )
+    policy = GuardPolicy.complete(
+        bound_host="127.0.0.1",
+        bound_port=8477,
+        bearer_token=new_token(),
+        csrf_token=new_token(),
+    )
+    app = build_app(host, policy=policy)
+    with TestClient(app, base_url="http://127.0.0.1:8477") as client:
+        assert client.get("/").status_code == 200
+        import time as _time
+
+        deadline = _time.monotonic() + 5.0
+        while _time.monotonic() < deadline:
+            if any(
+                event["kind"] == "retention_pruned"
+                for event in host.events.after(0)
+            ):
+                break
+            _time.sleep(0.05)
+    # Exit cancelled the scheduler and released the root lock.
+    assert not (tmp_path / "captures" / "library.lock").exists()
