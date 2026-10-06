@@ -10,6 +10,18 @@ link, re-sized for the 3 Mbps class by #393: a 512 KiB reader ring
 speaks the GENERIC OTDP section 8.1 stream kinds exactly as the guide's
 example does; no custom serial provider grammar exists on this backend,
 and no standards bytes move.
+
+The reconfigure law (issue #407): a baud change is a LINE RESET — a line
+reset starts a new conversation over a NEW link (the M1 fold's law, one
+level down); the old ring dies with the old link, so "drain" is the old
+link closing. ``reconfigure_link`` is one bounded attempt, never a host
+retry (A06); the busy guard refuses while a receive is parked on the
+link; the allowed switch set is descriptor-declared (``x-negotiated-
+bauds``, A02 — the author's declaration, not a host constant) and fails
+closed to {boot}-only when the declaration is absent. Boot settings
+never change under a switch: the reopen settings are literally
+``{**boot_settings, "baud": N}`` and the closed field set admits no
+other key.
 """
 
 from __future__ import annotations
@@ -55,6 +67,16 @@ _FIELDS = {
 
 _READ_CHUNK = 4096
 _JOIN_TIMEOUT_S = 5.0
+
+#: The reconfigure request's closed field set (issue #407): a switch
+#: names a baud, nothing else — parity/stop bits/data bits/rtscts are
+#: boot-carried, and a request naming any of them refuses by this rule,
+#: never silently applied.
+_RECONFIGURE_FIELDS = {"baud"}
+
+#: The boot baud default, shared with :func:`open_serial_port` (one
+#: definition — the opener's own default is the derivation's).
+_BOOT_BAUD_DEFAULT = 115200
 
 #: The poll quantum a receive waits on once the quiet window has expired
 #: with a partial frame buffered (FOLD-C): the quiet-line answer no longer
@@ -182,6 +204,7 @@ class SerialLink:
         self._closing = False
         self._closed = False
         self._dropped_bytes = 0
+        self._receive_depth = 0
         self._thread = threading.Thread(
             target=self._drain, name="benchweave-serial-reader", daemon=True
         )
@@ -208,6 +231,16 @@ class SerialLink:
         go first). Diagnostics only — surfaced nowhere yet, by design; a
         future status surface reads it from here."""
         return self._dropped_bytes
+
+    @property
+    def receive_depth(self) -> int:
+        """The receives currently parked on this link (issue #407).
+
+        The reconfigure busy guard's fact source: while it reads above
+        zero, a receive is in flight and a line reset would cut it
+        mid-conversation. Incremented at :meth:`take` entry under the
+        ring condition, decremented in its ``finally``."""
+        return self._receive_depth
 
     def ring_length(self) -> int:
         """The ring's current length (test and soak instrumentation)."""
@@ -250,51 +283,62 @@ class SerialLink:
         buffered for the next receive), ``ConnectionError`` (faulted or
         closed link).
         """
-        quiet_until = time.monotonic() + self._quiet_s
-        while True:
-            with self._cond:
-                if self._fault is not None:
-                    raise ConnectionError(
-                        f"serial transport faulted: {self._fault}"
-                    ) from self._fault
-                if self._closed and not self._ring:
-                    raise ConnectionError("serial link is closed")
-                if exact:
-                    if len(self._ring) >= exact:
-                        return self._pop(exact)
-                else:
-                    end = self._ring[:max_bytes].find(terminator)
-                    if end >= 0:
-                        return self._pop(end + len(terminator))
-                    if len(self._ring) >= max_bytes:
-                        del self._ring[:max_bytes]
-                        raise ValueError(f"no terminator within {max_bytes} bytes")
-                empty = not self._ring
-                if self._closed:
-                    # Closed-link drain-then-refuse: buffered COMPLETE
-                    # frames still deliver (evidence already received is
-                    # real — the completeness checks above return them);
-                    # a partial can never complete, the reader is dead,
-                    # so it refuses now instead of burning the deadline.
-                    raise ConnectionError(
-                        "serial link is closed with a partial frame buffered"
+        # The receive-depth counter (issue #407): a parked or running
+        # receive is structurally visible — the reconfigure busy guard's
+        # fact source. Incremented under the ring's own condition so the
+        # guard reads it consistently; decremented in a finally so every
+        # exit path (return, raise) unwinds it.
+        with self._cond:
+            self._receive_depth += 1
+        try:
+            quiet_until = time.monotonic() + self._quiet_s
+            while True:
+                with self._cond:
+                    if self._fault is not None:
+                        raise ConnectionError(
+                            f"serial transport faulted: {self._fault}"
+                        ) from self._fault
+                    if self._closed and not self._ring:
+                        raise ConnectionError("serial link is closed")
+                    if exact:
+                        if len(self._ring) >= exact:
+                            return self._pop(exact)
+                    else:
+                        end = self._ring[:max_bytes].find(terminator)
+                        if end >= 0:
+                            return self._pop(end + len(terminator))
+                        if len(self._ring) >= max_bytes:
+                            del self._ring[:max_bytes]
+                            raise ValueError(f"no terminator within {max_bytes} bytes")
+                    empty = not self._ring
+                    if self._closed:
+                        # Closed-link drain-then-refuse: buffered COMPLETE
+                        # frames still deliver (evidence already received is
+                        # real — the completeness checks above return them);
+                        # a partial can never complete, the reader is dead,
+                        # so it refuses now instead of burning the deadline.
+                        raise ConnectionError(
+                            "serial link is closed with a partial frame buffered"
+                        )
+                now = time.monotonic()
+                if empty and now >= quiet_until:
+                    return b""
+                if now >= deadline:
+                    raise TimeoutError(
+                        "receive deadline expired; a partial frame stays buffered"
                     )
-            now = time.monotonic()
-            if empty and now >= quiet_until:
-                return b""
-            if now >= deadline:
-                raise TimeoutError(
-                    "receive deadline expired; a partial frame stays buffered"
-                )
-            budget = min(quiet_until, deadline) - now
-            if budget <= 0:
-                # The quiet window has expired with a partial frame
-                # buffered: the quiet-line answer no longer applies, and a
-                # non-positive wait budget would return immediately — poll
-                # on a small bounded quantum until the deadline.
-                budget = _IDLE_POLL_S
+                budget = min(quiet_until, deadline) - now
+                if budget <= 0:
+                    # The quiet window has expired with a partial frame
+                    # buffered: the quiet-line answer no longer applies, and a
+                    # non-positive wait budget would return immediately — poll
+                    # on a small bounded quantum until the deadline.
+                    budget = _IDLE_POLL_S
+                with self._cond:
+                    self._cond.wait(budget + 0.001)
+        finally:
             with self._cond:
-                self._cond.wait(budget + 0.001)
+                self._receive_depth -= 1
 
     def _pop(self, count: int) -> bytes:
         out = bytes(self._ring[:count])
@@ -594,6 +638,7 @@ class SerialCaptureServices(WriterBackedCaptureServices):
         capture_root: Any = None,
         evidence_path: Any = None,
         capture_max_bytes: int | None = None,
+        reconfigurator: LinkReconfigurator | None = None,
     ) -> None:
         if (
             not isinstance(max_frame_bytes, int)
@@ -611,6 +656,20 @@ class SerialCaptureServices(WriterBackedCaptureServices):
         self._ceiling = min(link.transfer_ceiling, max_frame_bytes)
         self._evidence_path = evidence_path
         self.evidence: list[dict[str, Any]] = []
+        # The link-control capability (issue #407): configuration, present-
+        # but-degrading-loudly when absent — the conformance cells' direct
+        # construction carries no reconfigurator and the member refuses
+        # with the typed not-configured prefix, never a silent no-op. The
+        # link-settings bookkeeping rides the same source: without a
+        # reconfigurator there is no declared boot state to report, so
+        # ``link_state`` answers None (the schema's null arm).
+        self._reconfigurator = reconfigurator
+        self._boot_settings: dict[str, Any] | None = (
+            dict(reconfigurator.boot_settings) if reconfigurator is not None else None
+        )
+        self._link_settings: dict[str, Any] | None = (
+            dict(reconfigurator.boot_settings) if reconfigurator is not None else None
+        )
 
     @property
     def link(self) -> SerialLink:
@@ -693,6 +752,166 @@ class SerialCaptureServices(WriterBackedCaptureServices):
             with self._evidence_path.open("a", encoding="utf-8") as stream:
                 stream.write(json.dumps(record, sort_keys=True) + "\n")
 
+    # link control (OTDP §8.1 negotiation support, issue #407)
+
+    def _publish_link_event(
+        self,
+        event: str,
+        from_baud: int,
+        to_baud: int,
+        context: Any,
+        *,
+        reason: str | None = None,
+    ) -> None:
+        """One row of the closed link-event family. ``reason`` is
+        optional (the applied row carries none); refused rows publish
+        only where both endpoints are known ints — grammar and
+        not-configured refusals change nothing about the link state
+        machine, and the bus carries the link state machine only."""
+        publisher = (
+            self._reconfigurator.on_link_event if self._reconfigurator else None
+        )
+        if publisher is None:
+            return
+        row: dict[str, Any] = {
+            "event": event,
+            "from_baud": int(from_baud),
+            "to_baud": int(to_baud),
+            "operation_id": str(context.operation_id),
+        }
+        if reason is not None:
+            row["reason"] = reason
+        publisher(row)
+
+    def link_state(self) -> dict[str, Any] | None:
+        """The live link block for ``host_info``/``device_get`` (issue
+        #407): current baud, the descriptor's boot baud, and whether any
+        switch is negotiable. ``None`` without a reconfigurator — no
+        declared boot state to report."""
+        if self._reconfigurator is None or self._link_settings is None:
+            return None
+        return {
+            "baud": int(self._link_settings["baud"]),
+            "boot_baud": int(self._boot_settings["baud"]),  # type: ignore[index]
+            "negotiable": len(self._reconfigurator.allowed_bauds) > 1,
+        }
+
+    async def reconfigure_link(
+        self, settings: dict[str, Any], context: Any
+    ) -> dict[str, Any]:
+        """One bounded line-settings switch (the ``LinkControlServices``
+        capability member, issue #407).
+
+        The house discipline order (``transfer``'s): grammar first, then
+        liveness, then guards, then I/O. The swap is the fresh-link mint:
+        the old link closes (joins its reader — buffered residue dies
+        with it), the deadline is re-checked, then the opener runs once
+        at ``{**boot_settings, "baud": N}`` and a fresh
+        :class:`SerialLink` is minted over the new transport and rebound.
+        One attempt, never a host retry (A06): an opener error leaves the
+        services with NO link (the faulted posture) and raises
+        ``ConnectionError``; the caller's explicit fallback reconfigure
+        (for the boot baud) is the caller's move, not a host retry.
+        """
+        # grammar: the closed field set; boot settings never change.
+        baud = settings.get("baud") if isinstance(settings, dict) else None
+        if (
+            not isinstance(settings, dict)
+            or set(settings) != _RECONFIGURE_FIELDS
+            or not isinstance(baud, int)
+            or isinstance(baud, bool)
+        ):
+            shape = (
+                sorted(settings) if isinstance(settings, dict) else type(settings).__name__
+            )
+            raise ValueError(
+                "standalone_serial_reconfigure_fields: a switch request carries "
+                f'exactly {{"baud": <int>}}, got {shape}'
+            )
+        # liveness: refuse before any I/O (the C06/C07 posture).
+        self._live(context)
+        # guards: capability, allowed set, busy link.
+        if self._reconfigurator is None:
+            raise ValueError(
+                "standalone_serial_reconfigure_not_configured: this serial "
+                "session carries no link reconfigurator"
+            )
+        from_baud = _boot_baud(self._link_settings or {})
+        if self._link_settings is not None:
+            from_baud = int(self._link_settings["baud"])
+        if baud not in self._reconfigurator.allowed_bauds:
+            self._publish_link_event(
+                "reconfigure_refused",
+                from_baud,
+                baud,
+                context,
+                reason=f"baud {baud} is not in the negotiable set "
+                f"{sorted(self._reconfigurator.allowed_bauds)}",
+            )
+            raise ValueError(
+                "standalone_serial_baud_not_negotiable: "
+                f"{baud} is not in the negotiable set "
+                f"{sorted(self._reconfigurator.allowed_bauds)}"
+            )
+        if self._link.receive_depth > 0:
+            self._publish_link_event(
+                "reconfigure_refused",
+                from_baud,
+                baud,
+                context,
+                reason="a receive is in flight",
+            )
+            raise ValueError(
+                "standalone_serial_reconfigure_busy: a receive is in flight"
+            )
+        # the swap (one attempt — A06): copy the live link's configuration,
+        # close the old link (joins the reader; the ring dies with it),
+        # re-check the deadline, then reopen at the new baud.
+        old = self._link
+        ring_capacity = old.ring_capacity
+        quiet_s = old.quiet_s
+        transfer_ceiling = old.transfer_ceiling
+        old.close()
+        if context.is_cancelled() or self.monotonic() >= context.deadline_monotonic:
+            self._publish_link_event(
+                "reconfigure_failed",
+                from_baud,
+                baud,
+                context,
+                reason="the context expired during the close",
+            )
+            raise TimeoutError(
+                "reconfigure deadline expired; the old link is closed "
+                "(the honest ambiguous posture — no serving link)"
+            )
+        next_settings = {**self._reconfigurator.boot_settings, "baud": baud}
+        try:
+            transport = await asyncio.to_thread(
+                self._reconfigurator.opener,
+                self._reconfigurator.device_path,
+                next_settings,
+            )
+        except Exception as exc:
+            # The faulted posture: no rebind, no serving link, no retry —
+            # the caller owns any fallback move.
+            self._publish_link_event(
+                "reconfigure_failed",
+                from_baud,
+                baud,
+                context,
+                reason=f"{type(exc).__name__}: {exc}",
+            )
+            raise ConnectionError(f"serial reopen failed: {exc}") from exc
+        self._link = SerialLink(
+            transport,
+            ring_capacity=ring_capacity,
+            transfer_ceiling=transfer_ceiling,
+            quiet_s=quiet_s,
+        )
+        self._link_settings = dict(next_settings)
+        self._publish_link_event("reconfigured", from_baud, baud, context)
+        return dict(next_settings)
+
 def _serial_settings(plugin: Any) -> dict[str, Any]:
     """The descriptor's transport settings (the serial knobs the opener uses)."""
     settings = plugin.descriptor.get("transport", {}).get("settings", {})
@@ -724,7 +943,7 @@ def open_serial_port(device: str, settings: dict[str, Any]) -> Any:
     )
     return serial.Serial(
         device,
-        baudrate=int(settings.get("baud", 115200)),
+        baudrate=int(settings.get("baud", _BOOT_BAUD_DEFAULT)),
         bytesize=data,
         parity=parity,
         stopbits=stop,
@@ -732,6 +951,62 @@ def open_serial_port(device: str, settings: dict[str, Any]) -> Any:
         timeout=0.05,
         write_timeout=1.0,
     )
+
+
+def _boot_baud(settings: dict[str, Any]) -> int:
+    """The descriptor's boot baud (the opener's own default is the
+    derivation's — one definition)."""
+    return int(settings.get("baud", _BOOT_BAUD_DEFAULT))
+
+
+def negotiable_bauds(settings: dict[str, Any]) -> frozenset[int]:
+    """The allowed switch set: ``{boot baud} ∪ settings["x-negotiated-bauds"]``.
+
+    The ``x-`` key rides ``transport.settings`` (the schema-legal lane;
+    the ``usb_identity_filter`` posture). Validation is structural only —
+    a non-empty list of positive non-bool ints — and fails LOUD with the
+    prefixed error (the FOLD-F posture: an unparseable declared value
+    must not become a silently-empty capability). No range table, no
+    speed-plausibility check: which bauds a bench may use is the
+    descriptor author's declaration, not a host constant (A02). A
+    MISSING key is not an error: the allowed set is ``{boot baud}`` and
+    every switch refuses (fail-closed opt-in).
+    """
+    declared = settings.get("x-negotiated-bauds")
+    if declared is None:
+        return frozenset({_boot_baud(settings)})
+    if (
+        not isinstance(declared, list)
+        or not declared
+        or any(
+            not isinstance(baud, int) or isinstance(baud, bool) or baud <= 0
+            for baud in declared
+        )
+    ):
+        raise ValueError(
+            "standalone_serial_negotiated_bauds: declared x-negotiated-bauds "
+            f"{declared!r} must be a non-empty list of positive integers"
+        )
+    return frozenset({_boot_baud(settings)} | set(declared))
+
+
+@dataclass(frozen=True)
+class LinkReconfigurator:
+    """The factory's knowledge, made reusable for the reopen (issue #407).
+
+    ``serial_plugin_session`` holds every input the reopen needs — the
+    opener, the device path, the boot settings, the declared allowed set
+    — so it mints one of these per services object; ``reconfigure_link``
+    reuses it. ``on_link_event`` is the host layer's callback (the seam's
+    publisher, read at MINT time — the late-bound shape): applied,
+    refused and failed rows ride it; ``None`` publishes nothing.
+    """
+
+    opener: Callable[[str, dict[str, Any]], Any]
+    device_path: str
+    boot_settings: dict[str, Any]
+    allowed_bauds: frozenset[int]
+    on_link_event: Callable[[dict[str, Any]], None] | None = None
 
 
 def serial_plugin_session(
@@ -749,21 +1024,39 @@ def serial_plugin_session(
     injectable so tests never need a real port. ``capture_root`` and
     ``capture_max_bytes`` are the host's capture configuration — the root
     the per-capture writers publish under and the configured reservation
-    ceiling (I3b's lifecycle wiring)."""
+    ceiling (I3b's lifecycle wiring).
+
+    The link-control capability (issue #407): the declared allowed set is
+    derived HERE, loud and failing at session build (the FOLD-F posture);
+    each mint builds the reconfigurator — reading the session's
+    ``link_event_publisher`` at MINT time (the late-bound shape, the
+    ``cli.py`` factory docstring) — so a reconnect serves the CURRENT
+    publisher, not a stale one."""
     settings = _serial_settings(plugin)
     max_frame = transport_ceiling(settings)
     opener = open_port or open_serial_port
+    allowed = negotiable_bauds(settings)  # loud at session build
+    boot_settings = dict(settings)
 
     def factory() -> SerialCaptureServices:
-        transport = opener(device_path, settings)
+        transport = opener(device_path, boot_settings)
+        reconfigurator = LinkReconfigurator(
+            opener=opener,
+            device_path=device_path,
+            boot_settings=dict(boot_settings),
+            allowed_bauds=allowed,
+            on_link_event=session.link_event_publisher,
+        )
         return SerialCaptureServices(
             SerialLink(transport),
             max_frame_bytes=max_frame,
             capture_root=capture_root,
             capture_max_bytes=capture_max_bytes,
+            reconfigurator=reconfigurator,
         )
 
-    return PluginSession(plugin, factory)
+    session: PluginSession = PluginSession(plugin, factory)
+    return session
 
 
 @dataclass(frozen=True)

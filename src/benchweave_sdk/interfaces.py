@@ -328,6 +328,62 @@ class DatasetServices(HostServices, Protocol):
         """
 
 
+class LinkControlServices(HostServices, Protocol):
+    """Host services extended with the line-reconfiguration capability.
+
+    The negotiated serial transport's adapter-facing capability (issue
+    #407): a transport whose line settings the adapter may reconfigure
+    mid-session, one bounded attempt per call. The member reuses the
+    operation context's deadlines and cancellation exactly as ``transfer``
+    does. A host without the capability hands adapters plain
+    :class:`HostServices`; adapters detect it with
+    ``hasattr(services, "reconfigure_link")`` — the member check is the
+    whole test.
+
+    The protocol is the capability of record, pinned like its siblings:
+    the gateway's three-way agreement test carries a documented-gap row
+    for the member set (the ``CaptureServices``/``DatasetServices``
+    precedent), so a member rename or signature drift fails there.
+
+    See Also
+    --------
+    HostServices : the base transport, clock, and evidence surface.
+    CaptureServices : the capture extension over the same base.
+    DatasetServices : the dataset extension over the same base.
+    """
+
+    async def reconfigure_link(
+        self, settings: dict[str, Any], context: OperationContext
+    ) -> dict[str, Any]:
+        """Reconfigure the link's line settings, one bounded attempt.
+
+        Parameters
+        ----------
+        settings
+            The requested line settings. The closed field set is
+            ``{"baud"}``; boot settings (parity, stop bits, data bits,
+            rtscts) are boot-carried and can never ride a switch.
+        context
+            Identity, deadline, and cancellation state; an expired or
+            cancelled operation refuses before any I/O.
+
+        Returns
+        -------
+        dict
+            The applied settings (the read-back is the caller's proof).
+
+        Raises
+        ------
+        ValueError
+            A malformed request or a refused switch (fields, allowed
+            set, a receive in flight, or an unconfigured transport).
+        TimeoutError
+            The context expired or was cancelled.
+        ConnectionError
+            The reopen failed; the services then have no serving link
+            (the faulted posture — the host never retries on its own).
+        """
+
 
 class Adapter(Protocol):
     """Structural contract for a device plugin adapter.

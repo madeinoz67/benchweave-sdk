@@ -328,6 +328,10 @@ def test_host_info_validates_over_mcp_structured_output(starter_project) -> None
             result = await client.call_tool("bws_v1_host_info", {})
         data = result.structured_content or {}
         assert set(data["presentation"]) == {"features", "panels", "unavailable_pages"}
+        # The link block (issue #407) is additive and null on the mock —
+        # the structured output validates against the same schema only
+        # because the block is declared there.
+        assert data["link"] is None
 
     asyncio.run(run())
 

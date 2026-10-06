@@ -179,13 +179,19 @@ def test_r1_reconfigure_mints_a_fresh_link_and_returns_the_applied_settings() ->
 
     applied = asyncio.run(services.reconfigure_link({"baud": _TARGET}, _ctx()))
 
-    assert applied == {**_BOOT, "baud": _TARGET}
+    # boot settings never change: the reopen settings are literally
+    # {**boot_settings, "baud": N} — the full declared boot dict (the
+    # x- key included, exactly what the opener received at boot), only
+    # the baud replaced.
+    assert applied == {**_DECLARED, "baud": _TARGET}
+    assert applied["baud"] == _TARGET
+    assert applied["parity"] == "none" and applied["rtscts"] is False
     assert services.link is not old_link, "a line reset starts a new link"
     assert not old_link.reader_alive(), "the old reader joined through close()"
     assert services.link.reader_alive()
     assert old_link.ring_length() == 0
     assert services.link.ring_length() == 0
-    assert [s for _, s in opener.opens] == [_BOOT, {**_BOOT, "baud": _TARGET}]
+    assert [s for _, s in opener.opens] == [_DECLARED, {**_DECLARED, "baud": _TARGET}]
 
     _current_port(services).deliver(b"OK\n")
     got = asyncio.run(
@@ -339,7 +345,7 @@ def test_r6_a_failed_reconfigure_leaves_no_link_and_never_retries() -> None:
         on_link_event=None,
     )
     applied = asyncio.run(services.reconfigure_link({"baud": 115200}, _ctx()))
-    assert applied == {**_BOOT, "baud": 115200}
+    assert applied == {**_DECLARED, "baud": 115200}
     assert services.link.reader_alive(), "the explicit fallback restores a link"
 
 
@@ -355,7 +361,7 @@ def test_r7_link_events_carry_the_closed_shape_and_vocabulary() -> None:
     with pytest.raises(ValueError):
         asyncio.run(services.reconfigure_link({"baud": 9600}, _ctx()))  # refused
     applied = asyncio.run(services.reconfigure_link({"baud": _TARGET}, _ctx()))
-    assert applied == {**_BOOT, "baud": _TARGET}
+    assert applied == {**_DECLARED, "baud": _TARGET}
 
     services._reconfigurator = LinkReconfigurator(
         opener=_broken_opener(opener),

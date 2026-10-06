@@ -54,6 +54,21 @@ def _object(properties: dict[str, Any], required: list[str]) -> dict[str, Any]:
     }
 
 
+#: The live link block (issue #407): current baud, the descriptor's boot
+#: baud, and whether any switch is negotiable; null on every transport
+#: without a serial link.
+_LINK_BLOCK: dict[str, Any] = {
+    "type": ["object", "null"],
+    "properties": {
+        "baud": {"type": "integer"},
+        "boot_baud": {"type": "integer"},
+        "negotiable": {"type": "boolean"},
+    },
+    "required": ["baud", "boot_baud", "negotiable"],
+    "additionalProperties": False,
+}
+
+
 _HOST_INFO_RESULT = _object(
     {
         "mode": {"type": "string", "const": "standalone"},
@@ -76,6 +91,7 @@ _HOST_INFO_RESULT = _object(
         },
         "transport": {"type": "string"},
         "sdk_version": {"type": "string"},
+        "link": _LINK_BLOCK,
         "presentation": {
             "type": "object",
             "properties": {
@@ -100,7 +116,7 @@ _HOST_INFO_RESULT = _object(
         },
     },
     ["mode", "absent_guarantees", "served_operations", "deferred_operations",
-     "plugin", "transport", "sdk_version", "presentation"],
+     "plugin", "transport", "sdk_version", "link", "presentation"],
 )
 
 _DEVICE_SUMMARY = {
@@ -123,6 +139,11 @@ _IDENTITY_RESULT = _object(
         "serial": {"type": "string"},
         "firmware": {"type": "string"},
         "source": {"type": "string"},
+        # The live link block overlays the identity additively (issue
+        # #407, F3); null on every transport without a serial link, so
+        # the property is declared but not required — the adapter's own
+        # envelope never carries it.
+        "link": _LINK_BLOCK,
     },
     ["manufacturer", "model", "serial", "firmware", "source"],
 )
@@ -664,11 +685,12 @@ CATALOGUE: tuple[OperationSpec, ...] = (
         "events_get",
         (
             "Fetch the seam's events after a cursor: the state changes "
-            "(connect, disconnect, stage, apply, preset, reload) and "
-            "every refused seam operation — unknown, deferred, "
-            "invalid-argument and adapter-reported alike — in one "
-            "monotonic gap-free order, the same sequence the /events "
-            "stream carries."
+            "(connect, disconnect, stage, apply, preset, reload), the "
+            "link family (the serial link state machine: applied, "
+            "refused and failed switches) and every refused seam "
+            "operation — unknown, deferred, invalid-argument and "
+            "adapter-reported alike — in one monotonic gap-free order, "
+            "the same sequence the /events stream carries."
         ),
         _object(
             {
