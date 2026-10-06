@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.7.0] - 2026-10-04
+## [0.8.0] - 2026-10-05
 
 ### Bug Fixes
 
@@ -14,6 +14,9 @@ All notable changes to this project will be documented in this file.
 - The server-smoke banners are the tree's pinned wordings (#308)
 - The v0.7.0 bucket registers without git_ref — the ref cannot precede its tag
 - Docs-version registration moves to the post-tag pin-up — pre-tag is structurally impossible
+- Pass --device into StandaloneSeam so scans skip the connected port (exact-name match)
+- Serve survives a browserless host (gateway #308 fold F1, PR #400) (#116)
+- Derive the citation gate from site_url and refuse a vacuous match set (gateway #401)
 
 ### Documentation
 
@@ -22,6 +25,9 @@ All notable changes to this project will be documented in this file.
 - Four first-timer pages, usage-first navigation (issue #347 WS4)
 - Re-home the preview surface — invariants, drift rows, CLAUDE.md, README, user guide (#308)
 - STE register pass on the preview-ui surfaces (#107, gateway #308)
+- The v0.7.1 pin-up — both buckets registered, selector complete, repo-wide parity restored
+- Repoint published links to the project domains (gateway #401)
+- The v0.8.0 self-registration (selector + versions list)
 
 ### Features
 
@@ -33,11 +39,15 @@ All notable changes to this project will be documented in this file.
 - I3a — the serial backend, discovery and the mock/serial parity (#285) (#106)
 - Preview-ui becomes the standalone-host shim (PRD 12 R-9, gateway #308) [**BREAKING**]
 - The scaffold's preview citations move to the shim surface (#308) [**BREAKING**]
+- I3b — capture lifecycle, the SQLite library, SSE capture events (#285) (#110)
+- Size the serial reader ring for the 3 Mbps class (issue #393)
 
 ### Miscellaneous
 
 - Advance benchweave-ui-html pin to 0.2.0 (D-B5, #285) (#104)
 - Advance benchweave-ui-html pin to 0.2.1 (#105)
+- The v0.8.0 walk — bump, lock anchor, version surfaces, matrix record
+- Regenerate the scaffold fixtures at 0.8.0
 
 ### Refactoring
 
@@ -53,20 +63,28 @@ All notable changes to this project will be documented in this file.
 - The twin census pin moves to 37 with the #308 deletions
 - Carry the four gateway-only preview pins SDK-side (review fold adv2 F1, gateway #308)
 - Fold review rows R1-R5 — the parity pin gains type shape, the .claude references and the PR-time mirror follow the shim (#107, gateway #308)
+- The SW-61 conformance cell set over both fixtures (issue #393)
+- The fold-wave S items — deterministic gating, crlf pin, boundary arms, arithmetic (issue #393)
 
 ### Ci
 
 - Ui-html pin-freshness lane — the missing freshness signal (issue #294 slice 1, design §2.2)
 - The installed-wheel smoke proves the preview-ui posture (#308)
+- Fresh full run — the windows lane's rerun attempts kept canceling each other mid-flight
+- Parallelise the suite with xdist — the 15m ceiling stays, the suite gets fast (#117)
 
 ### Fold
 
 - Two-lane adversarial review, all rows RED-first (issue #347 WS4)
 
+### Merge
+
+- Main post-v0.7.1 (docs pin-up #114 + anchored lock #115) into the serial wiring fix
+
 
 ### Contributors
 
-- Stephen Eaton (35 commits)
+- Stephen Eaton (50 commits)
 ## [0.6.0] - 2026-10-03
 
 ### Bug Fixes
