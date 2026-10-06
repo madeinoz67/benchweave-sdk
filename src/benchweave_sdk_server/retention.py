@@ -18,6 +18,7 @@ the truth.
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -96,9 +97,20 @@ class QuotaUsage:
 
 
 def _is_number(value: Any) -> bool:
-    """A JSON number that is not a bool (bool is an int in Python — a
-    ``max_bytes: true`` is a malformed shape, not a cap of 1)."""
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    """A finite JSON number that is not a bool (bool is an int in Python —
+    a ``max_bytes: true`` is a malformed shape, not a cap of 1).
+
+    Non-finite floats refuse here (the fold wave's row 1): Python's json
+    accepts ``NaN`` and ``Infinity`` as extensions and ``1e999`` parses to
+    ``inf``, and none of them is computable — a NaN grace defeats the
+    sweep cutoff, a NaN age detonates the arithmetic, and a NaN interval
+    kills the schedule.
+    """
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+    )
 
 
 def _is_int(value: Any) -> bool:
@@ -107,9 +119,13 @@ def _is_int(value: Any) -> bool:
 
 def _rule_of(entry: Any, seen: set[str]) -> RetentionRule:
     """Validate one rules-list entry into a :class:`RetentionRule`."""
-    where = f"{RULES_INVALID} rule {entry.get('id', '<unidentified>')!r}: "
+    # The object check FIRST: the identification f-string below reads
+    # entry.get(), which a non-object entry does not have — evaluating it
+    # before this guard turned every malformed entry into an AttributeError
+    # escaping the prefixed refusal (the fold wave's row 2).
     if not isinstance(entry, dict):
         raise ValueError(f"{RULES_INVALID} a rule must be an object, got {entry!r}")
+    where = f"{RULES_INVALID} rule {entry.get('id', '<unidentified>')!r}: "
     unknown = set(entry) - {"id", "source", "project", "max_age_d", "max_count", "max_bytes"}
     if unknown:
         raise ValueError(f"{where}unknown keys {sorted(unknown)}")
@@ -132,7 +148,7 @@ def _rule_of(entry: Any, seen: set[str]) -> RetentionRule:
     limits = entry.get("max_age_d"), entry.get("max_count"), entry.get("max_bytes")
     max_age_d, max_count, max_bytes = limits
     if max_age_d is not None and (not _is_number(max_age_d) or max_age_d <= 0):
-        raise ValueError(f"{where}max_age_d must be a number > 0")
+        raise ValueError(f"{where}max_age_d must be a finite number > 0")
     if max_age_d is not None:
         max_age_d = float(max_age_d)
     if max_count is not None and (not _is_int(max_count) or max_count < 0):
@@ -167,12 +183,12 @@ def load_config(path: Path) -> RetentionConfig:
     interval_s = payload.get("interval_s")
     if interval_s is not None:
         if not _is_number(interval_s) or interval_s <= 0:
-            raise ValueError(f"{RULES_INVALID} interval_s must be a number > 0")
+            raise ValueError(f"{RULES_INVALID} interval_s must be a finite number > 0")
         interval_s = float(interval_s)
     grace = payload.get("orphan_grace_s")
     if grace is not None:
         if not _is_number(grace) or grace < 0:
-            raise ValueError(f"{RULES_INVALID} orphan_grace_s must be a number >= 0")
+            raise ValueError(f"{RULES_INVALID} orphan_grace_s must be a finite number >= 0")
         grace = float(grace)
     reserve = payload.get("reserve_bytes")
     if reserve is not None and (not _is_int(reserve) or reserve < 0):
@@ -459,17 +475,34 @@ def sweep_plan(
     moving between hosts).
     """
     cutoff = now - grace_s
+    if not (math.isfinite(grace_s) and math.isfinite(cutoff) and grace_s >= 0):
+        # An uncomputable or negative grace proves nothing about age:
+        # sweep NOTHING (deletion needs positive evidence — the same
+        # keep-by-default rule the evaluator applies to an unparseable
+        # started_at). The loader refuses these shapes at the document;
+        # this is the direct-call defense.
+        return []
     armed = frozenset(in_flight_ids)
     root_path = Path(root)
     swept: list[str] = []
     for entry in sorted(root_path.iterdir()):
-        if not entry.is_dir():
-            continue
-        if (entry / "manifest.json").is_file():
-            continue
-        if entry.name in armed:
-            continue
-        if entry.stat().st_mtime >= cutoff:
+        try:
+            # A symlink is never a sweep target: rmtree through a link
+            # raises OSError that would kill the whole run's report (the
+            # fold wave's row 3), and removing a LINK would leave its
+            # target's bytes in place while logging a removal anyway.
+            if not entry.is_dir() or entry.is_symlink():
+                continue
+            if (entry / "manifest.json").is_file():
+                continue
+            if entry.name in armed:
+                continue
+            if entry.stat().st_mtime >= cutoff:
+                continue
+        except OSError:
+            # Per-entry isolation: one unreadable entry cannot abort the
+            # plan for the rest (raced removal, a permission) — it is
+            # simply never a candidate.
             continue
         swept.append(entry.name)
     return swept

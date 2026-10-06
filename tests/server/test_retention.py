@@ -205,6 +205,10 @@ def test_load_config_defaults_when_keys_are_absent(tmp_path: Path) -> None:
         {"rules": [{"id": "r", "max_bytes": True}]},
         {"rules": [{"id": "r", "max_bytes": "1500"}]},
         {"rules": [{"id": "r", "max_age_d": 30, "unknown": 1}]},
+        {"rules": ["oops"]},
+        {"rules": [42]},
+        {"rules": [None]},
+        {"rules": [True]},
     ],
 )
 def test_load_config_refuses_every_malformed_shape(
@@ -999,3 +1003,276 @@ def test_pin_and_unpin_forms_round_trip(tmp_path: Path) -> None:
         assert unpinned.status_code == 303
     row = asyncio.run(seam.call("capture_get", {"capture_id": "cap-echo"}))
     assert row["metadata"]["pinned"] is False
+
+
+# --- fold wave (refute lane 1): non-finite floats defeat the arithmetic ------
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        '{"interval_s": NaN}',
+        '{"interval_s": 1e999}',
+        '{"orphan_grace_s": NaN}',
+        '{"orphan_grace_s": 1e999}',
+        '{"rules": [{"id": "r", "max_age_d": NaN}]}',
+        '{"rules": [{"id": "r", "max_age_d": 1e999}]}',
+    ],
+)
+def test_load_config_refuses_non_finite_numbers(tmp_path: Path, raw: str) -> None:
+    """F2 (row 1): a non-finite float is not a number the engine can
+    compute with. NaN defeats the sweep grace (an uncomputable cutoff
+    reads as 'everything is old'), inf/NaN detonate the age arithmetic
+    bare, and a NaN interval kills the schedule task at its first sleep
+    while an infinite one hangs it forever. Python's json accepts both as
+    extensions, so they reach the loader today."""
+    path = tmp_path / "rules.json"
+    path.write_text(raw, encoding="utf-8")
+    with pytest.raises(ValueError) as caught:
+        load_config(path)
+    assert str(caught.value).startswith("standalone_retention_rules_invalid:")
+
+
+def test_a_nan_grace_never_sweeps_the_fresh_orphan(tmp_path: Path) -> None:
+    """The AR-14 kill condition, stated for the fold: an uncomputable
+    grace proves nothing, so the sweep removes NOTHING (deletion needs
+    positive evidence — the evaluator's own keep-by-default rule). A NaN
+    cutoff currently reads every mtime as in-grace-eligible and sweeps
+    the fresh orphan immediately."""
+    root = _sweep_root(tmp_path)
+    assert sweep_plan(root, now=time.time(), grace_s=float("nan")) == []
+    assert (root / "orphan-fresh").is_dir()
+
+
+def test_the_scheduler_survives_a_non_finite_interval(tmp_path: Path) -> None:
+    """A NaN interval kills the schedule silently at its first sleep (the
+    ValueError escapes the tick's suppress because it fires in sleep) and
+    an infinite interval hangs it forever. A directly-constructed config
+    must not be able to kill or hang the loop: the first tick survives."""
+    import asyncio
+
+    from test_capture_lifecycle import _host
+
+    from benchweave_sdk_server.retention import RetentionConfig, load_config
+
+    _write_corpus(tmp_path / "captures")
+    config = load_config(_rules_file(tmp_path))
+    host = _host(
+        tmp_path,
+        mode="ok",
+        retention=RetentionConfig(
+            interval_s=float("nan"), rules=config.rules
+        ),
+    )
+
+    async def scenario() -> bool:
+        task = asyncio.create_task(host.retention_scheduler_loop())
+        await asyncio.sleep(0.2)  # past the loop's first sleep attempt
+        alive = not task.done()
+        task.cancel()
+        with _suppress_cancel():
+            await task
+        return alive
+
+    def _suppress_cancel():  # local helper, no import shadowing
+        import contextlib
+
+        return contextlib.suppress(asyncio.CancelledError)
+
+    assert asyncio.run(scenario())
+
+
+# --- fold wave (refute lane 1): a symlink must not dead the sweep -------------
+
+
+def _sweep_root_with_link(tmp_path: Path) -> tuple[Path, Path]:
+    """A sweep root with a real aged orphan AND a symlinked orphan (its
+    target outside the root, aged) — the F3 lane's shape."""
+    root = _sweep_root(tmp_path)
+    target = tmp_path / "outside-target"
+    target.mkdir()
+    stale = time.time() - 3600
+    import os
+
+    os.utime(target, (stale, stale))
+    link = root / "orphan-link"
+    link.symlink_to(target)
+    os.utime(link, (stale, stale))
+    return root, link
+
+
+def test_sweep_plan_skips_symlinked_entries(tmp_path: Path) -> None:
+    """F3: the sweep never names a symlink — rmtree through a link raises
+    OSError, and a raised sweep kills the whole run's report."""
+    root, link = _sweep_root_with_link(tmp_path)
+    assert sweep_plan(root, now=time.time(), grace_s=900.0) == ["orphan-old"]
+    assert link.is_symlink()
+
+
+def test_a_symlink_orphan_does_not_dead_the_sweep_run(tmp_path: Path) -> None:
+    """The F3 lane's run shape: with a symlinked orphan in the root, the
+    scheduled run COMPLETES — the real aged orphan goes with its log row,
+    the symlink is left alone (never rmtree'd through), and the
+    retention_pruned event fires. At 4d1afce the run raises OSError on
+    the link, the event never fires, and the scheduler's tick suppress
+    eats it forever — the crash-residue sweep silently dead."""
+
+    from test_capture_lifecycle import _host
+
+    root, link = _sweep_root_with_link(tmp_path)  # the corpus is already in
+    config = load_config(_rules_file(tmp_path))
+    host = _host(tmp_path, mode="ok", retention=config)
+
+    payload = host.run_retention_once(now=NOW, clock=time.time())
+    assert payload["count"] >= 1
+    assert (payload["by_rule"].get("orphan-sweep") or 0) == 1
+    assert not (root / "orphan-old").exists()
+    assert link.is_symlink()
+    assert link.exists()
+    pruned = [
+        event for event in host.events.after(0)
+        if event["kind"] == "retention_pruned"
+    ]
+    assert len(pruned) == 1
+
+
+def test_one_bad_sweep_entry_isolated_and_logged(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Per-entry isolation: one entry whose removal fails (a raced link,
+    a permission) cannot abort the run or the report — the entry is
+    logged by name and the remaining entries still go."""
+    import asyncio  # noqa: F401
+    import logging as _logging
+
+    from test_capture_lifecycle import _host
+
+    root, link = _sweep_root_with_link(tmp_path)  # the corpus is already in
+    config = load_config(_rules_file(tmp_path))
+    host = _host(tmp_path, mode="ok", retention=config)
+
+    import shutil as _shutil
+
+    real_rmtree = _shutil.rmtree
+
+    def failing_rmtree(path, *args, **kwargs):  # type: ignore[no-untyped-def]
+        if "orphan-old" in str(path):
+            raise OSError("injected: removal refused")
+        return real_rmtree(path, *args, **kwargs)
+
+    import benchweave_sdk_server.seam as seam_module
+
+    original = seam_module.shutil.rmtree
+    seam_module.shutil.rmtree = failing_rmtree  # type: ignore[assignment]
+    try:
+        with caplog.at_level(_logging.WARNING):
+            payload = host.run_retention_once(now=NOW, clock=time.time())
+    finally:
+        seam_module.shutil.rmtree = original  # type: ignore[assignment]
+    assert payload["count"] >= 1
+    assert any("orphan-old" in record.message for record in caplog.records)
+    pruned = [
+        event for event in host.events.after(0)
+        if event["kind"] == "retention_pruned"
+    ]
+    assert len(pruned) == 1
+
+
+# --- fold wave (refute lane 1): the log must survive a mid-run failure -------
+
+
+class _BudgetedSink:
+    """The probe's sink: a transactional writer whose calls must fit the
+    remaining row budget whole (a large batch the sink cannot complete is
+    refused with nothing landed — the disk-full model). Per-row appends
+    land until the budget runs out."""
+
+    def __init__(self, real: Any, budget: int) -> None:
+        self._real = real
+        self._budget = budget
+        self.calls = 0
+
+    def __call__(self, root: Path, removals: Any, *, trigger: str) -> None:
+        self.calls += 1
+        entries = list(removals)
+        if len(entries) > self._budget:
+            raise OSError("injected: the log write cannot complete this batch")
+        self._real(root, entries, trigger=trigger)
+        self._budget -= len(entries)
+        if self._budget <= 0:
+            raise OSError("injected: the log is full")
+
+
+def test_a_mid_run_log_failure_keeps_prior_rows(tmp_path: Path) -> None:
+    """F4 (row 4): the log is the artifact that survives index rebuilds,
+    so it cannot be written once after ALL removals — a crash or a
+    record failure in that window loses every row of the run
+    unrecoverably. Each removal records its own row (window = one
+    capture); a failure that lands mid-run keeps the prior removals'
+    rows. At 4d1afce the run writes its whole plan in one call and the
+    sink refuses it: zero rows for five deletions."""
+    from test_capture_lifecycle import _host
+
+    root = tmp_path / "captures"
+    _write_corpus(root)
+    config = load_config(_rules_file(tmp_path))
+    host = _host(tmp_path, mode="ok", retention=config)
+    sink = _BudgetedSink(record, budget=2)
+
+    import benchweave_sdk_server.seam as seam_module
+
+    original = seam_module.record
+    seam_module.record = sink  # type: ignore[assignment]
+    try:
+        with pytest.raises(OSError):
+            host.run_retention_once(now=NOW, clock=NOW.timestamp())
+    finally:
+        seam_module.record = original  # type: ignore[assignment]
+    log_rows = (
+        (root / "retention.log")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ) if (root / "retention.log").exists() else []
+    rows = [json.loads(line) for line in log_rows]
+    assert [row["capture_id"] for row in rows] == [
+        capture_id for capture_id, _rule, _n in GOLDEN[:2]
+    ]
+    assert all(row["trigger"] == "scheduled" for row in rows)
+
+
+def test_a_mid_run_log_failure_keeps_prior_rows_on_the_cli(
+    tmp_path: Path,
+) -> None:
+    """The same window on the CLI prune path (the other batch site)."""
+    root = tmp_path / "captures"
+    _write_corpus(root)
+    sink = _BudgetedSink(record, budget=2)
+
+    import benchweave_sdk_server.retention as retention_module
+
+    original = retention_module.record
+    retention_module.record = sink  # type: ignore[assignment]
+    try:
+        result = CliRunner().invoke(
+            server_cli,
+            [
+                "prune",
+                "--capture-root",
+                str(root),
+                "--retention-rules",
+                str(_rules_file(tmp_path)),
+            ],
+        )
+    finally:
+        retention_module.record = original  # type: ignore[assignment]
+    assert result.exit_code != 0  # the injected failure surfaces, not hides
+    log_rows = (
+        (root / "retention.log")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ) if (root / "retention.log").exists() else []
+    rows = [json.loads(line) for line in log_rows]
+    assert [row["capture_id"] for row in rows] == [
+        capture_id for capture_id, _rule, _n in GOLDEN[:2]
+    ]
+    assert all(row["trigger"] == "cli" for row in rows)

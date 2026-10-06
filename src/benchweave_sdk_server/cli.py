@@ -587,35 +587,39 @@ def prune(
         return
     if as_json:
         click.echo(json.dumps({"removals": removal_payload, "summary": summary}))
-    # The prune removes exactly the plan (directory + index row together),
-    # records every removal (trigger cli), and also runs the sweep.
+    # The prune removes exactly the plan (directory + index row together)
+    # and also runs the sweep. Each removal records ITS OWN log row
+    # immediately after the removal (window = one capture — the fold
+    # wave's row 4: the log is the artifact that survives index rebuilds,
+    # so a crash or a record failure mid-run must not lose every row).
     library = CaptureLibrary(root)
     try:
         for removal in removals:
             library.remove(removal.capture_id)
+            record(
+                root,
+                [
+                    {
+                        "capture_id": removal.capture_id,
+                        "sha256": by_id[removal.capture_id]["sha256"],
+                        "rule": removal.rule_id,
+                    }
+                ],
+                trigger="cli",
+            )
     finally:
         library.close()
-    record(
-        root,
-        [
-            {
-                "capture_id": m.capture_id,
-                "sha256": by_id[m.capture_id]["sha256"],
-                "rule": m.rule_id,
-            }
-            for m in removals
-        ],
-        trigger="cli",
-    )
     for name in swept:
-        shutil.rmtree(root / name)
-    if swept:
+        try:
+            shutil.rmtree(root / name)
+        except OSError as error:
+            # Per-entry isolation (the fold wave's row 3, second sweep
+            # site): one entry whose removal fails cannot abort the rest.
+            click.echo(f"orphan sweep could not remove {name}: {error}", err=True)
+            continue
         record(
             root,
-            [
-                {"capture_id": name, "sha256": None, "rule": "orphan-sweep"}
-                for name in swept
-            ],
+            [{"capture_id": name, "sha256": None, "rule": "orphan-sweep"}],
             trigger="sweep",
         )
     if not as_json:

@@ -29,6 +29,8 @@ import contextlib
 import getpass
 import hashlib
 import json
+import logging
+import math
 import shutil
 import struct
 import time
@@ -65,6 +67,8 @@ from .session import (
     load_plugin_project,
     project_py_digest,
 )
+
+_logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     # The presentation model and the observation ring import the
@@ -2360,8 +2364,16 @@ class StandaloneSeam:
         events — quota usage is measured over the rows that REMAIN after
         the removals (the number the next evaluation will act on).
 
+        Each removal records ITS OWN log row immediately after the removal
+        (window = one capture — the fold wave's row 4): the log is the
+        artifact that survives index rebuilds, so a crash or a record
+        failure mid-run must not lose every row of the run.
+
         Library mutation is synchronous sqlite with no await points, so a
-        scheduler tick cannot interleave a half-``remove``.
+        scheduler tick cannot interleave a half-``remove``. LATENT HAZARD
+        (N2): this method must STAY synchronous end to end — no await may
+        ever appear between the list/plan/remove/record/sweep/publish
+        steps, or a future async refactor re-opens the double-remove class.
         """
         if self._retention is None or not self._retention.rules:
             return {"count": 0, "bytes": 0, "by_rule": {}}
@@ -2376,10 +2388,9 @@ class StandaloneSeam:
             self._retention.rules, rows, now=moment, in_flight_ids=in_flight
         )
         by_id = {str(row["capture_id"]): row for row in rows}
+        root = library.root
         for removal in removals:
             library.remove(removal.capture_id)
-        root = library.root
-        if removals:
             record(
                 root,
                 [
@@ -2388,7 +2399,6 @@ class StandaloneSeam:
                         "sha256": by_id[removal.capture_id]["sha256"],
                         "rule": removal.rule_id,
                     }
-                    for removal in removals
                 ],
                 trigger="scheduled",
             )
@@ -2398,24 +2408,29 @@ class StandaloneSeam:
             grace_s=self._retention.orphan_grace_s,
             in_flight_ids=in_flight,
         )
+        # Per-entry isolation (the fold wave's row 3): one entry whose
+        # removal fails cannot abort the run or the report — it is logged
+        # by name and the remaining entries still go.
+        swept_ok: list[str] = []
         for name in swept:
-            shutil.rmtree(root / name)
-        if swept:
+            try:
+                shutil.rmtree(root / name)
+            except OSError as exc:
+                _logger.warning("orphan sweep could not remove %s: %s", name, exc)
+                continue
+            swept_ok.append(name)
             record(
                 root,
-                [
-                    {"capture_id": name, "sha256": None, "rule": "orphan-sweep"}
-                    for name in swept
-                ],
+                [{"capture_id": name, "sha256": None, "rule": "orphan-sweep"}],
                 trigger="sweep",
             )
         by_rule: dict[str, int] = {}
         for removal in removals:
             by_rule[removal.rule_id] = by_rule.get(removal.rule_id, 0) + 1
-        if swept:
-            by_rule["orphan-sweep"] = len(swept)
+        if swept_ok:
+            by_rule["orphan-sweep"] = len(swept_ok)
         payload = {
-            "count": len(removals) + len(swept),
+            "count": len(removals) + len(swept_ok),
             "bytes": sum(removal.bytes for removal in removals),
             "by_rule": by_rule,
         }
@@ -2453,11 +2468,15 @@ class StandaloneSeam:
         operational concern, not a protective envelope.
         """
         assert self._retention is not None and self._retention.rules
-        interval = (
-            self._retention.interval_s
-            if self._retention.interval_s is not None
-            else 86400.0
-        )
+        raw_interval = self._retention.interval_s
+        interval = raw_interval if raw_interval is not None else 86400.0
+        if not (math.isfinite(interval) and interval > 0):
+            # Defense-in-depth for a directly-constructed config (the
+            # loader refuses non-finite intervals at the document): a NaN
+            # delay kills this task silently at its first sleep and an
+            # infinite one hangs it forever — normalize to the documented
+            # default so the schedule survives its first tick.
+            interval = 86400.0
         while True:
             await asyncio.sleep(interval)
             with contextlib.suppress(Exception):
