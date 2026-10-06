@@ -20,6 +20,25 @@
 | 8 | Gateway `uv.lock` SDK pin (cross-repo) | the released SDK version | pin behind the release; moves on the gateway's next gateway-side lock run — a note, not a blocker |
 | 9 | Served-set bump class (issue #203 slice 1, owner Q8) | `standards-lock.json` rows + `dependency_policy` mirror vs the PREVIOUS lock | one SDK version covering two served sets: a carried-set change on an unchanged range that is not a PATCH-class bump, or a declared-range change that is not MINOR at least — the sync itself refuses `sdk_bump_class_invalid:`, and the gateway's `benchweave.standards check` refuses the lock↔manifest disagreement (`served_set_drift:` / `policy_mirror_drift:`) |
 
+## Test surfaces (issue #408 S4)
+
+Version-bearing TEST surfaces — the same walk, the same file (a sibling
+census file would be a second instrument to forget):
+
+| # | Surface | Machine truth | Motion / classification |
+|---|---------|---------------|------------------------|
+| T1 | `tests/fixtures/scaffold_expected/base/**` | the `create_project` render at the pinned version | release-cut regen step (R-2); tripwire = the byte-parity suite |
+| T2 | `tests/fixtures/scaffold_expected/ui/**` | the `create_project(with_ui=True)` + `create_ui_resources` render | same |
+| T3 | `tests/test_scaffold_copier.py` | consumes T1/T2; its docstring carries the regen procedure | the docstring moves only when the procedure changes — it now points at `make release-cut` as the procedure |
+| T4 | `tests/test_scaffold_update.py` synthetic `v0.8.0` tags | scratch-repo fixtures fabricating "some released tag" | **inert by design** — no bump motion; the row exists so the walk never wonders (the honest-negative row) |
+
+Closing clause (mirrors the gateway's obligation 18): a new bump-sensitive
+TEST surface is a defect — register it here AND in `DECLARED_SURFACES`
+(`scripts/release_cut.py`), or make it derived. The registry is the
+enforcement: an unregistered bump-sensitive surface is by construction one
+release-cut does not sweep (the mutation arms in the design record's §9
+prove the tripwire catches exactly that).
+
 ## The ordering constraint (row 6 is a pre-tag step)
 
 The registration of the new version in `great-docs.yml` must land **before

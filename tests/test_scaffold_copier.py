@@ -10,7 +10,9 @@ addition over the pre-copier tree is ``.copier-answers.yml``.
 
 Regenerating the fixture (after a deliberate template change, an SDK version
 bump, or a vendored OTDP version move — the answers/descriptor/pyproject pins
-carry those versions by design):
+carry those versions by design) is what `make release-cut VERSION=x.y.z`
+performs mechanically (occurrence-validated; issue #408). The manual
+procedure, for out-of-band repairs only:
 
     tmp=$(mktemp -d)
     uv run python -c "from pathlib import Path; \
