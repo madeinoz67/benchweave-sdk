@@ -154,8 +154,9 @@ class TestTwinCounter:
         pinned (36 at main after the #347 WS2/WS3 scaffold merges; I2c adds
         events.py and jsonpatch.py, the 37th and 38th files; I3a adds
         serial.py, the 39th; #308 deletes preview_server.py and
-        preview_tui.py back to 37; I3b adds library.py, the 38th) — a
-        scope change is a visible diff, never a silent denominator move.
+        preview_tui.py back to 37; I3b adds library.py, the 38th; #385
+        adds binding.py, the 39th) — a scope change is a visible diff,
+        never a silent denominator move.
         The server half is issue #309 slice A's scope extension: deleting
         the tree or narrowing the roots reds here."""
         result = subprocess.run(
@@ -165,7 +166,7 @@ class TestTwinCounter:
             check=False,
         )
         assert result.returncode == 0, result.stdout + result.stderr
-        assert json.loads(result.stdout)["scanned"] == 38, (
+        assert json.loads(result.stdout)["scanned"] == 39, (
             "the scanned-file census moved — update this pin in the "
             "same commit as the tree change (the ratchet discipline)"
         )

@@ -121,34 +121,44 @@ def test_connect_establishes_identity_over_the_loopback(starter_project) -> None
     assert ports["/dev/fake0"].closes == 1
 
 
-def test_cli_transport_serial_requires_device(starter_project: Path) -> None:
-    runner = CliRunner()
-    result = runner.invoke(
-        cli, ["serve", str(starter_project), "--transport", "serial", "--no-open"]
-    )
-    assert result.exit_code == 2
-    assert "--device" in result.output
-
-
-def test_cli_transport_serial_refuses_an_empty_device(
-    starter_project: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    "device_args",
+    [[], ["--device", ""]],
+    ids=["absent", "explicitly-empty"],
+)
+def test_cli_transport_serial_serves_binding_pending(
+    starter_project: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    device_args: list[str],
 ) -> None:
-    """Fold-refute 2: ``--device ""`` is a missing device, not a path —
-    the guard must refuse it at boot, not pass it to pyserial at
-    connect (the ``is None`` check let the empty string through)."""
-    import benchweave_sdk_server.serial as serial_module
+    """F-385-2's CLI-level pin (issue #385; replaces BOTH retired
+    requires-device refusal pins that lived here — the absent-device one
+    and fold-refute 2's explicitly-empty one): ``serve --transport
+    serial`` with no usable ``--device`` proceeds all the way to the
+    serving stage — pinned by a sentinel in ``uvicorn.run`` so the test
+    never binds a port. An empty string is a missing device, not a path;
+    it takes the binding-pending road and never reaches an opener (the
+    original fold-refute-2 hazard — an empty path handed to pyserial — is
+    structurally gone: the resolver is binding-backed, never a constant
+    empty path). The connect-time ``binding_absent`` refusal is pinned in
+    the wiring lane."""
+    import uvicorn
 
-    def _no_session(*args: object, **kwargs: object) -> None:
-        raise AssertionError("the guard must fire before the session builds")
+    class _ServingStage(Exception):
+        pass
 
-    monkeypatch.setattr(serial_module, "serial_plugin_session", _no_session)
+    def _sentinel(*args: object, **kwargs: object) -> None:
+        raise _ServingStage
+
+    monkeypatch.setattr(uvicorn, "run", _sentinel)
     runner = CliRunner()
     result = runner.invoke(
         cli,
-        ["serve", str(starter_project), "--transport", "serial", "--device", "", "--no-open"],
+        ["serve", str(starter_project), "--transport", "serial", *device_args, "--no-open"],
     )
-    assert result.exit_code == 2
-    assert "--device" in result.output
+    assert isinstance(result.exception, _ServingStage), (
+        "serve reached the serving stage — no device refusal fires"
+    )
 
 
 def test_cli_device_with_mock_is_refused(starter_project: Path) -> None:

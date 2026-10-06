@@ -72,11 +72,12 @@ _PATH_PATTERN = r"^[^\x00\n\r]{1,1024}$"
 #: explicit offset) — same shape as the capture sidecar's ``at``.
 _STAMP_PATTERN = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$"
 
-#: The identify answer the scan confirmed (§1.1): manufacturer and model are
-#: the confirm-by-identify conjuncts and always present; firmware is null
-#: until a connected session establishes it (bind refuses while connected,
-#: so no session identity exists at bind time — an honest null, never a
-#: fabricated one).
+#: The confirmed pick's evidence. manufacturer and model are the
+#: confirm-by-identify conjuncts and ride on the discovery row the pick is
+#: cross-checked against. firmware is null because the row IS the wire
+#: shape (issue #385 §1.2 widened it with port_path/usb_serial only): the
+#: scan's identify answer carried firmware, but the host retains the ROW,
+#: not the answer — an honest null, never a fabricated one.
 _IDENTITY_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {

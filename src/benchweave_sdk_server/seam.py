@@ -671,19 +671,30 @@ class StandaloneSeam:
                 "of the listed ports",
                 correlation,
             )
-        # The discriminator (§1.3): usb_serial keying only when the picked
-        # candidate carries a serial NO OTHER confirmed candidate shares —
-        # instance-stable across re-enumeration exactly when this bench's
-        # evidence says so. Duplicate or absent serials key on the path.
+        # The discriminator (§1.3, fold wave 1 M1): usb_serial keying only
+        # when the LIVE enumeration carries the picked serial exactly once
+        # — the same population resolve matches over, so a twin that
+        # appeared after the scan (or was scan-invisible while busy) cannot
+        # arm serial keying that resolve would immediately refuse as
+        # ambiguous (the busy-twin dead-end), and a scan-time duplicate
+        # whose port has since vanished no longer forces path keying. The
+        # confirmed cache still governs the PICK itself (the
+        # pick-unconfirmed check above); absent or live-duplicated serials
+        # key on the path.
         serial = picked.get("usb_serial")
-        serials = [row.get("usb_serial") for row in cache]
-        usb_keyed = serial is not None and serials.count(serial) == 1
+        live_candidates = self._enumerate_ports() if serial is not None else []
+        live_with_serial = [
+            candidate
+            for candidate in live_candidates
+            if str(getattr(candidate, "serial_number", None) or "") == serial
+        ]
+        usb_keyed = serial is not None and len(live_with_serial) == 1
         vid = pid = None
         if usb_keyed:
             port = next(
                 (
                     candidate
-                    for candidate in self._enumerate_ports()
+                    for candidate in live_with_serial
                     if _port_name(candidate) == port_path
                 ),
                 None,
@@ -703,8 +714,10 @@ class StandaloneSeam:
             "identity": {
                 "manufacturer": str(picked.get("manufacturer") or ""),
                 "model": str(picked.get("model") or ""),
-                # Bind runs while DISCONNECTED, so no session identity
-                # exists — an honest null until a connection establishes it.
+                # The discovery row is the wire shape (§1.2: port_path
+                # and usb_serial only) — the identify answer carried
+                # firmware, but the host retains the row, not the answer.
+                # An honest null, never a fabricated one.
                 "firmware": None,
             },
             "bound_at": binding_stamp(),
