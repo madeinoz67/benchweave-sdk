@@ -313,3 +313,40 @@ def test_low4_a_bool_boot_baud_refuses_typed() -> None:
     with pytest.raises(ValueError, match="standalone_serial_boot_baud"):
         negotiable_bauds({"baud": -1})
     assert negotiable_bauds({}) == frozenset({115200})
+
+
+class _SlowClosePort(_SwitchPort):
+    """A port whose close takes a planted 0.3 s (the host sits inside
+    ``old.close()`` while its deadline expires)."""
+
+    def close(self) -> None:
+        time.sleep(0.3)
+        super().close()
+
+
+def test_w2_the_post_close_recheck_refuses_before_any_io() -> None:
+    """Wave-2 F2 (arm 2): the deadline is re-checked AFTER the close —
+    a context that expires while the host sits inside a planted-slow
+    ``old.close()`` answers TimeoutError with the failed row, and the
+    opener NEVER runs (the refusal precedes any I/O). This is the only
+    pin on the post-close recheck: wave-2's probe showed a mutant
+    removing it passed the whole R-suite and N-suite green."""
+    opens: list[int] = []
+
+    def opener(device: str, settings: dict[str, Any]) -> _SlowClosePort:
+        opens.append(1)
+        return _SlowClosePort(settings)
+
+    events: list[dict[str, Any]] = []
+    services = _services_from_opener(opener, events=events)
+    context = HostOperationContext("cell-w2-postclose", timeout_ms=150)
+    with pytest.raises(TimeoutError):
+        asyncio.run(services.reconfigure_link({"baud": _TARGET}, context))
+    assert [row["event"] for row in events] == ["reconfigure_failed"], (
+        "the expiry during the close is a failed row, never a success row"
+    )
+    assert "close" in events[0]["reason"]
+    assert len(opens) == 1, (
+        "the post-close recheck refuses BEFORE the reopen — no opener call"
+    )
+    assert services.link_state() is None, "no serving link (LOW1's law)"
