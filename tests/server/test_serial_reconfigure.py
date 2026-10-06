@@ -62,6 +62,7 @@ class _SwitchPort:
         self.settings = dict(settings)
         self.inbound = bytearray()
         self.written: list[bytes] = []
+        self.closes = 0
         self._lock = threading.Lock()
         self._data = threading.Event()
         self._open = True
@@ -99,6 +100,7 @@ class _SwitchPort:
         with self._link_lock():
             _ = self._open
             self._open = False
+        self.closes += 1
         self._data.set()
 
     def _link_lock(self) -> threading.Lock:
