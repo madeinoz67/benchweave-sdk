@@ -10,7 +10,9 @@ addition over the pre-copier tree is ``.copier-answers.yml``.
 
 Regenerating the fixture (after a deliberate template change, an SDK version
 bump, or a vendored OTDP version move — the answers/descriptor/pyproject pins
-carry those versions by design):
+carry those versions by design) is what `make release-cut VERSION=x.y.z`
+performs mechanically (occurrence-validated; issue #408). The manual
+procedure, for out-of-band repairs only:
 
     tmp=$(mktemp -d)
     uv run python -c "from pathlib import Path; \
@@ -54,6 +56,28 @@ def test_line_endings_are_pinned_lf_for_the_scaffold_surfaces() -> None:
         if line and not line.startswith("#") and line.split()
     }
     for pinned in ("template/**", "tests/fixtures/scaffold_expected/**"):
+        assert pinned in rows, f"{pinned} must carry its own .gitattributes row"
+        assert "eol=lf" in rows[pinned], f"{pinned} must pin eol=lf"
+
+
+def test_line_endings_are_pinned_lf_for_the_phase2_patched_surfaces() -> None:
+    """Wave 4: the phase-2 patch's two surfaces must check out LF on every
+    OS. The phase-2 patch is generated from the CHECKED-OUT bytes and must
+    apply to the checked-out bytes; a CRLF checkout (the Windows runner's
+    global autocrlf) makes the context mismatch and git apply --check dies
+    ('patch does not apply', the sdk(windows-latest) lane's RED). Same
+    doctrine as the scaffold rows above (PR #93): the explicit rows pin
+    the surfaces so a future relaxation of the global line reddens HERE.
+    website/ is pinned as a whole directory, not just index.html: the dir
+    ships to the public site verbatim, so byte-consistency is the posture
+    for all of it."""
+    attributes = (REPO_ROOT / ".gitattributes").read_text(encoding="utf-8")
+    rows = {
+        line.split()[0]: line
+        for line in attributes.splitlines()
+        if line and not line.startswith("#") and line.split()
+    }
+    for pinned in ("great-docs.yml", "website/**"):
         assert pinned in rows, f"{pinned} must carry its own .gitattributes row"
         assert "eol=lf" in rows[pinned], f"{pinned} must pin eol=lf"
 
