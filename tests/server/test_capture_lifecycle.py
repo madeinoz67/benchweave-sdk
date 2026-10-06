@@ -74,7 +74,7 @@ def _patch_descriptor(
     verbs: tuple[str, ...],
     *,
     max_samples: int = 100_000,
-    max_bytes: int = 16 * 1024 * 1024,
+    max_bytes: int | None = 16 * 1024 * 1024,
     verb_timeout_ms: int = 5000,
 ) -> None:
     """Declare the capture verbs the test wants in the scaffold's descriptor.
@@ -117,6 +117,7 @@ def _host(
     max_bytes: int = 16 * 1024 * 1024,
     verb_timeout_ms: int = 5000,
     stubborn_s: float | None = None,
+    retention: Any | None = None,
 ) -> StandaloneSeam:
     """A serial-transport seam over the fixture plugin, not yet connected."""
     root = tmp_path / "proj"
@@ -141,7 +142,9 @@ def _host(
         open_port=lambda device, settings: port,
         capture_root=captures,
     )
-    return StandaloneSeam(session, transport_kind="serial", capture_root=captures)
+    return StandaloneSeam(
+        session, transport_kind="serial", capture_root=captures, retention=retention
+    )
 
 
 async def _connected(host: StandaloneSeam) -> None:
@@ -968,3 +971,138 @@ def test_reload_refuses_while_a_capture_is_in_flight(tmp_path: Path) -> None:
         assert reloaded["status"] == "reloaded"
 
     asyncio.run(scenario())
+
+
+# --- the storage reserve guard (SW-58, AR-10) ---------------------------------
+
+
+def _reserve(**overrides: Any) -> Any:
+    """A retention config whose reserve arms the guard (rules empty — the
+    reserve is independent of the rules, the A02 posture)."""
+    from benchweave_sdk_server.retention import RetentionConfig
+
+    fields: dict[str, Any] = {"reserve_bytes": 100_000}
+    fields.update(overrides)
+    return RetentionConfig(**fields)
+
+
+def test_storage_reserve_refuses_a_count_bound_start_that_would_breach(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AR-10(i): a start whose worst case cannot be cleared against the
+    configured reserve refuses unavailable before any dispatch, message
+    prefixed standalone_storage_reserve:."""
+    from benchweave_sdk_server import seam as seam_module
+
+    monkeypatch.setattr(seam_module, "_disk_free_bytes", lambda root: 50_000)
+    host = _host(tmp_path, mode="ok", retention=_reserve())
+
+    async def scenario() -> None:
+        await _connected(host)
+        with pytest.raises(SeamError) as caught:
+            await host.call("capture_start", _start(count=400))
+        assert "unavailable" in str(caught.value.code)
+        assert str(caught.value.message).startswith("standalone_storage_reserve:")
+        # The refusal names its numbers (claim discipline).
+        assert "50000" in str(caught.value.message)
+        assert "100000" in str(caught.value.message)
+
+    asyncio.run(scenario())
+
+
+def test_storage_reserve_refuses_an_unbounded_duration_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AR-10(ii): a duration bound with no reservation has an unbounded
+    worst case — the guard cannot clear it and refuses with the reason,
+    naming the declaration that would fix it (missing information blocks
+    control, A02).
+
+    Disclosed drift: the vendored schema's conditionals mandate
+    capture_limits.max_bytes for BOTH capture verbs (the capability
+    conditional and the operations-side not-required-invoke/capture
+    conditionals close every load-valid shape without a ceiling), and the
+    landed start logic adopts that ceiling as the effective reservation —
+    so this input is unreachable through a schema-valid load and the guard
+    branch is defense-in-depth. The arm presents the shape the branch
+    exists for by clearing the loaded plugin's in-memory limits (the seam
+    re-reads the descriptor per start, its own defensive posture)."""
+    from benchweave_sdk_server import seam as seam_module
+
+    monkeypatch.setattr(seam_module, "_disk_free_bytes", lambda root: 10**12)
+    host = _host(tmp_path, mode="ok", retention=_reserve())
+    host.session.plugin.descriptor.pop("capture_limits", None)
+
+    async def scenario() -> None:
+        await _connected(host)
+        with pytest.raises(SeamError) as caught:
+            await host.call("capture_start", _start(duration_s=5))
+        assert "unavailable" in str(caught.value.code)
+        message = str(caught.value.message)
+        assert message.startswith("standalone_storage_reserve:")
+        assert "unbounded" in message
+        assert "max_bytes" in message
+
+    asyncio.run(scenario())
+
+
+def test_midrun_reserve_breach_publishes_under_reserve(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AR-10(iii): a running capture that reaches the reserve stops and
+    FINALISES — state published, stop_reason reserve, byte_length the real
+    staged bytes at the stop, never relabelled completed (the B-F2 rule
+    extended by membership). The sampler is fixture-scripted: the start
+    guard and the first watcher sample clear, the second breaches."""
+    from benchweave_sdk_server import seam as seam_module
+
+    calls = {"n": 0}
+
+    def scripted_free(root: Any) -> int:
+        calls["n"] += 1
+        return 10**12 if calls["n"] <= 2 else 0
+
+    monkeypatch.setattr(seam_module, "_disk_free_bytes", scripted_free)
+    host = _host(tmp_path, mode="slow", retention=_reserve())
+
+    async def scenario() -> dict[str, Any]:
+        await _connected(host)
+        started = await host.call("capture_start", _start(count=120))
+        assert started["state"] == "capturing"
+        return await host.await_capture()
+
+    outcome = asyncio.run(scenario())
+    assert outcome["state"] == "published"
+    assert outcome["stop_reason"] == "reserve"
+    assert outcome["byte_length"] is not None
+    assert 0 < int(outcome["byte_length"]) < 120 * 8
+    assert int(outcome["byte_length"]) % 8 == 0
+
+
+def test_the_storage_guard_is_inert_without_a_configured_reserve(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AR-10(iv), the RED control: with the configuration absent the same
+    starts proceed — inert-by-default is the parameterised posture (A02:
+    no hardcoded reserve ships)."""
+    from benchweave_sdk_server import seam as seam_module
+
+    monkeypatch.setattr(seam_module, "_disk_free_bytes", lambda root: 0)
+    host = _host(tmp_path, mode="ok")
+
+    async def scenario() -> list[str]:
+        await _connected(host)
+        reasons: list[str] = []
+        for arguments in (_start(count=8), _start(duration_s=0.3)):
+            started = await host.call("capture_start", arguments)
+            outcome = await host.await_capture()
+            assert started["state"] == "capturing"
+            assert outcome["state"] == "published"
+            reasons.append(str(outcome["stop_reason"]))
+        return reasons
+
+    # The duration start finishes its eight appends inside its 0.3 s bound,
+    # so both publish completed — the arm's substance is that NEITHER start
+    # was refused (the sampler read 0 free the whole time).
+    reasons = asyncio.run(scenario())
+    assert reasons == ["completed", "completed"]

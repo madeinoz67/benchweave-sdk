@@ -118,6 +118,7 @@ def _build_seam(
     capture_root: Any = None,
     bindings: Path | None = None,
     serial_hooks: Any = None,
+    retention: Any | None = None,
 ) -> tuple[StandaloneSeam, ScenarioSelection | None]:
     """Compose the seam over one transport (§4.1's composition step).
 
@@ -167,6 +168,7 @@ def _build_seam(
                 unattended=unattended,
                 reload_wrapper=wrap_scenario_plugin,
                 capture_root=capture_root,
+                retention=retention,
             ),
             selection,
         )
@@ -225,6 +227,7 @@ def _build_seam(
                 serial_endpoint=endpoint,
                 bindings=store,
                 capture_root=capture_root,
+                retention=retention,
             ),
             None,
         )
@@ -251,6 +254,7 @@ def _build_seam(
             transport_kind=transport,
             unattended=unattended,
             capture_root=capture_root,
+            retention=retention,
         ),
         None,
     )
@@ -322,6 +326,14 @@ def cli() -> None:
     help="Waive the reload confirmation for adapter-code changes while a "
     "device is connected (valid only with --authoring; Q11 option 2).",
 )
+@click.option(
+    "--retention-rules",
+    type=click.Path(path_type=Path, exists=True),
+    default=None,
+    help="The retention rules document (JSON): prune rules, the sweep's "
+    "orphan grace, the in-host schedule interval and the storage reserve. "
+    "Without it the host keeps everything and the storage guard is inert.",
+)
 def serve(
     project: Path,
     host: str,
@@ -335,12 +347,24 @@ def serve(
     scenario: str | None,
     authoring: bool,
     unattended: bool,
+    retention_rules: Path | None,
 ) -> None:
     """Serve UI, REST and MCP over one plugin project."""
     if unattended and not authoring:
         raise click.UsageError(
             "--unattended requires --authoring (Q11: it waives an operator gate)"
         )
+    retention: Any | None = None
+    if retention_rules is not None:
+        from .retention import load_config
+
+        try:
+            retention = load_config(retention_rules)
+        except ValueError as exc:
+            # Refuse before any work: a malformed rules document must not
+            # reach a half-armed host (STD-4's prefix carries the reason).
+            click.echo(str(exc), err=True)
+            raise SystemExit(2) from exc
     try:
         # All three ride the [server] extra: web and uvicorn directly, and
         # security through starlette's middleware base -- the module-level
@@ -373,6 +397,7 @@ def serve(
         device=device,
         bindings=bindings,
         capture_root=capture_root,
+        retention=retention,
     )
     if seam.session.plugin.load_diagnostic is not None:
         # §4.5: the degraded load BINDS (exit 0) with its diagnostic on

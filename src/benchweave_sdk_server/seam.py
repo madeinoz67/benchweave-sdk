@@ -29,6 +29,7 @@ import contextlib
 import getpass
 import hashlib
 import json
+import shutil
 import struct
 import time
 import uuid
@@ -48,7 +49,7 @@ from .binding import BindingAbsent, BindingStale
 from .errors import SeamError
 from .events import EventBus
 from .library import CaptureLibrary
-from .retention import record
+from .retention import RetentionConfig, record
 from .session import (
     HostOperationContext,
     PluginLoadError,
@@ -147,6 +148,25 @@ _BOUND_GRACE_S = 0.30
 #: cannot hold the stop call forever.
 _STOP_SETTLE_MARGIN_S = 5.0
 
+#: The storage-guard's mid-run sample cadence (s) — a HOST SCHEDULING
+#: constant, not a protective envelope (20 Hz statvfs would be waste; a
+#: breach is caught within poll + this window). Disclosed: a sample whose
+#: stat fails (transient OSError) skips its window and retries the next.
+_RESERVE_CHECK_S = 1.0
+
+#: The host-initiated stop reasons — the watcher's terminal mapping
+#: publishes under these when the host is the one that pulled the trigger
+#: (B-F2's ok-after-forced rule): the operator's stop, the reached bound,
+#: and the storage reserve (SW-58). Membership extends the family; the
+#: mapping itself is the locked ruling.
+_HOST_STOP_REASONS: tuple[str, ...] = ("stopped", "bound", "reserve")
+
+
+def _disk_free_bytes(root: Path) -> int:
+    """Free bytes under the capture root — one seam-level sampler so the
+    storage guard's tests (and any future surface) read the same number."""
+    return shutil.disk_usage(root).free
+
 #: Raw (``max_points: 0``) series serving is refused above this sample
 #: count — the catalogue's own authored maximum (10M), not a second number.
 _RAW_SAMPLE_CEILING = 10_000_000
@@ -178,6 +198,7 @@ class StandaloneSeam:
         serial_endpoint: SerialEndpoint | None = None,
         bindings: BindingStore | None = None,
         capture_root: Any | None = None,
+        retention: RetentionConfig | None = None,
     ) -> None:
         self._session = session
         self._transport_kind = transport_kind
@@ -199,6 +220,12 @@ class StandaloneSeam:
         # construction, never a mid-request traceback.
         self._bindings = bindings
         self._capture_root = capture_root
+        # The retention configuration (I3c): rules, sweep grace, scheduler
+        # interval and the storage reserve. None (or no reserve_bytes) is
+        # the keep-everything posture — the guard is inert by default (A02:
+        # a hardcoded reserve would impose one bench's storage policy on
+        # every bench; the reserve is commissioned configuration).
+        self._retention = retention
         self._capture: Any | None = None
         self._capture_outcomes: dict[str, dict[str, Any]] = {}
         # The capture library (I3b slice 2) is LAZY: constructed on the
@@ -1543,6 +1570,58 @@ class StandaloneSeam:
         limits = self._session.plugin.descriptor.get("capture_limits", {})
         return limits if isinstance(limits, dict) else {}
 
+    def _storage_reserve_guard(
+        self, worst_case: int | None, correlation: str
+    ) -> Path | None:
+        """SW-58's start guard: refuse ``unavailable`` (prefix
+        ``standalone_storage_reserve:``) when the capture's worst case
+        cannot be cleared against the configured reserve — BEFORE any
+        dispatch. A duration bound with no reservation has an unbounded
+        worst case the guard cannot clear, so it refuses with the reason
+        naming the declaration that would fix it (missing information
+        blocks control, A02). Inert unless a reserve is configured.
+
+        Returns the resolved root the watcher's mid-run sampler reads (None
+        when the guard is not armed).
+        """
+        if self._retention is None or self._retention.reserve_bytes is None:
+            return None
+        reserve = int(self._retention.reserve_bytes)
+        if worst_case is None:
+            raise self._fail(
+                "unavailable",
+                "standalone_storage_reserve: an unbounded capture cannot be "
+                "cleared against a configured reserve; declare max_bytes",
+                correlation,
+            )
+        try:
+            root = resolve_capture_root(self._capture_root)
+            free = _disk_free_bytes(root)
+        except ValueError as exc:
+            raise SeamError(
+                "not_ready", f"capture root refused: {exc}", correlation_id=correlation
+            ) from exc
+        except OSError as exc:
+            # Free space that cannot be sampled cannot be cleared against —
+            # the reserve is unverifiable, and missing information blocks
+            # control rather than defaulting (A02).
+            raise self._fail(
+                "unavailable",
+                "standalone_storage_reserve: free space could not be sampled "
+                f"({exc}); the reserve cannot be verified",
+                correlation,
+            ) from exc
+        if free - worst_case < reserve:
+            raise self._fail(
+                "unavailable",
+                "standalone_storage_reserve: "
+                f"{free} bytes free cannot clear a worst case of "
+                f"{worst_case} bytes against the configured reserve of "
+                f"{reserve} bytes",
+                correlation,
+            )
+        return root
+
     def _resolve_capture_verb(self, correlation: str) -> str:
         """Ruling 6: the capture verb is descriptor-declared — ``capture``
         first, the declared ``invoke`` second, and no declaration at all is
@@ -1674,6 +1753,14 @@ class StandaloneSeam:
                 f"({bound_bytes} bytes); raise max_bytes or lower the count",
                 correlation,
             )
+        # SW-58's start guard, after the bound/reservation computation: the
+        # worst case is the effective reservation when one exists, else the
+        # count bound's bytes (None on an unreserved duration bound — the
+        # guard refuses that shape outright under a configured reserve).
+        reserve_root = self._storage_reserve_guard(
+            int(reservation) if reservation is not None else bound_bytes,
+            correlation,
+        )
         capture_id = f"cap-{uuid.uuid4().hex[:12]}"
         metadata = self._capture_metadata(arguments, capture_id, bound, fmt)
         capture_services.configure_capture(
@@ -1707,6 +1794,15 @@ class StandaloneSeam:
             "metadata": metadata,
             "device_id": arguments["device_id"],
             "progress": 0,
+            # SW-58's mid-run sampler (None when the guard is not armed):
+            # the reserve and the root the watcher samples at most every
+            # _RESERVE_CHECK_S.
+            "reserve_bytes": (
+                int(self._retention.reserve_bytes)
+                if self._retention is not None and self._retention.reserve_bytes is not None
+                else None
+            ),
+            "reserve_root": reserve_root,
         }
         self._capture = state
         state["watcher"] = asyncio.create_task(self._watch_capture(state))
@@ -2167,9 +2263,11 @@ class StandaloneSeam:
         A06); an error envelope → finalise the real bytes
         ``adapter_error``; an uncaught exception → abort
         ``adapter_exception`` — with the host's own cancel reason
-        (``stopped``/``bound``) winning over the envelope's class when the
-        host is the one that cancelled. A writer refusal at finalise aborts
-        ``finalise_refused``.
+        (``stopped``/``bound``/``reserve``) winning over the envelope's
+        class when the host is the one that cancelled (a reserve breach is
+        SW-58's mid-run stop: nothing discarded silently — the manifest's
+        byte_length is the real staged bytes). A writer refusal at
+        finalise aborts ``finalise_refused``.
         """
         task: asyncio.Task[dict[str, Any]] = state["task"]
         reason_pending: str | None = None
@@ -2180,6 +2278,10 @@ class StandaloneSeam:
         # actually moved.
         last_event_at = time.monotonic()
         last_event_bytes = 0
+        # SW-58's mid-run sampler: -inf arms the first sample at the first
+        # poll; a sample whose stat fails skips its window (disclosed at
+        # _RESERVE_CHECK_S).
+        last_reserve_check = float("-inf")
         while not task.done():
             await asyncio.wait({task}, timeout=_CAPTURE_POLL_S)
             if task.done():
@@ -2209,6 +2311,27 @@ class StandaloneSeam:
                 state["context"].cancel()
                 forced_at = now
                 continue
+            reserve = state.get("reserve_bytes")
+            if (
+                reserve is not None
+                and reason_pending is None
+                and now - last_reserve_check >= _RESERVE_CHECK_S
+            ):
+                last_reserve_check = now
+                reserve_root = state.get("reserve_root")
+                breached = False
+                if reserve_root is not None:
+                    with contextlib.suppress(OSError):
+                        breached = _disk_free_bytes(reserve_root) < int(reserve)
+                if breached:
+                    # The capture reaches the configured reserve: the host
+                    # initiates the stop and the capture FINALISES under
+                    # "reserve" with the real staged bytes (the family's
+                    # honest-stop shape — never a silent discard).
+                    reason_pending = "reserve"
+                    state["context"].cancel()
+                    forced_at = now
+                    continue
             at_bound = (
                 state["bound_bytes"] is not None
                 and state["progress"] >= int(state["bound_bytes"])
@@ -2241,7 +2364,7 @@ class StandaloneSeam:
                 detail=state["stop_details"]["message"],
             )
         except Exception as exc:  # noqa: BLE001 - the uncaught bucket
-            if reason_pending in ("stopped", "bound"):
+            if reason_pending in _HOST_STOP_REASONS:
                 return await self._finalise_capture(state, reason_pending)
             return await self._abort_capture(
                 state,
@@ -2251,7 +2374,7 @@ class StandaloneSeam:
         status = str(envelope.get("status", ""))
         dispatch_state = str((envelope.get("error") or {}).get("dispatch_state", ""))
         if status == "ok":
-            if reason_pending in ("stopped", "bound") and forced_at is not None:
+            if reason_pending in _HOST_STOP_REASONS and forced_at is not None:
                 # The envelope says ok, but the HOST is the one that pulled
                 # the trigger (B-F2): an adapter that ignored the stop or
                 # blew past its bound and answered ok afterwards publishes
@@ -2273,7 +2396,7 @@ class StandaloneSeam:
                 "stop_unknown",
                 detail=state["stop_details"]["message"],
             )
-        if reason_pending in ("stopped", "bound"):
+        if reason_pending in _HOST_STOP_REASONS:
             return await self._finalise_capture(state, reason_pending)
         return await self._finalise_capture(state, "adapter_error")
 
