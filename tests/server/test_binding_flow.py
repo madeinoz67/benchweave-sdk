@@ -334,6 +334,60 @@ def test_a_vanished_pick_with_a_serial_claiming_twin_opens_nothing(
     assert twin_port.written == [], "the never-confirmed twin receives zero frames"
 
 
+def test_a_reoccupied_path_with_a_different_serial_refuses_variant_a(
+    tmp_path: Path,
+) -> None:
+    """Fold wave 3, delta F1 variant A: the scan confirmed SER-B at the
+    picked path; B unplugged and a SER-X unit took the SAME path, with
+    SER-B gone from the bus entirely. The path is live, so the
+    vanished-pick check passes — the pick's SERIAL evidence must hold live
+    too: the bind must refuse naming both serials, never write a
+    path-keyed row on the old scan's identity and connect onto the SER-X
+    unit."""
+    fx = _binding_app(tmp_path)
+    asyncio.run(fx["seam"].call("device_discover"))
+    fx["candidates"][1] = UsbCandidate(_B, serial_number="SER-X")
+    with pytest.raises(SeamError) as raised:
+        asyncio.run(fx["seam"].bind_device(_B))
+    assert raised.value.code == "invalid_request"
+    assert "standalone_binding_pick_changed:" in raised.value.message
+    assert "SER-B" in raised.value.message and "SER-X" in raised.value.message
+    assert fx["store"].get(fx["plugin"].package, fx["plugin"].device_id) is None
+    assert not (fx["tmp_path"] / "device-bindings.json").exists(), (
+        "a refused bind writes no document"
+    )
+    with pytest.raises(SeamError) as connect_refusal:
+        asyncio.run(fx["seam"].call("device_connect", {"device_id": "example_device"}))
+    assert connect_refusal.value.details["reason"] == "binding_absent"
+    assert fx["opened"] == [_A, _B], "only the seeding scan's probes ever opened a port"
+
+
+def test_a_reoccupied_path_with_a_different_serial_refuses_variant_b(
+    tmp_path: Path,
+) -> None:
+    """Fold wave 3, delta F1 variant B: the SER-X unit took the picked path
+    AND a serial-claiming twin carries SER-B elsewhere — the case that
+    mispredicted under the README's discriminator sentence. The bind must
+    refuse on the serial-evidence check before any discriminator runs, and
+    neither the re-occupied path nor the twin may open."""
+    fx = _binding_app(tmp_path)
+    asyncio.run(fx["seam"].call("device_discover"))
+    fx["candidates"][1] = UsbCandidate(_B, serial_number="SER-X")
+    elsewhere = "/dev/ser-b-elsewhere"
+    fx["ports"][elsewhere] = LoopbackPort(replies={b"ID?\n": _MATCHING})
+    fx["candidates"].append(UsbCandidate(elsewhere, serial_number="SER-B"))
+    with pytest.raises(SeamError) as raised:
+        asyncio.run(fx["seam"].bind_device(_B))
+    assert raised.value.code == "invalid_request"
+    assert "standalone_binding_pick_changed:" in raised.value.message
+    assert "SER-B" in raised.value.message and "SER-X" in raised.value.message
+    assert fx["store"].get(fx["plugin"].package, fx["plugin"].device_id) is None
+    with pytest.raises(SeamError) as connect_refusal:
+        asyncio.run(fx["seam"].call("device_connect", {"device_id": "example_device"}))
+    assert connect_refusal.value.details["reason"] == "binding_absent"
+    assert fx["opened"] == [_A, _B], "neither the re-occupied path nor the twin opened"
+
+
 # --- AR-A: instance-keyed binding (THE core claim) ---------------------------
 
 

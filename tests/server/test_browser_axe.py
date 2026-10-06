@@ -374,8 +374,10 @@ def test_a_reload_advisory_lands_on_the_open_page(
         # Fire a real reload host-side (unattended, no changes pending: the
         # reload proceeds and publishes plugin_reloaded). Playwright's sync
         # API hosts its own event loop in this thread, so the reload runs
-        # on a worker thread's loop — the seam is loop-agnostic and the
-        # event bus is thread-guarded.
+        # on a worker thread's loop — safe here because the op-mutex
+        # acquire is uncontended (an uncontended asyncio.Lock acquire never
+        # binds to a loop; a contended cross-loop acquire is the documented
+        # wedge), and the event bus is thread-guarded.
         outcome: dict[str, object] = {}
 
         def _fire() -> None:
