@@ -442,9 +442,15 @@ def test_phase2_patch_is_exactly_two_files_and_applies_on_the_real_tree() -> Non
     paths = drift.patch_paths(patch)
     assert paths == {"great-docs.yml", "website/index.html"}
     with _scratch_copy_of_repo_files(ROOT, ["great-docs.yml", "website/index.html"]) as scratch:
+        # The patch travels as a FILE, never stdin: a text-mode pipe
+        # newline-translates \n to os.linesep on Windows and the context
+        # can never match (wave 5). File paths bypass pipe translation —
+        # and this mirrors the production invocation (release_cut.py's
+        # verify and the preflight's rehearsal both apply by path).
+        patch_file = scratch / "phase2.patch"
+        patch_file.write_bytes(patch.encode("utf-8"))
         proc = subprocess.run(
-            ["git", "apply", "--check", "-"],
-            input=patch,
+            ["git", "apply", "--check", str(patch_file)],
             capture_output=True,
             text=True,
             cwd=scratch,
@@ -617,6 +623,31 @@ def test_matrix_scaffold_pre_fills_every_row_and_guesses_no_class() -> None:
     # D7: the tool never guesses MINOR/PATCH — no class verdict in the scaffold.
     assert "MINOR class:" not in scaffold
     assert "PATCH class:" not in scaffold
+
+
+# --- wave 5: the patch travels by FILE, never by a text pipe --------------------
+
+
+def test_git_apply_never_reads_the_patch_from_stdin() -> None:
+    """Wave 5 (inspection arm, honest about its reach): a text-mode stdin
+    pipe newline-translates the patch before git reads it — on Windows the
+    text layer writes os.linesep, so a LF patch context arrives CRLF and
+    can never match (the sdk(windows-latest) RED at d5f8bc2, fresh run
+    37411745100, superseding the wave-4 CRLF-checkout diagnosis: the tree
+    was fine; the pipe mangled the patch). The arm pins that every git
+    apply invocation in this module and in release_cut.py passes the patch
+    as a FILE PATH — files bypass pipe translation — and never as stdin
+    '-'. What it cannot catch locally: a future invocation on a
+    Windows-only path, and the runner's own behavior — Windows CI remains
+    the verdict venue (W1)."""
+    # built by concatenation so the arm does not match its own source
+    stdin_apply = '"apply", "--check", ' + '"-"'
+    for name in ("scripts/release_cut.py", __file__):
+        text = Path(name).read_text(encoding="utf-8")
+        assert stdin_apply not in text, (
+            f"{name}: git apply reads the patch from a text pipe — move it to "
+            "a file path (wave 5)"
+        )
 
 
 # --- wave 3 (referee): F3 patch-content verify, F5 weakening arms, F6 BaseException restore ---
