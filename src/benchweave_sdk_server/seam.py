@@ -527,7 +527,12 @@ class StandaloneSeam:
             )
         # The link block overlays the established identity additively
         # (issue #407, F3): the device panel is where an operator looks.
-        return {**dict(self._session.identity), "link": self._link_state()}
+        # An adapter-reported ``link`` key WINS — the host's block fills
+        # the gap only when the adapter did not report its own.
+        result = dict(self._session.identity)
+        if "link" not in result:
+            result["link"] = self._link_state()
+        return result
 
     async def _op_parameter_read(
         self, arguments: dict[str, Any], correlation: str

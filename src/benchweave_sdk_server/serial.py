@@ -242,6 +242,13 @@ class SerialLink:
         ring condition, decremented in its ``finally``."""
         return self._receive_depth
 
+    @property
+    def is_closed(self) -> bool:
+        """Whether :meth:`close` has run on this link (the state block's
+        link-down fact — a closed link serves nothing, so nothing may
+        report a live-looking baud about it)."""
+        return self._closed
+
     def ring_length(self) -> int:
         """The ring's current length (test and soak instrumentation)."""
         with self._cond:
@@ -670,6 +677,11 @@ class SerialCaptureServices(WriterBackedCaptureServices):
         self._link_settings: dict[str, Any] | None = (
             dict(reconfigurator.boot_settings) if reconfigurator is not None else None
         )
+        # Serializes reconfigure_link across guard re-check + close +
+        # open + rebind (the refute wave's interleaving class): two
+        # concurrent switches queue; the loser's swap closes the winner's
+        # link through the normal old.close() path.
+        self._reconfigure_lock = asyncio.Lock()
 
     @property
     def link(self) -> SerialLink:
@@ -787,12 +799,16 @@ class SerialCaptureServices(WriterBackedCaptureServices):
         """The live link block for ``host_info``/``device_get`` (issue
         #407): current baud, the descriptor's boot baud, and whether any
         switch is negotiable. ``None`` without a reconfigurator — no
-        declared boot state to report."""
+        declared boot state to report — and ``None`` whenever the current
+        link is closed (a failed swap leaves no serving link; a
+        live-looking baud with nothing serving it would be a lie — A06)."""
         if self._reconfigurator is None or self._link_settings is None:
             return None
+        if self._link.is_closed:
+            return None
         return {
-            "baud": int(self._link_settings["baud"]),
-            "boot_baud": int(self._boot_settings["baud"]),  # type: ignore[index]
+            "baud": _boot_baud(self._link_settings),
+            "boot_baud": _boot_baud(self._boot_settings or {}),
             "negotiable": len(self._reconfigurator.allowed_bauds) > 1,
         }
 
@@ -803,12 +819,17 @@ class SerialCaptureServices(WriterBackedCaptureServices):
         capability member, issue #407).
 
         The house discipline order (``transfer``'s): grammar first, then
-        liveness, then guards, then I/O. The swap is the fresh-link mint:
-        the old link closes (joins its reader — buffered residue dies
-        with it), the deadline is re-checked, then the opener runs once
-        at ``{**boot_settings, "baud": N}`` and a fresh
-        :class:`SerialLink` is minted over the new transport and rebound.
-        One attempt, never a host retry (A06): an opener error leaves the
+        liveness, then guards, then I/O — the guards re-checked under the
+        session's reconfigure lock, which is held across the close, the
+        opener and the rebind (one swap at a time; concurrent switches
+        serialize). The swap is the fresh-link mint: the old link closes
+        (joins its reader — buffered residue dies with it), the deadline
+        is re-checked, then the opener runs once at
+        ``{**boot_settings, "baud": N}`` — and the deadline is re-checked
+        AFTER the opener too (a reopen that outlived its context closes
+        the port it opened and answers ``TimeoutError``, never success).
+        One attempt, never a host retry (A06): an opener error — or a
+        cancellation, which publishes the failed row too — leaves the
         services with NO link (the faulted posture) and raises
         ``ConnectionError``; the caller's explicit fallback reconfigure
         (for the boot baud) is the caller's move, not a host retry.
@@ -837,80 +858,128 @@ class SerialCaptureServices(WriterBackedCaptureServices):
                 "session carries no link reconfigurator"
             )
         from_baud = _boot_baud(self._link_settings or {})
-        if self._link_settings is not None:
-            from_baud = int(self._link_settings["baud"])
-        if baud not in self._reconfigurator.allowed_bauds:
-            self._publish_link_event(
-                "reconfigure_refused",
-                from_baud,
-                baud,
-                context,
-                reason=f"baud {baud} is not in the negotiable set "
-                f"{sorted(self._reconfigurator.allowed_bauds)}",
+        # One swap at a time: the lock is held across the guard re-checks,
+        # the close, the opener and the rebind, so two concurrent switches
+        # serialize — the loser closes the winner's link through the normal
+        # ``old.close()`` path and no transport is ever orphaned, and a
+        # failure answer then genuinely means no serving link (the guards
+        # read the CURRENT link; without the lock a queued twin could
+        # close a fresh link it never minted).
+        async with self._reconfigure_lock:
+            # Re-check liveness inside the lock: a caller queued behind a
+            # swap whose deadline expired while waiting refuses before
+            # any I/O (the C06/C07 posture).
+            self._live(context)
+            if baud not in self._reconfigurator.allowed_bauds:
+                self._publish_link_event(
+                    "reconfigure_refused",
+                    from_baud,
+                    baud,
+                    context,
+                    reason=f"baud {baud} is not in the negotiable set "
+                    f"{sorted(self._reconfigurator.allowed_bauds)}",
+                )
+                raise ValueError(
+                    "standalone_serial_baud_not_negotiable: "
+                    f"{baud} is not in the negotiable set "
+                    f"{sorted(self._reconfigurator.allowed_bauds)}"
+                )
+            if self._link.receive_depth > 0:
+                self._publish_link_event(
+                    "reconfigure_refused",
+                    from_baud,
+                    baud,
+                    context,
+                    reason="a receive is in flight",
+                )
+                raise ValueError(
+                    "standalone_serial_reconfigure_busy: a receive is in flight"
+                )
+            # the swap (one attempt — A06): copy the live link's
+            # configuration, close the old link (joins the reader; the
+            # ring dies with it), re-check the deadline, then reopen at
+            # the new baud.
+            old = self._link
+            ring_capacity = old.ring_capacity
+            quiet_s = old.quiet_s
+            transfer_ceiling = old.transfer_ceiling
+            old.close()
+            if context.is_cancelled() or self.monotonic() >= context.deadline_monotonic:
+                self._publish_link_event(
+                    "reconfigure_failed",
+                    from_baud,
+                    baud,
+                    context,
+                    reason="the context expired during the close",
+                )
+                raise TimeoutError(
+                    "reconfigure deadline expired; the old link is closed "
+                    "(the honest ambiguous posture — no serving link)"
+                )
+            next_settings = {**self._reconfigurator.boot_settings, "baud": baud}
+            reconfigurator = self._reconfigurator
+            opened: list[Any] = []
+
+            def _open() -> Any:
+                item = reconfigurator.opener(
+                    reconfigurator.device_path, next_settings
+                )
+                opened.append(item)
+                return item
+
+            try:
+                transport = await asyncio.to_thread(_open)
+            except BaseException as exc:
+                # The faulted posture: no rebind, no serving link, no
+                # retry — the caller owns any fallback move. Cancellation
+                # is a BaseException: the failed row publishes and any
+                # transport the opener managed to produce closes before
+                # the exception propagates. (A cancel landing while the
+                # thread is STILL inside a blocked opener cannot reach the
+                # produced transport — the disclosed residual; the host's
+                # own timeout enforcement sits at the same boundary.)
+                for item in opened:
+                    with contextlib.suppress(Exception):
+                        item.close()
+                self._publish_link_event(
+                    "reconfigure_failed",
+                    from_baud,
+                    baud,
+                    context,
+                    reason=f"{type(exc).__name__}: {exc}",
+                )
+                if isinstance(exc, Exception):
+                    raise ConnectionError(f"serial reopen failed: {exc}") from exc
+                raise
+            # The deadline is re-checked AFTER the opener too: a reopen
+            # that outlived its context answers TimeoutError, never
+            # success — and the transport it opened closes (a port opened
+            # past its deadline must not silently become the session's
+            # link).
+            if context.is_cancelled() or self.monotonic() >= context.deadline_monotonic:
+                with contextlib.suppress(Exception):
+                    transport.close()
+                self._publish_link_event(
+                    "reconfigure_failed",
+                    from_baud,
+                    baud,
+                    context,
+                    reason="the context expired during the reopen",
+                )
+                raise TimeoutError(
+                    "reconfigure deadline expired during the reopen; the "
+                    "opened port is closed (no serving link — the honest "
+                    "ambiguous posture)"
+                )
+            self._link = SerialLink(
+                transport,
+                ring_capacity=ring_capacity,
+                transfer_ceiling=transfer_ceiling,
+                quiet_s=quiet_s,
             )
-            raise ValueError(
-                "standalone_serial_baud_not_negotiable: "
-                f"{baud} is not in the negotiable set "
-                f"{sorted(self._reconfigurator.allowed_bauds)}"
-            )
-        if self._link.receive_depth > 0:
-            self._publish_link_event(
-                "reconfigure_refused",
-                from_baud,
-                baud,
-                context,
-                reason="a receive is in flight",
-            )
-            raise ValueError(
-                "standalone_serial_reconfigure_busy: a receive is in flight"
-            )
-        # the swap (one attempt — A06): copy the live link's configuration,
-        # close the old link (joins the reader; the ring dies with it),
-        # re-check the deadline, then reopen at the new baud.
-        old = self._link
-        ring_capacity = old.ring_capacity
-        quiet_s = old.quiet_s
-        transfer_ceiling = old.transfer_ceiling
-        old.close()
-        if context.is_cancelled() or self.monotonic() >= context.deadline_monotonic:
-            self._publish_link_event(
-                "reconfigure_failed",
-                from_baud,
-                baud,
-                context,
-                reason="the context expired during the close",
-            )
-            raise TimeoutError(
-                "reconfigure deadline expired; the old link is closed "
-                "(the honest ambiguous posture — no serving link)"
-            )
-        next_settings = {**self._reconfigurator.boot_settings, "baud": baud}
-        try:
-            transport = await asyncio.to_thread(
-                self._reconfigurator.opener,
-                self._reconfigurator.device_path,
-                next_settings,
-            )
-        except Exception as exc:
-            # The faulted posture: no rebind, no serving link, no retry —
-            # the caller owns any fallback move.
-            self._publish_link_event(
-                "reconfigure_failed",
-                from_baud,
-                baud,
-                context,
-                reason=f"{type(exc).__name__}: {exc}",
-            )
-            raise ConnectionError(f"serial reopen failed: {exc}") from exc
-        self._link = SerialLink(
-            transport,
-            ring_capacity=ring_capacity,
-            transfer_ceiling=transfer_ceiling,
-            quiet_s=quiet_s,
-        )
-        self._link_settings = dict(next_settings)
-        self._publish_link_event("reconfigured", from_baud, baud, context)
-        return dict(next_settings)
+            self._link_settings = dict(next_settings)
+            self._publish_link_event("reconfigured", from_baud, baud, context)
+            return dict(next_settings)
 
 def _serial_settings(plugin: Any) -> dict[str, Any]:
     """The descriptor's transport settings (the serial knobs the opener uses)."""
@@ -955,8 +1024,16 @@ def open_serial_port(device: str, settings: dict[str, Any]) -> Any:
 
 def _boot_baud(settings: dict[str, Any]) -> int:
     """The descriptor's boot baud (the opener's own default is the
-    derivation's — one definition)."""
-    return int(settings.get("baud", _BOOT_BAUD_DEFAULT))
+    derivation's — one definition), validated like the declared list: a
+    positive non-bool int, refusing typed otherwise (a bool baud would
+    admit the set ``{1}`` silently)."""
+    baud = settings.get("baud", _BOOT_BAUD_DEFAULT)
+    if not isinstance(baud, int) or isinstance(baud, bool) or baud <= 0:
+        raise ValueError(
+            "standalone_serial_boot_baud: declared boot baud "
+            f"{baud!r} must be a positive integer"
+        )
+    return int(baud)
 
 
 def negotiable_bauds(settings: dict[str, Any]) -> frozenset[int]:
@@ -972,6 +1049,11 @@ def negotiable_bauds(settings: dict[str, Any]) -> frozenset[int]:
     MISSING key is not an error: the allowed set is ``{boot baud}`` and
     every switch refuses (fail-closed opt-in).
     """
+    if not isinstance(settings, dict):
+        raise ValueError(
+            "standalone_serial_negotiated_bauds: transport settings must be "
+            f"a mapping, got {type(settings).__name__}"
+        )
     declared = settings.get("x-negotiated-bauds")
     if declared is None:
         return frozenset({_boot_baud(settings)})
@@ -1036,7 +1118,11 @@ def serial_plugin_session(
     max_frame = transport_ceiling(settings)
     opener = open_port or open_serial_port
     allowed = negotiable_bauds(settings)  # loud at session build
-    boot_settings = dict(settings)
+    # The mint ALWAYS carries the baud (the defaulted read — a descriptor
+    # whose settings omit it is legal and worked at base): every derived
+    # read of the boot/linked settings goes through the same defaulted
+    # getter, never a bare index.
+    boot_settings = {**settings, "baud": _boot_baud(settings)}
 
     def factory() -> SerialCaptureServices:
         transport = opener(device_path, boot_settings)

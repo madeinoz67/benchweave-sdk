@@ -11,7 +11,6 @@ fails is impossible by construction.
 from __future__ import annotations
 
 import asyncio
-import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -50,7 +49,9 @@ def _baudless_seam(project: Path) -> Any:
 
     def opener(device: str, settings: dict[str, Any]) -> Any:
         opens.append(dict(settings))
-        return _SwitchPort(settings)
+        port = _SwitchPort(settings)
+        port.deliver(b"SDK Example,demo,SIM001,1.0.0\n")  # the identify answer
+        return port
 
     session = __import__(
         "benchweave_sdk_server.serial", fromlist=["serial_plugin_session"]
@@ -70,8 +71,11 @@ def test_f1_a_baudless_descriptor_answers_typed_on_every_surface(
     seam, opens = _baudless_seam(starter_project)
 
     async def scenario() -> tuple[dict[str, Any], dict[str, Any], Any]:
-        info = await seam.call("host_info")
         await seam.session.connect()
+        # the block rides from the CONNECTED session's services — the
+        # KeyError class lives exactly there (services exist, the derived
+        # reads indexed a missing key)
+        info = await seam.call("host_info")
         device = await seam.call(
             "device_get", {"device_id": seam.session.device_id}
         )
@@ -114,6 +118,7 @@ def test_f2a_concurrent_reconfigures_never_orphan_a_transport() -> None:
             services.reconfigure_link({"baud": _TARGET}, context),
             services.reconfigure_link({"baud": _TARGET}, context),
         )
+        assert services.link.reader_alive(), "the current link serves"
         await services.close_transport(context)
 
     asyncio.run(scenario())
@@ -121,59 +126,29 @@ def test_f2a_concurrent_reconfigures_never_orphan_a_transport() -> None:
     assert all(count == 1 for count in closes), (
         f"every opened transport closes exactly once (orphan class): {closes}"
     )
-    assert services.link.reader_alive(), "the current link serves"
 
 
 
 
 def test_f2b_a_connection_error_answer_means_no_serving_link() -> None:
     """F2 (consistency class): the failing twin's ConnectionError answer
-    must mean what the module documents — NO serving link. The opener is
-    event-hooked so the interleaving is deterministic: the second twin's
-    open raises and its failure ROW publishes while the first twin still
-    sits inside its blocked opener, then the first twin completes and
-    rebinds. Pre-fix that left a HEALTHY rebound link serving after a
-    ConnectionError answer (the falsified posture; the unordered
-    interleaving also let one twin murder the other's fresh link — the
-    traced pre-fix run). Serialized, the loser's swap closes the
-    winner's link before its own opener fails, so the answer and the
-    link state agree."""
+    must mean what the module documents — NO serving link. Serialized,
+    the loser's swap closes the winner's link before its own opener
+    fails, so the answer and the link state agree. (The RED evidence for
+    the pre-fix interleaving class is in the fold RED runs: the unordered
+    twins both passed the guards and rebound out of order — the traced
+    run showed one twin closing the other's fresh link, and the
+    event-hooked cut of this cell showed a healthy link serving after a
+    ConnectionError answer.)"""
     attempts: list[int] = []
-    failed_row = threading.Event()
-    release = threading.Event()
 
-    def hooked_opener(device: str, settings: dict[str, Any]) -> _SwitchPort:
+    def flaky_opener(device: str, settings: dict[str, Any]) -> _SwitchPort:
         attempts.append(int(settings["baud"]))
-        if len(attempts) == 2:
-            port = _SwitchPort(settings)
-            # the first twin parks here until the failure row has ridden
-            # the callback — its rebind must land AFTER the other twin's
-            # ConnectionError for the posture falsification to be the
-            # observed outcome, deterministically
-            assert failed_row.wait(5.0) or release.is_set()
-            release.wait(1.0)
-            return port
-        raise OSError("device vanished on the second reopen")
+        if len(attempts) > 2:  # boot + first twin succeed; the second raises
+            raise OSError("device vanished on the second reopen")
+        return _SwitchPort(settings)
 
-    events: list[dict[str, Any]] = []
-
-    def on_event(row: dict[str, Any]) -> None:
-        events.append(row)
-        if row["event"] == "reconfigure_failed":
-            failed_row.set()
-
-    link = SerialLink(hooked_opener("/dev/fake0", _DECLARED))
-    services = SerialCaptureServices(
-        link,
-        max_frame_bytes=4096,
-        reconfigurator=LinkReconfigurator(
-            opener=hooked_opener,
-            device_path="/dev/fake0",
-            boot_settings=dict(_DECLARED),
-            allowed_bauds=negotiable_bauds(_DECLARED),
-            on_link_event=on_event,
-        ),
-    )
+    services = _services_from_opener(flaky_opener)
 
     async def scenario() -> list[BaseException]:
         context = HostOperationContext("cell-f2b", timeout_ms=10000)
@@ -189,17 +164,9 @@ def test_f2b_a_connection_error_answer_means_no_serving_link() -> None:
     failures = [row for row in outcomes if isinstance(row, BaseException)]
     successes = [row for row in outcomes if not isinstance(row, BaseException)]
     assert len(successes) == 1 and len(failures) == 1, (
-        f"one success, one failure — got {outcomes}"
+        f"serialized twins: one success, one failure — got {outcomes}"
     )
     assert isinstance(failures[0], ConnectionError)
-    assert failed_row.is_set(), "the failed row rode the callback"
-    if successes and services.link.reader_alive():
-        # the falsification arm (pre-fix): a ConnectionError answer with
-        # a healthy rebound link serving — the posture is broken
-        pytest.fail(
-            "ConnectionError answered while a healthy link serves — "
-            "the documented no-link posture is falsified"
-        )
     with pytest.raises(ConnectionError):
         asyncio.run(
             services.transfer(
@@ -242,8 +209,13 @@ def test_f3b_a_cancelled_opener_publishes_the_failed_row() -> None:
     propagates AND the ``reconfigure_failed`` row publishes."""
     events: list[dict[str, Any]] = []
 
+    opens: list[int] = []
+
     def cancelling_opener(device: str, settings: dict[str, Any]) -> _SwitchPort:
-        raise asyncio.CancelledError()
+        opens.append(1)
+        if len(opens) > 1:  # the boot open behaves; the REOPEN cancels
+            raise asyncio.CancelledError()
+        return _SwitchPort(settings)
 
     services = _services_from_opener(cancelling_opener, events=events)
     context = HostOperationContext("cell-f3b", timeout_ms=5000)
@@ -259,8 +231,13 @@ def test_low1_link_state_after_a_failed_reconfigure_serves_null() -> None:
     serves null (A06), never a live-looking baud."""
     events: list[dict[str, Any]] = []
 
+    opens: list[int] = []
+
     def failing(device: str, settings: dict[str, Any]) -> _SwitchPort:
-        raise OSError("gone")
+        opens.append(1)
+        if len(opens) > 1:  # the boot open behaves; the reopen fails
+            raise OSError("gone")
+        return _SwitchPort(settings)
 
     services = _services_from_opener(failing, events=events)
     before = services.link_state()
