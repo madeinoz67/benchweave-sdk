@@ -4,7 +4,9 @@ and the stdio entry's guard exemption posture."""
 from __future__ import annotations
 
 import json
+import os
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -332,3 +334,106 @@ def test_serve_without_the_full_extra_closure_refuses_through_the_entry(
     assert result.exit_code == 2, result.output
     assert "benchweave_sdk_server_extras_missing:" in result.output
     assert "benchweave-sdk[server]" in result.output
+
+
+# --- issue #422 increment 1: serve --env-file (the gateway twin) ---------------
+
+
+@pytest.fixture()
+def clean_benchweave_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Scrub every ``BENCHWEAVE_*`` process-env key for the arm, restoring
+    the exact prior state afterwards — INCLUDING keys the env-file loader
+    bridges into ``os.environ`` with a bare setdefault, which monkeypatch
+    cannot track (the gateway twin's suite carries the same fixture)."""
+    original = {
+        key: value for key, value in os.environ.items() if key.startswith("BENCHWEAVE_")
+    }
+    for key in original:
+        monkeypatch.delenv(key, raising=False)
+    yield
+    for key in [key for key in os.environ if key.startswith("BENCHWEAVE_") and key not in original]:
+        del os.environ[key]
+
+
+def _env_file(tmp_path: Path, body: str) -> Path:
+    path = tmp_path / "svc.env"
+    path.write_text(body, encoding="utf-8")
+    path.chmod(0o600)
+    return path
+
+
+def test_s1_env_file_sets_the_capture_dir_the_seam_resolves(
+    starter_project: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    clean_benchweave_env: None,
+) -> None:
+    """S1: ``--env-file`` carries ``BENCHWEAVE_CAPTURE_DIR`` and the serve
+    surface resolves THE FILE's value — proven on the real resolution path:
+    the serial transport's operator-action token file lands under the
+    file's directory (``capture_root`` reads the environment the loader
+    bridged, set-if-not-set)."""
+    from_file = tmp_path / "cap-from-file"
+    path = _env_file(tmp_path, f"BENCHWEAVE_CAPTURE_DIR={from_file}\n")
+    output = _serve_output(
+        starter_project,
+        monkeypatch,
+        tmp_path,
+        "--transport",
+        "serial",
+        "--env-file",
+        str(path),
+    )
+    payload = json.loads((from_file / "operator-action-token.json").read_text())
+    assert payload["url"].startswith("http://127.0.0.1:8477/?operator_action=")
+    # The default root was NOT used — the file's value is the one that
+    # resolved.
+    assert not (tmp_path / "captures" / "operator-action-token.json").exists()
+    assert "loaded" in output
+
+
+def test_s2_process_env_capture_dir_beats_the_file(
+    starter_project: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    clean_benchweave_env: None,
+) -> None:
+    """S2: explicit process environment always wins (flag > process env >
+    file — Decision 9's precedence family, the gateway twin's rule)."""
+    from_file = tmp_path / "cap-from-file"
+    from_env = tmp_path / "cap-from-env"
+    path = _env_file(tmp_path, f"BENCHWEAVE_CAPTURE_DIR={from_file}\n")
+    monkeypatch.setenv("BENCHWEAVE_CAPTURE_DIR", str(from_env))
+    _serve_output(
+        starter_project,
+        monkeypatch,
+        tmp_path,
+        "--transport",
+        "serial",
+        "--env-file",
+        str(path),
+    )
+    assert (from_env / "operator-action-token.json").is_file()
+    assert not (from_file / "operator-action-token.json").exists()
+
+
+def test_s6_without_the_flag_no_file_is_read(
+    starter_project: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    clean_benchweave_env: None,
+) -> None:
+    """S6: without ``--env-file`` zero filesystem reads change — a canary
+    ``benchweave.env`` in the working directory is NOT discovered (the
+    explicit-flag divergence the design record's section 3 records), and
+    the default capture-root resolution stands."""
+    canary = tmp_path / "benchweave.env"
+    canary.write_text("BENCHWEAVE_CAPTURE_DIR=/nonexistent-canary\n", encoding="utf-8")
+    canary.chmod(0o600)
+    output = _serve_output(
+        starter_project, monkeypatch, tmp_path, "--transport", "serial"
+    )
+    payload = json.loads((tmp_path / "captures" / "operator-action-token.json").read_text())
+    assert payload["pid"] == os.getpid()
+    assert "loaded" not in output
+    assert "env_file:" not in output

@@ -27,6 +27,7 @@ import click
 
 from benchweave_sdk import __version__
 
+from .env_file import EnvFileError, load_env_file, serve_env_file_keys
 from .seam import StandaloneSeam
 from .session import (
     LoadedPlugin,
@@ -334,6 +335,19 @@ def cli() -> None:
     "orphan grace, the in-host schedule interval and the storage reserve. "
     "Without it the host keeps everything and the storage guard is inert.",
 )
+@click.option(
+    "--env-file",
+    "env_file",
+    type=click.Path(path_type=Path, exists=True),
+    default=None,
+    help=(
+        "Load KEY=VALUE lines from this file into the environment, "
+        "set-if-not-set, before the host resolves its configuration "
+        "(allowed keys: BENCHWEAVE_STANDALONE_BINDINGS, "
+        "BENCHWEAVE_CAPTURE_DIR). Flags and the process environment "
+        "always win."
+    ),
+)
 def serve(
     project: Path,
     host: str,
@@ -348,8 +362,27 @@ def serve(
     authoring: bool,
     unattended: bool,
     retention_rules: Path | None,
+    env_file: Path | None,
 ) -> None:
     """Serve UI, REST and MCP over one plugin project."""
+    if env_file is not None:
+        # Issue #422 increment 1 — the gateway twin's one standard: bridge
+        # the file's allowlisted keys set-if-not-set BEFORE the serve body
+        # resolves its configuration (capture_root/bindings_path read the
+        # environment inside this command, so the loader must run first).
+        # Without the flag, zero filesystem reads change (arm S6).
+        try:
+            applied = load_env_file(env_file, serve_env_file_keys())
+        except EnvFileError as exc:
+            click.echo(str(exc), err=True)
+            raise SystemExit(2) from exc
+        if applied:
+            # Key NAMES only, never values (the file may carry credentials).
+            click.echo(
+                f"benchweave-sdk-server: loaded {env_file} "
+                f"(set {', '.join(applied)})",
+                err=True,
+            )
     if unattended and not authoring:
         raise click.UsageError(
             "--unattended requires --authoring (Q11: it waives an operator gate)"
