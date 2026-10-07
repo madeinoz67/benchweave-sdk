@@ -238,3 +238,78 @@ def test_the_real_client_hard_fails_when_retries_exhaust(
     client = lane.systemone_client("test-key-material", post=post)
     with pytest.raises(lane.ClaimLaneError, match="429"):
         client({}, [])
+
+
+# --- AR-3: the trace artifact ---------------------------------------------
+
+
+def test_ar3_a_well_formed_trace_validates(lane: ModuleType) -> None:
+    artifact = {
+        "claim_id": "capture-crash-reserved",
+        "observations": [
+            "An abandoned capture left its event directory under the capture root.",
+            "A fresh writer's append with that capture id was refused with a collision message.",
+        ],
+    }
+    observations = lane.validate_trace(artifact, expected_id="capture-crash-reserved")
+    assert len(observations) == 2
+
+
+def test_ar3_a_missing_claim_id_refuses(lane: ModuleType) -> None:
+    with pytest.raises(lane.ClaimLaneError, match="claim_id"):
+        lane.validate_trace({"observations": ["an observation"]})
+
+
+def test_ar3_a_mismatched_claim_id_refuses(lane: ModuleType) -> None:
+    with pytest.raises(lane.ClaimLaneError, match="mismatch"):
+        lane.validate_trace(
+            {"claim_id": "a", "observations": ["an observation"]}, expected_id="b"
+        )
+
+
+def test_ar3_an_empty_observation_set_refuses(lane: ModuleType) -> None:
+    with pytest.raises(lane.ClaimLaneError, match="no observations"):
+        lane.validate_trace({"claim_id": "a", "observations": []})
+
+
+def test_ar3_a_non_string_observation_refuses(lane: ModuleType) -> None:
+    with pytest.raises(lane.ClaimLaneError, match="not a string"):
+        lane.validate_trace({"claim_id": "a", "observations": ["ok", 7]})
+
+
+def test_ar3_a_blank_observation_refuses(lane: ModuleType) -> None:
+    with pytest.raises(lane.ClaimLaneError, match="blank"):
+        lane.validate_trace({"claim_id": "a", "observations": ["   "]})
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "The behavior conforms to the documented sentence.",
+        "This matches the claim exactly.",
+        "The system is non_conforming here.",
+        "The observation contradicts the claim.",
+        "This is consistent with the claim.",
+        "Verified: the code complies.",
+        "The verdict is conforming.",
+        "This is as documented.",
+    ],
+)
+def test_ar3_verdict_vocabulary_is_rejected(lane: ModuleType, bad: str) -> None:
+    """The deliberately-bad observation sets: judgment language inside a
+    trace hands the judge the answer — the schema refuses it (AR-3)."""
+    with pytest.raises(lane.ClaimLaneError, match="verdict vocabulary"):
+        lane.validate_trace({"claim_id": "a", "observations": [bad]})
+
+
+def test_ar3_behavior_vocabulary_stays_neutral(lane: ModuleType) -> None:
+    """Refusal and failure words describe BEHAVIOR, not the claim — they
+    must survive the neutrality gate (the probes observe refusal paths)."""
+    observations = [
+        "The writer refused the append with a ValueError.",
+        "The finalise call failed before any publication.",
+        "The scan returned two devices.",
+    ]
+    assert lane.validate_trace({"claim_id": "a", "observations": observations}) == (
+        observations
+    )

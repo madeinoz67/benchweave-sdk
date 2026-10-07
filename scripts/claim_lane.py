@@ -190,6 +190,61 @@ def validate_manifest(rows: list[ClaimRow], *, probes_root: Path | None = None) 
             raise ClaimLaneError(f"probe cell missing: {row.id}: {row.probe}")
 
 
+# --- the trace artifact ---------------------------------------------------
+
+#: Judgment language that must never appear inside an observation. Verdict
+#: vocabulary hands the judge the answer; the experiment's clean separation
+#: (false 0.02-0.04 vs true 0.74-0.98) came from NEUTRAL traces. Behavior
+#: vocabulary ("refused", "failed", "returned") is deliberately absent from
+#: this list: the probes observe refusal paths, and those words describe
+#: what happened, not whether it matches the claim.
+_VERDICT_VOCABULARY = (
+    "conform",
+    "verdict",
+    "as documented",
+    "as claimed",
+    "matches the claim",
+    "match the claim",
+    "consistent with the claim",
+    "contradicts the claim",
+    "complies",
+    "documented behavior",
+)
+
+
+def validate_trace(
+    artifact: dict[str, Any], *, expected_id: str | None = None
+) -> list[str]:
+    """Validate one trace artifact and return its observations.
+
+    An artifact is ``{"claim_id": str, "observations": [str, ...]}`` with at
+    least one non-blank observation, each free of verdict vocabulary.
+    Raises ClaimLaneError on any violation — a bad trace fails the probe,
+    never the judge.
+    """
+    claim_id = artifact.get("claim_id")
+    if not isinstance(claim_id, str) or not claim_id.strip():
+        raise ClaimLaneError(f"trace artifact has no claim_id: {artifact!r}")
+    if expected_id is not None and claim_id != expected_id:
+        raise ClaimLaneError(f"trace claim_id mismatch: {claim_id} != {expected_id}")
+    observations = artifact.get("observations")
+    if not isinstance(observations, list) or not observations:
+        raise ClaimLaneError(f"trace for {claim_id} has no observations")
+    for index, observation in enumerate(observations):
+        if not isinstance(observation, str):
+            raise ClaimLaneError(f"trace for {claim_id}: observation {index} is not a string")
+        if not observation.strip():
+            raise ClaimLaneError(f"trace for {claim_id}: observation {index} is blank")
+        lowered = observation.lower()
+        for word in _VERDICT_VOCABULARY:
+            if word in lowered:
+                raise ClaimLaneError(
+                    f"trace for {claim_id}: observation {index} carries verdict "
+                    f"vocabulary ({word!r})"
+                )
+    return [str(item) for item in observations]
+
+
 # --- the judge client -----------------------------------------------------
 
 

@@ -139,6 +139,7 @@ testpaths = ["tests"]
 markers = [
   "browser: Playwright-driven axe WCAG 2.2 A/AA over the real app factory (both themes) plus the doctored-template control; CI runs these in the dedicated browser lane with chromium installed — deselect locally with -m 'not browser'",
   "timing: wall-clock/bound-sensitive tests that must run serially and unloaded (the AR-2 soak asserts structural bounds over a real 10-second window); the xdist lane deselects them and a serial invocation runs them after — load-induced flakes under -n auto are the failure this partition prevents (issue #402)",
+  "claim_probe: claim-lane probe cells — they pin documented behavior as ordinary suite tests and emit a trace artifact when CLAIM_LANE_ARTIFACT_ROOT is wired (the shadow runner in scripts/claim_lane.py selects them with -m claim_probe)",
 ]
 # Generated scaffold output under byte-parity test (R-2): its tests/ tree is
 # plugin content, not this suite's — collecting it imports example_plugin.
