@@ -169,3 +169,78 @@ report is data, not a verdict, until a human reads it.
   Mitigated: rows are quoted verbatim; a moved sentence fails the manifest's
   own review the next time a human edits it. (A doc-quote linter is not
   built here; noted as part of the CI-wiring deferral's home.)
+
+## 9. Addendum — fold 1 (2026-10-07: refuted, then folded)
+
+The refute wave after the first live runs executed three MEDIUMs and two
+rides against this design as shipped. This addendum appends the honest
+reframing each one forced; the sections above are frozen bytes and stand
+as written (the pre-refute record).
+
+**F3 — AR-3's claim, reframed.** The vocabulary check is
+ACCIDENTAL-LEAK PROTECTION, not a gate: the refuter admitted 13 of 13
+paraphrase bypasses ("as the README specifies", "konform", "符合",
+"c0nforms", "did not differ", numeric leaks), and live, one leading
+sentence on a false trace bought +0.31 noul and flipped a verdict off
+non_conforming. The load-bearing refusal is now the STRUCTURAL gate
+added in the fold: every observation must be a past-tense event sentence
+— it opens with an event (a leading-token ban on conclusion/concession
+openers), carries no causal marker (because/therefore/which-means/
+proves-that class) and no evaluation marker (as-expected, in-line-with,
+negated comparatives, correct/expected/should-have), and contains a
+past-tense event verb (a regular -ed form or a closed irregular set).
+Matching normalizes NFKC + casefold + a leet digit fold, and the verdict
+vocabulary gained translation companions. Measured false-positive rate
+against the shipped corpus: 0 of 31 observations (pinned by the
+all-ten-probe schema cell). The judge-side anchoring instruction ("rest
+the answer only on observed_behavior") is the demonstrated backstop —
+on led false evidence it held 0.34, not 0.9. Residual, disclosed: the
+gate is heuristic; a paraphrase that reads as a past-tense event while
+asserting the verdict can still pass it, which is why the anchoring
+backstop and the shadow posture remain load-bearing.
+
+**F1 — stale evidence.** The traces directory is cleared at run start:
+a skipped or failed probe can no longer have its prior-run artifact
+judged as fresh evidence (the refuter executed exactly that laundering).
+
+**F2 — the exit contract.** The documented contract (0 for verdicts, 2
+for setup errors) admits no third value: response bodies parse
+defensively (an HTML 502 behind a proxy is `(502, None)`, not a raw
+JSONDecodeError traceback), every report/directory failure path is
+guarded to exit 2, and verdicts already earned are preserved — printed
+in the summary, and carried in a partial report whose `error` field
+names the failure — before any failure returns.
+
+**F5 — untrusted bodies.** Error text never interpolates a raw response
+body: detail passes through a redactor (bearer-shaped and token-shaped
+runs stripped) and a 120-character truncation. The refuter executed a
+401 body echoing the Authorization header onto stderr through
+`{payload!r}`; that path is closed and pinned.
+
+**F4 — the lane's own phrasing (ride).** The reservation probe's fourth
+observation was reworded from a causal clause ("was refused because its
+100 bytes would carry the staged total past...") to the cold-numbers
+past-tense form; the refuter measured the causal phrasing worth ~0.12
+noul of leading on top of an already-conforming trace.
+
+**Rides from the refuter's nulls chunk (same fold commit).**
+(a) The lane module now rides CI's type gate: `[tool.mypy] files` gained
+`scripts/claim_lane.py` (per-file — the older scripts predate strict
+typing and stay outside), and CI's lint step is now bare `uv run mypy`
+(config-driven), because the explicit `mypy src` argument silently
+overrode the file list the config declares.
+(b) `classify` refuses to mint verdicts from out-of-domain scores: -1
+used to read as confidently non-conforming and 1.5 as confidently
+conforming; every score outside [0, 1] (NaN included) now REFUSES with
+a `ClaimLaneError` naming the violation, which routes through the F2
+machinery as an infrastructure failure — partial report, error field
+naming it, exit 2. Resolution history, recorded because both shapes
+were built: a dead-band clamp (out-of-domain lands in
+`insufficient_evidence`) was tried first and ruled the weaker call —
+it launders a broken judge into a soft verdict row instead of
+surfacing as the named hard error it is. The skip pseudo-verdict is
+now counted in totals (`skipped`), never silently unbucketed.
+(c) scan-hint-filter's fourth observation was reworded to what the
+cell's assert pins ("both identified as example_device") — the prior
+"identity fields the descriptor declares" phrasing claimed more than
+the assertion proved, per ROW 3's cold-phrasing law.

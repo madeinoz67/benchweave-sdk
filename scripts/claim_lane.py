@@ -20,9 +20,12 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import shutil
 import subprocess
 import sys
 import time
+import unicodedata
 import urllib.error
 import urllib.request
 from collections.abc import Callable
@@ -76,9 +79,17 @@ def classify(noul: float) -> str:
     insufficient evidence. The middle band exists because the experiment's
     ambiguity control produced one 0.57 mid-band result: a trace that does
     not settle its claim must report as unsettled, never as a confident
-    verdict on either side. A NaN lands in the dead band by the same
-    conservative default.
+    verdict on either side.
+
+    The score domain is [0, 1]; a value outside it — including NaN —
+    REFUSES (ride b, the ruled resolution: the refuter's NIT was -1
+    reading as confidently non-conforming and 1.5 as conforming). A dead-
+    band clamp was tried and ruled the weaker call: it would launder a
+    broken judge into a soft verdict row instead of surfacing as the
+    named infrastructure failure it is (the F2 partial-report path).
     """
+    if not 0.0 <= noul <= 1.0:
+        raise ClaimLaneError(f"noul outside [0, 1]: {noul!r}")
     if noul >= CONFORMING_THRESHOLD:
         return VERDICT_CONFORMING
     if noul <= NON_CONFORMING_THRESHOLD:
@@ -203,12 +214,17 @@ def validate_manifest(rows: list[ClaimRow], *, probes_root: Path | None = None) 
 
 # --- the trace artifact ---------------------------------------------------
 
-#: Judgment language that must never appear inside an observation. Verdict
-#: vocabulary hands the judge the answer; the experiment's clean separation
-#: (false 0.02-0.04 vs true 0.74-0.98) came from NEUTRAL traces. Behavior
-#: vocabulary ("refused", "failed", "returned") is deliberately absent from
-#: this list: the probes observe refusal paths, and those words describe
-#: what happened, not whether it matches the claim.
+#: ACCIDENTAL-LEAK PROTECTION (fold-1 F3's honest framing): this vocabulary
+#: catches direct judgment language, but a blocklist is bypassable by
+#: paraphrase — the refuter admitted 13 of 13 through it, and one leading
+#: sentence on a false trace bought +0.31 noul live. The load-bearing
+#: refusal is the STRUCTURAL gate below (_structural_refusal): every
+#: observation must be a past-tense event sentence. The judge-side
+#: anchoring instruction is the demonstrated backstop (it held 0.34, not
+#: 0.9, on led false evidence). Behavior vocabulary ("refused", "failed",
+#: "returned") is deliberately absent here: the probes observe refusal
+#: paths, and those words describe what happened, not whether it agrees
+#: with the claim.
 _VERDICT_VOCABULARY = (
     "conform",
     "verdict",
@@ -220,7 +236,82 @@ _VERDICT_VOCABULARY = (
     "contradicts the claim",
     "complies",
     "documented behavior",
+    # fold-1 additions: translation and leet companions of the above
+    "konform",
+    "符合",
+    "遵从",
+    "如文档",
+    "一致",
 )
+
+#: Leet-fold the normalized text before the vocabulary match, so "c0nforms"
+#: and "c0nf0rms" meet the same blocklist as "conforms" (digits folded to
+#: their letter lookalikes; used ONLY for matching, never for storage).
+_LEET_FOLD = str.maketrans(
+    {"0": "o", "1": "i", "3": "e", "4": "a", "5": "s", "7": "t", "@": "a", "$": "s"}
+)
+
+#: A sentence that opens with one of these is a conclusion or concession,
+#: not an event the probe observed.
+_NON_EVENT_LEADS = frozenset((
+    "because", "although", "though", "however", "therefore", "thus",
+    "hence", "so", "which", "meaning", "confirming", "showing", "proving",
+    "as",
+))
+
+#: Causal connectors asserting why- or therefore-readings.
+_CAUSAL_MARKERS = (
+    "because", "therefore", "thus", "hence", "consequently", "so that",
+    "as a result", "which means", "means that", "showing that",
+    "shows that", "proving that", "proves that", "confirming that",
+    "confirms that",
+)
+
+#: Concessive, comparative and evaluative clauses — verdicts by paraphrase.
+_EVALUATION_MARKERS = (
+    "as expected", "as anticipated", "as documented", "as claimed",
+    "as specified", "as required", "as the readme", "as the guide",
+    "as the sentence", "as the claim", "in line with",
+    "in agreement with", "consistent with the", "did not differ",
+    "does not differ", "do not differ", "matches the", "match the",
+    "matched the", "same as the claim", "as it should", "should have",
+    "expected", "correct", "incorrect", "properly",
+)
+
+#: The closed irregular past set (the regular form is any ...ed word).
+_IRREGULAR_PAST = frozenset((
+    "was", "were", "ran", "led", "kept", "left", "held", "built",
+    "meant", "found", "got", "took", "did", "made", "wrote", "read",
+    "set", "put", "became", "began", "came", "went", "saw", "sent",
+    "brought", "bought", "caught", "dealt", "felt", "fought", "grew",
+    "heard", "hit", "lost", "paid", "said", "sold", "shook", "shot",
+    "shut", "spent", "stood", "taught", "told", "thought", "threw",
+    "understood", "wore", "won", "withdrew",
+))
+
+_PAST_TENSE_RE = re.compile(r"\b[a-z]{2,}ed\b")
+
+
+def _structural_refusal(normalized: str) -> str | None:
+    """The structural gate (fold-1 F3): one observation must read as a
+    past-tense event sentence — it opens with an event, carries no causal
+    or evaluative clause, and contains a past-tense event verb. Returns
+    the refusal reason, or None when the observation passes."""
+    tokens = [token for token in re.split(r"[^a-z0-9]+", normalized) if token]
+    if tokens and tokens[0] in _NON_EVENT_LEADS:
+        return f"opens with {tokens[0]!r}, not an event"
+    for marker in _CAUSAL_MARKERS:
+        if marker in normalized:
+            return f"carries the causal marker {marker!r}"
+    for marker in _EVALUATION_MARKERS:
+        if marker in normalized:
+            return f"carries the evaluation {marker!r}"
+    if (
+        not any(token in _IRREGULAR_PAST for token in tokens)
+        and not _PAST_TENSE_RE.search(normalized)
+    ):
+        return "carries no past-tense event verb"
+    return None
 
 
 def validate_trace(
@@ -229,9 +320,12 @@ def validate_trace(
     """Validate one trace artifact and return its observations.
 
     An artifact is ``{"claim_id": str, "observations": [str, ...]}`` with at
-    least one non-blank observation, each free of verdict vocabulary.
-    Raises ClaimLaneError on any violation — a bad trace fails the probe,
-    never the judge.
+    least one non-blank observation. Each observation must clear the
+    verdict vocabulary (NFKC+casefold+leet-fold matched — accidental-leak
+    protection) AND the structural gate (a past-tense event sentence with
+    no causal or evaluative clause — the load-bearing refusal). Raises
+    ClaimLaneError on any violation — a bad trace fails the probe, never
+    the judge.
     """
     claim_id = artifact.get("claim_id")
     if not isinstance(claim_id, str) or not claim_id.strip():
@@ -246,17 +340,56 @@ def validate_trace(
             raise ClaimLaneError(f"trace for {claim_id}: observation {index} is not a string")
         if not observation.strip():
             raise ClaimLaneError(f"trace for {claim_id}: observation {index} is blank")
-        lowered = observation.lower()
-        for word in _VERDICT_VOCABULARY:
-            if word in lowered:
-                raise ClaimLaneError(
-                    f"trace for {claim_id}: observation {index} carries verdict "
-                    f"vocabulary ({word!r})"
-                )
+        normalized = unicodedata.normalize("NFKC", observation).casefold()
+        folded = normalized.translate(_LEET_FOLD)
+        for variant in (normalized, folded):
+            for word in _VERDICT_VOCABULARY:
+                if word in variant:
+                    raise ClaimLaneError(
+                        f"trace for {claim_id}: observation {index} carries verdict "
+                        f"vocabulary ({word!r})"
+                    )
+        reason = _structural_refusal(normalized)
+        if reason is not None:
+            raise ClaimLaneError(f"trace for {claim_id}: observation {index} {reason}")
     return [str(item) for item in observations]
 
 
 # --- the judge client -----------------------------------------------------
+
+#: Bearer-shaped and token-shaped runs redacted from any error detail
+#: before it can be printed (fold-1 F5: a 401 body echoing the
+#: Authorization header travelled into stderr through {payload!r}).
+_REDACTION_PATTERNS = (
+    re.compile(r"(?i)bearer\s+[a-z0-9\-._~+/=]+"),
+    re.compile(r"(?i)authorization['\"]?\s*[:=]\s*['\"]?[a-z0-9\-._~+/=]+"),
+    re.compile(r"(?i)\b(?:sk|tok|key|token)[-_][a-z0-9]{8,}\b"),
+)
+_DETAIL_LIMIT = 120
+
+
+def _safe_detail(material: Any) -> str:
+    """Untrusted response material rendered safe for error text: redact
+    credential shapes, then truncate. Never let a body reach a message
+    unfiltered — run() prints ClaimLaneError text to stderr."""
+    if material is None:
+        return "unparseable body"
+    text = repr(material)
+    for pattern in _REDACTION_PATTERNS:
+        text = pattern.sub("[redacted]", text)
+    if len(text) > _DETAIL_LIMIT:
+        text = text[:_DETAIL_LIMIT] + "...[truncated]"
+    return text
+
+
+def _parse_json(text: str) -> Any:
+    """Parse a response body defensively: any failure yields None (fold-1
+    F2 — an HTML error page behind a proxy crashed the run with a raw
+    JSONDecodeError instead of the documented exit contract)."""
+    try:
+        return json.loads(text)
+    except ValueError:
+        return None
 
 
 def _urllib_post(url: str, body: bytes, key: str, timeout_s: float) -> tuple[int, Any]:
@@ -274,17 +407,18 @@ def _urllib_post(url: str, body: bytes, key: str, timeout_s: float) -> tuple[int
     )
     try:
         with urllib.request.urlopen(request, timeout=timeout_s) as response:  # noqa: S310
-            return response.status, json.loads(response.read().decode("utf-8"))
+            return response.status, _parse_json(response.read().decode("utf-8", "replace"))
     except urllib.error.HTTPError as error:
         # 422 bodies name the offending field — the diagnosis the live
-        # contract check needs, so it must travel with the status.
+        # contract check needs, so it must travel with the status — but
+        # through _safe_detail at the raise site, never raw (F5).
         try:
             detail = error.read().decode("utf-8", "replace")
         except OSError:  # pragma: no cover - body already consumed
             detail = ""
-        return error.code, (json.loads(detail) if detail else None)
+        return error.code, (_parse_json(detail) if detail else None)
     except (urllib.error.URLError, OSError) as error:
-        raise ClaimLaneError(f"systemone unreachable: {error}") from error
+        raise ClaimLaneError(f"systemone unreachable: {_safe_detail(error)}") from error
 
 
 def systemone_client(
@@ -313,7 +447,7 @@ def systemone_client(
                 return payload
             if status not in (429, 529):
                 raise ClaimLaneError(
-                    f"systemone request failed: HTTP {status} {payload!r}"
+                    f"systemone request failed: HTTP {status} {_safe_detail(payload)}"
                 )
             if attempt == max_attempts:
                 break
@@ -414,41 +548,54 @@ def collect_traces(
         path = artifact_root / f"{row.id}.json"
         if not path.is_file():
             raise ClaimLaneError(f"probe produced no trace artifact: {row.id}")
-        artifact = json.loads(path.read_text(encoding="utf-8"))
+        artifact = _parse_json(path.read_text(encoding="utf-8"))
+        if artifact is None:
+            raise ClaimLaneError(f"trace artifact is not valid JSON: {path}")
         traces[row.id] = validate_trace(artifact, expected_id=row.id)
     return traces
 
 
 def judge_rows(
     rows: list[ClaimRow], traces: dict[str, list[str]], client: JudgeClient
-) -> list[dict[str, Any]]:
-    """Judge every (claim, trace) pair through the client and classify."""
+) -> tuple[list[dict[str, Any]], ClaimLaneError | None]:
+    """Judge every (claim, trace) pair through the client and classify.
+
+    Fold-1 F2's shape: a dead or malformed judge mid-run stops the pass and
+    RETURNS the rows already judged plus the failure — verdicts already
+    earned are never discarded by a later row's error."""
     judged: list[dict[str, Any]] = []
     for row in rows:
         state = {
             "claim": row.claim,
             "observed_behavior": "\n".join(traces[row.id]),
         }
-        response = client(state, {row.id: conformance_question(row.id)})
-        answers = response.get("answers")
-        if not isinstance(answers, dict) or not isinstance(
-            answers.get(row.id), dict
-        ):
-            raise ClaimLaneError(f"judge returned no answer for {row.id}")
-        noul = _noul_of(answers[row.id])
+        try:
+            response = client(state, {row.id: conformance_question(row.id)})
+            answers = response.get("answers")
+            if not isinstance(answers, dict) or not isinstance(
+                answers.get(row.id), dict
+            ):
+                raise ClaimLaneError(f"judge returned no answer for {row.id}")
+            noul = _noul_of(answers[row.id])
+            # classify rides the guard too: an out-of-domain score refuses
+            # (ride b) and must surface through the F2 failure path, never
+            # escape as a traceback.
+            verdict = classify(noul)
+        except ClaimLaneError as error:
+            return judged, error
         usage = response.get("usage")
         tokens = usage.get("total_tokens", 0) if isinstance(usage, dict) else 0
         judged.append(
             {
                 "claim_id": row.id,
                 "claim": row.claim,
-                "verdict": classify(noul),
+                "verdict": verdict,
                 "noul": noul,
                 "model": response.get("model", DEFAULT_MODEL),
                 "tokens": tokens,
             }
         )
-    return judged
+    return judged, None
 
 
 def write_report(
@@ -457,8 +604,11 @@ def write_report(
     *,
     skipped: bool = False,
     skip_reason: str = "",
+    error: str = "",
 ) -> Path:
-    """Write .claim-lane/report.json and return its path."""
+    """Write .claim-lane/report.json and return its path. The ``error``
+    field names a mid-run judging failure (fold-1 F2: the partial report
+    is the durable record of what was earned before the failure)."""
     report_dir.mkdir(parents=True, exist_ok=True)
     totals = {
         "claims": len(rows_out),
@@ -469,6 +619,10 @@ def write_report(
         "insufficient_evidence": sum(
             1 for row in rows_out if row["verdict"] == VERDICT_INSUFFICIENT
         ),
+        # Ride (b): the skip pseudo-verdict is counted, never silently
+        # unbucketed (error/not_judged rows stay named by the top-level
+        # error field — that divergence is stated, not counted).
+        "skipped": sum(1 for row in rows_out if row["verdict"] == "skipped"),
     }
     document = {
         "generated_at": datetime.now(UTC).isoformat(timespec="seconds").replace(
@@ -477,12 +631,35 @@ def write_report(
         "model": DEFAULT_MODEL,
         "skipped": skipped,
         "skip_reason": skip_reason,
+        "error": error,
         "rows": rows_out,
         "totals": totals,
     }
     path = report_dir / "report.json"
     path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
     return path
+
+
+def _write_report_guarded(
+    report_dir: Path,
+    rows_out: list[dict[str, Any]],
+    *,
+    skipped: bool = False,
+    skip_reason: str = "",
+    error: str = "",
+) -> OSError | None:
+    """write_report with the crash path closed (fold-1 F2): a report
+    directory that cannot be written (a file squatting on the path, a read-
+    only tree) returns the OSError instead of raising it — the summary on
+    stdout stays the durable record of what was earned."""
+    try:
+        write_report(
+            report_dir, rows_out, skipped=skipped, skip_reason=skip_reason, error=error
+        )
+    except OSError as failure:
+        print(f"claim-lane: report write failed: {failure}", file=sys.stderr)
+        return failure
+    return None
 
 
 def _print_summary(rows_out: list[dict[str, Any]], skipped: bool) -> None:
@@ -520,7 +697,14 @@ def run(
 
     Exit codes: 0 for ANY verdict distribution (the shadow law) and for the
     missing-key skip; 2 for hard setup errors only — a malformed manifest, a
-    probe failure, a missing or leaky trace, or a dead judge client.
+    probe failure, a missing or leaky trace, an unusable trace/report
+    directory, or a dead judge client. The contract admits no third value:
+    every failure path on the way out is guarded, and verdicts already
+    earned are preserved (printed, and written to the report when the
+    report path is usable) before a failure returns (fold-1 F2).
+
+    The traces directory is CLEARED at run start (fold-1 F1): a prior
+    run's artifact can never be judged as a later run's evidence.
 
     ``client`` and ``probe_results`` are the test seams: an injected client
     replaces the network, and injected probe results replace the subprocess
@@ -536,10 +720,20 @@ def run(
         return 2
 
     traces_dir = artifact_root if artifact_root is not None else out_dir / TRACES_DIR_NAME
-    traces_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        shutil.rmtree(traces_dir, ignore_errors=True)
+        traces_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        print(f"claim-lane: trace directory unusable: {error}", file=sys.stderr)
+        return 2
 
     if probe_results is None:
-        if (code := _run_probes(traces_dir, root)) != 0:
+        try:
+            code = _run_probes(traces_dir, root)
+        except OSError as error:
+            print(f"claim-lane: probe run failed to start: {error}", file=sys.stderr)
+            return 2
+        if code != 0:
             print(
                 f"claim-lane: probe cells failed (pytest exit {code}) — "
                 "no report without evidence",
@@ -557,13 +751,13 @@ def run(
                 (traces_dir / f"{claim_id}.json").write_text(
                     json.dumps(artifact, indent=2), encoding="utf-8"
                 )
-        except ClaimLaneError as error:
+        except (ClaimLaneError, OSError) as error:
             print(f"claim-lane: trace collection failed: {error}", file=sys.stderr)
             return 2
 
     try:
         traces = collect_traces(manifest, traces_dir)
-    except ClaimLaneError as error:
+    except (ClaimLaneError, OSError) as error:
         print(f"claim-lane: trace collection failed: {error}", file=sys.stderr)
         return 2
 
@@ -580,17 +774,35 @@ def run(
             }
             for row in manifest
         ]
-        write_report(out_dir, rows_out, skipped=True, skip_reason=f"{KEY_ENV} is not set")
+        write_failed = _write_report_guarded(
+            out_dir, rows_out, skipped=True, skip_reason=f"{KEY_ENV} is not set"
+        )
         _print_summary(rows_out, skipped=True)
-        return 0
+        return 2 if write_failed else 0
 
-    try:
-        rows_out = judge_rows(manifest, traces, active)
-    except ClaimLaneError as error:
-        print(f"claim-lane: judging failed: {error}", file=sys.stderr)
-        return 2
-    write_report(out_dir, rows_out)
+    judged, failure = judge_rows(manifest, traces, active)
+    rows_out = list(judged)
+    error_text = ""
+    if failure is not None:
+        error_text = str(failure)
+        print(f"claim-lane: judging failed: {error_text}", file=sys.stderr)
+        for offset, remaining in enumerate(manifest[len(judged):]):
+            rows_out.append(
+                {
+                    "claim_id": remaining.id,
+                    "claim": remaining.claim,
+                    "verdict": "error" if offset == 0 else "not_judged",
+                    "noul": None,
+                    "model": DEFAULT_MODEL,
+                    "tokens": 0,
+                }
+            )
+    write_failed = _write_report_guarded(out_dir, rows_out, error=error_text)
     _print_summary(rows_out, skipped=False)
+    if write_failed is not None:
+        return 2
+    if failure is not None:
+        return 2
     return 0
 
 

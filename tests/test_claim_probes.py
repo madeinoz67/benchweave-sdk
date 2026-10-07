@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import inspect
 import json
 import os
 import shutil
@@ -242,8 +243,7 @@ def test_claim_scan_hint_filter(
             "Each opened port received exactly one identify frame and nothing else.",
             "The candidate whose USB vendor id differed from the declared hint "
             "was never opened.",
-            "The scan returned two devices, both carrying the identity fields "
-            "the descriptor declares.",
+            "The scan returned two devices, both identified as example_device.",
         ],
     )
 
@@ -357,9 +357,8 @@ def test_claim_capture_reservation_crossing(
             "A second append of 100 bytes was refused at the append call.",
             "The refusal message reported the reservation of 1024 bytes and "
             "the 1000 bytes already staged.",
-            "The refused append was refused because its 100 bytes would carry "
-            "the staged total to 1100 bytes, past the 1024-byte reservation; "
-            "the accepted append had stayed within it.",
+            "The 100-byte second append arrived with 1000 bytes already "
+            "staged against the 1024-byte reservation.",
         ],
     )
 
@@ -508,16 +507,40 @@ def test_every_manifest_probe_cell_exists_in_this_file() -> None:
 def test_trace_artifacts_are_schema_valid_and_neutral(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """AR-3 end to end: real probe cells run with the artifact root wired;
-    every emitted artifact validates and stays neutral."""
+    """AR-3 end to end (fold-1 form): ALL TEN probe cells run with the
+    artifact root wired; every emitted artifact passes the vocabulary AND
+    structural gates — the shipped corpus's structural false-positive
+    measurement."""
     monkeypatch.setenv(ARTIFACT_ROOT_ENV, str(tmp_path))
     recorder = _recorder()
-    test_claim_capture_empty_refused(tmp_path, recorder)
-    test_claim_capture_crash_reserved(tmp_path, recorder)
+    for cell in (
+        test_claim_scan_hint_filter,
+        test_claim_scan_unparseable_hint,
+        test_claim_capture_abort_id_reuse,
+        test_claim_capture_crash_reserved,
+        test_claim_capture_reservation_crossing,
+        test_claim_negotiated_bauds_validation,
+        test_claim_negotiated_switch_undeclared,
+        test_claim_capture_empty_refused,
+        test_claim_capture_waveform_length,
+        test_claim_capture_env_dir_empty,
+    ):
+        cell_root = tmp_path / cell.__name__
+        cell_root.mkdir()
+        available = {
+            "tmp_path": cell_root,
+            "claim_trace": recorder,
+            "monkeypatch": monkeypatch,
+        }
+        wanted = inspect.signature(cell).parameters
+        cell(**{name: available[name] for name in wanted})
     lane = _lane()
     artifacts = sorted(tmp_path.glob("*.json"))
-    assert [path.stem for path in artifacts] == ["capture-crash-reserved", "capture-empty-refused"]
+    assert len(artifacts) == 10
+    observation_count = 0
     for path in artifacts:
         artifact = json.loads(path.read_text(encoding="utf-8"))
         assert lane.validate_trace(artifact) == artifact["observations"]
+        observation_count += len(artifact["observations"])
         assert path.read_text(encoding="utf-8").find("TYPESAFE") == -1
+    assert observation_count == 31

@@ -68,10 +68,23 @@ def test_ar1_the_four_edges_are_exactly_pinned(lane: ModuleType) -> None:
     assert lane.classify(0.30) == "non_conforming"
 
 
-def test_ar1_a_nan_scores_insufficient_not_a_verdict(lane: ModuleType) -> None:
-    """A judge that returns NaN lands in the dead band — never a confident
-    verdict on either side (the shadow posture's conservative default)."""
-    assert lane.classify(float("nan")) == "insufficient_evidence"
+def test_ar1_a_nan_refuses_rather_than_scoring(lane: ModuleType) -> None:
+    """Ride (b), the ruled resolution: a NaN is malformed judge output, not
+    an unsettled trace — insufficient_evidence is for traces that do not
+    settle a claim; parking a broken answer there would launder an
+    infrastructure failure into a soft verdict row."""
+    with pytest.raises(lane.ClaimLaneError, match="outside"):
+        lane.classify(float("nan"))
+
+
+@pytest.mark.parametrize("bad", [-1.0, -0.01, 1.01, 1.5, float("inf")])
+def test_ar1_an_out_of_domain_score_refuses(lane: ModuleType, bad: float) -> None:
+    """Ride (b): -1 used to buy non_conforming and 1.5 conforming — an
+    out-of-domain score is a judge-contract violation and refuses, never
+    mints a verdict edge (the dead-band clamp was tried and ruled the
+    weaker call)."""
+    with pytest.raises(lane.ClaimLaneError, match=r"outside \[0, 1\]"):
+        lane.classify(bad)
 
 
 # --- AR-2: the manifest --------------------------------------------------
@@ -295,7 +308,9 @@ def test_ar3_an_empty_observation_set_refuses(lane: ModuleType) -> None:
 
 def test_ar3_a_non_string_observation_refuses(lane: ModuleType) -> None:
     with pytest.raises(lane.ClaimLaneError, match="not a string"):
-        lane.validate_trace({"claim_id": "a", "observations": ["ok", 7]})
+        lane.validate_trace(
+            {"claim_id": "a", "observations": ["The scan opened two ports.", 7]}
+        )
 
 
 def test_ar3_a_blank_observation_refuses(lane: ModuleType) -> None:
@@ -330,6 +345,70 @@ def test_ar3_behavior_vocabulary_stays_neutral(lane: ModuleType) -> None:
         "The writer refused the append with a ValueError.",
         "The finalise call failed before any publication.",
         "The scan returned two devices.",
+    ]
+    assert lane.validate_trace({"claim_id": "a", "observations": observations}) == (
+        observations
+    )
+
+
+# --- fold 1, F3: the structural gate (the blocklist is not enough) ----------
+
+#: The refuter's paraphrase classes (13) plus three new ones. The vocabulary
+#: blocklist alone admitted all of these; each must now refuse on STRUCTURE:
+#: no causal, concessive or evaluative clause, and a past-tense event core.
+_STRUCTURAL_BYPASSES = [
+    # the five named in the fold brief
+    "The scan behaved as the README specifies.",
+    "Das Verhalten ist konform.",
+    "行为符合声明。",
+    "The writer c0nforms to the documented limit.",
+    "The observed behavior did not differ from the claim.",
+    # eight more across the same classes
+    "The refusal count matched the documented number, so the sentence holds.",
+    "Everything worked exactly as expected.",
+    "The system therefore satisfies the sentence.",
+    "Because the reservation holds, the claim is intact.",
+    "The behavior is correct in every observed case.",
+    "This is in line with what the guide promises.",
+    "The trace proves that the sentence is true.",
+    "The scan will open all candidate ports.",
+    # three new for this fold
+    "It works.",
+    "The writer c0nf0rms t0 the limit.",
+    "The refused append was refused because its 100 bytes would carry the "
+    "staged total to 1100 bytes, past the 1024-byte reservation; the "
+    "accepted append had stayed within it.",
+]
+
+
+@pytest.mark.parametrize("bad", _STRUCTURAL_BYPASSES)
+def test_f3_structural_bypasses_are_refused(lane: ModuleType, bad: str) -> None:
+    """Every observation must be a past-tense event sentence: the blocklist
+    is accidental-leak protection, this structure check is the gate."""
+    with pytest.raises(lane.ClaimLaneError):
+        lane.validate_trace({"claim_id": "a", "observations": [bad]})
+
+
+def test_f3_a_present_tense_observation_refuses(lane: ModuleType) -> None:
+    with pytest.raises(lane.ClaimLaneError, match="past-tense"):
+        lane.validate_trace(
+            {"claim_id": "a", "observations": ["The scan opens four ports."]}
+        )
+
+
+def test_f3_a_fragment_without_a_verb_refuses(lane: ModuleType) -> None:
+    with pytest.raises(lane.ClaimLaneError, match="past-tense"):
+        lane.validate_trace({"claim_id": "a", "observations": ["Four open ports."]})
+
+
+def test_f3_cold_numbers_stay_admissible(lane: ModuleType) -> None:
+    """The ROW-4 shape: cold-numbers past-tense observations with no causal
+    clause must pass the structural gate."""
+    observations = [
+        "The 100-byte second append arrived with 1000 bytes already staged "
+        "against the 1024-byte reservation.",
+        "The refusal message reported the reservation of 1024 bytes and "
+        "the 1000 bytes already staged.",
     ]
     assert lane.validate_trace({"claim_id": "a", "observations": observations}) == (
         observations

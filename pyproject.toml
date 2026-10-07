@@ -132,7 +132,10 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 [tool.mypy]
 python_version = "3.13"
 strict = true
-files = ["src"]
+# scripts/claim_lane.py rides the gate (fold-1 ride a): the lane's own module
+# was the one typed surface CI never checked. Per-file, not the whole dir —
+# the older scripts predate strict typing and stay outside the gate.
+files = ["src", "scripts/claim_lane.py"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
