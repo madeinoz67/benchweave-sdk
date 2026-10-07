@@ -2,6 +2,106 @@
 
 All notable changes to this project will be documented in this file.
 
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+## [0.9.0] - 2026-10-07
+
+### Bug Fixes
+
+- Default-dialect coercion restored (fold, controller ruling 2)
+- One shared receive-ceiling resolution (fold, ruling 3)
+- Refuse-before-mutation — the backend's validation ladder
+- Close-path receive parity with the serial link
+- Assert_complete grows teeth on the byte-stream host
+- Close-path overlong parity + the quadratic cycle-plan scan
+- The lock-anchor pattern matches the compact JSON the lock ships
+- The regen lands in tests/fixtures/scaffold_expected, and a failed cut leaves no .release residue
+- Refresh the project env before the fixture regen
+- The summary prints the previous tag once (prev_tag already carries the v)
+- Wave 3 — patch content-verify, full pattern census, BaseException rollback
+- The phase-2 patched surfaces check out LF on every OS
+- The phase-2 patch travels by file path, never a text pipe
+- The #407 fold wave — F1-F3 + LOW1-4, all cells green
+- Wave-3 mechanism — closed-session law + from_baud under the lock
+- #385 fold wave 1 — the discriminator counts the live enumeration
+- #385 fold wave 2 — live-presence pick check, guarded connect spans, README wording
+- #385 fold wave 3 — the re-occupied path refuses on serial evidence
+- Complete the #126 union — retire the dangling serial_device_path assignment
+- #385 fold — the store's writes re-read and merge under a per-write lock
+- #385 fold — the connected-era scan reconciles against the mint-time serial
+- #385 fold — bind/unbind demand the per-launch operator action token
+- #385 fold — the LOW/NIT rows (drift-2/3/4, trust-5)
+- The live wire contract + the lane's first finding, folded
+- Fold the refute wave — stale evidence, crash paths, the structural gate, key redaction
+
+### Documentation
+
+- The Mock transports section (offline rehearsal)
+- The cycle rule, replay volume and the timing bound
+- Land the guide's cycle rule and budget bound; STE register pass (gateway #394)
+- The test-surface census (S4) + the walk points at the tool
+- The negotiated-serial-link section (issue #407)
+- Render LinkControlServices (issue #407)
+- The device-addition surface — instance-keyed connection bindings (#385)
+- #385 ladder 6 — the serial serve posture, binding store and pick flow
+- #385 fold — the review addendum and the corrected operator docs
+- Claim-conformance shadow lane — pre-committed design record
+- Hygiene and the README row
+- The v0.9.0 self-registration (selector + versions list)
+
+### Features
+
+- The byte-stream mock transport for binary §8.1 plugins
+- The --with-ui starter moves to the send_receive dialect
+- The minimal-period cycle model + release-once (fold)
+- The release-cut transaction — the bump carries its blast radius
+- Reconfigure_link — the negotiated serial transport capability (issue #407)
+- #385 ladder 1 — the binding store, schema and resolver
+- #385 ladder 2 — discovery rows carry their endpoints
+- #385 ladder 3 — the endpoint resolver owns the path; the seam binds
+- #385 ladder 4 — the bind/unbind routes and the pick-flow UI
+- #385 ladder 5 — serial serve without --device starts binding-pending
+- Manifest, dead band, and the injectable judge client
+- The probes — ten cells emitting neutral trace artifacts
+- The runner — validate, probe, judge, classify, report
+
+### Miscellaneous
+
+- Re-trigger PR checks (opened/reopened events were dropped by Actions)
+- The v0.9.0 cut's blast radius (bump, lock, README, anchor, fixtures, matrix)
+
+### Performance
+
+- O(1) unit-guard closure — the all-response-only residual
+
+### Testing
+
+- RED — issue #394 binary fixture + seam acceptance cells
+- The G cell's deafness control (gateway #394)
+- RED — the fold's cycle-model and release-once probes
+- The G cell's equality + drop e5's wall-clock assert
+- The tamper arm verifies a copy — package tree never mutated (#121)
+- Windows IO-class allowance on the grace-arm settle bound (#123)
+- The census arm pins PATTERNS, not just (path, kind) pairs
+- Governor fold wave — corpus-path loader refusal, matrix-vs-registry census, CI-map row, count + extras nits
+- The #407 link-reconfigure cells, RED first
+- The #407 refute-wave cells, RED first (F1-F3 + LOW1-4)
+- The post-close recheck gets its own pin (wave-2 F2, arm 2)
+- Wave-3 cells — R2 sensitivity, R1/R3/R4 RED (pre-fix)
+- Align the wavegen fixture's declared identity with its unit
+
+### Merge
+
+- Origin/main into feat/issue394-mock-bytestream (gateway #394)
+
+
+### Contributors
+
+- Stephen Eaton (67 commits)
+
+
 ## [0.8.0] - 2026-10-05
 
 ### Bug Fixes
