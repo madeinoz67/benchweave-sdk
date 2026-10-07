@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Analyse — standalone{% endblock %}
+{% block scripts %}<script src="/assets/analyse.js" defer></script>{% endblock %}
+{% block content %}
+<h1>Analyse</h1>
+<p class="hint">Select one or more published waveform captures and bound a time window.
+Statistics follow definition <code>benchweave-analysis/1</code>: host-computed, every
+block states its denominators. Drag a region on a plot to set the window; the numeric
+fields are the no-script path.</p>
+{% if analyse_error %}
+<div class="notice notice-refused" role="alert">
+  <p><strong>Refused</strong> — {{ analyse_error.code }}: {{ analyse_error.message }}</p>
+</div>
+{% endif %}
+<section class="panel">
+  <h2>Captures</h2>
+  <form method="get" action="/analyse" id="analyse-form"
+        hx-post="/analyse/stats" hx-target="#analyse-results" hx-swap="innerHTML"
+        hx-headers='{"X-CSRF-Token": "{{ csrf_token }}"}'>
+    {% if rows %}
+    {% for row in rows %}
+    <label class="bw-pick">
+      <input type="checkbox" name="capture" value="{{ row.capture_id }}"
+             {% if row.capture_id in selected %}checked{% endif %}>
+      <code>{{ row.capture_id }}</code> ({{ row.format }}, started {{ row.started_at }})
+    </label>
+    {% endfor %}
+    {% else %}
+    <p>No published waveform captures under this host's root yet.</p>
+    {% endif %}
+    <label for="a-lo">Window start (s)</label>
+    <input id="a-lo" name="lo" value="{{ lo }}" inputmode="decimal">
+    <label for="a-hi">Window end (s)</label>
+    <input id="a-hi" name="hi" value="{{ hi }}" inputmode="decimal">
+    <button type="submit">Analyse</button>
+  </form>
+</section>
+<div id="analyse-results">
+  {% include "analyse-results.html" %}
+</div>
+{% endblock %}

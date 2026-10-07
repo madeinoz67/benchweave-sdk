@@ -22,7 +22,7 @@ def test_the_inventory_lists_only_host_owned_files() -> None:
     """tokens.css/themes.css/globals.css serve from the installed ui-html
     package (§4.6, D-B3); this tree owns the host shell assets plus the
     plot wrapper's vendored uPlot bytes (I2a §3.3, #310's host-side
-    ruling)."""
+    ruling) and the analyse view's page-scoped brush (I4a)."""
     committed = json.loads((ROOT / "inventory.json").read_text())
     assert {row["path"] for row in committed["assets"]} == {
         "htmx.min.js",
@@ -33,6 +33,7 @@ def test_the_inventory_lists_only_host_owned_files() -> None:
         "uplot-LICENCE",
         "uplot-SOURCES.md",
         "bw-plot.js",
+        "analyse.js",
     }
 
 

@@ -168,6 +168,16 @@ def _tool_handlers(seam: StandaloneSeam) -> dict[str, Callable[..., Any]]:
             {"capture_id": capture_id, "offset": offset, "length": length},
         )
 
+    async def report_export(
+        capture_ids: list[str], lo: float | None = None, hi: float | None = None
+    ) -> Any:
+        arguments: dict[str, Any] = {"capture_ids": capture_ids}
+        if lo is not None:
+            arguments["lo"] = lo
+        if hi is not None:
+            arguments["hi"] = hi
+        return await _dispatch(seam, "report_export", arguments)
+
     handlers: dict[str, Callable[..., Any]] = {
         "host_info": host_info,
         "device_discover": device_discover,
@@ -190,6 +200,7 @@ def _tool_handlers(seam: StandaloneSeam) -> dict[str, Callable[..., Any]]:
         "capture_unpin": capture_unpin,
         "capture_delete": capture_delete,
         "artifact_read": artifact_read,
+        "report_export": report_export,
     }
     missing = set(catalogue.served_operations()) - set(handlers)
     extra = set(handlers) - set(catalogue.served_operations())

@@ -143,6 +143,14 @@ with permanent planted-violation arms R-5c). The generated plugin runtime has **
   `src/benchweave_sdk/standards/` — never against memory of what the standard says —
   `conformance.py`, `validation.py`, `fixtures.py`. *Confident recall of a standard is how
   a wrong rule ships.*
+- **[SRF-4]** (the I4a design record's new row; the maintainer assigns the final ID at
+  landing) A processed value is never rendered without its definition id, its
+  denominators (count, null_count, window) and the `host-computed` label — anchors:
+  `benchweave_sdk_server/analysis.py` (the statistics carry their own denominators),
+  `report.py` (every statistics block's caption), `templates/analyse-results.html`
+  (the view's same caption discipline); pinned by the AR-4(c) arms in
+  `tests/server/test_report.py`. *Without it, a report number means whatever the reader
+  assumes — the evidence-exactness crux of a reporting slice.*
 - **[TWO-1]** **Two-repo discipline**: an SDK change lands as a commit in this repository
   (pushed), then a pointer commit in the main repository; the main repository's
   `make sync-sdk-standards` refuses to run against a submodule HEAD that differs from the

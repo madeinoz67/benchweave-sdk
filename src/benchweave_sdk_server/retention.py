@@ -458,6 +458,19 @@ def record(
 # --- the sweep ------------------------------------------------------------------
 
 
+#: Host-owned persisted surfaces that live beside captures in the root.
+#: The I4a report pair writes ``reports/`` under the capture root (the
+#: design record's placement); the sweep's own rule ("every directory with
+#: no manifest.json is crash residue") would remove it once its mtime aged
+#: past the grace — the record's "capture retention does not govern
+#: reports/" premise is FALSE against the landed sweep without this
+#: reserved-name skip (the build-time re-derivation, disclosed in the I4a
+#: commit). Reports are governed by their own rule: they pin their
+#: sources, and their retention reopens on the first operator complaint
+#: or a disk-growth signal (the design record's named deferral).
+_RESERVED_ROOT_DIRS: frozenset[str] = frozenset({"reports"})
+
+
 def sweep_plan(
     root: Path,
     *,
@@ -466,8 +479,9 @@ def sweep_plan(
     in_flight_ids: Iterable[str] = frozenset(),
 ) -> list[str]:
     """Directories the sweep may remove: every directory in the root with
-    no ``manifest.json``, not any in-flight capture's directory, and an
-    mtime older than ``now - grace_s``.
+    no ``manifest.json``, not any in-flight capture's directory, not a
+    reserved host-owned surface (``reports``), and an mtime older than
+    ``now - grace_s``.
 
     The home of the crash-left residuals: the zombie's re-staged directory
     (a zombie still writing keeps its mtime fresh — the grace protects it),
@@ -499,6 +513,8 @@ def sweep_plan(
             if (entry / "manifest.json").is_file():
                 continue
             if entry.name in armed:
+                continue
+            if entry.name in _RESERVED_ROOT_DIRS:
                 continue
             if entry.stat().st_mtime >= cutoff:
                 continue

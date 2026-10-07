@@ -279,7 +279,20 @@ class McpGuard(BaseHTTPMiddleware):
 
 
 class SecurityHeadersGuard(BaseHTTPMiddleware):
-    """CSP on HTML responses; no CORS header is ever set (NFR-S5)."""
+    """CSP on HTML responses; no CORS header is ever set (NFR-S5).
+
+    The guard's policy is the DEFAULT, and a route that sets its own
+    ``Content-Security-Policy`` is preserved VERBATIM — that mechanism is
+    what the report download relies on (its policy is strictly stronger:
+    ``script-src 'none'; style-src 'unsafe-inline'``). Disclosed boundary
+    (fold wave 1, row 8 — the refuted "may tighten, never loosen" claim,
+    reworded to what the mechanism actually does): the guard does NOT
+    police a route-set policy's directives; a route setting a LOOSER
+    policy would not be refused here. Every route is this repository's
+    own code — directive policing is review's surface — and the report
+    route's stricter policy plus this preservation behaviour are pinned
+    by test.
+    """
 
     async def dispatch(
         self, request: Request, call_next: RequestResponseEndpoint
@@ -287,7 +300,10 @@ class SecurityHeadersGuard(BaseHTTPMiddleware):
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         content_type = response.headers.get("content-type", "")
-        if content_type.startswith("text/html"):
+        if (
+            content_type.startswith("text/html")
+            and "content-security-policy" not in response.headers
+        ):
             response.headers["Content-Security-Policy"] = CSP_POLICY
         return response
 
