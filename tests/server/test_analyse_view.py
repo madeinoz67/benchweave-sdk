@@ -213,3 +213,111 @@ def test_analyse_js_is_served_under_the_inventory(client: TestClient) -> None:
     # conventions: no plugin knowledge, no fetch targets beyond the host.
     assert "_bwPlot" in script
     assert "posToVal" in script
+
+
+# --- fold wave 1: view admission, escaping, and the CSP pin (rows 2, 3, 8) ---------
+
+
+def test_the_view_refuses_ids_outside_the_capture_root(
+    client: TestClient, capture_root: Path
+) -> None:
+    """Row 2a: the Analyse view runs its ids through the SAME admission
+    as the export — a traversal-shaped id that names a manifest outside
+    the capture root refuses, never analyses it (the lane's repro:
+    GET /analyse?capture=../x answered 200 with stats while the export
+    of the same id refused)."""
+    write_capture(capture_root.parent, "evil", values=(1.0, 2.0))
+    page = client.get("/analyse", params={"capture": "../evil"}).text
+    assert 'class="bw-stats"' not in page, "no stats table may render"
+    assert "no published capture" in page
+
+
+def test_unindexed_in_root_dir_refuses_in_view_and_export(
+    client: TestClient, capture_root: Path
+) -> None:
+    """Row 2b: a capture directory written to disk AFTER the library
+    constructed its index analyses in neither surface — the view and the
+    export share one admission gate."""
+    write_capture(capture_root, "fx-before", values=(1.0,))
+    client.get("/analyse")  # constructs the library over the current root
+    write_capture(capture_root, "fx-after", values=(2.0,))  # unindexed
+    page = client.get("/analyse", params={"capture": "fx-after"}).text
+    assert 'class="bw-stats"' not in page, "no stats table may render"
+    assert "no published capture" in page
+    token = csrf_of(client)
+    export = client.post(
+        "/analyse/export",
+        data={"capture": "fx-after", "lo": "", "hi": ""},
+        headers={"X-CSRF-Token": token},
+    )
+    assert export.status_code == 404
+    assert "no published capture: fx-after" in export.text
+
+
+def test_the_figure_markup_escapes_the_capture_id(
+    client: TestClient, capture_root: Path
+) -> None:
+    """Row 3: the figure's attribute slots escape the capture id exactly
+    like the title two lines up — an event directory whose name carries
+    attribute-breakout bytes (hand-mangled on disk; the writer's own ids
+    are allowlisted) renders defanged."""
+    hostile = 'fx-break" onmouseover="alert(1)'
+    write_capture(capture_root, hostile, values=(1.0, 2.0))
+    page = client.get("/analyse", params={"capture": hostile}).text
+    assert 'onmouseover="alert(1)' not in page
+    assert "&#34;" in page or "&quot;" in page
+
+
+def test_figure_json_block_never_carries_a_raw_script_closer(
+    client: TestClient, capture_root: Path
+) -> None:
+    """Row 3's element-breakout class, disposition: STRUCTURALLY
+    UNREACHABLE, asserted as such. A ``</script>`` closer always contains
+    a slash, and a slash can never appear in a capture id that maps to a
+    real event directory (the id IS one path segment) — and a form-carried
+    id with a slash refuses at load before any render. The arm pins the
+    refusal so the unreachability is enforced, not assumed."""
+    hostile = "fx-</script>-x"
+    page = client.get("/analyse", params={"capture": hostile}).text
+    assert 'class="bw-stats"' not in page, "no stats table may render"
+    assert "no published capture" in page
+
+
+def test_guard_preserves_a_route_set_csp_verbatim(plugin, capture_root: Path) -> None:
+    """Row 8's pin (the reworded claim): the guard preserves a route-set
+    CSP VERBATIM and does not police its directives — a route setting a
+    looser CSP than the default survives (disclosed residual: every route
+    is this repository's own code; directive policing is review's job,
+    not the guard's — and the report route's stricter policy is pinned in
+    test_export_redirects_to_the_download). This test pins the actual
+    mechanism the report route relies on, replacing the refuted
+    'may tighten, never loosen' claim."""
+    from fastapi import FastAPI
+    from fastapi.responses import HTMLResponse
+
+    from benchweave_sdk_server.security import GuardPolicy, install_guards
+
+    app = FastAPI()
+
+    @app.get("/route-csp", response_class=HTMLResponse)
+    async def route_csp() -> HTMLResponse:
+        response = HTMLResponse("<html></html>")
+        response.headers["Content-Security-Policy"] = (
+            "default-src *; script-src *; style-src *"
+        )
+        return response
+
+    install_guards(
+        app,
+        GuardPolicy.complete(
+            bound_host=TEST_HOST,
+            bound_port=TEST_PORT,
+            bearer_token="t",
+            csrf_token="t",
+        ),
+    )
+    with TestClient(app, base_url=f"http://{TEST_HOST}:{TEST_PORT}") as c:
+        preserved = c.get("/route-csp")
+        assert preserved.headers["content-security-policy"] == (
+            "default-src *; script-src *; style-src *"
+        )

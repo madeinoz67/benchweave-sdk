@@ -30,6 +30,7 @@ from benchweave_sdk_server.analysis import (
     region_stats,
     scan_series,
     series_samples,
+    windowed_points,
 )
 
 _INTERVAL = 0.001
@@ -331,3 +332,42 @@ def test_missing_metadata_reads_as_empty_not_a_refusal(tmp_path: Path) -> None:
     (event / "metadata.json").unlink()
     source = load_series_set(tmp_path, ["fx-nometa"])[0]
     assert source.metadata == {}
+
+
+# --- fold wave 1: the bounded, verified windowing pass (rows 4 and 5) --------------
+
+
+def test_windowed_points_verifies_the_digest_on_its_own_pass(tmp_path: Path) -> None:
+    """Row 5: the plot points come from a SECOND read of the primary —
+    that pass must verify the digest itself. A primary mutated between
+    the statistics pass and the points pass refuses here instead of
+    feeding unverified bytes to the plot."""
+    values = (1.0, 2.0, 3.0, 4.0)
+    event = write_capture(tmp_path, "fx-two-pass", values=values)
+    source = load_series_set(tmp_path, ["fx-two-pass"])[0]
+    stats, digest = scan_series(source)
+    assert digest == source.manifest_sha256
+    assert stats.count == 4
+    (event / "fx-two-pass.f64").write_bytes(
+        b"".join(struct.pack("<d", value) for value in (1.0, 2.0, 3.0, 9.0))
+    )
+    with pytest.raises(ValueError, match="standalone_report_primary_mismatch"):
+        windowed_points(source, lo=None, hi=None, limit=100)
+
+
+def test_windowed_points_enforces_the_limit_incrementally(tmp_path: Path) -> None:
+    """Row 4: the ceiling binds MEMORY, not just the response — the
+    window list refuses the moment it would exceed the limit, never after
+    materialising the whole window."""
+    write_capture(tmp_path, "fx-limit", values=tuple(float(i) for i in range(1000)))
+    source = load_series_set(tmp_path, ["fx-limit"])[0]
+    with pytest.raises(ValueError, match="standalone_report_window_too_large"):
+        windowed_points(source, lo=None, hi=None, limit=100)
+    # At or below the limit the pass is exact and window-filtering holds.
+    bounded = windowed_points(source, lo=1.0, hi=3.0, limit=1000)
+    assert bounded == [
+        (t, value) for t, value in series_samples(source) if 1.0 <= t <= 3.0
+    ]
+    assert windowed_points(source, lo=None, hi=None, limit=1000) == list(
+        series_samples(source)
+    )

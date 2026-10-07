@@ -277,3 +277,56 @@ def scan_series(
             f"{source.manifest_sha256}; the capture changed after publication"
         )
     return stats, digest
+
+
+def windowed_points(
+    source: SeriesSource,
+    *,
+    lo: float | None,
+    hi: float | None,
+    limit: int,
+) -> list[tuple[float, float]]:
+    """The windowed plot points in ONE verified, bounded pass (fold wave 1,
+    rows 4 and 5).
+
+    Verified: the chunks are hashed as they are read and the recomputed
+    digest must still match the manifest — this is the SECOND read of the
+    primary (the statistics pass was the first), and a primary mutated
+    between the passes refuses here rather than feeding unverified bytes
+    to the plot. Bounded: the window list refuses the moment it would
+    exceed ``limit`` — the ceiling binds the ALLOCATION, never just the
+    response after a full materialisation."""
+    if limit < 1:
+        raise ValueError("the windowed-point limit must be positive")
+    hasher = hashlib.sha256()
+    points: list[tuple[float, float]] = []
+    interval = source.sample_interval_s
+    with source.primary.open("rb") as stream:
+        index = 0
+        while True:
+            chunk = stream.read(_CHUNK_SAMPLES * 8)
+            if not chunk:
+                break
+            hasher.update(chunk)
+            for value in struct.unpack_from(f"<{len(chunk) // 8}d", chunk):
+                t = index * interval
+                index += 1
+                if lo is not None and t < lo:
+                    continue
+                if hi is not None and t > hi:
+                    continue
+                points.append((t, value))
+                if len(points) > limit:
+                    raise AnalysisRefusal(
+                        "standalone_report_window_too_large: "
+                        f"{source.capture_id} window exceeds the {limit}-sample "
+                        "plot ceiling (narrow the window)"
+                    )
+    digest = hasher.hexdigest()
+    if digest != source.manifest_sha256:
+        raise AnalysisRefusal(
+            f"standalone_report_primary_mismatch: {source.capture_id} primary "
+            f"digest {digest} does not match its manifest "
+            f"{source.manifest_sha256}; the capture changed after publication"
+        )
+    return points

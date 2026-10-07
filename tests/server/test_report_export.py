@@ -252,6 +252,51 @@ def test_mcp_registers_the_report_tool(seam: StandaloneSeam) -> None:
     assert tool_name("report_export") == "bws_v1_report_export"
 
 
+# --- fold wave 1: bounded windows and typed refusals (rows 4 and 7) ----------------
+
+
+def test_window_ceiling_binds_memory_not_just_the_response(
+    seam: StandaloneSeam,
+    capture_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Row 4: the plot ceiling must bind the ALLOCATION. An over-ceiling
+    window refuses payload_too_large without ever materialising the full
+    point list (peak stays near the chunk buffers, far under the ~20 MB a
+    materialised 300k-tuple window would cost)."""
+    import tracemalloc
+
+    from benchweave_sdk_server import report as report_module
+
+    write_capture(
+        capture_root, "fx-huge", values=tuple(float(i % 101) for i in range(300_000))
+    )
+    monkeypatch.setattr(report_module, "REPORT_PLOT_SAMPLE_CEILING", 100)
+    tracemalloc.start()
+    try:
+        with pytest.raises(SeamError) as caught:
+            call(seam, "report_export", {"capture_ids": ["fx-huge"]})
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert caught.value.code == "payload_too_large"
+    assert "standalone_report_window_too_large" in caught.value.message
+    assert peak < 2_000_000, f"the window was materialised first (peak {peak} bytes)"
+
+
+def test_a_file_named_reports_refuses_typed(
+    seam: StandaloneSeam, capture_root: Path
+) -> None:
+    """Row 7: a FILE named ``reports`` in the capture root is a typed
+    conflict, never an unhandled FileExistsError (a 500)."""
+    write_capture(capture_root, "fx-ok", values=(1.0, 2.0))
+    (capture_root / "reports").write_text("not a directory")
+    with pytest.raises(SeamError) as caught:
+        call(seam, "report_export", {"capture_ids": ["fx-ok"]})
+    assert caught.value.code == "conflict"
+    assert "standalone_report_reports_blocked" in caught.value.message
+
+
 # --- the retention sweep's reserved directory (build-time re-derivation) ----------
 
 

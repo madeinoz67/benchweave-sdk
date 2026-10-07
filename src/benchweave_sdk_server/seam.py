@@ -2395,8 +2395,8 @@ class StandaloneSeam:
         rule). The handler performs no ``await`` between the stale-row
         check and the write, so nothing interleaves with the pin.
         """
-        from .analysis import load_series_set, scan_series, series_samples
-        from .report import ReportEntry, build_report
+        from .analysis import load_series_set, scan_series, windowed_points
+        from .report import REPORT_PLOT_SAMPLE_CEILING, ReportEntry, build_report
 
         capture_ids = [str(entry) for entry in arguments["capture_ids"]]
         lo = arguments.get("lo")
@@ -2411,16 +2411,27 @@ class StandaloneSeam:
         root = library.root
         for capture_id in capture_ids:
             self._stale_row_refusal(library, capture_id, correlation)
+        reports = root / "reports"
+        if reports.exists() and not reports.is_dir():
+            # Fold row 7: a FILE named ``reports`` is a typed conflict,
+            # never an unhandled FileExistsError out of mkdir.
+            raise self._fail(
+                "conflict",
+                f"standalone_report_reports_blocked: {reports} exists and is "
+                "not a directory; the report store cannot be created",
+                correlation,
+            )
         try:
             sources = load_series_set(root, capture_ids)
             entries: list[ReportEntry] = []
             for source in sources:
                 stats, _ = scan_series(source, lo=lo, hi=hi)
-                points = [
-                    (t, value)
-                    for t, value in series_samples(source)
-                    if (lo is None or t >= lo) and (hi is None or t <= hi)
-                ]
+                points = windowed_points(
+                    source,
+                    lo=lo,
+                    hi=hi,
+                    limit=REPORT_PLOT_SAMPLE_CEILING,
+                )
                 entries.append(
                     ReportEntry(source=source, stats=stats, points=points)
                 )
@@ -2511,27 +2522,28 @@ class StandaloneSeam:
         functions (one computation, the fork's duplicated-maths defect
         avoided). Raises ``SeamError`` with the ``standalone_report_*``
         family under the same code map as the export path.
+
+        Fold row 2: the view's ids run through the SAME admission as the
+        export (``_stale_row_refusal`` — the safe-segment check plus the
+        index row) before anything loads, so a traversal-shaped id or an
+        unindexed directory refuses identically on both surfaces.
         """
-        from .analysis import load_series_set, scan_series, series_samples
+        from .analysis import load_series_set, scan_series, windowed_points
         from .report import REPORT_PLOT_SAMPLE_CEILING
 
         library = self._library(correlation)
+        for capture_id in capture_ids:
+            self._stale_row_refusal(library, capture_id, correlation)
         try:
             entries: list[dict[str, Any]] = []
             for source in load_series_set(library.root, capture_ids):
                 stats, _ = scan_series(source, lo=lo, hi=hi)
-                points = [
-                    (t, value)
-                    for t, value in series_samples(source)
-                    if (lo is None or t >= lo) and (hi is None or t <= hi)
-                ]
-                if len(points) > REPORT_PLOT_SAMPLE_CEILING:
-                    raise ValueError(
-                        "standalone_report_window_too_large: "
-                        f"{source.capture_id} window holds {len(points)} samples "
-                        f"for plotting; the plot ceiling is "
-                        f"{REPORT_PLOT_SAMPLE_CEILING} (narrow the window)"
-                    )
+                points = windowed_points(
+                    source,
+                    lo=lo,
+                    hi=hi,
+                    limit=REPORT_PLOT_SAMPLE_CEILING,
+                )
                 entries.append(
                     {
                         "capture_id": source.capture_id,

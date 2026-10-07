@@ -205,9 +205,13 @@ def _figure_entry(entry: dict[str, Any]) -> dict[str, Any]:
         {"channels": [{"id": capture_id, "x": x_values, "y": y_values}], "x_unit": "s"}
     )
     title = str(escape(f"{capture_id} ({unit})"))
+    # Fold row 3: EVERY attribute slot escapes the capture id — the slug
+    # gets the same treatment as the title (a hand-mangled event name
+    # cannot break out of the attribute).
+    slug = str(escape(f"analyse-{capture_id}"))
     figure = Markup(
         f'<div class="bw-plot-host" data-bw-plot-host '
-        f'data-bw-plot-slug="analyse-{capture_id}">\n'
+        f'data-bw-plot-slug="{slug}">\n'
         f'<figure class="bw-plot" role="img" aria-label="{title}">\n'
         f'  <div class="bw-plot__canvas" data-bw-axes="s;{unit}" '
         f'data-bw-plot-title="{title}"></div>\n'

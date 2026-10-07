@@ -16,6 +16,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import math
 import re
 import struct
 from pathlib import Path
@@ -319,6 +320,42 @@ def test_plot_points_ceiling_refuses(
     monkeypatch.setattr(report_module, "REPORT_PLOT_SAMPLE_CEILING", 10)
     with pytest.raises(ValueError, match="standalone_report_window_too_large"):
         _render(tmp_path, ["fx-huge"])
+
+
+# --- fold wave 1: plot scales and null rendering (rows 1 and 6) --------------------
+
+
+def test_same_unit_series_share_a_union_scale(tmp_path: Path) -> None:
+    """Row 1: the per-unit y scale is the UNION of that unit's series
+    extents — a same-unit series with a different extent must not vanish
+    outside the viewBox (the last-writer-wins defect). Every path
+    coordinate lands inside the plot box."""
+    write_capture(tmp_path, "fx-wide", values=tuple(float(i) for i in range(1000)))
+    write_capture(tmp_path, "fx-narrow", values=(0.0, 0.5, 1.0))
+    document = _render(tmp_path, ["fx-wide", "fx-narrow"])
+    paths = re.findall(r'<path d="([^"]+)"', document)
+    assert len(paths) == 2
+    for path in paths:
+        coordinates = re.findall(r"([0-9.]+),(-?[0-9.]+)", path)
+        assert coordinates, "a drawn series must have path coordinates"
+        for _, y_text in coordinates:
+            y = float(y_text)
+            assert 20 <= y <= 370, f"path y {y} outside the plot box"
+
+
+def test_all_null_window_renders_no_nan_literals(tmp_path: Path) -> None:
+    """Row 6: an all-NaN window (every sample null) renders an honest
+    absence — no ``nan`` coordinate literals in the SVG (an invalid path
+    silently undrawn), the document still renders, and the stats block
+    carries the null denominator."""
+    write_capture(tmp_path, "fx-allnull", values=(math.nan,) * 64)
+    document = _render(tmp_path, ["fx-allnull"])
+    assert not re.search(r",[+-]?nan\b", document, re.IGNORECASE), (
+        "NaN coordinate literals must not reach the SVG"
+    )
+    assert 'role="img"' in document
+    assert "null_count 64" in document
+    assert "count 0" in document
 
 
 # --- AR-6: genericity --------------------------------------------------------------

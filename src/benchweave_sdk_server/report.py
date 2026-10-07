@@ -293,18 +293,33 @@ def _svg_plot(
     def x_of(t: float) -> float:
         return _PLOT_LEFT + (t / x_max) * plot_width
 
-    # Per-unit y scales over that unit's own extent (the decimated points
-    # carry each column's min and max, so the extent is the drawn extent).
-    scales: dict[str, tuple[float, float]] = {}
+    # Per-unit y scales over the UNION of that unit's series extents (fold
+    # row 1: last-writer-wins let a same-unit series with a different
+    # extent escape the viewBox — every series of a unit scales against
+    # one shared axis). Null (NaN) samples are not observations of a
+    # numeric axis and never enter the extent (fold row 6: an all-null
+    # series must not produce a NaN scale).
+    extents: dict[str, tuple[float, float]] = {}
     for series_ in series:
-        values = [value for _, value in series_["points"]]
+        values = [
+            value
+            for _, value in series_["points"]
+            if not math.isnan(value)
+        ]
         if not values:
             continue
         low, high = min(values), max(values)
+        if series_["unit"] in extents:
+            previous_low, previous_high = extents[series_["unit"]]
+            low = min(low, previous_low)
+            high = max(high, previous_high)
+        extents[series_["unit"]] = (low, high)
+    scales: dict[str, tuple[float, float]] = {}
+    for unit, (low, high) in extents.items():
         if low == high:
             low, high = low - 1.0, high + 1.0
         margin = (high - low) * 0.05
-        scales[series_["unit"]] = (low - margin, high + margin)
+        scales[unit] = (low - margin, high + margin)
 
     def y_of(unit: str, value: float) -> float:
         low, high = scales.get(unit, (0.0, 1.0))
@@ -344,11 +359,19 @@ def _svg_plot(
             f'height="{plot_height}" fill="#4682b4" opacity="0.08"/>'
         )
     for series_ in series:
-        if not series_["points"]:
+        # Null samples are gaps, never coordinates (fold row 6: a NaN
+        # coordinate would render an invalid, silently-undrawn path).
+        coordinates = [
+            (t, value)
+            for t, value in series_["points"]
+            if not math.isnan(value)
+        ]
+        if not coordinates:
             continue
         path = " ".join(
-            f"{'M' if index == 0 else 'L'}{x_of(t):.2f},{y_of(series_['unit'], value):.2f}"
-            for index, (t, value) in enumerate(series_["points"])
+            f"{'M' if index == 0 else 'L'}{x_of(t):.2f},"
+            f"{y_of(series_['unit'], value):.2f}"
+            for index, (t, value) in enumerate(coordinates)
         )
         dash = (
             f' stroke-dasharray="{series_["form"]}"' if series_["form"] else ""
