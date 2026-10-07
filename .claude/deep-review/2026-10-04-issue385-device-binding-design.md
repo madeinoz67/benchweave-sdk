@@ -15,6 +15,59 @@ Design-lane note: this is a read-only design pass. The record is NOT
 committed from here; the orchestrator lands it as the slice branch's first
 commit, byte-for-byte (the I3 record's own disclosed pattern).
 
+## Addendum (2026-10-07): the review fold
+
+A four-dimension adversarial review of the merged lineage reproduced its
+confirmed findings end-to-end (probes under the review lane). This fold
+lands every confirmed row; the record's bytes above are frozen, and this
+addendum corrects the claims that did not survive review:
+
+- **§1.5's trust claim was FALSE as shipped and is true now (trust-1,
+  MEDIUM).** "The UI-only, CSRF'd route keeps the act with the human": the
+  CSRF token renders into UNAUTHENTICATED HTML, so any loopback process
+  scraped it in one GET and moved or removed the binding in one POST, and
+  the bearer-only REST surface then connected on the attacker-chosen port.
+  bind/unbind now demand a credential a page GET can never yield — the
+  per-launch OPERATOR ACTION TOKEN, minted at serve start and delivered
+  out-of-band (the serve banner and `operator-action-token.json` under the
+  capture-root family); the launch URL carries it as a query so the armed
+  page view plants it into the forms' headers, and the routes fail closed
+  without it (including on an unminted token). Route-only intact: still no
+  catalogue/REST/MCP surface.
+- **§1.2's connected-era short-circuit row laundered a re-occupied port
+  (trust-2, MEDIUM).** The row took identity from the live session but its
+  USB serial from the FRESH enumeration — a chimera (old identity, new
+  serial) that confirmed a bind keyed on the re-occupant's serial, which
+  fold wave 3's bind-time check cannot catch (both of its sides read the
+  same fresh enumeration). The session factory now records the connected
+  unit's USB serial at MINT TIME, and the connected-era row reconciles
+  against it: mismatched, the row is not a confirmed candidate.
+- **§1.1's "writes are atomic" was crash-safety, not concurrency (trust-3
+  + drift-1, MEDIUM, found independently by two dimensions).** Two
+  processes sharing one document silently erased each other's rows
+  (last-writer-wins per DOCUMENT — each opener's in-memory rows were its
+  only truth). Writes now re-read and MERGE foreign rows under a per-write
+  exclusive lockfile (the library.lock mechanics, scoped to one write):
+  last-writer-wins per KEY, never per document.
+- **trust-5 (LOW)**: connect-time establishment now compares the identify
+  answer's manufacturer/model against the descriptor's DECLARED identity
+  and refuses typed (`standalone_connect_identity_mismatch:`) — discovery
+  already applied this comparison to every candidate it confirms;
+  establishment was the one path that skipped it. Only declared conjuncts
+  constrain.
+- **drift-2/3/4 (LOW/NIT)**: `--bindings` refuses on non-serial transports
+  (the `--device` message family); `events_get`'s catalogue parenthetical
+  names every publish-site family again (endpoint bind/unbind and the
+  capture lifecycle joined the enumeration); the module's two
+  path-resolution refusals carry the `standalone_binding_path:` prefix.
+
+Named deferrals of this fold: the resolve-time descriptor USB-hint
+question (a foreign-USB-CLASS port answering the RIGHT identity resolves
+through an operator-planted row — the row is operator state and the hint
+is a discovery filter, so the fork is the owner's, not this fold's), and
+alias-spelling matching for the connected-era reconciliation (`cu.` vs
+`tty.` — the no-re-probe clause's existing follow-up owns it).
+
 ## 0. Verification of premises (done before designing)
 
 Every claim below was read in the merged-I3a tree, not assumed:
