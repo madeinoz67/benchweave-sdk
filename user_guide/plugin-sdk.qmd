@@ -422,6 +422,39 @@ A switch is one bounded attempt:
 The host never retries a failed switch. A failed reopen leaves no serving link and raises `ConnectionError`. The adapter may then request the boot baud as its own explicit step. That is the adapter's move.
 
 `host_info` and `device_get` carry a `link` block on the serial transport: the current baud, the boot baud, and whether any switch is negotiable. The block is `null` on other transports and before a connection. The event stream carries the `link` family. Each event says what happened (`reconfigured`, `reconfigure_refused` or `reconfigure_failed`), both baud rates, and the operation id.
+### Capture retention and the library page (standalone host)
+
+The standalone host adds retention, a storage reserve and a library page over one capture root. A retention rules document states what the host keeps and what it removes. The document is a JSON file with an explicit path. Its top-level keys are `interval_s`, `orphan_grace_s`, `reserve_bytes` and `rules`, and every key is optional. Each rule has a unique, non-empty `id`. A rule can carry the match keys `source` (`ui`, `rest` or `mcp`) and `project` (an exact string). An absent match key matches anything.
+
+Each rule needs at least one limit. `max_age_d` removes captures strictly older than the given number of days. `max_count` keeps only the newest N captures. `max_bytes` keeps only the newest prefix that fits. Without a document, the plan is empty and only the orphan sweep removes anything. The engine ships no default rules. A default arrives as a document, not as host constants.
+
+```json
+{
+  "interval_s": 86400,
+  "orphan_grace_s": 900,
+  "reserve_bytes": 2000000000,
+  "rules": [
+    {"id": "ui-age-30d", "source": "ui", "max_age_d": 30},
+    {"id": "rest-keep-200", "source": "rest", "max_count": 200}
+  ]
+}
+```
+
+The CLI command `benchweave-sdk-server prune` applies a document from outside the host. The command is root-scoped; it takes no project argument. `--capture-root <path>` names the capture root. `--retention-rules <path>` names the rules document. `--dry-run` lists each removal and its rule, and changes nothing. `--json` emits `{"removals": [...], "summary": {count, bytes}}`.
+
+```sh
+benchweave-sdk-server prune --capture-root /path/to/captures --retention-rules rules.json --dry-run
+```
+
+The prune removes exactly the plan. Each removal deletes the capture directory and its index row together. The prune also runs the orphan sweep. The sweep removes crash-left directories, which have no `manifest.json`, past the grace window of 900 s by default. A malformed rules document refuses with the `standalone_retention_rules_invalid:` prefix and exit 2. The library's one-writer lock refuses a prune while a host serves the same root: `standalone_library_locked`, exit 2. Stop the host, or use the in-host schedule.
+
+`serve --retention-rules <path>` runs the same evaluator inside the host. The schedule runs only when the document names at least one rule. One task evaluates the rules every `interval_s`, 86400 s by default, over the host's own capture root. The armed capture is excluded. Every run publishes one `retention_pruned` event. For every `max_bytes` rule whose usage crosses 0.8 rising, the host publishes a `retention_quota` event. A rule already above the threshold fires once, and a rule that drops below and crosses again fires again.
+
+`reserve_bytes` in the same document arms the storage guard. There is no default reserve; each bench commissions its own number. At capture start, the host refuses `unavailable` with the `standalone_storage_reserve:` prefix when the worst case cannot be cleared against the reserve. A duration-bound capture with no byte reservation refuses the same way; declare `max_bytes` for it. During a capture, the host samples free space about every second. On a breach, the host stops the capture and publishes it with `stop_reason: "reserve"` and the real staged byte count. Nothing is discarded silently.
+
+Every removal is appended to `retention.log`, a JSONL file in the capture root. Each row carries the capture id, the manifest's own sha256, the rule, the time and the trigger. The trigger names who removed the capture: the schedule, the CLI, the sweep or a delete. A swept orphan is logged under the rule `orphan-sweep` with a `null` sha256. On exit, through an interrupt or a terminal close, a capture in flight is settled honestly. It is published with its real bytes, or aborted with nothing half-written. No half-written primary files remain.
+
+The host serves the capture library at `GET /captures`. The table shows the capture id, started, format, bytes, source, project, tags, `pinned`, stop reason and the next retention effect. The next-effect column comes from the same evaluator the prune runs: `prunable now by <rule>`, `<rule> at <date>`, `eligible under <rule>` or `kept`. Filters cover project, source, tag, device and free text over id and notes; the device filter reads each capture's metadata file. Pin and unpin are form buttons, and a pinned capture refuses deletion until you unpin it. Delete is a two-step confirmation page that names the capture id, its size and its project. The confirmed delete dispatches through the operations seam and writes its own `retention.log` row with trigger `delete-ui`.
 
 ## 4. Review compatibility and deployment
 

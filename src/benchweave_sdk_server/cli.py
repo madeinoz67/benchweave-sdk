@@ -118,6 +118,7 @@ def _build_seam(
     capture_root: Any = None,
     bindings: Path | None = None,
     serial_hooks: Any = None,
+    retention: Any | None = None,
 ) -> tuple[StandaloneSeam, ScenarioSelection | None]:
     """Compose the seam over one transport (§4.1's composition step).
 
@@ -167,6 +168,7 @@ def _build_seam(
                 unattended=unattended,
                 reload_wrapper=wrap_scenario_plugin,
                 capture_root=capture_root,
+                retention=retention,
             ),
             selection,
         )
@@ -225,6 +227,7 @@ def _build_seam(
                 serial_endpoint=endpoint,
                 bindings=store,
                 capture_root=capture_root,
+                retention=retention,
             ),
             None,
         )
@@ -251,6 +254,7 @@ def _build_seam(
             transport_kind=transport,
             unattended=unattended,
             capture_root=capture_root,
+            retention=retention,
         ),
         None,
     )
@@ -322,6 +326,14 @@ def cli() -> None:
     help="Waive the reload confirmation for adapter-code changes while a "
     "device is connected (valid only with --authoring; Q11 option 2).",
 )
+@click.option(
+    "--retention-rules",
+    type=click.Path(path_type=Path, exists=True),
+    default=None,
+    help="The retention rules document (JSON): prune rules, the sweep's "
+    "orphan grace, the in-host schedule interval and the storage reserve. "
+    "Without it the host keeps everything and the storage guard is inert.",
+)
 def serve(
     project: Path,
     host: str,
@@ -335,12 +347,24 @@ def serve(
     scenario: str | None,
     authoring: bool,
     unattended: bool,
+    retention_rules: Path | None,
 ) -> None:
     """Serve UI, REST and MCP over one plugin project."""
     if unattended and not authoring:
         raise click.UsageError(
             "--unattended requires --authoring (Q11: it waives an operator gate)"
         )
+    retention: Any | None = None
+    if retention_rules is not None:
+        from .retention import load_config
+
+        try:
+            retention = load_config(retention_rules)
+        except ValueError as exc:
+            # Refuse before any work: a malformed rules document must not
+            # reach a half-armed host (STD-4's prefix carries the reason).
+            click.echo(str(exc), err=True)
+            raise SystemExit(2) from exc
     try:
         # All three ride the [server] extra: web and uvicorn directly, and
         # security through starlette's middleware base -- the module-level
@@ -373,6 +397,7 @@ def serve(
         device=device,
         bindings=bindings,
         capture_root=capture_root,
+        retention=retention,
     )
     if seam.session.plugin.load_diagnostic is not None:
         # §4.5: the degraded load BINDS (exit 0) with its diagnostic on
@@ -438,6 +463,8 @@ def serve(
 )
 def mcp(project: Path, authoring: bool, unattended: bool) -> None:
     """Run the MCP server over stdio (no HTTP listener, no HTTP guards)."""
+    import asyncio
+
     if unattended and not authoring:
         raise click.UsageError(
             "--unattended requires --authoring (Q11: it waives an operator gate)"
@@ -449,7 +476,164 @@ def mcp(project: Path, authoring: bool, unattended: bool) -> None:
 
     seam, _ = _build_seam(project, unattended=unattended)
     server = build_mcp(seam, authoring=authoring)
-    server.run()
+    try:
+        server.run()
+    finally:
+        # NFR-O1's close-down runs on EVERY exit from run() — the clean
+        # return AND the interrupt paths (SIGINT raises KeyboardInterrupt
+        # out of run(), which click surfaces as Abort; without this
+        # finally the settle and the root lock's release never execute
+        # and the guide's "through an interrupt ... settled honestly"
+        # claim is false). The settle needs its own FRESH loop here:
+        # server.run() owned — and closed — its event loop, so a watcher
+        # that died with it is aborted directly, nothing half-published.
+        # The interrupt itself propagates after this block.
+        asyncio.run(seam.settle_capture_for_shutdown())
+        seam.close()
+
+
+@cli.command()
+@click.option(
+    "--capture-root",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Directory captures publish under (default: the same resolution the "
+    "host uses — BENCHWEAVE_CAPTURE_DIR, then captures/ under the working "
+    "directory). One library per root.",
+)
+@click.option(
+    "--retention-rules",
+    type=click.Path(path_type=Path, exists=True),
+    default=None,
+    help="The retention rules document (JSON). Without it the plan is empty "
+    "(keep-everything) and only the orphan sweep can remove anything.",
+)
+@click.option("--dry-run", is_flag=True, help="List the removals and their rule; change nothing.")
+@click.option("--json", "as_json", is_flag=True, help="Machine-comparable JSON output.")
+def prune(
+    capture_root: Path | None,
+    retention_rules: Path | None,
+    dry_run: bool,
+    as_json: bool,
+) -> None:
+    """Prune captures under a capture root per the retention rules (SW-57).
+
+    Root-scoped — no plugin project argument. The library's one-writer lock
+    IS the prune-vs-host exclusion: a live host holding the root refuses
+    this command (stop the host or use the in-host schedule). Every removal
+    deletes the directory and its index row together and appends a row to
+    the root's append-only retention.log; the sweep removes crash-left
+    orphan directories past their grace window.
+    """
+    import shutil
+    import time
+    from datetime import UTC, datetime
+
+    from benchweave_sdk.capture import capture_root as resolve_capture_root
+
+    from .library import CaptureLibrary
+    from .retention import LOG_NAME, load_config, plan, record, sweep_plan
+
+    if retention_rules is not None:
+        try:
+            config = load_config(retention_rules)
+        except ValueError as exc:
+            click.echo(str(exc), err=True)
+            raise SystemExit(2) from exc
+    else:
+        config = None
+    rules = config.rules if config is not None else ()
+    grace_s = config.orphan_grace_s if config is not None else 900.0
+    try:
+        root = resolve_capture_root(capture_root)
+    except ValueError as exc:
+        click.echo(f"standalone_capture_root_refused: {exc}", err=True)
+        raise SystemExit(2) from exc
+    try:
+        library = CaptureLibrary(root)
+    except RuntimeError as exc:
+        # standalone_library_locked: one host process per capture root.
+        click.echo(str(exc), err=True)
+        raise SystemExit(2) from exc
+    try:
+        rows = library.list_captures()
+        by_id = {row["capture_id"]: row for row in rows}
+        removals = plan(rules, rows, now=datetime.now(UTC))
+        swept = sweep_plan(root, now=time.time(), grace_s=grace_s)
+    finally:
+        library.close()
+
+    def _dir_size(path: Path) -> int:
+        return sum(entry.stat().st_size for entry in path.rglob("*") if entry.is_file())
+
+    plan_rows = [
+        {"capture_id": m.capture_id, "rule": m.rule_id, "bytes": m.bytes}
+        for m in removals
+    ]
+    sweep_rows = [
+        {"capture_id": name, "rule": "orphan-sweep", "bytes": _dir_size(root / name)}
+        for name in swept
+    ]
+    removal_payload: list[dict[str, Any]] = [*plan_rows, *sweep_rows]
+    summary = {
+        "count": len(removal_payload),
+        "bytes": sum(row["bytes"] for row in removal_payload),
+    }
+    if dry_run:
+        if as_json:
+            click.echo(json.dumps({"removals": removal_payload, "summary": summary}))
+        else:
+            for row in removal_payload:
+                click.echo(
+                    f"would remove {row['capture_id']} "
+                    f"({row['bytes']} bytes, rule {row['rule']})"
+                )
+            click.echo(
+                f"{summary['count']} removal(s), {summary['bytes']} bytes total"
+            )
+        return
+    if as_json:
+        click.echo(json.dumps({"removals": removal_payload, "summary": summary}))
+    # The prune removes exactly the plan (directory + index row together)
+    # and also runs the sweep. Each removal records ITS OWN log row
+    # immediately after the removal (window = one capture — the fold
+    # wave's row 4: the log is the artifact that survives index rebuilds,
+    # so a crash or a record failure mid-run must not lose every row).
+    library = CaptureLibrary(root)
+    try:
+        for removal in removals:
+            library.remove(removal.capture_id)
+            record(
+                root,
+                [
+                    {
+                        "capture_id": removal.capture_id,
+                        "sha256": by_id[removal.capture_id]["sha256"],
+                        "rule": removal.rule_id,
+                    }
+                ],
+                trigger="cli",
+            )
+    finally:
+        library.close()
+    for name in swept:
+        try:
+            shutil.rmtree(root / name)
+        except OSError as error:
+            # Per-entry isolation (the fold wave's row 3, second sweep
+            # site): one entry whose removal fails cannot abort the rest.
+            click.echo(f"orphan sweep could not remove {name}: {error}", err=True)
+            continue
+        record(
+            root,
+            [{"capture_id": name, "sha256": None, "rule": "orphan-sweep"}],
+            trigger="sweep",
+        )
+    if not as_json:
+        click.echo(
+            f"pruned {summary['count']} removal(s), {summary['bytes']} bytes; "
+            f"log: {root / LOG_NAME}"
+        )
 
 
 def main(argv: list[str] | None = None) -> int:

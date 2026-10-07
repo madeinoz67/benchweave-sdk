@@ -74,7 +74,7 @@ def _patch_descriptor(
     verbs: tuple[str, ...],
     *,
     max_samples: int = 100_000,
-    max_bytes: int = 16 * 1024 * 1024,
+    max_bytes: int | None = 16 * 1024 * 1024,
     verb_timeout_ms: int = 5000,
 ) -> None:
     """Declare the capture verbs the test wants in the scaffold's descriptor.
@@ -117,6 +117,7 @@ def _host(
     max_bytes: int = 16 * 1024 * 1024,
     verb_timeout_ms: int = 5000,
     stubborn_s: float | None = None,
+    retention: Any | None = None,
 ) -> StandaloneSeam:
     """A serial-transport seam over the fixture plugin, not yet connected."""
     root = tmp_path / "proj"
@@ -141,7 +142,9 @@ def _host(
         open_port=lambda device, settings: port,
         capture_root=captures,
     )
-    return StandaloneSeam(session, transport_kind="serial", capture_root=captures)
+    return StandaloneSeam(
+        session, transport_kind="serial", capture_root=captures, retention=retention
+    )
 
 
 async def _connected(host: StandaloneSeam) -> None:
@@ -961,5 +964,363 @@ def test_reload_refuses_while_a_capture_is_in_flight(tmp_path: Path) -> None:
         assert "conflict" in str(caught.value.code)
         assert "capture is in flight" in str(caught.value.message)
         await host.call("capture_stop", {"capture_id": started["capture_id"]})
+        # AR-12's second half: once the capture settles, the same reload
+        # proceeds — the guard read the live slot, and the watcher cleared
+        # it at the terminal state.
+        reloaded = await host.reload_plugin(source="test")
+        assert reloaded["status"] == "reloaded"
 
     asyncio.run(scenario())
+
+
+# --- the storage reserve guard (SW-58, AR-10) ---------------------------------
+
+
+def _reserve(**overrides: Any) -> Any:
+    """A retention config whose reserve arms the guard (rules empty — the
+    reserve is independent of the rules, the A02 posture)."""
+    from benchweave_sdk_server.retention import RetentionConfig
+
+    fields: dict[str, Any] = {"reserve_bytes": 100_000}
+    fields.update(overrides)
+    return RetentionConfig(**fields)
+
+
+def test_storage_reserve_refuses_a_count_bound_start_that_would_breach(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AR-10(i): a start whose worst case cannot be cleared against the
+    configured reserve refuses unavailable before any dispatch, message
+    prefixed standalone_storage_reserve:."""
+    from benchweave_sdk_server import seam as seam_module
+
+    monkeypatch.setattr(seam_module, "_disk_free_bytes", lambda root: 50_000)
+    host = _host(tmp_path, mode="ok", retention=_reserve())
+
+    async def scenario() -> None:
+        await _connected(host)
+        with pytest.raises(SeamError) as caught:
+            await host.call("capture_start", _start(count=400))
+        assert "unavailable" in str(caught.value.code)
+        assert str(caught.value.message).startswith("standalone_storage_reserve:")
+        # The refusal names its numbers (claim discipline).
+        assert "50000" in str(caught.value.message)
+        assert "100000" in str(caught.value.message)
+
+    asyncio.run(scenario())
+
+
+def test_storage_reserve_refuses_an_unbounded_duration_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AR-10(ii): a duration bound with no reservation has an unbounded
+    worst case — the guard cannot clear it and refuses with the reason,
+    naming the declaration that would fix it (missing information blocks
+    control, A02).
+
+    Disclosed drift: the vendored schema's conditionals mandate
+    capture_limits.max_bytes for BOTH capture verbs (the capability
+    conditional and the operations-side not-required-invoke/capture
+    conditionals close every load-valid shape without a ceiling), and the
+    landed start logic adopts that ceiling as the effective reservation —
+    so this input is unreachable through a schema-valid load and the guard
+    branch is defense-in-depth. The arm presents the shape the branch
+    exists for by clearing the loaded plugin's in-memory limits (the seam
+    re-reads the descriptor per start, its own defensive posture)."""
+    from benchweave_sdk_server import seam as seam_module
+
+    monkeypatch.setattr(seam_module, "_disk_free_bytes", lambda root: 10**12)
+    host = _host(tmp_path, mode="ok", retention=_reserve())
+    host.session.plugin.descriptor.pop("capture_limits", None)
+
+    async def scenario() -> None:
+        await _connected(host)
+        with pytest.raises(SeamError) as caught:
+            await host.call("capture_start", _start(duration_s=5))
+        assert "unavailable" in str(caught.value.code)
+        message = str(caught.value.message)
+        assert message.startswith("standalone_storage_reserve:")
+        assert "unbounded" in message
+        assert "max_bytes" in message
+
+    asyncio.run(scenario())
+
+
+def test_midrun_reserve_breach_publishes_under_reserve(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AR-10(iii): a running capture that reaches the reserve stops and
+    FINALISES — state published, stop_reason reserve, byte_length the real
+    staged bytes at the stop, never relabelled completed (the B-F2 rule
+    extended by membership). The sampler is fixture-scripted: the start
+    guard and the first watcher sample clear, the second breaches."""
+    from benchweave_sdk_server import seam as seam_module
+
+    calls = {"n": 0}
+
+    def scripted_free(root: Any) -> int:
+        calls["n"] += 1
+        return 10**12 if calls["n"] <= 2 else 0
+
+    monkeypatch.setattr(seam_module, "_disk_free_bytes", scripted_free)
+    host = _host(tmp_path, mode="slow", retention=_reserve())
+
+    async def scenario() -> dict[str, Any]:
+        await _connected(host)
+        started = await host.call("capture_start", _start(count=120))
+        assert started["state"] == "capturing"
+        return await host.await_capture()
+
+    outcome = asyncio.run(scenario())
+    assert outcome["state"] == "published"
+    assert outcome["stop_reason"] == "reserve"
+    assert outcome["byte_length"] is not None
+    assert 0 < int(outcome["byte_length"]) < 120 * 8
+    assert int(outcome["byte_length"]) % 8 == 0
+
+
+def test_the_storage_guard_is_inert_without_a_configured_reserve(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AR-10(iv), the RED control: with the configuration absent the same
+    starts proceed — inert-by-default is the parameterised posture (A02:
+    no hardcoded reserve ships)."""
+    from benchweave_sdk_server import seam as seam_module
+
+    monkeypatch.setattr(seam_module, "_disk_free_bytes", lambda root: 0)
+    host = _host(tmp_path, mode="ok")
+
+    async def scenario() -> list[str]:
+        await _connected(host)
+        reasons: list[str] = []
+        for arguments in (_start(count=8), _start(duration_s=0.3)):
+            started = await host.call("capture_start", arguments)
+            outcome = await host.await_capture()
+            assert started["state"] == "capturing"
+            assert outcome["state"] == "published"
+            reasons.append(str(outcome["stop_reason"]))
+        return reasons
+
+    # The duration start finishes its eight appends inside its 0.3 s bound,
+    # so both publish completed — the arm's substance is that NEITHER start
+    # was refused (the sampler read 0 free the whole time).
+    reasons = asyncio.run(scenario())
+    assert reasons == ["completed", "completed"]
+
+
+# --- the shutdown close-down (NFR-O1, AR-11) ----------------------------------
+
+
+def test_lifespan_exit_settles_an_in_flight_capture(tmp_path: Path) -> None:
+    """AR-11: a capture in flight at lifespan exit is settled honestly —
+    every event directory published or removed, no *.tmp primaries, the
+    index consistent with the root, the outcome recorded."""
+    from fastapi.testclient import TestClient
+
+    from benchweave_sdk_server.security import GuardPolicy, new_token
+    from benchweave_sdk_server.web import build_app
+
+    host = _host(tmp_path, mode="slow")
+    policy = GuardPolicy.complete(
+        bound_host="127.0.0.1",
+        bound_port=8477,
+        bearer_token=new_token(),
+        csrf_token=new_token(),
+    )
+    app = build_app(host, policy=policy)
+    headers = {"authorization": f"Bearer {policy.bearer_token}"}
+    with TestClient(app, base_url="http://127.0.0.1:8477") as client:
+        client.post("/v1/device_connect", json={"device_id": DEV}, headers=headers)
+        started = client.post(
+            "/v1/capture_start", json=_start(count=4000), headers=headers
+        )
+        capture_id = started.json()["data"]["capture_id"]
+        assert host.in_flight_capture_id == capture_id  # the settle's premise
+    # The lifespan's finally settled the capture before releasing anything.
+    root = tmp_path / "captures"
+    outcomes = dict(host._capture_outcomes)
+    assert capture_id in outcomes
+    assert outcomes[capture_id]["state"] in ("published", "aborted")
+    assert host._capture is None  # the slot freed
+    # No half-written primaries anywhere; every event dir is a publication.
+    assert not list(root.rglob("*.tmp"))
+    for entry in root.iterdir():
+        if entry.is_dir():
+            assert (entry / "manifest.json").is_file(), entry
+    # The index agrees with the root (a fresh library rebuilds over it).
+    from benchweave_sdk_server.library import CaptureLibrary
+
+    library = CaptureLibrary(root)
+    try:
+        on_disk = {
+            entry.name
+            for entry in root.iterdir()
+            if entry.is_dir() and (entry / "manifest.json").is_file()
+        }
+        assert {row["capture_id"] for row in library.list_captures()} == on_disk
+    finally:
+        library.close()
+
+
+def test_shutdown_settle_escapes_a_hostile_adapter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AR-11's hostile arm: an adapter that ignores the stop and even
+    cancellation cannot hold the close-down — the B-F5 escape fires inside
+    the stop timeout + margin and the process exits (the settle margin is
+    test-shrunk here; it is a host scheduling constant, not a protective
+    envelope)."""
+    from benchweave_sdk_server import seam as seam_module
+
+    monkeypatch.setattr(seam_module, "_STOP_SETTLE_MARGIN_S", 0.5)
+    # stubborn_s outlives the shrunk escape window (0.3 + 0.3 + 0.5 = 1.1 s)
+    # but not the test: the settle returns at the escape while the zombie
+    # keeps swallowing cancellation until its own deadline — this loop's
+    # shutdown then reaps it (the disclosed B-F5 residual; a real process's
+    # exit never waits on it, the loop is already gone).
+    host = _host(tmp_path, mode="stubborn_ok", stubborn_s=3.0, verb_timeout_ms=300)
+
+    async def scenario() -> dict[str, Any]:
+        await _connected(host)
+        started = await host.call("capture_start", _start(count=64))
+        settle = await host.settle_capture_for_shutdown()
+        assert settle is not None
+        assert started["capture_id"] == settle["capture_id"]
+        return settle
+
+    began = time.monotonic()
+    outcome = asyncio.run(scenario())
+    elapsed = time.monotonic() - began
+    assert outcome["state"] == "aborted"
+    assert outcome["stop_reason"] == "stop_timeout"
+    assert host._capture is None
+    # The escape fired inside the shrunk window (verb 0.3 + grace 0.3 +
+    # margin 0.5 = 1.1 s) plus the zombie's own 3 s reap at loop shutdown.
+    assert elapsed < 6.0
+
+
+def test_stdio_settle_aborts_when_the_watchers_loop_is_gone(
+    tmp_path: Path,
+) -> None:
+    """The stdio entry's shape: server.run() returns with a capture in
+    flight — its watcher died with that loop, so a fresh-loop settle cannot
+    await it. The close-down aborts the capture DIRECTLY (staging discarded,
+    the event directory removed — no half-written primary) and records the
+    outcome, honestly labelled with the host shutdown."""
+    host = _host(tmp_path, mode="slow")
+
+    async def arm() -> str:
+        await _connected(host)
+        started = await host.call("capture_start", _start(count=4000))
+        return str(started["capture_id"])
+
+    capture_id = asyncio.run(arm())  # the loop (and the watcher) died here
+
+    async def settle() -> dict[str, Any] | None:
+        return await host.settle_capture_for_shutdown()
+
+    outcome = asyncio.run(settle())  # a FRESH loop
+    assert outcome is not None
+    assert outcome["capture_id"] == capture_id
+    assert outcome["state"] == "aborted"
+    assert str(outcome["stop_reason"]).startswith("host_shutdown")
+    root = tmp_path / "captures"
+    assert not (root / capture_id).exists()
+    assert not list(root.rglob("*.tmp"))
+    assert host._capture is None
+
+
+def test_settle_returns_none_with_no_capture_in_flight(tmp_path: Path) -> None:
+    host = _host(tmp_path, mode="ok")
+
+    async def settle() -> dict[str, Any] | None:
+        return await host.settle_capture_for_shutdown()
+
+    assert asyncio.run(settle()) is None
+
+
+# --- fold wave 2 (lane 2): the stdio close-down runs on EVERY exit path ------
+
+
+def _mcp_interrupt_scenario(tmp_path: Path, *, interrupt: bool):
+    """Drive the mcp command with a scripted server: run() arms a capture
+    (its loop owning — and closing — the watcher, the stdio shape) and
+    then either returns normally or raises KeyboardInterrupt the way
+    SIGINT unwinds out of run(). Returns (host, invoke-result)."""
+    from click.testing import CliRunner
+
+    import benchweave_sdk_server.cli as cli_module
+    from benchweave_sdk_server.cli import cli as server_cli
+
+    host = _host(tmp_path, mode="slow")
+    project_root = tmp_path / "proj"  # _host already scaffolded this one
+
+    class FakeServer:
+        def run(self) -> None:
+            async def arm() -> str:
+                await _connected(host)
+                started = await host.call("capture_start", _start(count=4000))
+                return str(started["capture_id"])
+
+            asyncio.run(arm())
+            if interrupt:
+                raise KeyboardInterrupt
+
+    def fake_build(seam, authoring=False):  # type: ignore[no-untyped-def]
+        assert seam is host
+        return FakeServer()
+
+    original_build_seam = cli_module._build_seam
+    import benchweave_sdk_server.mcp as mcp_module
+
+    original_build_mcp = mcp_module.build_mcp
+    cli_module._build_seam = lambda *args, **kwargs: (host, None)  # type: ignore[assignment]
+    mcp_module.build_mcp = fake_build  # type: ignore[assignment]
+    escaped: list[BaseException] = []
+    try:
+        # No runner wrapping: the KeyboardInterrupt must be observable RAW
+        # (click's standalone mode would re-cast it as Abort/SystemExit(1)).
+        result = CliRunner().invoke(
+            server_cli,
+            ["mcp", str(project_root)],
+            standalone_mode=False,
+            catch_exceptions=False,
+        )
+    except BaseException as exc:  # noqa: BLE001 - the interrupt under test
+        escaped.append(exc)
+        result = None
+    finally:
+        cli_module._build_seam = original_build_seam  # type: ignore[assignment]
+        mcp_module.build_mcp = original_build_mcp  # type: ignore[assignment]
+    return host, (escaped[0] if escaped else result)
+
+
+def test_the_mcp_entry_settles_an_in_flight_capture_on_interrupt(
+    tmp_path: Path,
+) -> None:
+    """NFR-O1's close-down must run on EVERY exit from server.run() — the
+    clean return AND the interrupt paths. SIGINT raises KeyboardInterrupt
+    out of run(); without a try/finally the settle and the root lock's
+    release never execute, and the guide's claim ("on exit, through an
+    interrupt or a terminal close, a capture in flight is settled
+    honestly") is false. The interrupt propagates AFTER the cleanup."""
+    from click.exceptions import Abort
+
+    host, outcome = _mcp_interrupt_scenario(tmp_path, interrupt=True)
+    # click re-casts a KeyboardInterrupt out of run() to its Abort idiom;
+    # either surface means the interrupt propagated AFTER the cleanup.
+    assert isinstance(outcome, (KeyboardInterrupt, Abort))
+    assert host.in_flight_capture_id is None  # the slot freed
+    assert any(host._capture_outcomes.values())  # the settle outcome exists
+    assert not (tmp_path / "captures" / "library.lock").exists()
+
+
+def test_the_mcp_entry_settles_on_a_clean_return(tmp_path: Path) -> None:
+    """The clean-return arm (kept green): run() returning normally settles
+    the capture and releases the root the same way."""
+    host, outcome = _mcp_interrupt_scenario(tmp_path, interrupt=False)
+    assert not isinstance(outcome, BaseException)
+    assert outcome.exit_code == 0
+    assert host.in_flight_capture_id is None
+    assert any(host._capture_outcomes.values())
+    assert not (tmp_path / "captures" / "library.lock").exists()

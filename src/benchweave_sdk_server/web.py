@@ -105,16 +105,25 @@ def build_app(
     @asynccontextmanager
     async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         # FastMCP's http_app lifespan must run on the host app (the gateway
-        # composition precedent): initialize 500s without it. On shutdown the
-        # adapter's quiet path runs (NFR-O1) — close is idempotent-tolerant.
+        # composition precedent): initialize 500s without it. On shutdown,
+        # NFR-O1's close-down runs in order: the retention schedule stops
+        # first (it is a writer over the library), then the in-flight
+        # capture settles honestly, then the adapter's quiet path (close is
+        # idempotent-tolerant), then the host's own resources.
+        scheduler: asyncio.Task[None] | None = None
+        if seam.retention is not None and seam.retention.rules:
+            scheduler = asyncio.create_task(seam.retention_scheduler_loop())
         async with mcp_app.lifespan(app):
             try:
                 yield
             finally:
+                if scheduler is not None:
+                    scheduler.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await scheduler
+                await seam.settle_capture_for_shutdown()
                 await seam.session.close()
-                # The host's own resources: the capture library's root lock
-                # (NFR-O1's close-down shape; I3c extends this to settle an
-                # in-flight capture first).
+                # The host's own resources: the capture library's root lock.
                 seam.close()
 
     app = FastAPI(title="BenchWeave SDK server", lifespan=_lifespan)
@@ -947,6 +956,135 @@ def _add_html_routes(
                     binding_error={"code": exc.code, "message": exc.message},
                 )
             return RedirectResponse(url=_index_url(request), status_code=303)
+
+    # --- the captures library page (I3c, SW-49) ------------------------------
+
+    @app.get("/captures", response_class=HTMLResponse)
+    async def captures_page(request: Request) -> Response:
+        """The capture library over the landed rows: the closed metadata
+        fields, each capture's NEXT retention effect (computed by the same
+        evaluator the prune runs — never a second implementation), filters
+        over the closed fields, and the pin/unpin/delete forms. Display and
+        forms over existing rows: no new catalogue row, no new capability."""
+        from datetime import UTC as _UTC
+        from datetime import datetime as _datetime
+
+        from .retention import next_effects
+
+        rows = (await seam.call("capture_list", {}))["captures"]
+        params = request.query_params
+        project = params.get("project") or None
+        source = params.get("source") or None
+        tag = params.get("tag") or None
+        query = (params.get("q") or "").strip().lower() or None
+        device = params.get("device") or None
+        shown = rows
+        if project:
+            shown = [row for row in shown if str(row.get("project") or "") == project]
+        if source:
+            shown = [row for row in shown if str(row.get("surface") or "") == source]
+        if tag:
+            shown = [row for row in shown if tag in (row.get("tags") or [])]
+        if query:
+            shown = [
+                row
+                for row in shown
+                if query in str(row.get("capture_id", "")).lower()
+                or query in str(row.get("notes", "")).lower()
+            ]
+        if device:
+            # SW-49's device filter reads metadata.json per row at render:
+            # the FILE is the authority, the index has no device column and
+            # this slice does not widen it (disclosed). A row that NAMES NO
+            # DEVICE — sidecar absent, unparseable (it reads as an empty
+            # dict) or refused — stays under every filter: a row must never
+            # disappear from view without positive evidence that it does
+            # not match (the fold wave's row 2 — the keep-on-unreadable
+            # claim, now true as coded).
+            kept: list[dict[str, Any]] = []
+            for row in shown:
+                try:
+                    fetched = await seam.call(
+                        "capture_get", {"capture_id": row["capture_id"]}
+                    )
+                except SeamError:
+                    kept.append(row)
+                    continue
+                metadata = fetched.get("metadata") or {}
+                device_of_row = str((metadata.get("device") or {}).get("id") or "")
+                if not device_of_row or device_of_row == device:
+                    kept.append(row)
+            shown = kept
+        rules = seam.retention.rules if seam.retention is not None else ()
+        armed = seam.in_flight_capture_id
+        effects = next_effects(
+            rules,
+            rows,
+            now=_datetime.now(_UTC),
+            in_flight_ids={armed} if armed is not None else frozenset(),
+        )
+        return _TEMPLATES.TemplateResponse(
+            request=request,
+            name="captures.html",
+            context=shared(
+                rows=shown,
+                effects=effects,
+                filters={
+                    "project": project or "",
+                    "source": source or "",
+                    "tag": tag or "",
+                    "q": params.get("q") or "",
+                    "device": device or "",
+                },
+            ),
+        )
+
+    @app.get("/captures/{capture_id}/delete", response_class=HTMLResponse)
+    async def capture_delete_confirm(
+        request: Request, capture_id: str
+    ) -> Response:
+        """The delete confirmation (SW-59): names the capture id, its size
+        and its project — the operator confirms against the real row, never
+        a blind submit."""
+        rows = (await seam.call("capture_list", {}))["captures"]
+        row = next(
+            (row for row in rows if str(row["capture_id"]) == capture_id), None
+        )
+        if row is None:
+            return HTMLResponse("not found", status_code=404)
+        return _TEMPLATES.TemplateResponse(
+            request=request,
+            name="capture-delete.html",
+            context=shared(row=row),
+        )
+
+    @app.post("/captures/{capture_id}/delete")
+    async def capture_delete_route(request: Request, capture_id: str) -> Response:
+        """The confirmed delete: CSRF'd POST dispatching capture_delete with
+        the UI surface (the recorder names delete-ui; neither the UI nor the
+        MCP tool bypasses the retention log)."""
+        try:
+            await _ui_call("capture_delete", {"capture_id": capture_id})
+        except SeamError as exc:
+            return HTMLResponse(
+                f"{exc.code}: {exc.message}",
+                status_code=ERROR_HTTP_STATUS[exc.code],
+            )
+        return RedirectResponse(url="/captures", status_code=303)
+
+    @app.post("/captures/{capture_id}/pin")
+    async def capture_pin_route(request: Request, capture_id: str) -> Response:
+        # A refused pin (a stale row) redirects — the library re-renders
+        # without it, the disconnect idiom.
+        with contextlib.suppress(SeamError):
+            await _ui_call("capture_pin", {"capture_id": capture_id})
+        return RedirectResponse(url="/captures", status_code=303)
+
+    @app.post("/captures/{capture_id}/unpin")
+    async def capture_unpin_route(request: Request, capture_id: str) -> Response:
+        with contextlib.suppress(SeamError):
+            await _ui_call("capture_unpin", {"capture_id": capture_id})
+        return RedirectResponse(url="/captures", status_code=303)
 
 
 #: The event kinds whose SSE payload is a human advisory rather than the
