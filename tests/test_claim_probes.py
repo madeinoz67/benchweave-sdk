@@ -357,6 +357,9 @@ def test_claim_capture_reservation_crossing(
             "A second append of 100 bytes was refused at the append call.",
             "The refusal message reported the reservation of 1024 bytes and "
             "the 1000 bytes already staged.",
+            "The refused append was refused because its 100 bytes would carry "
+            "the staged total to 1100 bytes, past the 1024-byte reservation; "
+            "the accepted append had stayed within it.",
         ],
     )
 

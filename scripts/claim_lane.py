@@ -52,7 +52,7 @@ CONFORMING_THRESHOLD = 0.70
 NON_CONFORMING_THRESHOLD = 0.30
 
 #: The judge answers one question per (claim, trace) pair.
-JudgeClient = Callable[[dict[str, Any], list[dict[str, Any]]], dict[str, Any]]
+JudgeClient = Callable[[dict[str, Any], dict[str, dict[str, Any]]], dict[str, Any]]
 #: One HTTP attempt: (status, parsed body or None). Injectable for tests.
 Post = Callable[[str, bytes, str, float], tuple[int, Any]]
 
@@ -133,7 +133,8 @@ CLAIMS: list[ClaimRow] = [
     ),
     ClaimRow(
         id="capture-reservation-crossing",
-        claim="The writer refuses an append that crosses the reservation at each append.",
+        claim=("The writer checks the reservation at each append: an append that would "
+            "carry the staged total past the reservation is refused, naming both numbers."),
         probe="tests/test_claim_probes.py::test_claim_capture_reservation_crossing",
     ),
     ClaimRow(
@@ -275,7 +276,13 @@ def _urllib_post(url: str, body: bytes, key: str, timeout_s: float) -> tuple[int
         with urllib.request.urlopen(request, timeout=timeout_s) as response:  # noqa: S310
             return response.status, json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as error:
-        return error.code, None
+        # 422 bodies name the offending field — the diagnosis the live
+        # contract check needs, so it must travel with the status.
+        try:
+            detail = error.read().decode("utf-8", "replace")
+        except OSError:  # pragma: no cover - body already consumed
+            detail = ""
+        return error.code, (json.loads(detail) if detail else None)
     except (urllib.error.URLError, OSError) as error:
         raise ClaimLaneError(f"systemone unreachable: {error}") from error
 
@@ -293,7 +300,9 @@ def systemone_client(
     backoff (1 s, 2 s, 4 s, ...), hard failure otherwise."""
     do_post: Post = post if post is not None else _urllib_post
 
-    def client(state: dict[str, Any], questions: list[dict[str, Any]]) -> dict[str, Any]:
+    def client(
+        state: dict[str, Any], questions: dict[str, dict[str, Any]]
+    ) -> dict[str, Any]:
         body = json.dumps(
             {"model": model, "state": state, "questions": questions}
         ).encode("utf-8")
@@ -303,7 +312,9 @@ def systemone_client(
             if status == 200 and isinstance(payload, dict):
                 return payload
             if status not in (429, 529):
-                raise ClaimLaneError(f"systemone request failed: HTTP {status}")
+                raise ClaimLaneError(
+                    f"systemone request failed: HTTP {status} {payload!r}"
+                )
             if attempt == max_attempts:
                 break
             _sleep(delay)
@@ -327,7 +338,7 @@ def default_client() -> JudgeClient | None:
 
 def ask(
     state: dict[str, Any],
-    questions: list[dict[str, Any]],
+    questions: dict[str, dict[str, Any]],
     *,
     client: JudgeClient | None = None,
 ) -> dict[str, Any]:
@@ -351,6 +362,24 @@ CONFORMANCE_INSTRUCTIONS = (
     "sentence. If the observations do not settle the question, answer "
     "without confidence. Rest the answer only on observed_behavior."
 )
+
+#: The question's typed shape on the wire (the API contract): a noul with
+#: explicit true/false descriptions. The live 422 that shaped this constant
+#: is the lesson: an injectable client proves nothing about the wire form
+#: unless a test pins it.
+CONFORMANCE_CRITERIA = {
+    "true": "the observed behavior matches the claim's assertion",
+    "false": "the observed behavior differs from the claim's assertion",
+}
+
+
+def conformance_question(claim_id: str) -> dict[str, Any]:
+    """The wire-shaped question for one claim, keyed for the questions map."""
+    return {
+        "type": "noul",
+        "instructions": CONFORMANCE_INSTRUCTIONS,
+        "criteria": CONFORMANCE_CRITERIA,
+    }
 
 
 def _noul_of(answer: Any) -> float:
@@ -400,12 +429,13 @@ def judge_rows(
             "claim": row.claim,
             "observed_behavior": "\n".join(traces[row.id]),
         }
-        question = {"id": row.id, "instructions": CONFORMANCE_INSTRUCTIONS}
-        response = client(state, [question])
+        response = client(state, {row.id: conformance_question(row.id)})
         answers = response.get("answers")
-        if not isinstance(answers, list) or not answers:
+        if not isinstance(answers, dict) or not isinstance(
+            answers.get(row.id), dict
+        ):
             raise ClaimLaneError(f"judge returned no answer for {row.id}")
-        noul = _noul_of(answers[0])
+        noul = _noul_of(answers[row.id])
         usage = response.get("usage")
         tokens = usage.get("total_tokens", 0) if isinstance(usage, dict) else 0
         judged.append(

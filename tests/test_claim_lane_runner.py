@@ -61,7 +61,9 @@ _DEAD_BAND_TRACE = {
 def _client_returning(noul: float) -> Any:
     def client(state: Any, questions: Any) -> Any:
         return {
-            "answers": [{"id": q["id"], "noul": noul} for q in questions],
+            # The wire contract: answers arrive as a map keyed by the
+            # question ids the request sent.
+            "answers": {qid: {"type": "noul", "noul": noul} for qid in questions},
             "usage": {"total_tokens": 42},
             "model": "jev-test",
         }
@@ -232,7 +234,7 @@ def test_a_verdict_vocabulary_trace_exits_nonzero_before_judging(
 
     def client(state: Any, questions: Any) -> Any:
         called.append(state)
-        return {"answers": [{"id": "x", "noul": 1.0}]}
+        return {"answers": {qid: {"type": "noul", "noul": 1.0} for qid in questions}}
 
     code = lane.run(
         rows=lane.CLAIMS[:1],
@@ -258,7 +260,7 @@ def test_ar7_the_key_never_appears_in_any_artifact(
 
     def post(_url: str, _body: bytes, _key: str, _t: float) -> tuple[int, Any]:
         return 200, {
-            "answers": [{"id": "scan-hint-filter", "noul": 0.88}],
+            "answers": {"scan-hint-filter": {"type": "noul", "noul": 0.88}},
             "usage": {"total_tokens": 5},
         }
 

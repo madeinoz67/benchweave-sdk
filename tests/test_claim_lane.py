@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import dataclasses
 import importlib.util
+import json
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -147,7 +148,9 @@ def _fake_client(noul: float) -> tuple[list[Any], Any]:
     def client(state: Any, questions: Any) -> Any:
         calls.append({"state": state, "questions": questions})
         return {
-            "answers": [{"id": q["id"], "noul": noul} for q in questions],
+            # The wire contract: answers arrive as a map keyed by the
+            # question ids the request sent (mirrors the live API).
+            "answers": {qid: {"type": "noul", "noul": noul} for qid in questions},
             "usage": {"total_tokens": 7},
         }
 
@@ -157,11 +160,22 @@ def _fake_client(noul: float) -> tuple[list[Any], Any]:
 def test_the_client_seam_is_injectable(lane: ModuleType) -> None:
     calls, client = _fake_client(0.9)
     state = {"claim": "c", "observed_behavior": ["an observation"]}
-    questions = [{"id": "q1", "instructions": "judge"}]
+    questions = {"q1": lane.conformance_question("q1")}
     result = lane.ask(state, questions, client=client)
-    assert result["answers"][0]["noul"] == 0.9
+    assert result["answers"]["q1"]["noul"] == 0.9
     assert len(calls) == 1
     assert calls[0]["state"] is state
+
+
+def test_the_conformance_question_is_wire_shaped(lane: ModuleType) -> None:
+    """The live-contract pin (the 422 lesson): the question carries the
+    noul type and explicit true/false criteria — an injectable client
+    proves nothing about the wire form unless this shape is pinned."""
+    question = lane.conformance_question("scan-hint-filter")
+    assert question["type"] == "noul"
+    assert isinstance(question["instructions"], str) and question["instructions"]
+    assert set(question["criteria"]) == {"true", "false"}
+    assert all(isinstance(v, str) and v for v in question["criteria"].values())
 
 
 def test_ask_without_a_client_or_a_key_is_a_hard_error(
@@ -169,7 +183,7 @@ def test_ask_without_a_client_or_a_key_is_a_hard_error(
 ) -> None:
     monkeypatch.delenv(lane.KEY_ENV, raising=False)
     with pytest.raises(lane.ClaimLaneError, match="TYPESAFE_API_KEY"):
-        lane.ask({}, [])
+        lane.ask({}, {})
 
 
 def test_default_client_is_none_without_the_key(
@@ -198,14 +212,21 @@ def test_the_real_client_carries_auth_timeout_and_backoff(
     sleeps: list[float] = []
 
     def post(url: str, body: bytes, key: str, timeout_s: float) -> tuple[int, Any]:
-        posts.append({"url": url, "key": key, "timeout_s": timeout_s})
-        return statuses[len(posts) - 1], {"answers": [{"id": "q", "noul": 0.5}]}
+        posts.append({"url": url, "key": key, "timeout_s": timeout_s, "body": body})
+        return statuses[len(posts) - 1], {
+            "answers": {"q": {"type": "noul", "noul": 0.5}}
+        }
 
     monkeypatch.setattr(lane, "_sleep", sleeps.append)
     client = lane.systemone_client("test-key-material", post=post)
-    result = client({"claim": "c"}, [{"id": "q", "instructions": "i"}])
+    result = client({"claim": "c"}, {"q": lane.conformance_question("q")})
 
-    assert result["answers"][0]["noul"] == 0.5
+    assert result["answers"]["q"]["noul"] == 0.5
+    # The wire contract pinned at the byte level: the POSTed body carries
+    # the questions as a MAP with the noul type present (the live-422 fix).
+    sent = json.loads(posts[0]["body"])
+    assert isinstance(sent["questions"], dict)
+    assert sent["questions"]["q"]["type"] == "noul"
     assert len(posts) == 3, "429 and 529 each retried once"
     for call in posts:
         assert call["url"] == lane.SYSTEMONE_URL
