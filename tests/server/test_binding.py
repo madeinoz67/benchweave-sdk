@@ -305,6 +305,109 @@ def test_a_leftover_tmp_from_a_killed_write_is_inert(tmp_path: Path) -> None:
     )
 
 
+# --- concurrent writers: re-read-and-merge (trust-3/drift-1) ------------------
+#
+# Two processes CAN legitimately share one device-bindings.json (two hosts,
+# one working directory — the document's own rows-unique-by-key shape admits
+# it). Atomic writes alone make each write crash-safe but last-writer-wins:
+# a second opener's full-document rewrite silently erased the first opener's
+# rows. The fold: every write re-reads the document under a per-write
+# exclusive lockfile and MERGES (this process's rows win their keys; foreign
+# keys survive); same-key writes stay last-writer-wins per KEY, never per
+# document.
+
+
+def test_two_openers_interleaved_writes_both_rows_survive(tmp_path: Path) -> None:
+    """The lost-update reproduction (probe 5's shape): two stores opened
+    before either wrote, one bind through each — the FILE carries both rows."""
+    path = tmp_path / "device-bindings.json"
+    store_one = BindingStore.open(path)
+    store_two = BindingStore.open(path)
+    store_one.bind(
+        _row(
+            connection_key="device_a",
+            plugin_package="plugin_x",
+            port_path="/dev/one",
+        )
+    )
+    store_two.bind(
+        _row(
+            connection_key="device_b",
+            plugin_package="plugin_y",
+            port_path="/dev/two",
+        )
+    )
+    document = json.loads(path.read_text(encoding="utf-8"))
+    assert [row["connection_key"] for row in document["bindings"]] == [
+        "device_a",
+        "device_b",
+    ], "the second opener's write must not erase the first opener's row"
+
+
+def test_two_openers_same_key_last_write_wins_per_key(tmp_path: Path) -> None:
+    """Same-key contention resolves to the MOST RECENT pick (an operator
+    re-picking through a second host), never to an erased document: the
+    losing row is replaced, every other row survives."""
+    path = tmp_path / "device-bindings.json"
+    store_one = BindingStore.open(path)
+    store_two = BindingStore.open(path)
+    store_one.bind(_row(port_path="/dev/match-a"))
+    store_two.bind(_row(port_path="/dev/match-b"))
+    document = json.loads(path.read_text(encoding="utf-8"))
+    assert [row["port_path"] for row in document["bindings"]] == ["/dev/match-b"]
+
+
+def test_unbind_removes_a_row_another_process_wrote(tmp_path: Path) -> None:
+    """The merge is not write-only: an unbind re-reads too, so a row another
+    process bound is removable by this one (the operator's one document, not
+    each process's private view)."""
+    path = tmp_path / "device-bindings.json"
+    store_one = BindingStore.open(path)
+    store_two = BindingStore.open(path)
+    store_one.bind(_row())
+    assert store_two.unbind("example_plugin", "example_device") is True
+    assert BindingStore.open(path).rows() == []
+
+
+def test_a_write_refuses_when_the_document_turned_unreadable(
+    tmp_path: Path,
+) -> None:
+    """The merge read is typed like the load: a document that went garbage
+    between open and write refuses the write loudly (prefixed), never
+    silently overwrites the operator's evidence."""
+    path = tmp_path / "device-bindings.json"
+    store = BindingStore.open(path)
+    path.write_text("{not json anymore", encoding="utf-8")
+    with pytest.raises(ValueError, match="standalone_binding_unreadable:"):
+        store.bind(_row())
+    assert path.read_text(encoding="utf-8") == "{not json anymore", (
+        "a refused merge overwrites nothing"
+    )
+
+
+def test_the_write_lock_does_not_linger(tmp_path: Path) -> None:
+    path = tmp_path / "device-bindings.json"
+    store = BindingStore.open(path)
+    store.bind(_row())
+    assert not (tmp_path / "device-bindings.json.lock").exists(), (
+        "the per-write lock is released with the write"
+    )
+
+
+def test_a_stale_lock_from_a_dead_process_is_stolen(tmp_path: Path) -> None:
+    """The library.lock precedent's steal rule: a crashed writer's lockfile
+    names a dead pid and must not wedge the document forever."""
+    from benchweave_sdk_server.binding import _dead_pid
+
+    path = tmp_path / "device-bindings.json"
+    (tmp_path / "device-bindings.json.lock").write_text(
+        json.dumps({"pid": _dead_pid()}), encoding="utf-8"
+    )
+    store = BindingStore.open(path)
+    store.bind(_row())
+    assert store.get("example_plugin", "example_device") is not None
+
+
 # --- resolve: the §1.4 algorithm ---------------------------------------------
 
 

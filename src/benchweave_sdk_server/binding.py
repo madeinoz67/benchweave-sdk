@@ -31,13 +31,16 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Callable, Iterable
+import time
+from collections.abc import Callable, Iterable, Iterator
+from contextlib import contextmanager, suppress
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from jsonschema import Draft202012Validator
 
+from .library import _pid_is_dead
 from .serial import _identity_int, _port_name
 
 #: The environment override in ``capture_root``'s exact family (Decision 9):
@@ -190,6 +193,69 @@ class BindingStale(BindingError):
     is gone from a fresh enumeration. The operator must scan and re-pick."""
 
 
+def _dead_pid() -> int:
+    """A pid that provably holds no live process here (the library lock
+    tests' own finder, mirrored for this module's stale-lock arm)."""
+    pid = os.getpid() - 1
+    while pid > 1:
+        if _pid_is_dead(pid):
+            return pid
+        pid -= 1
+    raise RuntimeError("no dead pid found to test the stale-lock path")
+
+
+#: How long a writer waits for a live writer's per-write lock before
+#: refusing (the lock scopes ONE merge+write — milliseconds in practice;
+#: the budget only needs to outlast a slow fsync, never an operator).
+_LOCK_WAIT_S = 5.0
+
+
+@contextmanager
+def _write_lock(path: Path) -> Iterator[None]:
+    """The per-write exclusive lockfile over one bindings document.
+
+    The ``library.lock`` precedent's mechanics (``O_CREAT | O_EXCL``, the
+    holder's pid inside, a provably-dead holder's lock stolen), scoped to
+    ONE write instead of the store's lifetime: two live writers serialise
+    here for the re-read-and-merge span, so neither's full-document
+    rewrite can erase the other's rows (the trust-3/drift-1 fold). A LIVE
+    holder is waited out (bounded); an unprovable one is refused loudly
+    with ``standalone_binding_locked:`` — conservative refuse, never steal.
+    """
+    lock = path.with_name(path.name + ".lock")
+    deadline = time.monotonic() + _LOCK_WAIT_S
+    while True:
+        try:
+            handle = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            break
+        except FileExistsError as taken:
+            try:
+                holder = json.loads(lock.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                holder = None
+            pid = holder.get("pid") if isinstance(holder, dict) else None
+            if isinstance(pid, int) and _pid_is_dead(pid):
+                # A crashed writer's lock must not wedge the document.
+                with suppress(OSError):
+                    lock.unlink()
+                continue
+            if time.monotonic() >= deadline:
+                shown = pid if isinstance(pid, int) else "unknown"
+                raise ValueError(
+                    f"standalone_binding_locked: another writer holds "
+                    f"{lock} (pid {shown}); it refused to clear within "
+                    f"{_LOCK_WAIT_S}s"
+                ) from taken
+            time.sleep(0.01)
+    try:
+        os.write(handle, json.dumps({"pid": os.getpid()}).encode("utf-8"))
+        yield
+    finally:
+        os.close(handle)
+        with suppress(OSError):
+            lock.unlink()
+
+
 def bindings_path(explicit: Path | None = None) -> Path:
     """Resolve the bindings document's path.
 
@@ -231,6 +297,55 @@ def bindings_path(explicit: Path | None = None) -> Path:
     return resolved
 
 
+def _read_rows(path: Path) -> dict[tuple[str, str], dict[str, Any]]:
+    """The document at ``path`` as validated rows; a missing file is empty.
+
+    The ONE reader both the constructor and every write's merge go through
+    (the trust-3/drift-1 fold): a write re-reads through this, so the load
+    and the merge refuse with the same typed prefixes — never a silently
+    overwritten document, never a divergent second validation."""
+    try:
+        raw = path.read_bytes()
+    except FileNotFoundError:
+        return {}
+    except OSError as exc:
+        raise ValueError(
+            f"standalone_binding_unreadable: {path}: {exc}"
+        ) from exc
+    if len(raw) > _MAX_BINDINGS_BYTES:
+        raise ValueError(
+            f"standalone_binding_unreadable: {path}: {len(raw)} bytes "
+            f"exceeds the {_MAX_BINDINGS_BYTES}-byte cap"
+        )
+    try:
+        document = json.loads(raw)
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise ValueError(
+            f"standalone_binding_unreadable: {path}: {exc}"
+        ) from exc
+    findings = sorted(
+        _DOCUMENT_VALIDATOR.iter_errors(document),
+        key=lambda error: list(error.absolute_path),
+    )
+    if findings:
+        first = findings[0]
+        raise ValueError(
+            f"standalone_binding_schema: {path}: "
+            f"{list(first.absolute_path)}: {first.message}"
+        )
+    rows: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in document["bindings"]:
+        key = (row["plugin_package"], row["connection_key"])
+        if key in rows:
+            raise ValueError(
+                f"standalone_binding_schema: {path}: duplicate binding "
+                f"for plugin {key[0]!r} connection key {key[1]!r}; "
+                "rows are unique per plugin and key, never last-wins"
+            )
+        rows[key] = dict(row)
+    return rows
+
+
 def utc_now() -> str:
     """The real UTC now, in the host's stamp shape (the services' own)."""
     return datetime.now(UTC).isoformat().replace("+00:00", "Z")
@@ -249,8 +364,11 @@ class BindingStore:
     """One ``device-bindings.json``: loaded typed, mutated in memory, and
     written atomically. Rows are unique by ``(plugin_package,
     connection_key)``; a duplicate refuses at load, never last-wins. The
-    in-memory rows ARE the truth for this process — a bind through this
-    store is visible to the next resolution without a reload."""
+    in-memory rows are the truth for this process's READS (a bind through
+    this store is visible to the next resolution without a reload); every
+    WRITE re-reads and merges under the per-write lock, so a second process
+    sharing the document keeps its rows (trust-3/drift-1 — last-writer-wins
+    per key, never per document)."""
 
     def __init__(self, path: Path, rows: dict[tuple[str, str], dict[str, Any]]) -> None:
         self._path = path
@@ -263,46 +381,7 @@ class BindingStore:
         ``standalone_binding_unreadable:`` (unreadable, over the cap,
         unparseable) or ``standalone_binding_schema:`` (schema violation,
         duplicate row) — at construction, never mid-request."""
-        try:
-            raw = path.read_bytes()
-        except FileNotFoundError:
-            return cls(path, {})
-        except OSError as exc:
-            raise ValueError(
-                f"standalone_binding_unreadable: {path}: {exc}"
-            ) from exc
-        if len(raw) > _MAX_BINDINGS_BYTES:
-            raise ValueError(
-                f"standalone_binding_unreadable: {path}: {len(raw)} bytes "
-                f"exceeds the {_MAX_BINDINGS_BYTES}-byte cap"
-            )
-        try:
-            document = json.loads(raw)
-        except (UnicodeDecodeError, ValueError) as exc:
-            raise ValueError(
-                f"standalone_binding_unreadable: {path}: {exc}"
-            ) from exc
-        findings = sorted(
-            _DOCUMENT_VALIDATOR.iter_errors(document),
-            key=lambda error: list(error.absolute_path),
-        )
-        if findings:
-            first = findings[0]
-            raise ValueError(
-                f"standalone_binding_schema: {path}: "
-                f"{list(first.absolute_path)}: {first.message}"
-            )
-        rows: dict[tuple[str, str], dict[str, Any]] = {}
-        for row in document["bindings"]:
-            key = (row["plugin_package"], row["connection_key"])
-            if key in rows:
-                raise ValueError(
-                    f"standalone_binding_schema: {path}: duplicate binding "
-                    f"for plugin {key[0]!r} connection key {key[1]!r}; "
-                    "rows are unique per plugin and key, never last-wins"
-                )
-            rows[key] = dict(row)
-        return cls(path, rows)
+        return cls(path, _read_rows(path))
 
     @property
     def path(self) -> Path:
@@ -320,7 +399,10 @@ class BindingStore:
     def bind(self, row: dict[str, Any]) -> None:
         """Upsert one row (the operator's pick) and write the document
         atomically. The row is validated against the closed schema BEFORE
-        any write: a refused row leaves the file untouched."""
+        any write: a refused row leaves the file untouched. The write takes
+        the per-write lock and MERGES: rows another process wrote since this
+        store opened survive (their keys), this row wins its own key —
+        last-writer-wins per KEY, never per document (trust-3/drift-1)."""
         findings = sorted(
             _ROW_VALIDATOR.iter_errors(row),
             key=lambda error: list(error.absolute_path),
@@ -331,15 +413,31 @@ class BindingStore:
                 f"standalone_binding_schema: {self._path}: "
                 f"{list(first.absolute_path)}: {first.message}"
             )
-        self._rows[(row["plugin_package"], row["connection_key"])] = dict(row)
-        self._write()
+        with _write_lock(self._path):
+            self._merge_foreign_rows()
+            self._rows[(row["plugin_package"], row["connection_key"])] = dict(row)
+            self._write()
 
     def unbind(self, plugin_package: str, connection_key: str) -> bool:
-        """Remove one row and write; ``False`` when no row existed."""
-        if self._rows.pop((plugin_package, connection_key), None) is None:
-            return False
-        self._write()
-        return True
+        """Remove one row and write; ``False`` when no row existed. The
+        same locked merge as bind: a row another process bound is visible
+        to this unbind — the operator's one document, not each process's
+        private view."""
+        with _write_lock(self._path):
+            self._merge_foreign_rows()
+            if self._rows.pop((plugin_package, connection_key), None) is None:
+                return False
+            self._write()
+            return True
+
+    def _merge_foreign_rows(self) -> None:
+        """Fold the document's CURRENT rows into memory, foreign keys only
+        (this process's rows win theirs — its picks are the newer ones for
+        its own keys). Called under the write lock, immediately before the
+        write, so the rewrite carries every live row."""
+        foreign = _read_rows(self._path)
+        for key, row in foreign.items():
+            self._rows.setdefault(key, row)
 
     def _write(self) -> None:
         """The atomic write: temp file in the same directory, fsync of the
