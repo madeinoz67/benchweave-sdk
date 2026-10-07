@@ -27,7 +27,12 @@ import click
 
 from benchweave_sdk import __version__
 
-from .env_file import EnvFileError, load_env_file, serve_env_file_keys
+from .env_file import (
+    ENV_FILE_HAND_NAMED_KEYS,
+    EnvFileError,
+    load_env_file,
+    serve_env_file_keys,
+)
 from .seam import StandaloneSeam
 from .session import (
     LoadedPlugin,
@@ -343,9 +348,8 @@ def cli() -> None:
     help=(
         "Load KEY=VALUE lines from this file into the environment, "
         "set-if-not-set, before the host resolves its configuration "
-        "(allowed keys: BENCHWEAVE_STANDALONE_BINDINGS, "
-        "BENCHWEAVE_CAPTURE_DIR). Flags and the process environment "
-        "always win."
+        f"(allowed keys: {', '.join(ENV_FILE_HAND_NAMED_KEYS)}). "
+        "Flags and the process environment always win."
     ),
 )
 def serve(
