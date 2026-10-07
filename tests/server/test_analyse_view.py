@@ -258,18 +258,48 @@ def test_unindexed_in_root_dir_refuses_in_view_and_export(
     assert "no published capture: fx-after" in export.text
 
 
-def test_the_figure_markup_escapes_the_capture_id(
+def test_the_figure_escapes_a_double_quoted_capture_id_at_render() -> None:
+    """Row 3 (direct render, wave 3's portability shape): the full
+    double-quote attribute-breakout payload is proven at the RENDER SEAM
+    — ``_figure_entry`` driven directly with the hostile id string, no
+    on-disk directory (double quotes are illegal in Windows path
+    components, so a fixture directory carrying them dies with WinError
+    123 before any assertion; the CI windows lane redded there)."""
+    from benchweave_sdk_server.analysis import region_stats
+    from benchweave_sdk_server.web import _figure_entry
+
+    hostile = 'fx-break" onmouseover="alert(1)'
+    stats = region_stats([(0.0, 1.0), (0.001, 2.0)], lo=None, hi=None)
+    figure = _figure_entry(
+        {
+            "capture_id": hostile,
+            "unit": "V",
+            "stats": stats,
+            "points": [(0.0, 1.0), (0.001, 2.0)],
+            "sha256": "a" * 64,
+        }
+    )["figure"]
+    assert 'onmouseover="alert(1)' not in figure
+    assert "&#34;" in figure or "&quot;" in figure
+
+
+def test_the_figure_escapes_a_hostile_but_windows_legal_id_end_to_end(
     client: TestClient, capture_root: Path
 ) -> None:
-    """Row 3: the figure's attribute slots escape the capture id exactly
-    like the title two lines up — an event directory whose name carries
-    attribute-breakout bytes (hand-mangled on disk; the writer's own ids
-    are allowlisted) renders defanged."""
-    hostile = 'fx-break" onmouseover="alert(1)'
+    """Row 3's end-to-end arm, portable: single quotes are the one
+    attribute-payload class legal in a Windows path component, so the
+    on-disk fixture carries them — the full view path (picker, figure,
+    stats tables) must render the hostile-but-legal name defanged."""
+    hostile = "fx-break' onmouseover='alert(1)"
     write_capture(capture_root, hostile, values=(1.0, 2.0))
     page = client.get("/analyse", params={"capture": hostile}).text
-    assert 'onmouseover="alert(1)' not in page
-    assert "&#34;" in page or "&quot;" in page
+    # The raw name survives ONLY inside the inert application/json data
+    # block (plain JSON content — the parser ends the element at
+    # </script, never at a quote); the attribute slots must carry the
+    # escaped form.
+    assert 'data-bw-plot-slug="analyse-fx-break\' ' not in page
+    assert "&#39;" in page
+    assert 'class="bw-stats"' in page
 
 
 def test_figure_json_block_never_carries_a_raw_script_closer(
