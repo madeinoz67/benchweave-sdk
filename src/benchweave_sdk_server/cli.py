@@ -17,6 +17,8 @@ default install's entry point degrades honestly instead of tracebacking).
 
 from __future__ import annotations
 
+import json
+import os
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn
@@ -65,6 +67,46 @@ def _load(project: Path) -> LoadedPlugin:
         raise SystemExit(2) from exc
 
 
+def _deliver_operator_action_token(
+    root_argument: Path | None, token: str, host: str, port: int
+) -> Path | None:
+    """Write the per-launch operator action token under the capture-root
+    family (explicit argument over ``BENCHWEAVE_CAPTURE_DIR`` over
+    ``captures/`` under the working directory — Decision 9's precedence,
+    the state-file family the bindings document already follows).
+
+    The banner already carries the token, so this second out-of-band
+    channel DEGRADES, never blocks: a root that refuses to resolve or a
+    write that fails warns on stderr and serve continues (the capture
+    library itself stays lazy — this file is not a capture, takes no
+    library lock, and the root tolerates root-level files)."""
+    from benchweave_sdk.capture import capture_root
+
+    try:
+        root = capture_root(root_argument)
+        root.mkdir(parents=True, exist_ok=True)
+        path = root / "operator-action-token.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "pid": os.getpid(),
+                    "operator_action_token": token,
+                    "url": f"http://{host}:{port}/?operator_action={token}",
+                },
+                indent=2,
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+        return path
+    except (OSError, ValueError) as exc:
+        click.echo(
+            f"warning: the operator action token file was not written: {exc}",
+            err=True,
+        )
+        return None
+
+
 def _build_seam(
     project: Path,
     *,
@@ -74,6 +116,8 @@ def _build_seam(
     device: str | None = None,
     open_port: Any = None,
     capture_root: Any = None,
+    bindings: Path | None = None,
+    serial_hooks: Any = None,
 ) -> tuple[StandaloneSeam, ScenarioSelection | None]:
     """Compose the seam over one transport (§4.1's composition step).
 
@@ -87,14 +131,23 @@ def _build_seam(
     late-bound ``mock_plugin_session`` shape) so a reload's reconnect
     speaks the new plugin's own script; scenario mode additionally hands
     the seam the scenario wrapper so a reload re-binds the scenario
-    adapter over the reloaded project.
+    adapter over the reloaded project. The serial branch composes ONE
+    ``SerialEndpoint`` (issue #385 §1.4) shared by the session factory and
+    the seam, and opens the binding store HERE — a malformed
+    ``device-bindings.json`` refuses serve construction with the prefixed
+    message and exit 2, never a mid-request traceback. ``--device`` is the
+    headless/scripted CONSTANT endpoint (the binding bypass, §1.6);
+    without it the endpoint is binding-backed and the host serves
+    binding-pending until the operator picks. ``serial_hooks`` is the
+    test-injection axis for discovery + resolution enumeration (the
+    ``open_port`` sibling).
     """
     from .scenarios import (
         ScenarioSelection,
         scenario_session,
         wrap_scenario_plugin,
     )
-    from .serial import serial_plugin_session
+    from .serial import SerialEndpoint, serial_plugin_session
     from .session import mock_plugin_session
 
     plugin = _load(project)
@@ -118,30 +171,59 @@ def _build_seam(
             selection,
         )
     if transport == "serial":
-        if not device:  # absent OR empty — "" is a missing path, not a path
-            click.echo(
-                "standalone_transport_serial_device_required: --transport serial "
-                "requires --device <path>",
-                err=True,
+        from .binding import BindingStore, binding_endpoint, bindings_path
+
+        try:
+            store = BindingStore.open(bindings_path(bindings))
+        except ValueError as exc:
+            click.echo(str(exc), err=True)
+            raise SystemExit(2) from exc
+        hooks = serial_hooks
+        # ONE enumeration callable serves both masters in both forms: the
+        # binding-backed resolver (below) and the mint-time serial
+        # recording (serial_plugin_session) — the discovery short-circuit's
+        # reconciliation reads what the factory noted, so the CLI's two
+        # forms arm it equally (trust-2).
+        if hooks is not None:
+            enumerate_ports = hooks.enumerate_ports
+        else:
+            from .serial import _pyserial_enumerate
+
+            enumerate_ports = _pyserial_enumerate
+        if device:
+            # The --device form is the constant endpoint (the binding
+            # bypass, §1.6): the store is loaded and validated but never
+            # consulted for resolution, and never modified.
+            endpoint = SerialEndpoint(device)
+        else:
+            # F-385-2 (adopted): serve starts BINDING-PENDING — the
+            # refusal moved to connect time (``binding_absent``) so the UI
+            # can render the pick; a stored binding resolves straight away.
+            endpoint = SerialEndpoint(
+                binding_endpoint(
+                    store, plugin.package, plugin.device_id, enumerate_ports
+                )
             )
-            raise SystemExit(2)
         return (
             StandaloneSeam(
                 serial_plugin_session(
                     plugin,
-                    device,
+                    endpoint,
                     open_port=open_port,
                     capture_root=capture_root,
+                    enumerate_ports=enumerate_ports,
                 ),
                 transport_kind="serial",
                 unattended=unattended,
-                # The no-re-probe clause (I3 §3.3): a scan serves the
-                # candidate whose enumerated name byte-equals this path from
-                # the session's identity instead of re-opening the live port
-                # (issue #389). Alias spellings of the same physical port
-                # (cu vs tty, by-id symlinks) do not match and still
-                # re-probe -- the alias-matching follow-up owns that.
-                serial_device_path=device,
+                serial_ports=hooks,
+                # The no-re-probe clause (I3 §3.3, issue #389) now flows
+                # from the endpoint's last_resolution — the path the live
+                # session actually opened. Alias spellings of the same
+                # physical port (cu vs tty, by-id symlinks) do not match
+                # and still re-probe — the alias-matching follow-up owns
+                # that.
+                serial_endpoint=endpoint,
+                bindings=store,
                 capture_root=capture_root,
             ),
             None,
@@ -150,6 +232,16 @@ def _build_seam(
         click.echo(
             "standalone_transport_device_serial_only: --device applies only to "
             "--transport serial",
+            err=True,
+        )
+        raise SystemExit(2)
+    if bindings is not None:
+        # drift-2 (review fold): --bindings names the serial binding
+        # document; on any other transport it is not silently ignored —
+        # the --device precedent's family, one flag one meaning.
+        click.echo(
+            "standalone_transport_bindings_serial_only: --bindings applies only "
+            "to --transport serial",
             err=True,
         )
         raise SystemExit(2)
@@ -192,7 +284,23 @@ def cli() -> None:
 @click.option(
     "--device",
     default=None,
-    help="Serial device path (required with --transport serial, refused otherwise).",
+    help=(
+        "Serial device path: the headless constant endpoint (the binding "
+        "bypass). Without it, a serial host serves binding-pending until an "
+        "endpoint is picked in the UI, or a stored binding resolves. "
+        "Refused on non-serial transports."
+    ),
+)
+@click.option(
+    "--bindings",
+    type=click.Path(path_type=Path),
+    default=None,
+    help=(
+        "The device-bindings document (default: "
+        "BENCHWEAVE_STANDALONE_BINDINGS, then device-bindings.json under "
+        "the working directory). One row per plugin and connection key; "
+        "validated at startup."
+    ),
 )
 @click.option(
     "--capture-root",
@@ -222,6 +330,7 @@ def serve(
     no_open: bool,
     transport: str,
     device: str | None,
+    bindings: Path | None,
     capture_root: Path | None,
     scenario: str | None,
     authoring: bool,
@@ -262,6 +371,7 @@ def serve(
         scenario=scenario,
         unattended=unattended,
         device=device,
+        bindings=bindings,
         capture_root=capture_root,
     )
     if seam.session.plugin.load_diagnostic is not None:
@@ -274,10 +384,31 @@ def serve(
         bound_port=port,
         bearer_token=new_token(),
         csrf_token=new_token(),
+        operator_action_token=new_token(),
     )
     app = build_app(seam, policy=policy, authoring=authoring, scenario=selection)
     click.echo(f"Serving {seam.session.plugin.package} on http://{host}:{port}")
     click.echo(f"Bearer token (REST mutations and MCP over HTTP): {policy.bearer_token}")
+    # trust-1: the per-launch operator action token, minted for every serve
+    # (uniform and fail-closed — the routes refuse everything without one)
+    # but DELIVERED only where it has a consumer: the serial transport's
+    # bind/unbind routes. Two out-of-band channels, never a page GET: the
+    # banner line below, and a file under the capture-root family.
+    launch_url = f"http://{host}:{port}"
+    if transport == "serial":
+        click.echo(
+            "Operator action token (endpoint bind/unbind in the UI): "
+            f"{policy.operator_action_token}"
+        )
+        token_file = _deliver_operator_action_token(
+            capture_root, policy.operator_action_token, host, port
+        )
+        if token_file is not None:
+            click.echo(f"Operator action token file: {token_file}")
+        # The launch URL carries the token as a QUERY: the page view it
+        # opens is the armed view (the forms' headers carry it), while a
+        # GET without the credential never yields it.
+        launch_url = f"http://{host}:{port}/?operator_action={policy.operator_action_token}"
     if not no_open:
         import webbrowser
 
@@ -288,11 +419,11 @@ def serve(
         # it). Degrade to the notice: the server is the point, not the
         # browser (review fold F1 on gateway PR #400).
         try:
-            opened = webbrowser.open(f"http://{host}:{port}")
+            opened = webbrowser.open(launch_url)
         except webbrowser.Error:
             opened = False
         if not opened:
-            click.echo(f"Browser did not open; use http://{host}:{port}", err=True)
+            click.echo(f"Browser did not open; use {launch_url}", err=True)
     uvicorn.run(app, host=host, port=port, log_level="warning")
 
 

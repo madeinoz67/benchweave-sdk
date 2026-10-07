@@ -127,8 +127,23 @@ _DEVICE_SUMMARY = {
         "model": {"type": "string"},
         "transport": {"type": "string"},
         "connection_key": {"type": "string"},
+        # The endpoint fields (issue #385 §1.2, a disclosed result-schema
+        # widening): every row names the physical candidate it describes —
+        # nullable because the mock transport has no endpoint and a
+        # candidate's USB serial is None without an iSerial. Required so a
+        # consumer never guesses whether the field was forgotten.
+        "port_path": {"type": ["string", "null"]},
+        "usb_serial": {"type": ["string", "null"]},
     },
-    "required": ["id", "manufacturer", "model", "transport", "connection_key"],
+    "required": [
+        "id",
+        "manufacturer",
+        "model",
+        "transport",
+        "connection_key",
+        "port_path",
+        "usb_serial",
+    ],
     "additionalProperties": False,
 }
 
@@ -685,11 +700,12 @@ CATALOGUE: tuple[OperationSpec, ...] = (
         "events_get",
         (
             "Fetch the seam's events after a cursor: the state changes "
-            "(connect, disconnect, stage, apply, preset, reload), the "
-            "link family (the serial link state machine: applied, "
-            "refused and failed switches) and every refused seam "
-            "operation — unknown, deferred, invalid-argument and "
-            "adapter-reported alike — in one monotonic gap-free order, "
+            "(connect, disconnect, stage, apply, preset, reload, "
+            "endpoint bind/unbind), the capture lifecycle (started, "
+            "progress, stopped), the link family (the serial link state "
+            "machine: applied, refused and failed switches) and every "
+            "refused seam operation — unknown, deferred, invalid-argument "
+            "and adapter-reported alike — in one monotonic gap-free order, "
             "the same sequence the /events stream carries."
         ),
         _object(

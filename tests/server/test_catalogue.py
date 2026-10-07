@@ -86,6 +86,25 @@ def test_unknown_name_has_no_row() -> None:
     assert catalogue.spec("lease_create") is None
 
 
+def test_device_summary_carries_the_endpoint_fields() -> None:
+    """Issue #385 §1.2's wire-visible widening: every ``device_discover``
+    row names its physical endpoint — ``port_path`` always a string,
+    ``usb_serial`` string-or-null (the CH3433G-class no-iSerial case),
+    both REQUIRED so a consumer never guesses whether the field was
+    forgotten. REST and MCP pin from this one schema (the parity gate's
+    single authority)."""
+    items = catalogue.spec("device_discover").result_schema["properties"][
+        "devices"
+    ]["items"]
+    assert items["required"] == [
+        "id", "manufacturer", "model", "transport", "connection_key",
+        "port_path", "usb_serial",
+    ]
+    assert items["properties"]["port_path"] == {"type": ["string", "null"]}
+    assert items["properties"]["usb_serial"] == {"type": ["string", "null"]}
+    assert items["additionalProperties"] is False
+
+
 def test_spec_returns_rows_for_every_name() -> None:
     for name in SW10_NAMES:
         row = catalogue.spec(name)

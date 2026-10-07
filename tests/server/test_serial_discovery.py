@@ -64,12 +64,23 @@ class LoopbackPort:
 
 
 class CandidatePort:
-    """A list_ports-shaped candidate: ``device`` plus USB identity."""
+    """A list_ports-shaped candidate: ``device`` plus USB identity.
 
-    def __init__(self, device: str, vid: int | None = None, pid: int | None = None) -> None:
+    ``serial_number`` models ``ListPortInfo``'s own field (None when the
+    device descriptor carries no iSerial — the CH343G-class open fact).
+    """
+
+    def __init__(
+        self,
+        device: str,
+        vid: int | None = None,
+        pid: int | None = None,
+        serial_number: str | None = None,
+    ) -> None:
         self.device = device
         self.vid = vid
         self.pid = pid
+        self.serial_number = serial_number
 
 
 _MATCHING = b"SDK Example,demo,SIM001,1.0.0\n"
@@ -99,8 +110,8 @@ def _scan_fixture(tmp_path: Path) -> dict[str, Any]:
         "/dev/silent": silent,
     }
     candidates = [
-        CandidatePort("/dev/match-a", vid=0x1A86, pid=0x7523),
-        CandidatePort("/dev/match-b", vid=0x1A86, pid=0x7523),
+        CandidatePort("/dev/match-a", vid=0x1A86, pid=0x7523, serial_number="SER-A"),
+        CandidatePort("/dev/match-b", vid=0x1A86, pid=0x7523, serial_number="SER-B"),
         CandidatePort("/dev/foreign", vid=0x1A86, pid=0x0002),
         CandidatePort("/dev/silent", vid=0x1A86, pid=0x0003),
         CandidatePort("/dev/other-vendor", vid=0x10C4, pid=0xEA60),
@@ -147,6 +158,22 @@ def test_ar4_discovery_returns_exactly_the_two_matching_candidates(tmp_path: Pat
     )
 
 
+def test_rows_carry_the_endpoint_fields(tmp_path: Path) -> None:
+    """Issue #385 §1.2: a discovery row names its PHYSICAL endpoint —
+    ``port_path`` always, ``usb_serial`` when the candidate's descriptor
+    carries an iSerial (None when it does not — an honest null, never a
+    fabricated serial). Two identical boards were previously two
+    indistinguishable rows the operator could not act on."""
+    fx = _scan_fixture(tmp_path)
+    from benchweave_sdk_server.serial import discover_serial_devices
+
+    devices = asyncio.run(
+        discover_serial_devices(fx["plugin"], hooks=fx["hooks"])
+    )
+    assert [row["port_path"] for row in devices] == ["/dev/match-a", "/dev/match-b"]
+    assert [row["usb_serial"] for row in devices] == ["SER-A", "SER-B"]
+
+
 def test_a_silent_or_foreign_port_is_omitted_not_reported(tmp_path: Path) -> None:
     fx = _scan_fixture(tmp_path)
     from benchweave_sdk_server.serial import discover_serial_devices
@@ -178,20 +205,161 @@ def test_the_connected_sessions_port_is_served_without_reprobing(tmp_path: Path)
     assert fx["opened"].count("/dev/match-a") == 0, (
         "the connected port is never re-probed"
     )
+    # §1.2: the connected row is served with the CONNECTED candidate's own
+    # endpoint — the operator sees which physical row their session is on.
+    assert devices[0]["port_path"] == "/dev/match-a"
+    assert devices[0]["usb_serial"] == "SER-A"
+
+
+def test_a_connected_era_row_with_a_mismatched_mint_serial_is_not_confirmed(
+    tmp_path: Path,
+) -> None:
+    """Trust-2 (probe 3's class): the connected short-circuit row takes its
+    serial from the LIVE enumeration — a re-occupied path (the connected
+    unit left, a foreign unit took the path) would serve a chimera row (the
+    session's established identity, the re-occupant's serial) that the
+    bind-time serial-evidence check cannot catch, because both sides of ITS
+    comparison read the foreign serial. The mint-time serial reconciles:
+    known and mismatched, the row is skipped — the re-occupant is not a
+    confirmed candidate."""
+    fx = _scan_fixture(tmp_path)
+    from benchweave_sdk_server.serial import SerialPortHooks, discover_serial_devices
+
+    identity = {"manufacturer": "SDK Example", "model": "demo"}
+    # The physical swap: the enumeration now carries a foreign serial at
+    # the connected path.
+    swapped = [CandidatePort("/dev/match-a", vid=0x1A86, pid=0x7523, serial_number="SER-X")]
+    devices = asyncio.run(
+        discover_serial_devices(
+            fx["plugin"],
+            hooks=SerialPortHooks(
+                enumerate_ports=lambda: swapped, open_port=lambda d, s: fx["ports"][d]
+            ),
+            connected_device="/dev/match-a",
+            connected_identity=identity,
+            connected_serial="SER-A",
+            connected_serial_known=True,
+        )
+    )
+    assert devices == [], "the re-occupied path's row must not confirm"
+
+
+def test_a_connected_era_row_reconciles_matching_and_null_mint_serials(
+    tmp_path: Path,
+) -> None:
+    """The reconciliation's honest edges: a matching mint serial serves the
+    row; a serial-less unit (mint None, live None) reconciles and serves;
+    a mint-time None against a live serial is a MISMATCH (the occupant
+    changed) and must not confirm."""
+    fx = _scan_fixture(tmp_path)
+    from benchweave_sdk_server.serial import SerialPortHooks, discover_serial_devices
+
+    identity = {"manufacturer": "SDK Example", "model": "demo"}
+
+    def _run(candidates: list[CandidatePort], minted: str | None) -> list[Any]:
+        return asyncio.run(
+            discover_serial_devices(
+                fx["plugin"],
+                hooks=SerialPortHooks(
+                    enumerate_ports=lambda: list(candidates),
+                    open_port=lambda d, s: fx["ports"][d],
+                ),
+                connected_device="/dev/match-a",
+                connected_identity=identity,
+                connected_serial=minted,
+                connected_serial_known=True,
+            )
+        )
+
+    same = [CandidatePort("/dev/match-a", vid=0x1A86, pid=0x7523, serial_number="SER-A")]
+    assert [row["usb_serial"] for row in _run(same, "SER-A")] == ["SER-A"]
+    serial_less = [CandidatePort("/dev/match-a", vid=0x1A86, pid=0x7523)]
+    assert [row["usb_serial"] for row in _run(serial_less, None)] == [None]
+    gained = [CandidatePort("/dev/match-a", vid=0x1A86, pid=0x7523, serial_number="NEW")]
+    assert _run(gained, None) == [], "an occupant that GAINED a serial is a mismatch"
+
+
+def test_an_unknown_mint_serial_serves_the_row_as_before(
+    tmp_path: Path,
+) -> None:
+    """The pre-fold shape stays honest: an endpoint minted without an
+    enumeration (direct test construction, the byte-compat form) has NO
+    evidence — no reconciliation runs, the connected row serves exactly as
+    the lineage shipped it."""
+    fx = _scan_fixture(tmp_path)
+    from benchweave_sdk_server.serial import SerialPortHooks, discover_serial_devices
+
+    identity = {"manufacturer": "SDK Example", "model": "demo"}
+    swapped = [CandidatePort("/dev/match-a", vid=0x1A86, pid=0x7523, serial_number="SER-X")]
+    devices = asyncio.run(
+        discover_serial_devices(
+            fx["plugin"],
+            hooks=SerialPortHooks(
+                enumerate_ports=lambda: swapped, open_port=lambda d, s: fx["ports"][d]
+            ),
+            connected_device="/dev/match-a",
+            connected_identity=identity,
+        )
+    )
+    assert [row["usb_serial"] for row in devices] == ["SER-X"]
+
+
+def test_a_candidate_without_a_usb_serial_serves_an_honest_null(tmp_path: Path) -> None:
+    """A bridge whose device descriptor carries no iSerial (pyserial's
+    ``serial_number`` is None) serves ``usb_serial: null`` — honest null,
+    never a fabricated serial or an empty string."""
+    project = tmp_path / "proj"
+    from benchweave_sdk.scaffold import create_project
+    from benchweave_sdk_server.serial import SerialPortHooks, discover_serial_devices
+
+    create_project(project, "example_plugin")
+    plugin = load_plugin_project(project)
+    port = LoopbackPort(replies={b"ID?\n": _MATCHING})
+    hooks = SerialPortHooks(
+        enumerate_ports=lambda: [CandidatePort("/dev/no-serial", vid=0x1A86, pid=0x7523)],
+        open_port=lambda device, settings: port,
+    )
+    devices = asyncio.run(discover_serial_devices(plugin, hooks=hooks))
+    assert [row["usb_serial"] for row in devices] == [None]
+    assert [row["port_path"] for row in devices] == ["/dev/no-serial"]
+
+
+def test_the_mock_transports_row_is_an_honest_null_endpoint(seam) -> None:
+    """The mock branch has no endpoint at all: its single row carries
+    ``port_path``/``usb_serial`` null — the one row shape holds across
+    transports (§1.2), and the nulls are honest, never a fake path."""
+    devices = asyncio.run(seam.call("device_discover"))["devices"]
+    # The row echoes the DESCRIPTOR's declared transport (the scaffold
+    # declares serial) — the serving transport is host_info's business.
+    assert devices == [
+        {
+            "id": "example_device",
+            "manufacturer": "SDK Example",
+            "model": "demo",
+            "transport": "serial",
+            "connection_key": "example_device",
+            "port_path": None,
+            "usb_serial": None,
+        }
+    ]
 
 
 def _serial_app(tmp_path: Path) -> tuple[Any, ...]:
     """A serial-transport app over the AR-4 fixture (TestClient + policy)."""
     fx = _scan_fixture(tmp_path)
-    from benchweave_sdk_server.serial import serial_plugin_session
+    from benchweave_sdk_server.serial import SerialEndpoint, serial_plugin_session
     from benchweave_sdk_server.web import build_app
 
-    session = serial_plugin_session(fx["plugin"], "/dev/match-a")
+    # The resolver form (issue #385): ONE endpoint object feeds both the
+    # session factory and the seam — the connected short-circuit reads the
+    # resolver's last_resolution, never a second source of truth.
+    endpoint = SerialEndpoint("/dev/match-a")
+    session = serial_plugin_session(fx["plugin"], endpoint)
     seam = StandaloneSeam(
         session,
         transport_kind="serial",
         serial_ports=fx["hooks"],
-        serial_device_path="/dev/match-a",
+        serial_endpoint=endpoint,
     )
     policy = GuardPolicy.complete(
         bound_host="127.0.0.1",
@@ -207,15 +375,16 @@ def _serial_app_with_hooks(tmp_path: Path, hooks: Any) -> tuple[Any, ...]:
     """A serial-transport app over the AR-4 fixture with EXPLICIT hooks
     (the fold's failure-injection seam)."""
     fx = _scan_fixture(tmp_path)
-    from benchweave_sdk_server.serial import serial_plugin_session
+    from benchweave_sdk_server.serial import SerialEndpoint, serial_plugin_session
     from benchweave_sdk_server.web import build_app
 
-    session = serial_plugin_session(fx["plugin"], "/dev/match-a")
+    endpoint = SerialEndpoint("/dev/match-a")
+    session = serial_plugin_session(fx["plugin"], endpoint)
     seam = StandaloneSeam(
         session,
         transport_kind="serial",
         serial_ports=hooks,
-        serial_device_path="/dev/match-a",
+        serial_endpoint=endpoint,
     )
     policy = GuardPolicy.complete(
         bound_host="127.0.0.1",

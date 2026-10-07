@@ -110,13 +110,18 @@ def _wired_seam(starter_project: Path) -> tuple[Any, list[str]]:
 
 
 def test_the_cli_serial_seam_carries_the_device_path(starter_project: Path) -> None:
-    """The wiring itself: ``serve --transport serial --device PATH`` must
-    hand the seam the path, or the seam scans with ``connected_device=None``
-    and the no-re-probe clause never fires in production (issue #389:
-    pre-fix this attribute stayed ``None``; only hand-built test seams ever
-    set it)."""
+    """The wiring itself (issue #385's resolver form): ``serve --transport
+    serial --device PATH`` hands the seam the SAME endpoint object the
+    session factory consults — resolve it and you get the path, or the
+    scan's connected short-circuit never fires in production (issue #389:
+    pre-fix the seam carried no path at all; only hand-built test seams
+    ever set it)."""
     seam, _ = _wired_seam(starter_project)
-    assert seam._serial_device_path == _CONNECTED
+    assert seam._serial_endpoint is not None
+    assert seam._serial_endpoint() == _CONNECTED
+    assert seam._serial_endpoint.last_resolution is None, (
+        "nothing has connected; the resolution is unset, not fabricated"
+    )
 
 
 def test_a_scan_through_the_cli_seam_never_reopens_the_connected_port(
@@ -162,20 +167,183 @@ def test_the_mock_and_scenario_branches_carry_no_serial_wiring(
     plain, plain_selection = _build_seam(starter_project)
     assert plain.transport_kind == "mock"
     assert plain_selection is None
-    assert plain._serial_device_path is None
+    assert plain._serial_endpoint is None
     scenario_seam, selection = _build_seam(starter_project, scenario="stale")
     assert scenario_seam.transport_kind == "mock"
     assert selection is not None and selection.current == "stale"
-    assert scenario_seam._serial_device_path is None
+    assert scenario_seam._serial_endpoint is None
 
 
-def test_serial_without_a_device_refuses(starter_project: Path, capsys) -> None:
-    """The serial branch's own guard, previously pinned nowhere: no
-    ``--device`` (absent or empty) refuses with the prefixed message."""
+def test_serial_without_a_device_serves_binding_pending(
+    starter_project: Path,
+) -> None:
+    """F-385-2 (adopted): serial serve WITHOUT ``--device`` no longer
+    refuses — the seam starts binding-pending and the UI drives the pick
+    (the refusal ``standalone_transport_serial_device_required`` is
+    RETIRED; its old pin lived here). Serve starts; ``device_connect``
+    refuses ``not_ready`` with reason ``binding_absent`` at connect time,
+    not startup, because the UI must render to let the operator pick."""
+    from benchweave_sdk_server.errors import SeamError
+    from benchweave_sdk_server.serial import SerialPortHooks
+
+    ports = {_CONNECTED: LoopbackPort(replies={b"ID?\n": _MATCHING})}
+    opened: list[str] = []
+
+    def open_port(device: str, settings: dict[str, Any]) -> LoopbackPort:
+        opened.append(device)
+        return ports[device]
+
+    seam, selection = _build_seam(
+        starter_project,
+        transport="serial",
+        open_port=open_port,
+        serial_hooks=SerialPortHooks(
+            enumerate_ports=lambda: [Candidate(_CONNECTED)], open_port=open_port
+        ),
+    )
+    assert selection is None
+    assert seam.binding_row is None, "nothing is bound yet"
+    assert opened == [], "construction opens nothing"
+
+    async def scenario() -> None:
+        with pytest.raises(SeamError) as raised:
+            await seam.call("device_connect", {"device_id": "example_device"})
+        assert raised.value.code == "not_ready"
+        assert raised.value.details["reason"] == "binding_absent"
+
+    asyncio.run(scenario())
+
+
+def test_a_stored_binding_resolves_without_the_device_flag(
+    starter_project: Path,
+) -> None:
+    """The whole point of the store: a binding written by a previous run
+    makes a fresh serve — no ``--device`` — connect straight to the bound
+    port (the restart no longer re-types the path)."""
+    from benchweave_sdk_server.binding import BindingStore
+    from benchweave_sdk_server.serial import SerialPortHooks
+
+    ports = {
+        _CONNECTED: LoopbackPort(replies={b"ID?\n": _MATCHING}),
+        _OTHER: LoopbackPort(replies={b"ID?\n": _MATCHING}),
+    }
+    opened: list[str] = []
+
+    def open_port(device: str, settings: dict[str, Any]) -> LoopbackPort:
+        opened.append(device)
+        return ports[device]
+
+    hooks = SerialPortHooks(
+        enumerate_ports=lambda: [
+            Candidate(_CONNECTED),
+            Candidate(_OTHER),
+        ],
+        open_port=open_port,
+    )
+    store_path = starter_project.parent / "device-bindings.json"
+    BindingStore.open(store_path).bind(
+        {
+            "connection_key": "example_device",
+            "plugin_package": "example_plugin",
+            "transport": "serial",
+            "endpoint_kind": "port_path",
+            "usb_serial": None,
+            "vid": None,
+            "pid": None,
+            "port_path": _OTHER,
+            "identity": {"manufacturer": "SDK Example", "model": "demo", "firmware": None},
+            "bound_at": "2026-10-04T09:00:00Z",
+            "bound_via": "ui",
+        }
+    )
+    seam, _ = _build_seam(
+        starter_project,
+        transport="serial",
+        open_port=open_port,
+        serial_hooks=hooks,
+        bindings=store_path,
+    )
+    asyncio.run(seam.call("device_connect", {"device_id": "example_device"}))
+    assert opened == [_OTHER], "the stored binding resolved the connect"
+
+
+def test_the_bindings_flag_names_the_store(starter_project: Path) -> None:
+    """``--bindings <path>``: the operator's own location for the document
+    (the capture-root family's explicit-argument precedence)."""
+    from benchweave_sdk_server.serial import SerialPortHooks
+
+    ports = {_CONNECTED: LoopbackPort(replies={b"ID?\n": _MATCHING})}
+    opened: list[str] = []
+
+    def open_port(device: str, settings: dict[str, Any]) -> LoopbackPort:
+        opened.append(device)
+        return ports[device]
+
+    store_path = starter_project.parent / "custom-bindings.json"
+    seam, _ = _build_seam(
+        starter_project,
+        transport="serial",
+        device=_CONNECTED,
+        open_port=open_port,
+        serial_hooks=SerialPortHooks(
+            enumerate_ports=lambda: [Candidate(_CONNECTED)], open_port=open_port
+        ),
+        bindings=store_path,
+    )
+    asyncio.run(seam.call("device_discover"))
+    asyncio.run(seam.bind_device(_CONNECTED))
+    import json
+
+    document = json.loads(store_path.read_text())
+    assert document["bindings"], "the named store carries the row"
+
+
+def test_ar_f_a_malformed_bindings_document_refuses_serve_construction(
+    starter_project: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """AR-F's serve arm: a planted malformed ``device-bindings.json``
+    refuses construction (exit 2, the prefixed message, no traceback) —
+    never a mid-request traceback once the host is up."""
+    store_path = starter_project.parent / "device-bindings.json"
+    store_path.write_text('{"config_version": "1", "bindings": [', encoding="utf-8")
     with pytest.raises(SystemExit) as exc:
-        _build_seam(starter_project, transport="serial")
+        _build_seam(
+            starter_project,
+            transport="serial",
+            device=_CONNECTED,
+            bindings=store_path,
+        )
     assert exc.value.code == 2
-    assert "standalone_transport_serial_device_required:" in capsys.readouterr().err
+    assert "standalone_binding_unreadable:" in capsys.readouterr().err
+
+
+def test_ar_f_a_duplicate_row_document_refuses_serve_construction(
+    starter_project: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import json
+
+    row = {
+        "connection_key": "example_device",
+        "plugin_package": "example_plugin",
+        "transport": "serial",
+        "endpoint_kind": "port_path",
+        "usb_serial": None,
+        "vid": None,
+        "pid": None,
+        "port_path": _CONNECTED,
+        "identity": {"manufacturer": "SDK Example", "model": "demo", "firmware": None},
+        "bound_at": "2026-10-04T09:00:00Z",
+        "bound_via": "ui",
+    }
+    store_path = starter_project.parent / "device-bindings.json"
+    store_path.write_text(
+        json.dumps({"config_version": "1", "bindings": [row, dict(row)]}),
+        encoding="utf-8",
+    )
+    with pytest.raises(SystemExit) as exc:
+        _build_seam(starter_project, transport="serial", bindings=store_path)
+    assert exc.value.code == 2
+    assert "standalone_binding_schema:" in capsys.readouterr().err
 
 
 def test_a_device_on_the_mock_transport_refuses(starter_project: Path, capsys) -> None:
@@ -185,3 +353,19 @@ def test_a_device_on_the_mock_transport_refuses(starter_project: Path, capsys) -
         _build_seam(starter_project, device="/dev/nowhere")
     assert exc.value.code == 2
     assert "standalone_transport_device_serial_only:" in capsys.readouterr().err
+
+
+def test_bindings_on_a_non_serial_transport_refuses(
+    starter_project: Path, capsys
+) -> None:
+    """drift-2 (review fold): ``--bindings`` names the serial binding
+    document; on any other transport it was silently ignored — the same
+    hole ``--device`` guards against, so it refuses with the same message
+    family instead of accepting a flag it will never read."""
+    with pytest.raises(SystemExit) as exc:
+        _build_seam(
+            starter_project,
+            bindings=starter_project.parent / "device-bindings.json",
+        )
+    assert exc.value.code == 2
+    assert "standalone_transport_bindings_serial_only:" in capsys.readouterr().err

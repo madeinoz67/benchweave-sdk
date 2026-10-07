@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hmac
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -188,6 +189,35 @@ def _add_html_routes(
     simulated = seam.transport_kind == "mock"
     mode_banner = Markup(mode_banner_html(simulated=simulated))
 
+    def _operator_valid(request: Request) -> bool:
+        """Whether the request presented the per-launch operator action
+        token (trust-1). Fail-closed on an unminted (empty) policy token —
+        including against an empty-string header, which a naive equality
+        would accept; constant-time against a minted one."""
+        supplied = request.headers.get("x-operator-action-token", "")
+        return bool(policy.operator_action_token) and hmac.compare_digest(
+            supplied, policy.operator_action_token
+        )
+
+    def _launch_token(request: Request) -> str | None:
+        """The token an ARMED page view may render into its forms' headers:
+        the query parameter, but only when it IS the minted token. A page
+        GET without the credential never yields it."""
+        supplied = request.query_params.get("operator_action", "")
+        if policy.operator_action_token and hmac.compare_digest(
+            supplied, policy.operator_action_token
+        ):
+            return policy.operator_action_token
+        return None
+
+    def _index_url(request: Request) -> str:
+        """The post-action index URL: the launch query is PRESERVED when
+        the acting request carried the token, so the next action on the
+        landing page (unbind after bind, re-pick after scan) stays armed."""
+        if _operator_valid(request):
+            return f"/?operator_action={policy.operator_action_token}"
+        return "/"
+
     def pres() -> HostPresentation:
         """The CURRENT presentation model, read per request: a reload
         rebuilds it on the seam, and a closure captured at build time
@@ -217,17 +247,23 @@ def _add_html_routes(
         never null."""
         return await seam.call(operation, arguments, surface="ui")
 
-    @app.get("/", response_class=HTMLResponse)
-    async def index(request: Request) -> Response:
+    async def _index_response(
+        request: Request,
+        *,
+        scan_error: dict[str, Any] | None = None,
+        binding_error: dict[str, Any] | None = None,
+    ) -> Response:
+        """The index page's ONE rendering path: the GET view, a refused
+        scan and a refused bind/unbind all render here, so a refusal is
+        never a silent redirect back (the M1 fold's render-the-refusal
+        idiom, carried onto the pick flow)."""
         if seam.transport_kind == "serial":
             # NFR-O3: a page load never transmits — GET serves the LAST
             # discovery result (host state, initially empty with a scan
             # prompt); scanning is the explicit POST below.
             devices = seam.discovery_cache or []
-            scan_error = None
         else:
             devices = (await seam.call("device_discover"))["devices"]
-            scan_error = None
         return _TEMPLATES.TemplateResponse(
             request=request,
             name="index.html",
@@ -238,8 +274,20 @@ def _add_html_routes(
                 has_presentation=pres().available,
                 scan_available=seam.transport_kind == "serial",
                 scan_error=scan_error,
+                binding_error=binding_error,
+                binding=seam.binding_row,
+                # trust-1: the armed page view. A GET whose query carries
+                # the per-launch operator action token renders it into the
+                # bind/unbind forms' headers — a GET WITHOUT it never
+                # yields the credential, so no loopback process can scrape
+                # what the pages do not carry.
+                operator_token=_launch_token(request),
             ),
         )
+
+    @app.get("/", response_class=HTMLResponse)
+    async def index(request: Request) -> Response:
+        return await _index_response(request)
 
     @app.post("/discover")
     async def discover_route(request: Request) -> Response:
@@ -251,38 +299,22 @@ def _add_html_routes(
         try:
             await seam.call("device_discover")
         except SeamError as exc:
-            devices = seam.discovery_cache or []
-            return _TEMPLATES.TemplateResponse(
-                request=request,
-                name="index.html",
-                context=shared(
-                    devices=devices,
-                    connected=seam.session.connected,
-                    pages=pres().pages,
-                    has_presentation=pres().available,
-                    scan_available=True,
-                    scan_error={"code": exc.code, "message": exc.message},
-                ),
+            return await _index_response(
+                request, scan_error={"code": exc.code, "message": exc.message}
             )
         except (RuntimeError, ValueError, OSError) as exc:
             # The scan's failure classes that raise before any SeamError
             # exists (FOLD-E) render the same typed scan-refused row; the
             # seam maps them for REST and MCP too, so this arm is the
             # route's own defense, not the only reader.
-            devices = seam.discovery_cache or []
-            return _TEMPLATES.TemplateResponse(
-                request=request,
-                name="index.html",
-                context=shared(
-                    devices=devices,
-                    connected=seam.session.connected,
-                    pages=pres().pages,
-                    has_presentation=pres().available,
-                    scan_available=True,
-                    scan_error={"code": "not_ready", "message": str(exc)},
-                ),
+            return await _index_response(
+                request, scan_error={"code": "not_ready", "message": str(exc)}
             )
-        return RedirectResponse(url="/", status_code=303)
+        # The scan itself needs only the CSRF token (it transmits identify
+        # probes to candidate ports, but the operator's explicit POST is
+        # the act); its redirect keeps the LAUNCH query armed when the
+        # armed page sent the request, so pick-after-scan still binds.
+        return RedirectResponse(url=_index_url(request), status_code=303)
 
     async def _gather_readings(
         device_id: str
@@ -635,9 +667,17 @@ def _add_html_routes(
             await _ui_call("device_connect", {"device_id": device_id})
         except SeamError as exc:
             # The M1 fold: a refused connect RENDERS its refusal — the
-            # operator never gets the silent prompt back instead.
+            # operator never gets the silent prompt back instead. The
+            # binding reasons ride the error row so the device page can
+            # offer the scan-and-re-pick action beside them (#385 §1.4).
             return await _render_device(
-                request, device_id, action_error={"code": exc.code, "message": exc.message}
+                request,
+                device_id,
+                action_error={
+                    "code": exc.code,
+                    "message": exc.message,
+                    "reason": exc.details.get("reason"),
+                },
             )
         return _redirect()
 
@@ -829,6 +869,84 @@ def _add_html_routes(
                     action_error={"code": "invalid_request", "message": str(exc)},
                 )
             return _redirect()
+
+    if seam.transport_kind == "serial":
+
+        @app.post("/devices/{device_id}/bind")
+        async def bind_endpoint(request: Request, device_id: str) -> Response:
+            """The operator's endpoint pick (issue #385 §1.5): a HOST-side
+            route over the seam's bind, not a catalogue operation (the
+            scenario-select precedent, D-B1). The credential class is the
+            per-launch OPERATOR ACTION TOKEN (trust-1), delivered
+            out-of-band — the serve banner and a file under the capture
+            root family — never in a page GET: the CSRF token renders into
+            unauthenticated HTML, so CSRF alone would let any loopback
+            process scrape it and move the physical endpoint subsequent
+            writes hit. Neither a bearer-holding agent nor a tokenless
+            page-scraping process can bind; the act stays with the
+            operator who launched the serve. Binding transmits nothing:
+            the pick records what the scan already confirmed."""
+            if device_id != seam.session.device_id:
+                return HTMLResponse("not found", status_code=404)
+            if not _operator_valid(request):
+                refusal = await _index_response(
+                    request,
+                    binding_error={
+                        "code": "invalid_request",
+                        "message": (
+                            "standalone_binding_operator_token_required: "
+                            "bind needs the per-launch operator action token "
+                            "(the x-operator-action-token header); it is "
+                            "printed at serve start and written under the "
+                            "capture root — open the launch URL, or append "
+                            "?operator_action=<token> to this page"
+                        ),
+                    },
+                )
+                refusal.status_code = 403
+                return refusal
+            form = await request.form()
+            try:
+                await seam.bind_device(str(form.get("port_path", "")))
+            except SeamError as exc:
+                return await _index_response(
+                    request,
+                    binding_error={"code": exc.code, "message": exc.message},
+                )
+            return RedirectResponse(url=_index_url(request), status_code=303)
+
+        @app.post("/devices/{device_id}/unbind")
+        async def unbind_endpoint(request: Request, device_id: str) -> Response:
+            """Remove the endpoint binding — the same host-state posture,
+            the same conflict-while-connected guard, and the same operator
+            action token credential as bind (trust-1)."""
+            if device_id != seam.session.device_id:
+                return HTMLResponse("not found", status_code=404)
+            if not _operator_valid(request):
+                refusal = await _index_response(
+                    request,
+                    binding_error={
+                        "code": "invalid_request",
+                        "message": (
+                            "standalone_binding_operator_token_required: "
+                            "unbind needs the per-launch operator action token "
+                            "(the x-operator-action-token header); it is "
+                            "printed at serve start and written under the "
+                            "capture root — open the launch URL, or append "
+                            "?operator_action=<token> to this page"
+                        ),
+                    },
+                )
+                refusal.status_code = 403
+                return refusal
+            try:
+                await seam.unbind_device()
+            except SeamError as exc:
+                return await _index_response(
+                    request,
+                    binding_error={"code": exc.code, "message": exc.message},
+                )
+            return RedirectResponse(url=_index_url(request), status_code=303)
 
 
 #: The event kinds whose SSE payload is a human advisory rather than the

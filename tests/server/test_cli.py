@@ -188,6 +188,86 @@ def test_serve_survives_a_browserless_host(
     assert "http://127.0.0.1:8477" in result.output
 
 
+# --- trust-1: the operator action token's mint and delivery -------------------
+
+
+def _serve_output(
+    starter_project: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *args: str
+) -> str:
+    """One serve invocation's stdout, with uvicorn parked and the CWD under
+    a scratch root (the capture-root family resolves against it)."""
+    import uvicorn
+
+    monkeypatch.setattr(uvicorn, "run", lambda *a, **k: None)
+    monkeypatch.chdir(tmp_path)
+    return CliRunner().invoke(
+        cli, ["serve", str(starter_project), "--no-open", *args]
+    ).output
+
+
+def test_serial_serve_mints_and_delivers_the_operator_action_token(
+    starter_project: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """trust-1's delivery: a serial serve mints the per-launch operator
+    action token and hands it over OUT-OF-BAND — the banner line and a file
+    under the capture-root family whose ``url`` field is the armed launch
+    URL (the query carries the token, so the page it opens renders the
+    forms' headers while a plain GET never yields the credential)."""
+    import json
+    import os
+
+    output = _serve_output(
+        starter_project, monkeypatch, tmp_path, "--transport", "serial"
+    )
+    banner = next(
+        (
+            line
+            for line in output.splitlines()
+            if "Operator action token" in line and "file" not in line.lower()
+        ),
+        None,
+    )
+    assert banner is not None, output
+    token = banner.rsplit(" ", 1)[1]
+    payload = json.loads(
+        (tmp_path / "captures" / "operator-action-token.json").read_text()
+    )
+    assert payload["operator_action_token"] == token
+    assert payload["pid"] == os.getpid()
+    assert payload["url"] == f"http://127.0.0.1:8477/?operator_action={token}"
+
+
+def test_the_operator_action_token_is_per_launch(
+    starter_project: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Two serves mint two DIFFERENT tokens — the credential names this
+    launch, so a token from a dead serve must stop working against the
+    next one."""
+    tokens = []
+    for _ in range(2):
+        output = _serve_output(
+            starter_project, monkeypatch, tmp_path, "--transport", "serial"
+        )
+        banner = next(
+            line
+            for line in output.splitlines()
+            if "Operator action token" in line and "file" not in line.lower()
+        )
+        tokens.append(banner.rsplit(" ", 1)[1])
+    assert tokens[0] != tokens[1]
+
+
+def test_a_mock_serve_prints_no_operator_action_token(
+    starter_project: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The mock transport has no bind surface: the token is minted (the
+    uniform fail-closed shape) but never DELIVERED — no banner line, no
+    file. The banner stays honest about what the surface consumes."""
+    output = _serve_output(starter_project, monkeypatch, tmp_path)
+    assert "Operator action token" not in output
+    assert not (tmp_path / "captures" / "operator-action-token.json").exists()
+
+
 # --- fold F2: main() returns click's exit codes, never a traceback --------
 
 

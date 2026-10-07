@@ -87,6 +87,12 @@ def _patch_descriptor(
     path = root / "src" / _PACKAGE / "descriptor.json"
     descriptor = json.loads(path.read_text(encoding="utf-8"))
     descriptor["capabilities"] = ["identify", "read", *verbs]
+    # The declared identity names the unit the wavegen fixture SIMULATES
+    # (_ID_REPLY) — pre-trust-5 the descriptor kept the scaffold's default
+    # identity while the port answered Bench Fixture/wavegen, drift no
+    # check ever surfaced; the establishment comparison refuses it now.
+    descriptor["identity"]["manufacturer"] = "Bench Fixture"
+    descriptor["identity"]["model"] = "wavegen"
     for verb in verbs:
         descriptor["operations"][verb] = {
             "timeout_ms": verb_timeout_ms,

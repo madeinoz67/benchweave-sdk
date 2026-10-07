@@ -44,6 +44,7 @@ from benchweave_sdk.presentation import read_file, validate_preset
 from benchweave_sdk.testing import ConformanceError
 
 from . import catalogue
+from .binding import BindingAbsent, BindingStale
 from .errors import SeamError
 from .events import EventBus
 from .library import CaptureLibrary
@@ -65,8 +66,10 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     # The CLI module chain imports nothing from the extra set (the A-E
     # contract); the lazy imports below run only when a seam is
     # constructed — inside the guarded serve/mcp bodies.
+    from .binding import BindingStore
     from .plots import ObservationRing
     from .presentation import HostPresentation
+    from .serial import SerialEndpoint
 
     class _CaptureCapable(Protocol):
         """The capture members the lifecycle drives on a capture-capable
@@ -171,19 +174,29 @@ class StandaloneSeam:
         unattended: bool = False,
         reload_wrapper: Callable[[Any], Any] | None = None,
         serial_ports: Any = None,
-        serial_device_path: str | None = None,
+        serial_endpoint: SerialEndpoint | None = None,
+        bindings: BindingStore | None = None,
         capture_root: Any | None = None,
     ) -> None:
         self._session = session
         self._transport_kind = transport_kind
         self._serial_ports = serial_ports
-        self._serial_device_path = serial_device_path
         if transport_kind == "serial":
             # The link family's one publisher (issue #407): the seam is the
             # only publisher by construction (events.py), so the session's
             # serial services get the CALLBACK, not the bus — the factory
             # reads it at mint time (the late-bound shape).
             session.link_event_publisher = self._publish_link_event
+        # The endpoint resolver (issue #385 §1.4): ONE object shared with
+        # the session's services factory — its ``last_resolution`` is the
+        # path the live session actually opened, and the discovery
+        # short-circuit reads it for a connected session (retiring the
+        # parallel ``serial_device_path`` source of truth).
+        self._serial_endpoint = serial_endpoint
+        # The operator's binding store (None off the serial transport):
+        # opened by the composer so a malformed document refuses SERVE
+        # construction, never a mid-request traceback.
+        self._bindings = bindings
         self._capture_root = capture_root
         self._capture: Any | None = None
         self._capture_outcomes: dict[str, dict[str, Any]] = {}
@@ -239,8 +252,15 @@ class StandaloneSeam:
         # staging write against the map an apply is flushing) must not
         # interleave with a reload's quiet-close→swap or with each other —
         # every await point inside those spans is an interleaving window.
-        # The lock is loop-level (single event loop); it serializes async
-        # interleavings, which is exactly the class the lanes reproduced.
+        # Fold wave 2 extended the same class to the connected-DEPENDENT
+        # guards: a connect's open→establish span (the connected flag's
+        # False→True transition — an adapter open may legitimately await),
+        # a bind/unbind's guarded store write, and a scan's
+        # confirm-by-identify span (it opens candidate ports) all serialize
+        # here, so a guard never reads session state a concurrent connect
+        # is mid-flip on. The lock is loop-level (single event loop); it
+        # serializes async interleavings, which is exactly the class the
+        # lanes reproduced.
         self._op_mutex = asyncio.Lock()
 
     @property
@@ -438,14 +458,45 @@ class StandaloneSeam:
 
             session = self._session
             try:
-                devices = await discover_serial_devices(
-                    session.plugin,
-                    hooks=self._serial_ports,
-                    connected_device=(
-                        self._serial_device_path if session.connected else None
-                    ),
-                    connected_identity=session.identity,
-                )
+                # Under the op mutex for the whole scan (fold wave 2, lane
+                # A F2): the confirm-by-identify span OPENS candidate ports,
+                # and the no-reopen short-circuit below reads the connected
+                # flag and the resolver's last resolution — the same state
+                # a connect's open→establish span is flipping. Unguarded, a
+                # scan that starts inside a connect's window re-opens the
+                # port that connecting session just opened (a double-open
+                # on the wire).
+                async with self._op_mutex:
+                    minted = (
+                        self._serial_endpoint
+                        if session.connected and self._serial_endpoint is not None
+                        else None
+                    )
+                    devices = await discover_serial_devices(
+                        session.plugin,
+                        hooks=self._serial_ports,
+                        connected_device=(
+                            # §1.4: the RESOLVER's last resolution — the path
+                            # the live session actually opened — never a second
+                            # source of truth; a re-scan while connected serves
+                            # that candidate from session identity and re-opens
+                            # nothing on the live port.
+                            minted.last_resolution
+                            if minted is not None
+                            else None
+                        ),
+                        connected_identity=session.identity,
+                        # The trust-2 reconciliation: the mint-time serial the
+                        # factory recorded for the path it opened. A connected
+                        # path whose LIVE serial differs now is skipped — the
+                        # re-occupant never launders into the confirmed cache.
+                        connected_serial=(
+                            minted.last_serial if minted is not None else None
+                        ),
+                        connected_serial_known=(
+                            minted.last_serial_known if minted is not None else False
+                        ),
+                    )
             except (RuntimeError, ValueError, OSError) as exc:
                 # The scan's real failure classes (a missing pyserial, an
                 # enumerate error, an invalid declared hint) raise BEFORE
@@ -467,6 +518,11 @@ class StandaloneSeam:
                     "model": str(identity.get("model", "")),
                     "transport": str(transport.get("type", "")),
                     "connection_key": str(transport.get("connection_key", "")),
+                    # The no-endpoint spelling (§1.2): the mock transport
+                    # has no physical port — honest nulls, one row shape
+                    # across transports, never a fake path.
+                    "port_path": None,
+                    "usb_serial": None,
                 }
             ]
         }
@@ -478,26 +534,49 @@ class StandaloneSeam:
             raise self._fail(
                 "not_found", f"no such device: {arguments['device_id']}", correlation
             )
-        self._refuse_degraded(correlation)
-        if self._session.connected:
-            raise self._fail(
-                "conflict",
-                f"device already connected: {arguments['device_id']}",
-                correlation,
-            )
-        try:
-            await self._session.connect()
-        except ConformanceError as exc:
-            raise self._fail(
-                "unavailable", f"transport refused the exchange: {exc}", correlation
-            ) from exc
-        except (TimeoutError, ConnectionError) as exc:
-            raise self._fail(
-                "not_ready", f"device not ready: {exc}", correlation
-            ) from exc
-        except RuntimeError as exc:
-            raise self._fail("not_ready", str(exc), correlation) from exc
-        return {"device_id": self._session.device_id, "connected": True}
+        # Under the op mutex for the WHOLE connect span (fold wave 2, lane
+        # A F2): open→establish is the connected flag's False→True
+        # transition, and the connected-DEPENDENT guards (the bind/unbind
+        # conflict check, the discover no-reopen short-circuit) must not
+        # read that flag inside the transition — every await point in the
+        # span (a legitimately-awaiting adapter open, the establishment
+        # identify) is an interleaving window.
+        async with self._op_mutex:
+            self._refuse_degraded(correlation)
+            if self._session.connected:
+                raise self._fail(
+                    "conflict",
+                    f"device already connected: {arguments['device_id']}",
+                    correlation,
+                )
+            try:
+                await self._session.connect()
+            except (BindingAbsent, BindingStale) as exc:
+                # The typed binding refusals (§1.4): reason rides the details
+                # so the UI can offer the scan-and-re-pick action, and the
+                # message names the key or the stale endpoint — not a raw
+                # pyserial string with no re-pick path (§0's finding).
+                raise self._fail(
+                    "not_ready",
+                    str(exc),
+                    correlation,
+                    reason=(
+                        "binding_absent"
+                        if isinstance(exc, BindingAbsent)
+                        else "binding_stale"
+                    ),
+                ) from exc
+            except ConformanceError as exc:
+                raise self._fail(
+                    "unavailable", f"transport refused the exchange: {exc}", correlation
+                ) from exc
+            except (TimeoutError, ConnectionError) as exc:
+                raise self._fail(
+                    "not_ready", f"device not ready: {exc}", correlation
+                ) from exc
+            except RuntimeError as exc:
+                raise self._fail("not_ready", str(exc), correlation) from exc
+            return {"device_id": self._session.device_id, "connected": True}
 
     async def _op_device_disconnect(
         self, arguments: dict[str, Any], correlation: str
@@ -560,6 +639,251 @@ class StandaloneSeam:
             name, time.monotonic() * 1000.0, data.get("value")
         )
         return data
+
+    # --- the endpoint binding (issue #385 §1.5) ------------------------------
+
+    @property
+    def binding_row(self) -> dict[str, Any] | None:
+        """The current endpoint binding (host state for the pick flow's
+        UI); ``None`` when nothing is bound or off the serial transport."""
+        if self._bindings is None:
+            return None
+        return self._bindings.get(
+            self._session.plugin.package, self._session.device_id
+        )
+
+    def _enumerate_ports(self) -> list[Any]:
+        """Enumerate candidate ports through the seam's hooks (the injected
+        test double) or the default pyserial enumeration — a read-only OS
+        query that opens no port and transmits nothing, so NFR-O3's
+        write-bar is untouched."""
+        from .serial import _pyserial_enumerate
+
+        hooks = self._serial_ports
+        if hooks is not None:
+            return list(hooks.enumerate_ports())
+        return list(_pyserial_enumerate())
+
+    async def bind_device(self, port_path: str, *, via: str = "ui") -> dict[str, Any]:
+        """Record the operator's endpoint pick (§1.5): HOST state, not a
+        catalogue operation — the scenario-select precedent (D-B1), kept
+        off REST/MCP deliberately (a bind exposed there would let a
+        bearer-holding agent silently move the physical endpoint
+        subsequent writes hit), and the ROUTE that reaches this method
+        demands the per-launch operator action token alongside CSRF
+        (trust-1): the CSRF token renders into unauthenticated HTML, so
+        CSRF alone let any loopback process scrape-and-bind — the token is
+        minted at serve start and delivered out-of-band (the banner and a
+        file under the capture-root family), a credential class a page GET
+        can never yield. The act stays with the operator who launched the
+        serve.
+
+        Refuses ``conflict`` while connected (a live session must never
+        have its physical endpoint swapped underneath it — staging, plots
+        and the observation ring all address it), and
+        ``invalid_request`` with ``standalone_binding_pick_unconfirmed:``
+        for a path the confirmed discovery cache never carried (a
+        hand-crafted form cannot bind an unconfirmed or foreign port), with
+        ``standalone_binding_pick_vanished:`` for a confirmed pick whose
+        port the LIVE enumeration no longer carries (it unplugged between
+        the scan and the click — stale evidence, never a row to write), and
+        with ``standalone_binding_pick_changed:`` for a pick whose path a
+        DIFFERENT serial now occupies (the re-occupied path — the scan
+        row's serial must hold live at the picked path). Chooses the
+        discriminator the bench's own evidence supported (§1.3), writes the
+        store atomically, publishes ``device_bound``. Binding transmits
+        NOTHING — the identify exchange happened at scan time; this only
+        records."""
+        correlation = self._correlation(None)
+        # Under the op mutex for the whole guarded body (fold wave 2, lane
+        # A F2): the conflict-while-connected guard and the pick's evidence
+        # checks must not interleave with a connect's open→establish span —
+        # the flag flips inside awaits the bind would otherwise read
+        # through.
+        async with self._op_mutex:
+            return await self._bind_body(port_path, via, correlation)
+
+    async def _bind_body(
+        self, port_path: str, via: str, correlation: str
+    ) -> dict[str, Any]:
+        from .binding import usb_id_hex
+        from .binding import utc_now as binding_stamp
+        from .serial import _port_name
+
+        if self._bindings is None:
+            raise self._fail(
+                "not_found", "endpoint binding is a serial-transport surface", correlation
+            )
+        if self._session.connected:
+            raise self._fail(
+                "conflict",
+                "disconnect the device before changing its endpoint binding",
+                correlation,
+            )
+        cache = self._discovery_cache or []
+        picked = next(
+            (row for row in cache if row.get("port_path") == port_path), None
+        )
+        if picked is None:
+            raise self._fail(
+                "invalid_request",
+                f"standalone_binding_pick_unconfirmed: {port_path} is not a "
+                "confirmed scan candidate; scan for devices, then pick one "
+                "of the listed ports",
+                correlation,
+            )
+        # The live-presence cross-check (fold wave 2, lane A F1): the
+        # confirmed cache governs the PICK, but the pick must still name a
+        # port the LIVE enumeration carries. A port that unplugged between
+        # the scan and the click is stale evidence, never a row to write:
+        # the milder face wrote a path-keyed row for a dead path; the
+        # executed face let a foreign serial-claiming twin arm usb keying
+        # (the cache still carries the serial, the live count is the twin
+        # alone) and the connect opened the NEVER-CONFIRMED twin.
+        live_candidates = self._enumerate_ports()
+        picked_live = next(
+            (
+                candidate
+                for candidate in live_candidates
+                if _port_name(candidate) == str(port_path)
+            ),
+            None,
+        )
+        if picked_live is None:
+            raise self._fail(
+                "invalid_request",
+                f"standalone_binding_pick_vanished: {port_path} is no longer "
+                "present; scan for devices, then pick one of the listed ports",
+                correlation,
+            )
+        # The serial-evidence cross-check (fold wave 3, delta F1): the
+        # re-occupied path. The path is live but a DIFFERENT unit may hold
+        # it now — the unfixed seam bound path-keyed on the OLD scan's
+        # identity and the connect established on the re-occupant (whether
+        # or not a serial-claiming twin kept the row's serial live
+        # elsewhere). When the scan row carries a serial, that serial must
+        # hold live AT THE PICKED PATH; a row with no serial has no serial
+        # evidence to contradict and keeps plain path-keyed semantics.
+        serial = picked.get("usb_serial")
+        if serial is not None:
+            live_raw = getattr(picked_live, "serial_number", None)
+            live_serial = str(live_raw) if live_raw else "no serial"
+            if live_serial != str(serial):
+                raise self._fail(
+                    "invalid_request",
+                    f"standalone_binding_pick_changed: {port_path} carried USB "
+                    f"serial {str(serial)!r} at scan time and carries "
+                    f"{live_serial!r} now; scan for devices, then pick one "
+                    "of the listed ports",
+                    correlation,
+                )
+        # The discriminator (§1.3, fold wave 1 M1): usb_serial keying only
+        # when the LIVE enumeration carries the picked serial exactly once
+        # — the same population resolve matches over, so a twin that
+        # appeared after the scan (or was scan-invisible while busy) cannot
+        # arm serial keying that resolve would immediately refuse as
+        # ambiguous (the busy-twin dead-end), and a scan-time duplicate
+        # whose port has since vanished no longer forces path keying. The
+        # confirmed cache still governs the PICK itself (the checks above);
+        # absent or live-duplicated serials key on the path. Fold wave 2
+        # adds the closing conjunct — the unique live carrier must BE the
+        # picked port — so with the picked path guaranteed live, the vid/pid
+        # conjuncts always derive from the picked port itself (never
+        # dropped, never sourced from a foreign port); with wave 3's
+        # serial-evidence check passed, the picked port is itself in the
+        # counted population whenever the row carried a serial.
+        live_with_serial = [
+            candidate
+            for candidate in live_candidates
+            if serial is not None
+            and str(getattr(candidate, "serial_number", None) or "") == serial
+        ]
+        usb_keyed = (
+            serial is not None
+            and len(live_with_serial) == 1
+            and _port_name(live_with_serial[0]) == str(port_path)
+        )
+        vid = pid = None
+        if usb_keyed:
+            port = live_with_serial[0]
+            vid = usb_id_hex(getattr(port, "vid", None))
+            pid = usb_id_hex(getattr(port, "pid", None))
+        row: dict[str, Any] = {
+            "connection_key": self._session.device_id,
+            "plugin_package": self._session.plugin.package,
+            "transport": self._transport_kind,
+            "endpoint_kind": "usb_serial" if usb_keyed else "port_path",
+            "usb_serial": serial if usb_keyed else None,
+            "vid": vid,
+            "pid": pid,
+            "port_path": str(port_path),
+            "identity": {
+                "manufacturer": str(picked.get("manufacturer") or ""),
+                "model": str(picked.get("model") or ""),
+                # The discovery row is the wire shape (§1.2: port_path
+                # and usb_serial only) — the identify answer carried
+                # firmware, but the host retains the row, not the answer.
+                # An honest null, never a fabricated one.
+                "firmware": None,
+            },
+            "bound_at": binding_stamp(),
+            "bound_via": via,
+        }
+        try:
+            self._bindings.bind(row)
+        except (OSError, ValueError) as exc:
+            raise self._fail(
+                "internal_error", f"the binding store refused the write: {exc}", correlation
+            ) from exc
+        self.events.publish(
+            "device_bound",
+            {
+                "device_id": self._session.device_id,
+                "port_path": row["port_path"],
+                "endpoint_kind": row["endpoint_kind"],
+                "usb_serial": row["usb_serial"],
+            },
+        )
+        return {
+            "device_id": self._session.device_id,
+            "port_path": row["port_path"],
+            "endpoint_kind": row["endpoint_kind"],
+        }
+
+    async def unbind_device(self) -> dict[str, Any]:
+        """Remove the endpoint binding (§1.5): same conflict-while-connected
+        guard, same host-state posture. Publishing ``device_unbound``; a
+        missing row refuses ``not_found`` — the closed refusal model, never
+        a silent no-op."""
+        correlation = self._correlation(None)
+        # Under the op mutex for the whole guarded body (fold wave 2, lane
+        # A F2): the same serialization as bind — the guard must not read
+        # the connected flag through a connect's open→establish window.
+        async with self._op_mutex:
+            if self._bindings is None:
+                raise self._fail(
+                    "not_found",
+                    "endpoint binding is a serial-transport surface",
+                    correlation,
+                )
+            if self._session.connected:
+                raise self._fail(
+                    "conflict",
+                    "disconnect the device before changing its endpoint binding",
+                    correlation,
+                )
+            if not self._bindings.unbind(
+                self._session.plugin.package, self._session.device_id
+            ):
+                raise self._fail(
+                    "not_found",
+                    f"no endpoint is bound for device {self._session.device_id!r}",
+                    correlation,
+                )
+            self.events.publish(
+                "device_unbound", {"device_id": self._session.device_id}
+            )
+            return {"device_id": self._session.device_id, "bound": False}
 
     # --- staged/apply and presets (I2b §4.1) ---------------------------------
 

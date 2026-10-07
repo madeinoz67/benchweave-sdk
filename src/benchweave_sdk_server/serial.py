@@ -40,7 +40,7 @@ import shutil
 import threading
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Protocol
@@ -1140,32 +1140,113 @@ class LinkReconfigurator:
     on_link_event: Callable[[dict[str, Any]], None] | None = None
 
 
+class SerialEndpoint:
+    """The session's endpoint source (issue #385 §1.4): consulted AT
+    CONNECT TIME by the services factory, so a rebind changes the next
+    connection's port (the late-bound ``mock_plugin_session`` precedent —
+    the factory reads the endpoint when it runs, never a path baked in at
+    construction). ``last_resolution`` is the path the factory last opened
+    successfully — the one source the discovery short-circuit reads for a
+    connected session, replacing the parallel ``serial_device_path``
+    constructor arg (net deletion of a second source of truth).
+
+    ``last_serial``/``last_serial_known`` are the mint-time serial
+    reconciliation's evidence (the trust-2 fold): when the factory opens a
+    port with an enumeration in hand, it records the USB serial that
+    enumeration carried for the opened path AT MINT TIME. A later
+    connected-era scan reconciles its short-circuit row against this —
+    a path whose occupant changed underneath the live session is not a
+    confirmed candidate, never a chimera row (old identity, new serial)
+    the bind-time checks cannot catch.
+
+    ``source`` is a constant path (the ``--device`` headless form — the
+    binding bypass, byte-compatible with every pre-#385 test) or a callable
+    resolving the path from the binding store
+    (:func:`benchweave_sdk_server.binding.binding_endpoint`), whose
+    ``BindingAbsent``/``BindingStale`` refusals ride ``RuntimeError`` so
+    the session's connect path passes them through unwrapped for the seam
+    to map.
+    """
+
+    def __init__(self, source: str | Callable[[], str]) -> None:
+        if callable(source):
+            self._source = source
+        else:
+            path = str(source)
+            self._source = lambda: path
+        #: The path the last successful open used; None until then. Set by
+        #: the services factory AFTER the opener returns — a resolver that
+        #: names a path the open then refuses never records it.
+        self.last_resolution: str | None = None
+        #: The USB serial the mint-time enumeration carried for that path
+        #: (None when the unit has no iSerial). Only meaningful together
+        #: with ``last_serial_known`` — an endpoint minted without an
+        #: enumeration has NO evidence, which is not the same as a
+        #: serial-less unit.
+        self.last_serial: str | None = None
+        self.last_serial_known: bool = False
+
+    def note_minted_serial(self, serial: str | None) -> None:
+        """Record the mint-time serial for ``last_resolution`` (called by
+        the services factory, only when it minted with an enumeration)."""
+        self.last_serial = serial
+        self.last_serial_known = True
+
+    def __call__(self) -> str:
+        return self._source()
+
+
+def _enumerated_serial_at(
+    path: str, enumerate_ports: Callable[[], Iterable[Any]]
+) -> str | None:
+    """The USB serial a LIVE enumeration carries for ``path`` (None when
+    the enumeration does not list the path or the port carries no iSerial)
+    — the mint-time recording's read, never an open."""
+    for port in enumerate_ports():
+        if _port_name(port) == path:
+            raw = getattr(port, "serial_number", None)
+            return str(raw) if raw else None
+    return None
+
+
 def serial_plugin_session(
     plugin: LoadedPlugin,
-    device_path: str,
+    endpoint: SerialEndpoint | str | Callable[[], str],
     *,
     open_port: Any = None,
     capture_root: Any = None,
     capture_max_bytes: int | None = None,
+    enumerate_ports: Callable[[], Iterable[Any]] | None = None,
 ) -> PluginSession:
-    """A ``PluginSession`` over a serial port: the services factory mints a
-    FRESH link + services per connection (the M1 fold's per-connection
-    precedent — a reconnect starts a new conversation over a new link, and
-    a faulted link never serves a second conversation). ``open_port`` stays
-    injectable so tests never need a real port. ``capture_root`` and
-    ``capture_max_bytes`` are the host's capture configuration — the root
-    the per-capture writers publish under and the configured reservation
-    ceiling (I3b's lifecycle wiring).
+    """A ``PluginSession`` over a serial endpoint: the services factory
+    mints a FRESH link + services per connection (the M1 fold's
+    per-connection precedent — a reconnect starts a new conversation over a
+    new link, and a faulted link never serves a second conversation),
+    reading the endpoint AT CONNECT TIME so a rebind redirects the next
+    connection. A bare string wraps as the constant resolver (the
+    ``--device`` form, byte-compatible with every existing call).
+    ``open_port`` stays injectable so tests never need a real port.
+    ``capture_root`` and ``capture_max_bytes`` are the host's capture
+    configuration — the root the per-capture writers publish under and the
+    configured reservation ceiling (I3b's lifecycle wiring).
+    ``enumerate_ports`` (the CLI passes the discovery enumeration in both
+    its forms) arms the mint-time serial recording: each mint notes the
+    serial the enumeration carries for the opened path, so a connected-era
+    scan can refuse a re-occupied path's row (trust-2). Absent (direct
+    test construction), no serial is recorded and no reconciliation runs.
 
     The link-control capability (issue #407): the declared allowed set is
     derived HERE, loud and failing at session build (the FOLD-F posture);
     each mint builds the reconfigurator — reading the session's
     ``link_event_publisher`` at MINT time (the late-bound shape, the
     ``cli.py`` factory docstring) — so a reconnect serves the CURRENT
-    publisher, not a stale one."""
+    publisher, not a stale one. The reconfigurator's ``device_path`` is
+    the RESOLVED path of that mint, so a reopen after a rebind targets the
+    port the link actually opened, never a stale one."""
     settings = _serial_settings(plugin)
     max_frame = transport_ceiling(settings)
     opener = open_port or open_serial_port
+    resolver = endpoint if isinstance(endpoint, SerialEndpoint) else SerialEndpoint(endpoint)
     allowed = negotiable_bauds(settings)  # loud at session build
     # The mint ALWAYS carries the baud (the defaulted read — a descriptor
     # whose settings omit it is legal and worked at base): every derived
@@ -1174,10 +1255,19 @@ def serial_plugin_session(
     boot_settings = {**settings, "baud": _boot_baud(settings)}
 
     def factory() -> SerialCaptureServices:
-        transport = opener(device_path, boot_settings)
+        path = resolver()
+        transport = opener(path, boot_settings)
+        resolver.last_resolution = path
+        if enumerate_ports is not None:
+            # The trust-2 evidence: the serial the enumeration carries for
+            # the path THIS mint opened — recorded now, at mint time, so a
+            # later connected-era scan reconciles against what the session
+            # actually connected to, never against a fresh read that a
+            # re-occupied path would already satisfy.
+            resolver.note_minted_serial(_enumerated_serial_at(path, enumerate_ports))
         reconfigurator = LinkReconfigurator(
             opener=opener,
-            device_path=device_path,
+            device_path=path,
             boot_settings=dict(boot_settings),
             allowed_bauds=allowed,
             on_link_event=session.link_event_publisher,
@@ -1361,8 +1451,19 @@ async def _confirm_by_identify(
                 link.close()
 
 
-def _device_row(plugin: LoadedPlugin, identity: dict[str, Any]) -> dict[str, Any]:
-    """One _DEVICE_SUMMARY row, schema-verbatim."""
+def _device_row(
+    plugin: LoadedPlugin,
+    identity: dict[str, Any],
+    *,
+    port_path: str | None = None,
+    usb_serial: str | None = None,
+) -> dict[str, Any]:
+    """One _DEVICE_SUMMARY row, schema-verbatim. The endpoint fields
+    (issue #385 §1.2) name the PHYSICAL candidate the row describes:
+    ``port_path`` from the enumerated port object, ``usb_serial`` from its
+    ``serial_number`` (None when the device descriptor carries no iSerial —
+    an honest null, never a fabricated serial). ``None``/``None`` is the
+    no-endpoint spelling (the mock transport's row)."""
     transport = plugin.descriptor.get("transport", {})
     return {
         "id": plugin.device_id,
@@ -1370,6 +1471,8 @@ def _device_row(plugin: LoadedPlugin, identity: dict[str, Any]) -> dict[str, Any
         "model": str(identity.get("model", "")),
         "transport": str(transport.get("type", "")),
         "connection_key": str(transport.get("connection_key", "")),
+        "port_path": port_path,
+        "usb_serial": usb_serial,
     }
 
 
@@ -1379,12 +1482,25 @@ async def discover_serial_devices(
     hooks: SerialPortHooks | None = None,
     connected_device: str | None = None,
     connected_identity: dict[str, Any] | None = None,
+    connected_serial: str | None = None,
+    connected_serial_known: bool = False,
 ) -> list[dict[str, Any]]:
     """Enumerate candidate ports, filter by the descriptor's declared USB
     identity WHERE DECLARED, confirm each survivor by its identify answer,
     and return the confirmed devices as _DEVICE_SUMMARY rows. The ONLY
     transmissions are the identify exchanges; the connected session's port
-    is served from the session's established identity without re-probing."""
+    is served from the session's established identity without re-probing.
+
+    The connected-era row reconciles against ``connected_serial`` (the
+    MINT-TIME serial the session's factory recorded for the path it
+    opened, trust-2): when known, a path whose LIVE enumeration serial
+    differs from it is SKIPPED — the occupant changed underneath the live
+    session, and a row served anyway would be a chimera (the session's old
+    identity, the re-occupant's new serial) that launders the foreign unit
+    into the confirmed cache the bind-time checks cross-check against.
+    Both sides ``None`` (no iSerial) reconcile; an unknown mint-time serial
+    (no enumeration at mint) reconciles with nothing — the row serves as
+    before, the pre-fold shape."""
     effective = hooks or _default_hooks()
     hint = usb_identity_filter(plugin)
     if hint is not None:
@@ -1401,13 +1517,33 @@ async def discover_serial_devices(
     rows: list[dict[str, Any]] = []
     for port in effective.enumerate_ports():
         name = _port_name(port)
+        # The candidate's own USB serial, read from the enumeration (never
+        # from a port open): None when the device descriptor has no iSerial.
+        usb_serial = getattr(port, "serial_number", None)
         if connected_device is not None and name == connected_device:
-            rows.append(_device_row(plugin, connected_identity or {}))
+            if connected_serial_known and (
+                str(usb_serial) if usb_serial else None
+            ) != (str(connected_serial) if connected_serial else None):
+                # The re-occupied path (trust-2): the unit that holds this
+                # path now is not the unit the session connected to. Not a
+                # confirmed candidate — the operator sees the row gone and
+                # re-picks after a disconnect, never binds the chimera.
+                continue
+            rows.append(
+                _device_row(
+                    plugin,
+                    connected_identity or {},
+                    port_path=name,
+                    usb_serial=usb_serial,
+                )
+            )
             continue
         if hint is not None and not _port_matches(port, hint):
             continue
         answered = await _confirm_by_identify(plugin, port, effective, timeout_ms)
         if answered is None:
             continue
-        rows.append(_device_row(plugin, answered))
+        rows.append(
+            _device_row(plugin, answered, port_path=name, usb_serial=usb_serial)
+        )
     return rows

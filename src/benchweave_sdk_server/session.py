@@ -790,6 +790,29 @@ class PluginSession:
                     )
                 data = envelope.get("data")
                 if isinstance(data, dict):
+                    # trust-5 (probe 4c): the establishment answer is
+                    # compared against the descriptor's DECLARED identity —
+                    # discovery already applies this comparison to every
+                    # candidate it confirms, so a foreign unit that answers
+                    # someone else's name must not become live through the
+                    # one path that skipped it (a planted or stale binding
+                    # row). Only declared conjuncts constrain: a descriptor
+                    # that declares neither manufacturer nor model has
+                    # nothing to contradict. Not caught: resolve still
+                    # applies no descriptor USB-hint check (this fold's
+                    # named deferral — the row is operator state).
+                    declared = self._plugin.descriptor.get("identity")
+                    if isinstance(declared, dict):
+                        for field in ("manufacturer", "model"):
+                            want = declared.get(field)
+                            if isinstance(want, str) and want and data.get(field) != want:
+                                raise RuntimeError(
+                                    "standalone_connect_identity_mismatch: the "
+                                    f"connected device answered {field}="
+                                    f"{data.get(field)!r}; the descriptor "
+                                    f"declares {want!r} — disconnect and "
+                                    "re-pick the endpoint"
+                                )
                     self.identity = dict(data)
         except BaseException:
             await self.close()
