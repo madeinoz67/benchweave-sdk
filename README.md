@@ -68,6 +68,20 @@ The registry uses its own process for its own release. Status documents there ar
 
 The project publishes the versioned documentation site at <https://sdk.benchweave.dev/>. Start from the rendered [plugin SDK guide](https://sdk.benchweave.dev/docs/user-guide/plugin-sdk.html). The version selector on each docs page switches between the released versions and the current `main` build.
 
+### Claim-conformance lane (shadow)
+
+`scripts/claim_lane.py` checks that documented behavior sentences stay true. The lane keeps a manifest of sentences quoted from this README and the plugin SDK guide. Each sentence is bound to a probe test in `tests/test_claim_probes.py`. The probe runs the real behavior and writes a trace file of neutral observation sentences. A judge model then scores each trace against its sentence. The score passes through a dead band: 0.70 and above is `conforming`, 0.30 and below is `non_conforming`, and the values between them are `insufficient_evidence`.
+
+Run the lane from the repository root:
+
+```sh
+uv run python scripts/claim_lane.py
+```
+
+Judging needs the `TYPESAFE_API_KEY` environment variable. Without the key, the probes still run and the report records a skip. The key is never written to any file.
+
+The lane is in shadow mode. A verdict never fails the run: the exit code is 0 for any verdict distribution, and 2 only for setup errors such as a malformed manifest or a probe failure. The report lands in `.claim-lane/report.json`, and that directory is never committed. Judgement rests on executed traces, never on code excerpts. The design record (`.claude/deep-review/2026-10-07-claim-lane-shadow-design.md`) carries the experiment behind this rule, the accepted rules, and the deferrals.
+
 ## Which checkout do I use?
 
 **This repository (`madeinoz67/benchweave-sdk`) is the canonical SDK.** Install it, scaffold plugins with it, and develop SDK features here.
