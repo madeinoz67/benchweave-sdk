@@ -49,9 +49,12 @@ jobs:
         run: uv sync --locked --extra test --extra server --extra scaffold
 
       - name: Lint
+        # Bare mypy — config-driven ([tool.mypy] files = src plus
+        # scripts/claim_lane.py since fold-1 ride a); an explicit path
+        # argument would silently drop the lane module from the gate.
         run: |
           uv run ruff check .
-          uv run mypy src
+          uv run mypy
 
       - name: Tests
         # The browser lane is marker-partitioned (I2a NFR-Q1): its Playwright

@@ -48,5 +48,10 @@ _great_docs_build/
 .bu-scratch/
 dist/
 
+# Claim lane run output — trace artifacts and the shadow report, never
+# committed (scripts/claim_lane.py writes here; AR-7's key-leak grep runs
+# over this tree)
+.claim-lane/
+
 # parallel-lane worktrees (2026-09-28 owner directive; gateway repo convention)
 .wt/
