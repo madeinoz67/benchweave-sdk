@@ -20,19 +20,29 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import sys
 import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 SYSTEMONE_URL = "https://api.typesafe.ai/v1/systemone"
 DEFAULT_MODEL = "jev-latest"
 KEY_ENV = "TYPESAFE_API_KEY"
+#: The probes write trace artifacts under this directory when it is wired
+#: (the runner wires it; plain suite runs leave it unset).
+ARTIFACT_ROOT_ENV = "CLAIM_LANE_ARTIFACT_ROOT"
 REQUEST_TIMEOUT_S = 60
 MAX_ATTEMPTS = 5
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+REPORT_DIR_NAME = ".claim-lane"
+TRACES_DIR_NAME = "traces"
 
 VERDICT_CONFORMING = "conforming"
 VERDICT_NON_CONFORMING = "non_conforming"
@@ -266,6 +276,8 @@ def _urllib_post(url: str, body: bytes, key: str, timeout_s: float) -> tuple[int
             return response.status, json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as error:
         return error.code, None
+    except (urllib.error.URLError, OSError) as error:
+        raise ClaimLaneError(f"systemone unreachable: {error}") from error
 
 
 def systemone_client(
@@ -325,3 +337,236 @@ def ask(
     if active is None:
         raise ClaimLaneError(f"no judge client: {KEY_ENV} is not set")
     return active(state, questions)
+
+
+# --- the runner ------------------------------------------------------------
+
+#: The experiment's conformance question: judgment rests on the executed
+#: trace alone, with explicit true/false criteria and an explicit
+#: low-confidence out for unsettled traces (the dead band's input side).
+CONFORMANCE_INSTRUCTIONS = (
+    "Given `observed_behavior`, does the system behave as the sentence in "
+    "`claim` states? Answer true only if the observed behavior demonstrates "
+    "the sentence. Answer false if the observed behavior contradicts the "
+    "sentence. If the observations do not settle the question, answer "
+    "without confidence. Rest the answer only on observed_behavior."
+)
+
+
+def _noul_of(answer: Any) -> float:
+    value = answer.get("noul") if isinstance(answer, dict) else None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ClaimLaneError(f"judge answer carries no numeric noul: {answer!r}")
+    return float(value)
+
+
+def _run_probes(artifact_root: Path, probes_root: Path) -> int:
+    """Run the claim_probe cells as a subprocess with the artifact root
+    wired. The probes' own exit code decides: red cells are probe failures."""
+    env = dict(os.environ)
+    env[ARTIFACT_ROOT_ENV] = str(artifact_root)
+    completed = subprocess.run(  # noqa: S603 - the repo's own test suite
+        [sys.executable, "-m", "pytest", "-m", "claim_probe", "tests"],
+        cwd=probes_root,
+        env=env,
+        check=False,
+    )
+    return completed.returncode
+
+
+def collect_traces(
+    rows: list[ClaimRow], artifact_root: Path
+) -> dict[str, list[str]]:
+    """Read and validate every row's trace artifact. A missing artifact or a
+    schema violation is a hard setup error — nothing is judged on evidence
+    that is not there."""
+    traces: dict[str, list[str]] = {}
+    for row in rows:
+        path = artifact_root / f"{row.id}.json"
+        if not path.is_file():
+            raise ClaimLaneError(f"probe produced no trace artifact: {row.id}")
+        artifact = json.loads(path.read_text(encoding="utf-8"))
+        traces[row.id] = validate_trace(artifact, expected_id=row.id)
+    return traces
+
+
+def judge_rows(
+    rows: list[ClaimRow], traces: dict[str, list[str]], client: JudgeClient
+) -> list[dict[str, Any]]:
+    """Judge every (claim, trace) pair through the client and classify."""
+    judged: list[dict[str, Any]] = []
+    for row in rows:
+        state = {
+            "claim": row.claim,
+            "observed_behavior": "\n".join(traces[row.id]),
+        }
+        question = {"id": row.id, "instructions": CONFORMANCE_INSTRUCTIONS}
+        response = client(state, [question])
+        answers = response.get("answers")
+        if not isinstance(answers, list) or not answers:
+            raise ClaimLaneError(f"judge returned no answer for {row.id}")
+        noul = _noul_of(answers[0])
+        usage = response.get("usage")
+        tokens = usage.get("total_tokens", 0) if isinstance(usage, dict) else 0
+        judged.append(
+            {
+                "claim_id": row.id,
+                "claim": row.claim,
+                "verdict": classify(noul),
+                "noul": noul,
+                "model": response.get("model", DEFAULT_MODEL),
+                "tokens": tokens,
+            }
+        )
+    return judged
+
+
+def write_report(
+    report_dir: Path,
+    rows_out: list[dict[str, Any]],
+    *,
+    skipped: bool = False,
+    skip_reason: str = "",
+) -> Path:
+    """Write .claim-lane/report.json and return its path."""
+    report_dir.mkdir(parents=True, exist_ok=True)
+    totals = {
+        "claims": len(rows_out),
+        "conforming": sum(1 for row in rows_out if row["verdict"] == VERDICT_CONFORMING),
+        "non_conforming": sum(
+            1 for row in rows_out if row["verdict"] == VERDICT_NON_CONFORMING
+        ),
+        "insufficient_evidence": sum(
+            1 for row in rows_out if row["verdict"] == VERDICT_INSUFFICIENT
+        ),
+    }
+    document = {
+        "generated_at": datetime.now(UTC).isoformat(timespec="seconds").replace(
+            "+00:00", "Z"
+        ),
+        "model": DEFAULT_MODEL,
+        "skipped": skipped,
+        "skip_reason": skip_reason,
+        "rows": rows_out,
+        "totals": totals,
+    }
+    path = report_dir / "report.json"
+    path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def _print_summary(rows_out: list[dict[str, Any]], skipped: bool) -> None:
+    for row in rows_out:
+        score = f"{row['noul']:.2f}" if row["noul"] is not None else "  - "
+        print(f"claim-lane: {row['verdict']:<22} {score}  {row['claim_id']}")
+    if skipped:
+        print("claim-lane: judging skipped (no API key); probes ran, report written")
+        return
+    totals_rows = [row for row in rows_out]
+    conforming = sum(1 for row in totals_rows if row["verdict"] == VERDICT_CONFORMING)
+    non_conforming = sum(
+        1 for row in totals_rows if row["verdict"] == VERDICT_NON_CONFORMING
+    )
+    insufficient = sum(
+        1 for row in totals_rows if row["verdict"] == VERDICT_INSUFFICIENT
+    )
+    print(
+        f"claim-lane: {len(rows_out)} claims — {conforming} conforming, "
+        f"{non_conforming} non_conforming, {insufficient} insufficient_evidence "
+        "(shadow: verdicts never fail the run)"
+    )
+
+
+def run(
+    *,
+    rows: list[ClaimRow] | None = None,
+    probes_root: Path | None = None,
+    report_dir: Path | None = None,
+    artifact_root: Path | None = None,
+    client: JudgeClient | None = None,
+    probe_results: dict[str, Any] | None = None,
+) -> int:
+    """The shadow run: validate, probe, judge, classify, report.
+
+    Exit codes: 0 for ANY verdict distribution (the shadow law) and for the
+    missing-key skip; 2 for hard setup errors only — a malformed manifest, a
+    probe failure, a missing or leaky trace, or a dead judge client.
+
+    ``client`` and ``probe_results`` are the test seams: an injected client
+    replaces the network, and injected probe results replace the subprocess
+    (``{"__returncode__": 1}`` simulates a probe failure).
+    """
+    manifest = rows if rows is not None else CLAIMS
+    root = probes_root if probes_root is not None else REPO_ROOT
+    out_dir = report_dir if report_dir is not None else root / REPORT_DIR_NAME
+    try:
+        validate_manifest(manifest, probes_root=root)
+    except ClaimLaneError as error:
+        print(f"claim-lane: malformed manifest: {error}", file=sys.stderr)
+        return 2
+
+    traces_dir = artifact_root if artifact_root is not None else out_dir / TRACES_DIR_NAME
+    traces_dir.mkdir(parents=True, exist_ok=True)
+
+    if probe_results is None:
+        if (code := _run_probes(traces_dir, root)) != 0:
+            print(
+                f"claim-lane: probe cells failed (pytest exit {code}) — "
+                "no report without evidence",
+                file=sys.stderr,
+            )
+            return 2
+    elif probe_results.get("__returncode__", 0) != 0:
+        print("claim-lane: probe cells failed — no report without evidence", file=sys.stderr)
+        return 2
+    else:
+        try:
+            for claim_id, observations in probe_results.items():
+                artifact = {"claim_id": claim_id, "observations": observations}
+                validate_trace(artifact, expected_id=claim_id)
+                (traces_dir / f"{claim_id}.json").write_text(
+                    json.dumps(artifact, indent=2), encoding="utf-8"
+                )
+        except ClaimLaneError as error:
+            print(f"claim-lane: trace collection failed: {error}", file=sys.stderr)
+            return 2
+
+    try:
+        traces = collect_traces(manifest, traces_dir)
+    except ClaimLaneError as error:
+        print(f"claim-lane: trace collection failed: {error}", file=sys.stderr)
+        return 2
+
+    active = client if client is not None else default_client()
+    if active is None:
+        rows_out = [
+            {
+                "claim_id": row.id,
+                "claim": row.claim,
+                "verdict": "skipped",
+                "noul": None,
+                "model": DEFAULT_MODEL,
+                "tokens": 0,
+            }
+            for row in manifest
+        ]
+        write_report(out_dir, rows_out, skipped=True, skip_reason=f"{KEY_ENV} is not set")
+        _print_summary(rows_out, skipped=True)
+        return 0
+
+    try:
+        rows_out = judge_rows(manifest, traces, active)
+    except ClaimLaneError as error:
+        print(f"claim-lane: judging failed: {error}", file=sys.stderr)
+        return 2
+    write_report(out_dir, rows_out)
+    _print_summary(rows_out, skipped=False)
+    return 0
+
+
+def main() -> int:
+    return run()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
