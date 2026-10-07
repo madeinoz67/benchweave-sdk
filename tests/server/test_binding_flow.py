@@ -14,6 +14,7 @@ import asyncio
 import json
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -134,6 +135,7 @@ def _binding_app(
     *,
     serials: tuple[str | None, str | None] = ("SER-A", "SER-B"),
     open_gate: _ParkingGate | None = None,
+    adapter_wrap: Callable[[Any], Any] | None = None,
 ) -> dict[str, Any]:
     """A serial seam over a binding-backed endpoint (two matching boards).
 
@@ -158,6 +160,11 @@ def _binding_app(
         plugin = replace(
             plugin,
             adapter_factory=lambda: _ParkingAdapter(factory(), open_gate),
+        )
+    if adapter_wrap is not None:
+        factory = plugin.adapter_factory
+        plugin = replace(
+            plugin, adapter_factory=lambda: adapter_wrap(factory())
         )
     ports = {
         _A: LoopbackPort(replies={b"ID?\n": _MATCHING}),
@@ -862,3 +869,90 @@ def test_a_discover_during_an_in_flight_connect_never_reopens_the_port(
     )
     connected_row = next(row for row in rows if row["port_path"] == _B)
     assert connected_row["usb_serial"] == "SER-B"
+
+
+class _MisidentifyingAdapter:
+    """Delegates everything, answers identify ``ok`` with a WRONG identity
+    — the third-party adapter shape the HOST must defend against. The
+    scaffold's own adapter refuses this at the adapter layer
+    (PROTOCOL_ERROR), but adapter courtesy is not a host guarantee:
+    nothing in the OTDP contract makes a plugin validate its own answer,
+    and discovery applies the comparison at ITS layer regardless."""
+
+    def __init__(self, inner: Any) -> None:
+        self._inner = inner
+
+    async def open(self, descriptor: Any, services: Any, context: Any) -> None:
+        return await self._inner.open(descriptor, services, context)
+
+    async def close(self, context: Any) -> None:
+        return await self._inner.close(context)
+
+    async def execute(self, request: Any, context: Any) -> dict[str, Any]:
+        if request.get("verb") == "identify":
+            return {
+                "operation_id": request.get("operation_id"),
+                "verb": "identify",
+                "status": "ok",
+                "data": {
+                    "manufacturer": "Evil Corp",
+                    "model": "pwned-board",
+                    "serial": "ZZZ",
+                    "firmware": "9.9.9",
+                    "source": "device",
+                },
+            }
+        return await self._inner.execute(request, context)
+
+
+def test_establishment_refuses_a_wrong_identity_answer(tmp_path: Path) -> None:
+    """trust-5 (probe 4c's class): connect-time establishment compares the
+    identify answer's manufacturer/model against the descriptor's DECLARED
+    identity and refuses typed — a unit answering someone else's name has
+    not connected to the device this host serves. Discovery already applies
+    the same comparison to every candidate it confirms; establishment was
+    the one path that skipped it (a planted or stale binding row could
+    reach it, and an adapter that does not validate its own answer went
+    live on the foreign unit)."""
+    fx = _binding_app(tmp_path, adapter_wrap=_MisidentifyingAdapter)
+    seam = fx["seam"]
+    foreign = "/dev/foreign"
+    fx["ports"][foreign] = LoopbackPort(replies={b"ID?\n": _MATCHING})
+    fx["candidates"].append(UsbCandidate(foreign, serial_number="FOREIGN-SER"))
+    row = {
+        "connection_key": "example_device",
+        "plugin_package": "example_plugin",
+        "transport": "serial",
+        "endpoint_kind": "usb_serial",
+        "usb_serial": "FOREIGN-SER",
+        "vid": None,
+        "pid": None,
+        "port_path": foreign,
+        "identity": {"manufacturer": "SDK Example", "model": "demo", "firmware": None},
+        "bound_at": "2026-10-06T00:00:00Z",
+        "bound_via": "planted",
+    }
+    fx["store"].bind(row)
+    with pytest.raises(SeamError) as raised:
+        asyncio.run(seam.call("device_connect", {"device_id": "example_device"}))
+    assert raised.value.code == "not_ready"
+    assert "standalone_connect_identity_mismatch" in raised.value.message
+    assert "Evil Corp" in raised.value.message
+    assert seam.session.connected is False, "the refused establishment closed the session"
+    assert fx["ports"][foreign].closes >= 1, "the foreign port was closed again"
+
+
+def test_establishment_accepts_the_matching_identity_answer(tmp_path: Path) -> None:
+    """The negative control: the descriptor's own declared identity answers
+    identify (the ordinary bind flow's establishment) and connects — the
+    comparison refuses only the WRONG answer, never the honest one. An
+    answer omitting an undeclared field is accepted too (the comparison
+    constrains only what the descriptor declares)."""
+    fx = _binding_app(tmp_path)
+    _bind_b(fx)
+    result = asyncio.run(
+        fx["seam"].call("device_connect", {"device_id": "example_device"})
+    )
+    assert result["connected"] is True
+    assert fx["seam"].session.identity is not None
+    assert fx["seam"].session.identity["manufacturer"] == "SDK Example"

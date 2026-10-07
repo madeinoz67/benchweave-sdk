@@ -353,3 +353,19 @@ def test_a_device_on_the_mock_transport_refuses(starter_project: Path, capsys) -
         _build_seam(starter_project, device="/dev/nowhere")
     assert exc.value.code == 2
     assert "standalone_transport_device_serial_only:" in capsys.readouterr().err
+
+
+def test_bindings_on_a_non_serial_transport_refuses(
+    starter_project: Path, capsys
+) -> None:
+    """drift-2 (review fold): ``--bindings`` names the serial binding
+    document; on any other transport it was silently ignored — the same
+    hole ``--device`` guards against, so it refuses with the same message
+    family instead of accepting a flag it will never read."""
+    with pytest.raises(SystemExit) as exc:
+        _build_seam(
+            starter_project,
+            bindings=starter_project.parent / "device-bindings.json",
+        )
+    assert exc.value.code == 2
+    assert "standalone_transport_bindings_serial_only:" in capsys.readouterr().err

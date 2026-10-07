@@ -700,11 +700,12 @@ CATALOGUE: tuple[OperationSpec, ...] = (
         "events_get",
         (
             "Fetch the seam's events after a cursor: the state changes "
-            "(connect, disconnect, stage, apply, preset, reload), the "
-            "link family (the serial link state machine: applied, "
-            "refused and failed switches) and every refused seam "
-            "operation — unknown, deferred, invalid-argument and "
-            "adapter-reported alike — in one monotonic gap-free order, "
+            "(connect, disconnect, stage, apply, preset, reload, "
+            "endpoint bind/unbind), the capture lifecycle (started, "
+            "progress, stopped), the link family (the serial link state "
+            "machine: applied, refused and failed switches) and every "
+            "refused seam operation — unknown, deferred, invalid-argument "
+            "and adapter-reported alike — in one monotonic gap-free order, "
             "the same sequence the /events stream carries."
         ),
         _object(

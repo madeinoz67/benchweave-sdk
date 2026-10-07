@@ -235,6 +235,16 @@ def _build_seam(
             err=True,
         )
         raise SystemExit(2)
+    if bindings is not None:
+        # drift-2 (review fold): --bindings names the serial binding
+        # document; on any other transport it is not silently ignored —
+        # the --device precedent's family, one flag one meaning.
+        click.echo(
+            "standalone_transport_bindings_serial_only: --bindings applies only "
+            "to --transport serial",
+            err=True,
+        )
+        raise SystemExit(2)
     return (
         StandaloneSeam(
             mock_plugin_session(plugin, capture_root=capture_root),

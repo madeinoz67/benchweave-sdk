@@ -275,8 +275,8 @@ def bindings_path(explicit: Path | None = None) -> Path:
         from_environment = os.environ.get(_ENV_BINDINGS)
         if from_environment is not None and not from_environment.strip():
             raise ValueError(
-                f"{_ENV_BINDINGS} is set but empty or whitespace-only "
-                f"({from_environment!r}); unset it to use "
+                f"standalone_binding_path: {_ENV_BINDINGS} is set but empty or "
+                f"whitespace-only ({from_environment!r}); unset it to use "
                 "device-bindings.json under the working directory, or set "
                 "it to a file path"
             )
@@ -289,9 +289,9 @@ def bindings_path(explicit: Path | None = None) -> Path:
     package_parent = Path(__file__).resolve().parent.parent
     if resolved.is_relative_to(package_parent):
         raise ValueError(
-            f"bindings file inside the installed package tree is refused: "
-            f"{resolved} is under {package_parent}; a reinstall or upgrade "
-            "wipes it — pass an explicit path or set "
+            f"standalone_binding_path: bindings file inside the installed "
+            f"package tree is refused: {resolved} is under {package_parent}; "
+            "a reinstall or upgrade wipes it — pass an explicit path or set "
             f"{_ENV_BINDINGS}"
         )
     return resolved

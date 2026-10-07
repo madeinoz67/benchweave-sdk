@@ -492,3 +492,21 @@ def test_binding_endpoint_resolves_late_through_the_store(tmp_path: Path) -> Non
     assert source() == "/dev/match-a"
     store.bind(_row(usb_serial="SER-B", port_path="/dev/match-b"))
     assert source() == "/dev/match-b"
+
+
+def test_bindings_path_refusals_carry_the_machine_prefix(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """drift-4 (review fold): the module's two path-resolution refusals —
+    the set-but-empty environment value and the installed-package-tree
+    refusal — are exit-2 serve refusals, so each carries the
+    ``standalone_binding_path:`` prefix and stays machine-classifiable
+    with every other prefixed refusal."""
+    import benchweave_sdk_server.binding as binding_module
+
+    monkeypatch.setenv(_ENV, "   ")
+    with pytest.raises(ValueError, match=r"^standalone_binding_path:"):
+        bindings_path()
+    package_parent = Path(binding_module.__file__).resolve().parent.parent
+    with pytest.raises(ValueError, match=r"^standalone_binding_path:"):
+        bindings_path(package_parent / "nested" / "device-bindings.json")

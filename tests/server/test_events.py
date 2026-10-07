@@ -351,3 +351,29 @@ def test_sse_honours_the_cursor(app, seam) -> None:
         if line.startswith("data: "):
             payload = json.loads(line.removeprefix("data: "))
             assert payload["id"] > last
+
+
+def test_events_get_description_names_every_published_family() -> None:
+    """drift-3 (review fold): the catalogue row's parenthetical enumerates
+    the event families, so it must be regenerable from the seam's publish
+    sites — every family the bus actually carries is named, including the
+    two the lineage added after the row was written (endpoint bind/unbind)
+    and the capture lifecycle the enumeration owed all along."""
+    from benchweave_sdk_server.catalogue import CATALOGUE
+
+    description = next(
+        row.description for row in CATALOGUE if row.name == "events_get"
+    )
+    for family in (
+        "connect",
+        "disconnect",
+        "stage",
+        "apply",
+        "preset",
+        "reload",
+        "endpoint bind/unbind",
+        "capture lifecycle",
+        "link family",
+        "refused seam operation",
+    ):
+        assert family in description, family
