@@ -467,6 +467,11 @@ class StandaloneSeam:
                 # port that connecting session just opened (a double-open
                 # on the wire).
                 async with self._op_mutex:
+                    minted = (
+                        self._serial_endpoint
+                        if session.connected and self._serial_endpoint is not None
+                        else None
+                    )
                     devices = await discover_serial_devices(
                         session.plugin,
                         hooks=self._serial_ports,
@@ -476,11 +481,21 @@ class StandaloneSeam:
                             # source of truth; a re-scan while connected serves
                             # that candidate from session identity and re-opens
                             # nothing on the live port.
-                            self._serial_endpoint.last_resolution
-                            if session.connected and self._serial_endpoint is not None
+                            minted.last_resolution
+                            if minted is not None
                             else None
                         ),
                         connected_identity=session.identity,
+                        # The trust-2 reconciliation: the mint-time serial the
+                        # factory recorded for the path it opened. A connected
+                        # path whose LIVE serial differs now is skipped — the
+                        # re-occupant never launders into the confirmed cache.
+                        connected_serial=(
+                            minted.last_serial if minted is not None else None
+                        ),
+                        connected_serial_known=(
+                            minted.last_serial_known if minted is not None else False
+                        ),
                     )
             except (RuntimeError, ValueError, OSError) as exc:
                 # The scan's real failure classes (a missing pyserial, an

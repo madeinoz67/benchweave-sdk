@@ -180,7 +180,13 @@ def _binding_app(
     endpoint = SerialEndpoint(
         binding_endpoint(store, plugin.package, plugin.device_id, hooks.enumerate_ports)
     )
-    session = serial_plugin_session(plugin, endpoint, open_port=open_port)
+    # The CLI's production shape (trust-2): the session factory mints with
+    # the enumeration in hand, so each connect records the serial the
+    # enumeration carried for the opened path — the evidence a connected-era
+    # scan reconciles its short-circuit row against.
+    session = serial_plugin_session(
+        plugin, endpoint, open_port=open_port, enumerate_ports=hooks.enumerate_ports
+    )
     seam = StandaloneSeam(
         session,
         transport_kind="serial",
@@ -195,6 +201,7 @@ def _binding_app(
         "candidates": candidates,
         "opened": opened,
         "plugin": plugin,
+        "endpoint": endpoint,
         "tmp_path": tmp_path,
     }
 
@@ -619,6 +626,79 @@ def test_a_rescan_while_connected_never_reopens_the_bound_port(
         "the bound, connected port is never re-opened by a scan"
     )
     assert fx["ports"][_B].written == establishment, "no bytes on the live port"
+    connected_row = next(row for row in rows if row["port_path"] == _B)
+    assert connected_row["usb_serial"] == "SER-B"
+
+
+# --- trust-2: the connected-era serial reconciliation -------------------------
+
+
+def test_the_factory_records_the_mint_time_serial(tmp_path: Path) -> None:
+    """The evidence itself: a connect through the CLI's production shape
+    (factory minted with the enumeration) records the serial the
+    enumeration carried for the path it opened — known, on the endpoint the
+    discovery short-circuit already reads."""
+    fx = _binding_app(tmp_path)
+    _bind_b(fx)
+    asyncio.run(fx["seam"].call("device_connect", {"device_id": "example_device"}))
+    assert fx["endpoint"].last_resolution == _B
+    assert fx["endpoint"].last_serial == "SER-B"
+    assert fx["endpoint"].last_serial_known is True
+
+
+def test_a_connected_era_scan_refuses_the_reoccupied_connected_path(
+    tmp_path: Path,
+) -> None:
+    """Probe 3's attack, through the seam (the production wiring): bind A,
+    connect, physically swap the occupant at A (its serial changes while
+    the session stays connected), scan. The unfixed seam served a chimera
+    row at A — the session's OLD identity with the re-occupant's NEW
+    serial — which then confirmed a bind keyed on the foreign serial, and
+    the connect after it established on the never-picked unit. With the
+    mint-time reconciliation: the scan carries NO row at A, and the bind
+    after the disconnect refuses unconfirmed — the re-occupant never
+    enters the confirmed cache."""
+    fx = _binding_app(tmp_path)
+    seam = fx["seam"]
+    asyncio.run(seam.call("device_discover"))
+    asyncio.run(seam.bind_device(_A))
+    asyncio.run(seam.call("device_connect", {"device_id": "example_device"}))
+    assert seam.session.connected
+    # The physical swap: A's occupant leaves; a foreign unit (same path,
+    # different serial) arrives. The session stays 'connected' (host
+    # state; nothing probed the dead link).
+    written_before = list(fx["ports"][_A].written)
+    fx["candidates"][:] = [
+        UsbCandidate(_A, serial_number="SER-X"),
+        UsbCandidate(_B, serial_number="SER-B"),
+    ]
+    scan = asyncio.run(seam.call("device_discover"))
+    paths = [row["port_path"] for row in scan["devices"]]
+    assert _A not in paths, (
+        "the re-occupied connected path must not serve a confirmed row"
+    )
+    assert fx["ports"][_A].written == written_before, (
+        "the scan transmitted nothing on the connected path either way"
+    )
+    # The re-pick path after the swap: disconnect, then the operator's
+    # click on the vanished row refuses — A is no longer confirmed.
+    asyncio.run(seam.call("device_disconnect", {"device_id": "example_device"}))
+    with pytest.raises(SeamError) as raised:
+        asyncio.run(seam.bind_device(_A))
+    assert raised.value.code == "invalid_request"
+    assert "standalone_binding_pick_unconfirmed" in raised.value.message
+
+
+def test_a_connected_era_scan_serves_the_row_when_the_serial_holds(
+    tmp_path: Path,
+) -> None:
+    """The reconciliation's negative control: an UNCHANGED enumeration
+    serves the connected row exactly as before — the fix refuses only the
+    mismatched occupant, never the honest connected view."""
+    fx = _binding_app(tmp_path)
+    _bind_b(fx)
+    asyncio.run(fx["seam"].call("device_connect", {"device_id": "example_device"}))
+    rows = asyncio.run(fx["seam"].call("device_discover"))["devices"]
     connected_row = next(row for row in rows if row["port_path"] == _B)
     assert connected_row["usb_serial"] == "SER-B"
 

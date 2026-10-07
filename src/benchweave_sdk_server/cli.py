@@ -137,11 +137,17 @@ def _build_seam(
             click.echo(str(exc), err=True)
             raise SystemExit(2) from exc
         hooks = serial_hooks
-        enumerate_ports = (
-            hooks.enumerate_ports
-            if hooks is not None
-            else None  # the resolver's default: pyserial's own enumeration
-        )
+        # ONE enumeration callable serves both masters in both forms: the
+        # binding-backed resolver (below) and the mint-time serial
+        # recording (serial_plugin_session) — the discovery short-circuit's
+        # reconciliation reads what the factory noted, so the CLI's two
+        # forms arm it equally (trust-2).
+        if hooks is not None:
+            enumerate_ports = hooks.enumerate_ports
+        else:
+            from .serial import _pyserial_enumerate
+
+            enumerate_ports = _pyserial_enumerate
         if device:
             # The --device form is the constant endpoint (the binding
             # bypass, §1.6): the store is loaded and validated but never
@@ -151,10 +157,6 @@ def _build_seam(
             # F-385-2 (adopted): serve starts BINDING-PENDING — the
             # refusal moved to connect time (``binding_absent``) so the UI
             # can render the pick; a stored binding resolves straight away.
-            if enumerate_ports is None:
-                from .serial import _pyserial_enumerate
-
-                enumerate_ports = _pyserial_enumerate
             endpoint = SerialEndpoint(
                 binding_endpoint(
                     store, plugin.package, plugin.device_id, enumerate_ports
@@ -167,6 +169,7 @@ def _build_seam(
                     endpoint,
                     open_port=open_port,
                     capture_root=capture_root,
+                    enumerate_ports=enumerate_ports,
                 ),
                 transport_kind="serial",
                 unattended=unattended,
