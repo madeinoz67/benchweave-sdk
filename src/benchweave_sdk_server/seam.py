@@ -31,6 +31,7 @@ import hashlib
 import json
 import logging
 import math
+import os
 import shutil
 import struct
 import time
@@ -1679,6 +1680,11 @@ class StandaloneSeam:
                 "descriptor_sha256": plugin.descriptor_sha256,
             },
             "surface": _SURFACE.get(),
+            # The transport the capture ran on — the field the I4 report's
+            # SIMULATED mark derives from (SW-72's banner rule generalised
+            # to the report, data-derived like the gateway's
+            # SIMULATION_MARK, never a live probe at render time).
+            "transport": self._transport_kind,
             "operator": operator,
             "project": arguments.get("project"),
             "tags": list(arguments.get("tags", [])),
@@ -2320,6 +2326,165 @@ class StandaloneSeam:
             "offset": offset,
             "length": len(data),
             "data_base64": base64.b64encode(data).decode("ascii"),
+        }
+
+    # --- report export (I4a, SW-53) -----------------------------------------
+
+    #: The ``standalone_report_*`` refusal prefixes onto their
+    #: interface-0.1.0 codes (STD-4's posture — the prefix stays in the
+    #: wire message).
+    _REPORT_REFUSAL_CODES: dict[str, str] = {
+        "standalone_report_capture_unknown": "not_found",
+        "standalone_report_manifest_unreadable": "not_found",
+        "standalone_report_manifest_incomplete": "invalid_request",
+        "standalone_report_format_unsupported": "invalid_request",
+        "standalone_report_primary_missing": "not_found",
+        "standalone_report_primary_length": "conflict",
+        "standalone_report_primary_mismatch": "conflict",
+        "standalone_report_sources_empty": "invalid_request",
+        "standalone_report_units_unsupported": "invalid_request",
+        "standalone_report_window_too_large": "payload_too_large",
+    }
+
+    def _report_refusal(self, exc: ValueError, correlation: str) -> SeamError:
+        """Map one analysis/report ``ValueError`` onto the seam's refusal."""
+        message = str(exc)
+        prefix = message.split(":", 1)[0]
+        return SeamError(
+            self._REPORT_REFUSAL_CODES.get(prefix, "invalid_request"),
+            message,
+            correlation_id=correlation,
+        )
+
+    def _report_assets(self) -> tuple[str, str, dict[str, str]]:
+        """The report's inlined asset bytes and versions: the installed
+        renderer's tokens/themes (the exact pinned bytes ``assets.py``
+        serves — same bytes, inlined so the document has no external
+        dependency) plus the ui-html distribution version and the bytes'
+        own digests (the sidecar records them; a pin bump re-exports to a
+        new digest honestly)."""
+        from .assets import renderer_assets_root
+
+        root = renderer_assets_root()
+        tokens = (root / "tokens.css").read_text(encoding="utf-8")
+        themes = (root / "themes.css").read_text(encoding="utf-8")
+        digests = {
+            "tokens_sha256": hashlib.sha256(tokens.encode()).hexdigest(),
+            "themes_sha256": hashlib.sha256(themes.encode()).hexdigest(),
+        }
+        try:
+            ui_html_version = metadata.version("benchweave-ui-html")
+        except metadata.PackageNotFoundError:  # pragma: no cover - dev edge
+            ui_html_version = "unknown"
+        return f"{tokens}\n{themes}", ui_html_version, digests
+
+    async def _op_report_export(
+        self, arguments: dict[str, Any], correlation: str
+    ) -> dict[str, Any]:
+        """Render and persist one report; pin every source (SW-56).
+
+        Every refusal — window shape, unknown source, unreadable or
+        incomplete manifest, unsupported format, tampered primary, plot
+        ceiling, unit count — happens BEFORE anything is written: a
+        refused export leaves no ``reports/`` directory (AR-5's no-orphans
+        rule). The handler performs no ``await`` between the stale-row
+        check and the write, so nothing interleaves with the pin.
+        """
+        from .analysis import load_series_set, scan_series, series_samples
+        from .report import ReportEntry, build_report
+
+        capture_ids = [str(entry) for entry in arguments["capture_ids"]]
+        lo = arguments.get("lo")
+        hi = arguments.get("hi")
+        if lo is not None and hi is not None and float(lo) > float(hi):
+            raise self._fail(
+                "invalid_request",
+                f"standalone_report_window_invalid: lo {lo} exceeds hi {hi}",
+                correlation,
+            )
+        library = self._library(correlation)
+        root = library.root
+        for capture_id in capture_ids:
+            self._stale_row_refusal(library, capture_id, correlation)
+        try:
+            sources = load_series_set(root, capture_ids)
+            entries: list[ReportEntry] = []
+            for source in sources:
+                stats, _ = scan_series(source, lo=lo, hi=hi)
+                points = [
+                    (t, value)
+                    for t, value in series_samples(source)
+                    if (lo is None or t >= lo) and (hi is None or t <= hi)
+                ]
+                entries.append(
+                    ReportEntry(source=source, stats=stats, points=points)
+                )
+            styles, ui_html_version, asset_digests = self._report_assets()
+            html = build_report(
+                entries,
+                lo=lo,
+                hi=hi,
+                styles=styles,
+                pin_version=ui_html_version,
+                sdk_version=sdk_version(),
+            )
+        except ValueError as exc:
+            raise self._report_refusal(exc, correlation) from exc
+        html_bytes = html.encode("utf-8")
+        html_digest = hashlib.sha256(html_bytes).hexdigest()
+        report_id = f"rep-{html_digest[:16]}"
+        reports = root / "reports"
+        html_path = reports / f"{report_id}.html"
+        sidecar_path = reports / f"{report_id}.json"
+        created = not (html_path.is_file() and sidecar_path.is_file())
+        if created:
+            # Pin before the write: an export's sources are protected even
+            # if the write itself fails (a pin is only ever protective).
+            for capture_id in capture_ids:
+                library.set_pinned(capture_id, True)
+            sidecar = {
+                "report_id": report_id,
+                "params": {"lo": lo, "hi": hi},
+                "sources": [
+                    {
+                        "capture_id": source.capture_id,
+                        "sha256": source.manifest_sha256,
+                    }
+                    for source in sources
+                ],
+                "assets": {
+                    "ui_html_version": ui_html_version,
+                    **asset_digests,
+                },
+                "sdk_version": sdk_version(),
+                # The ONE clock read in the export: the rendered document
+                # stays byte-stable across re-exports (AR-4d).
+                "generated_at": datetime.now(UTC).isoformat(),
+                "html_sha256": html_digest,
+            }
+            reports.mkdir(exist_ok=True)
+            sidecar_bytes = json.dumps(
+                sidecar, indent=2, sort_keys=True, allow_nan=False
+            ).encode("utf-8")
+            for path, payload in (
+                (html_path, html_bytes),
+                (sidecar_path, sidecar_bytes),
+            ):
+                temp = path.with_suffix(path.suffix + ".tmp")
+                temp.write_bytes(payload)
+                os.replace(temp, path)
+        return {
+            "report_id": report_id,
+            "created": created,
+            "html_sha256": html_digest,
+            "captures": [
+                {
+                    "capture_id": source.capture_id,
+                    "sha256": source.manifest_sha256,
+                    "pinned": True,
+                }
+                for source in sources
+            ],
         }
 
     def close(self) -> None:

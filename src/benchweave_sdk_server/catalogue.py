@@ -483,6 +483,80 @@ _ARTIFACT_READ_RESULT = _object(
     ["capture_id", "artifact_id", "offset", "length", "data_base64"],
 )
 
+# --- report export (I4a): the second disclosed-delta row beyond SW-10 ------
+
+#: The capture-set bound: a presentation bound (one report renders at most
+#: two plot axes and a readable table per series), not a commissioned
+#: envelope (A02 posture).
+_REPORT_SET_CEILING = 16
+
+_REPORT_EXPORT_INPUT = _object(
+    {
+        "capture_ids": {
+            "type": "array",
+            "items": {"type": "string", "minLength": 1},
+            "minItems": 1,
+            "maxItems": _REPORT_SET_CEILING,
+            "uniqueItems": True,
+            "description": "The published waveform captures composing the "
+            "report (at most 16 — a presentation bound)",
+        },
+        "lo": {
+            "type": "number",
+            "description": "Inclusive window start, seconds from each "
+            "capture's own start",
+        },
+        "hi": {
+            "type": "number",
+            "description": "Inclusive window end, seconds from each "
+            "capture's own start",
+        },
+    },
+    ["capture_ids"],
+)
+
+_REPORT_EXPORT_RESULT = _object(
+    {
+        "report_id": {
+            "type": "string",
+            "pattern": "^rep-[0-9a-f]{16}$",
+            "description": "Content-addressed over the rendered bytes",
+        },
+        "created": {
+            "type": "boolean",
+            "description": "False when the identical report already existed "
+            "(the export is content-addressed and writes nothing new)",
+        },
+        "html_sha256": {
+            "type": "string",
+            "minLength": 64,
+            "maxLength": 64,
+            "description": "The rendered document's own sha256",
+        },
+        "captures": {
+            "type": "array",
+            "items": _object(
+                {
+                    "capture_id": {"type": "string", "minLength": 1},
+                    "sha256": {
+                        "type": "string",
+                        "minLength": 64,
+                        "maxLength": 64,
+                        "description": "The source's manifest digest",
+                    },
+                    "pinned": {
+                        "type": "boolean",
+                        "description": "Always true: an export pins its "
+                        "sources (SW-56)",
+                    },
+                },
+                ["capture_id", "sha256", "pinned"],
+            ),
+        },
+    },
+    ["report_id", "created", "html_sha256", "captures"],
+)
+
 
 def _spec(
     name: str,
@@ -761,6 +835,23 @@ CATALOGUE: tuple[OperationSpec, ...] = (
         "Unpin a capture (SW-56).",
         _CAPTURE_ID_INPUT,
         _PIN_RESULT,
+    ),
+    # I4a's disclosed delta (the design record's adopted fork F-C): row 22,
+    # beyond SW-10's closed 18 and I3b's three — SW-53/SW-56 name the
+    # capability, the closed list omits it.
+    _spec(
+        "report_export",
+        (
+            "Render one self-contained HTML analysis report (inline SVG, no "
+            "script, inline styles, manifest digests printed, host-computed "
+            "statistics under definition benchweave-analysis/1) over 1..n "
+            "published waveform captures and an inclusive [lo, hi] window; "
+            "writes the content-addressed reports/rep-<sha16> pair and pins "
+            "every source capture (SW-56). Identical inputs re-export to the "
+            "same report id and write nothing new."
+        ),
+        _REPORT_EXPORT_INPUT,
+        _REPORT_EXPORT_RESULT,
     ),
 )
 
