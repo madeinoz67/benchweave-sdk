@@ -10,6 +10,7 @@ scan-and-re-pick action on a binding refusal.
 from __future__ import annotations
 
 import asyncio
+import re
 import threading
 from pathlib import Path
 from typing import Any
@@ -131,6 +132,7 @@ def _route_app(tmp_path: Path) -> dict[str, Any]:
         bound_port=8477,
         bearer_token=new_token(),
         csrf_token=new_token(),
+        operator_action_token=new_token(),
     )
     app = build_app(seam, policy=policy)
     return {
@@ -153,6 +155,16 @@ def _csrf(fx: dict[str, Any]) -> dict[str, str]:
     return {"x-csrf-token": fx["policy"].csrf_token}
 
 
+def _armed(fx: dict[str, Any]) -> dict[str, str]:
+    """The launch-armed page's header bag (trust-1): CSRF plus the
+    per-launch operator action token — the sanctioned pick-flow credential
+    set every bind/unbind through the routes now carries."""
+    return {
+        "x-csrf-token": fx["policy"].csrf_token,
+        "x-operator-action-token": fx["policy"].operator_action_token,
+    }
+
+
 # --- the happy path ----------------------------------------------------------
 
 
@@ -163,7 +175,7 @@ def test_the_pick_flow_binds_and_unbinds_through_the_route(tmp_path: Path) -> No
         assert scan.status_code == 303
         bound = client.post(
             f"/devices/{_DEVICE}/bind",
-            headers=_csrf(fx),
+            headers=_armed(fx),
             data={"port_path": _B},
             follow_redirects=False,
         )
@@ -176,7 +188,7 @@ def test_the_pick_flow_binds_and_unbinds_through_the_route(tmp_path: Path) -> No
         assert "SER-B" in page.text
         assert f"/devices/{_DEVICE}/unbind" in page.text
         unbound = client.post(
-            f"/devices/{_DEVICE}/unbind", headers=_csrf(fx), follow_redirects=False
+            f"/devices/{_DEVICE}/unbind", headers=_armed(fx), follow_redirects=False
         )
         assert unbound.status_code == 303
         assert fx["store"].rows() == []
@@ -206,7 +218,7 @@ def test_ar_d_an_unconfirmed_pick_renders_and_writes_nothing(tmp_path: Path) -> 
         before = store_path.read_bytes()
         refused = client.post(
             f"/devices/{_DEVICE}/bind",
-            headers=_csrf(fx),
+            headers=_armed(fx),
             data={"port_path": "/dev/never-scanned"},
         )
         # The M1 fold's idiom: an HTML route RENDERS its refusal (the
@@ -228,7 +240,7 @@ def test_ar_d_a_bind_while_connected_renders_conflict(tmp_path: Path) -> None:
         before = store_path.read_bytes()
         refused = client.post(
             f"/devices/{_DEVICE}/bind",
-            headers=_csrf(fx),
+            headers=_armed(fx),
             data={"port_path": _A},
         )
         assert refused.status_code == 200, "the refusal renders"
@@ -312,3 +324,142 @@ def test_the_mock_host_has_no_bind_routes(client: TestClient) -> None:
     assert client.post(
         f"/devices/{_DEVICE}/unbind", headers=headers
     ).status_code == 404
+
+
+# --- trust-1: the operator action token ---------------------------------------
+#
+# The CSRF token renders into UNAUTHENTICATED HTML (every page GET serves
+# it), so it is a replay-protection credential, not an operator
+# credential: any loopback process scraped it in one GET and moved or
+# removed the binding in one POST (probe 1's attack, reproduced end-to-end
+# on the base). The fold: bind/unbind demand a credential class a page GET
+# can never yield — the per-launch operator action token, minted at serve
+# start and delivered OUT-OF-BAND (the serve banner and a file under the
+# capture-root family); the CSRF token alone no longer suffices.
+
+
+def test_a_scraped_csrf_token_alone_cannot_bind_or_unbind(
+    tmp_path: Path,
+) -> None:
+    """Probe 1's attack through the route lane: GET / with NO credentials,
+    scrape the CSRF token the page renders, POST bind/unbind with ONLY it.
+    Both must refuse; the store's bytes never move."""
+    fx = _route_app(tmp_path)
+    with _client(fx) as client:
+        client.post("/discover", headers=_csrf(fx))
+        asyncio.run(fx["seam"].bind_device(_A))
+        store_path = fx["tmp_path"] / "device-bindings.json"
+        before = store_path.read_bytes()
+        page = client.get("/")
+        assert page.status_code == 200
+        scraped = re.search(
+            r'X-CSRF-Token&quot;: &quot;([^&]+)&quot;', page.text
+        ) or re.search(r'X-CSRF-Token": "([^"]+)"', page.text)
+        assert scraped is not None, "the CSRF token still renders (the probe's premise)"
+        moved = client.post(
+            f"/devices/{_DEVICE}/bind",
+            headers={"x-csrf-token": scraped.group(1)},
+            data={"port_path": _B},
+            follow_redirects=False,
+        )
+        assert moved.status_code == 403, moved.status_code
+        assert "standalone_binding_operator_token_required" in moved.text
+        removed = client.post(
+            f"/devices/{_DEVICE}/unbind",
+            headers={"x-csrf-token": scraped.group(1)},
+            follow_redirects=False,
+        )
+        assert removed.status_code == 403
+        assert "standalone_binding_operator_token_required" in removed.text
+        assert store_path.read_bytes() == before, "neither refusal moved the store"
+
+
+def test_the_launch_url_token_arms_the_forms_and_survives_the_redirects(
+    tmp_path: Path,
+) -> None:
+    """The sanctioned flow: the page view the CLI's launch URL opened (its
+    query carries the token) renders the forms with BOTH headers, and the
+    redirects keep the query armed so the next action (unbind, re-pick)
+    still works."""
+    fx = _route_app(tmp_path)
+    token = fx["policy"].operator_action_token
+    with _client(fx) as client:
+        page = client.get("/", params={"operator_action": token})
+        assert page.status_code == 200
+        assert "X-Operator-Action-Token" in page.text, (
+            "the armed page view plants the header on the forms"
+        )
+        both = {
+            "x-csrf-token": fx["policy"].csrf_token,
+            "x-operator-action-token": token,
+        }
+        scanned = client.post("/discover", headers=both, follow_redirects=False)
+        assert scanned.status_code == 303
+        assert f"operator_action={token}" in scanned.headers["location"], (
+            "the scan's redirect keeps the launch query armed"
+        )
+        bound = client.post(
+            f"/devices/{_DEVICE}/bind",
+            headers=both,
+            data={"port_path": _B},
+            follow_redirects=False,
+        )
+        assert bound.status_code == 303
+        assert f"operator_action={token}" in bound.headers["location"]
+        assert fx["store"].get("example_plugin", _DEVICE) is not None
+        unbound = client.post(
+            f"/devices/{_DEVICE}/unbind", headers=both, follow_redirects=False
+        )
+        assert unbound.status_code == 303
+        assert f"operator_action={token}" in unbound.headers["location"]
+        assert fx["store"].rows() == []
+
+
+def test_an_unarmed_page_view_renders_the_token_notice(
+    tmp_path: Path,
+) -> None:
+    """The page a manual open reaches (no query) says WHY Bind is refused
+    and where the token lives — never a silent 403 with no path forward."""
+    fx = _route_app(tmp_path)
+    with _client(fx) as client:
+        page = client.get("/")
+        assert page.status_code == 200
+        assert "operator action token" in page.text
+        assert "X-Operator-Action-Token" not in page.text, (
+            "an unarmed view never renders the credential into HTML"
+        )
+
+
+def test_an_unminted_operator_token_fails_closed(tmp_path: Path) -> None:
+    """The composer who never minted a token gets routes that refuse
+    everything — including the empty-string header a naive equality check
+    would accept against a default-empty policy field."""
+    fx = _route_app(tmp_path)
+    app = build_app(
+        fx["seam"],
+        policy=GuardPolicy.complete(
+            bound_host="127.0.0.1",
+            bound_port=8477,
+            bearer_token=new_token(),
+            csrf_token=fx["policy"].csrf_token,
+        ),
+    )
+    with TestClient(app, base_url="http://127.0.0.1:8477") as client:
+        client.post("/discover", headers=_csrf(fx))
+        # Seed the operator's row through the seam directly, so the store
+        # file exists for the before/after byte comparison.
+        asyncio.run(fx["seam"].bind_device(_A))
+        store_path = fx["tmp_path"] / "device-bindings.json"
+        before = store_path.read_bytes()
+        for supplied in ("", "guess", fx["policy"].operator_action_token):
+            refused = client.post(
+                f"/devices/{_DEVICE}/bind",
+                headers={
+                    "x-csrf-token": fx["policy"].csrf_token,
+                    "x-operator-action-token": supplied,
+                },
+                data={"port_path": _B},
+            )
+            assert refused.status_code == 403, supplied
+            assert "standalone_binding_operator_token_required" in refused.text
+        assert store_path.read_bytes() == before

@@ -72,12 +72,21 @@ class GuardPolicy:
 
     ``complete()`` builds the full set; ``replace(policy, enable_x=False)``
     builds the minus-one RED arms.
+
+    ``operator_action_token`` is NOT a middleware guard's material: the
+    bind/unbind routes check it directly (trust-1), because the CSRF token
+    renders into unauthenticated HTML — a page GET yields it, so it is
+    replay protection, not an operator credential. The default is empty
+    and the route check FAILS CLOSED on empty (a composer who never minted
+    gets routes that refuse everything, including an empty-string header
+    a naive equality would accept); ``serve`` always mints.
     """
 
     bound_host: str
     bound_port: int
     bearer_token: str
     csrf_token: str
+    operator_action_token: str = ""
     enable_trusted_host: bool = True
     enable_csrf: bool = True
     enable_bearer: bool = True
@@ -87,13 +96,19 @@ class GuardPolicy:
 
     @classmethod
     def complete(
-        cls, bound_host: str, bound_port: int, bearer_token: str, csrf_token: str
+        cls,
+        bound_host: str,
+        bound_port: int,
+        bearer_token: str,
+        csrf_token: str,
+        operator_action_token: str = "",
     ) -> GuardPolicy:
         return cls(
             bound_host=bound_host,
             bound_port=bound_port,
             bearer_token=bearer_token,
             csrf_token=csrf_token,
+            operator_action_token=operator_action_token,
         )
 
     def minus(self, flag: str) -> GuardPolicy:

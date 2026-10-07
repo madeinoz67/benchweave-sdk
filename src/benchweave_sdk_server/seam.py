@@ -667,10 +667,16 @@ class StandaloneSeam:
     async def bind_device(self, port_path: str, *, via: str = "ui") -> dict[str, Any]:
         """Record the operator's endpoint pick (§1.5): HOST state, not a
         catalogue operation — the scenario-select precedent (D-B1), kept
-        UI-only deliberately: a bind exposed on REST/MCP would let a
+        off REST/MCP deliberately (a bind exposed there would let a
         bearer-holding agent silently move the physical endpoint
-        subsequent writes hit; the CSRF'd route keeps the act with the
-        human.
+        subsequent writes hit), and the ROUTE that reaches this method
+        demands the per-launch operator action token alongside CSRF
+        (trust-1): the CSRF token renders into unauthenticated HTML, so
+        CSRF alone let any loopback process scrape-and-bind — the token is
+        minted at serve start and delivered out-of-band (the banner and a
+        file under the capture-root family), a credential class a page GET
+        can never yield. The act stays with the operator who launched the
+        serve.
 
         Refuses ``conflict`` while connected (a live session must never
         have its physical endpoint swapped underneath it — staging, plots

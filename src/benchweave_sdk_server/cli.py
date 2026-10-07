@@ -17,6 +17,8 @@ default install's entry point degrades honestly instead of tracebacking).
 
 from __future__ import annotations
 
+import json
+import os
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn
@@ -63,6 +65,46 @@ def _load(project: Path) -> LoadedPlugin:
     except PluginLoadError as exc:
         click.echo(str(exc), err=True)
         raise SystemExit(2) from exc
+
+
+def _deliver_operator_action_token(
+    root_argument: Path | None, token: str, host: str, port: int
+) -> Path | None:
+    """Write the per-launch operator action token under the capture-root
+    family (explicit argument over ``BENCHWEAVE_CAPTURE_DIR`` over
+    ``captures/`` under the working directory — Decision 9's precedence,
+    the state-file family the bindings document already follows).
+
+    The banner already carries the token, so this second out-of-band
+    channel DEGRADES, never blocks: a root that refuses to resolve or a
+    write that fails warns on stderr and serve continues (the capture
+    library itself stays lazy — this file is not a capture, takes no
+    library lock, and the root tolerates root-level files)."""
+    from benchweave_sdk.capture import capture_root
+
+    try:
+        root = capture_root(root_argument)
+        root.mkdir(parents=True, exist_ok=True)
+        path = root / "operator-action-token.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "pid": os.getpid(),
+                    "operator_action_token": token,
+                    "url": f"http://{host}:{port}/?operator_action={token}",
+                },
+                indent=2,
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+        return path
+    except (OSError, ValueError) as exc:
+        click.echo(
+            f"warning: the operator action token file was not written: {exc}",
+            err=True,
+        )
+        return None
 
 
 def _build_seam(
@@ -332,10 +374,31 @@ def serve(
         bound_port=port,
         bearer_token=new_token(),
         csrf_token=new_token(),
+        operator_action_token=new_token(),
     )
     app = build_app(seam, policy=policy, authoring=authoring, scenario=selection)
     click.echo(f"Serving {seam.session.plugin.package} on http://{host}:{port}")
     click.echo(f"Bearer token (REST mutations and MCP over HTTP): {policy.bearer_token}")
+    # trust-1: the per-launch operator action token, minted for every serve
+    # (uniform and fail-closed — the routes refuse everything without one)
+    # but DELIVERED only where it has a consumer: the serial transport's
+    # bind/unbind routes. Two out-of-band channels, never a page GET: the
+    # banner line below, and a file under the capture-root family.
+    launch_url = f"http://{host}:{port}"
+    if transport == "serial":
+        click.echo(
+            "Operator action token (endpoint bind/unbind in the UI): "
+            f"{policy.operator_action_token}"
+        )
+        token_file = _deliver_operator_action_token(
+            capture_root, policy.operator_action_token, host, port
+        )
+        if token_file is not None:
+            click.echo(f"Operator action token file: {token_file}")
+        # The launch URL carries the token as a QUERY: the page view it
+        # opens is the armed view (the forms' headers carry it), while a
+        # GET without the credential never yields it.
+        launch_url = f"http://{host}:{port}/?operator_action={policy.operator_action_token}"
     if not no_open:
         import webbrowser
 
@@ -346,11 +409,11 @@ def serve(
         # it). Degrade to the notice: the server is the point, not the
         # browser (review fold F1 on gateway PR #400).
         try:
-            opened = webbrowser.open(f"http://{host}:{port}")
+            opened = webbrowser.open(launch_url)
         except webbrowser.Error:
             opened = False
         if not opened:
-            click.echo(f"Browser did not open; use http://{host}:{port}", err=True)
+            click.echo(f"Browser did not open; use {launch_url}", err=True)
     uvicorn.run(app, host=host, port=port, log_level="warning")
 
 

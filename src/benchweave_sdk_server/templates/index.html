@@ -1,5 +1,14 @@
 {% extends "base.html" %}
 {% block title %}Standalone host — {{ plugin.package }}{% endblock %}
+
+{# trust-1: the mutation forms' header bag. The operator action token rides
+   ONLY an armed page view (one whose query carried it); the token values
+   are per-launch urlsafe secrets, so nothing here can break out of the
+   attribute. #}
+{% macro action_headers(csrf_token, operator_token) -%}
+{"X-CSRF-Token": "{{ csrf_token }}"{% if operator_token %}, "X-Operator-Action-Token": "{{ operator_token }}"{% endif %}}
+{%- endmacro %}
+
 {% block content %}
 <h1>Standalone host</h1>
 <p class="lede">
@@ -32,7 +41,7 @@
   {%- else %}
   <form method="post" action="/devices/{{ device.id }}/bind"
         hx-post="/devices/{{ device.id }}/bind"
-        hx-headers='{"X-CSRF-Token": "{{ csrf_token }}"}'>
+        hx-headers='{{ action_headers(csrf_token, operator_token) }}'>
     <input type="hidden" name="port_path" value="{{ device.port_path }}">
     <button type="submit">Bind this port</button>
   </form>
@@ -66,6 +75,20 @@
     <p><strong>Bind refused</strong> — {{ binding_error.code }}: {{ binding_error.message }}</p>
   </div>
   {% endif %}
+  {# trust-1: the per-launch operator action token. Only a page view whose
+     query carried the token renders it into the forms' headers — a page
+     GET without the credential never yields it. The unarmed view says so
+     and names where the token lives, never a silent refusal. #}
+  {% if not operator_token %}
+  <p class="hint">
+    This page view carries no operator action token. Bind and unbind are
+    refused without it. Open the URL that the serve command printed. That
+    URL carries the token. Or append
+    <code>?operator_action=&lt;token&gt;</code> to this page. The token is
+    printed at serve start. It is also written to the
+    <code>operator-action-token.json</code> file under the capture root.
+  </p>
+  {% endif %}
   {% if binding %}
   <div class="notice">
     <p><strong>Bound endpoint</strong> — {{ binding.endpoint_kind }}:
@@ -73,7 +96,7 @@
       bound {{ binding.bound_at }}.</p>
     <form method="post" action="/devices/{{ plugin.device_id }}/unbind"
           hx-post="/devices/{{ plugin.device_id }}/unbind"
-          hx-headers='{"X-CSRF-Token": "{{ csrf_token }}"}'>
+          hx-headers='{{ action_headers(csrf_token, operator_token) }}'>
       <button type="submit">Unbind</button>
     </form>
   </div>
@@ -86,7 +109,7 @@
   {% endif %}
   <form method="post" action="/discover"
         hx-post="/discover"
-        hx-headers='{"X-CSRF-Token": "{{ csrf_token }}"}'>
+        hx-headers='{{ action_headers(csrf_token, operator_token) }}'>
     <button type="submit">Scan for devices</button>
   </form>
 </section>
