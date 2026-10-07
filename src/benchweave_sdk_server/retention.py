@@ -2,10 +2,14 @@
 
 One launch-configuration artifact (the rules document, JSON, explicit path —
 never silently substituted) drives everything here. The engine is
-rule-driven and ships keep-everything: with no document there are no rules,
-no scheduler and no reserve, and every default the PRD's unruled Q13 would
-set is a parameter instead (the F-3 fork — a ruled defaults document lands
-as a DOCUMENT the day the PRD rules it, with no code change).
+rule-driven; the SHIPPED default is the ruled set (Q13, ruled 2026-10-07):
+the packaged :data:`DEFAULTS_DOCUMENT_NAME` document keeps mcp captures 30
+days unless pinned, keeps ui and rest captures until deleted (no rule
+matches them), and warns at :data:`QUOTA_FRACTION` of a configured byte
+quota. :func:`ruled_defaults` loads that document and
+:func:`effective_config` composes an operator's document ON TOP of it
+(additive — the ruling's composition; nothing can loosen the mcp floor;
+pinning is the keep-forever mechanism).
 
 The evaluator is deterministic and hand-computable: same rules, same rows,
 same ``now`` — same plan, in a stable order, each removal attributed to the
@@ -31,6 +35,12 @@ RULES_INVALID = "standalone_retention_rules_invalid:"
 #: The retention log's filename, in the capture root (survives index
 #: rebuilds by construction — it is not an index table).
 LOG_NAME = "retention.log"
+
+#: The packaged ruled-defaults document (Q13, ruled 2026-10-07), shipped
+#: beside this module: the ruled set as DATA — parsed by the same
+#: :func:`parse_config` an operator's document passes, never a host
+#: constant (F-3's landing shape).
+DEFAULTS_DOCUMENT_NAME = "retention-defaults.json"
 
 #: The closed dispatch-surface vocabulary a rule's ``source`` may name
 #: (SW-55's match key is SW-34's recorded surface — ui/rest/mcp).
@@ -161,8 +171,11 @@ def _rule_of(entry: Any, seen: set[str]) -> RetentionRule:
     return RetentionRule(rule_id, source, project, max_age_d, max_count, max_bytes)
 
 
-def load_config(path: Path) -> RetentionConfig:
-    """Load and validate the rules document.
+def parse_config(text: str) -> RetentionConfig:
+    """Parse and validate a rules document's TEXT — the body of
+    :func:`load_config`, factored out so the packaged ruled-defaults
+    document validates through the SAME implementation an operator's
+    document does (one validator, never a second one beside it).
 
     Every malformed shape — unparseable JSON, a non-object, an unknown key,
     a bad type, a duplicate id, a missing limit, an unknown source value —
@@ -170,11 +183,9 @@ def load_config(path: Path) -> RetentionConfig:
     and scripts branch on the text).
     """
     try:
-        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+        payload = json.loads(text)
     except ValueError as exc:
         raise ValueError(f"{RULES_INVALID} not parseable JSON: {exc}") from exc
-    except OSError as exc:
-        raise ValueError(f"{RULES_INVALID} unreadable rules document: {exc}") from exc
     if not isinstance(payload, dict):
         raise ValueError(f"{RULES_INVALID} the document must be a JSON object")
     unknown = set(payload) - {"interval_s", "orphan_grace_s", "reserve_bytes", "rules"}
@@ -203,6 +214,78 @@ def load_config(path: Path) -> RetentionConfig:
         orphan_grace_s=DEFAULT_GRACE_S if grace is None else grace,
         reserve_bytes=reserve,
         rules=rules,
+    )
+
+
+def load_config(path: Path) -> RetentionConfig:
+    """Load and validate the rules document at ``path`` (read +
+    :func:`parse_config` — one validation implementation).
+
+    An unreadable document refuses with :data:`RULES_INVALID` prefixed
+    ``ValueError`` (STD-4), exactly as every malformed shape does.
+    """
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ValueError(f"{RULES_INVALID} unreadable rules document: {exc}") from exc
+    return parse_config(text)
+
+
+def ruled_defaults() -> RetentionConfig:
+    """The packaged ruled-defaults document (Q13, ruled 2026-10-07), loaded
+    and validated like any operator document.
+
+    The ruled set as DATA (:data:`DEFAULTS_DOCUMENT_NAME` beside this
+    module): mcp captures are kept 30 days unless pinned; ui and rest
+    captures are kept until deleted (no rule matches them); no default
+    byte quota, reserve or interval was ruled — the warning threshold is
+    :data:`QUOTA_FRACTION` over a quota an operator configures, the
+    reserve stays commissioned configuration (A02), and the schedule's
+    86400 s default stands. An unreadable packaged document refuses with
+    the :data:`RULES_INVALID` prefix — a packaging defect is loud, never a
+    silent fallback to keep-everything.
+    """
+    path = Path(__file__).with_name(DEFAULTS_DOCUMENT_NAME)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ValueError(
+            f"{RULES_INVALID} the packaged ruled-defaults document "
+            f"{DEFAULTS_DOCUMENT_NAME} is unreadable: {exc}"
+        ) from exc
+    return parse_config(text)
+
+
+def effective_config(custom: RetentionConfig | None) -> RetentionConfig:
+    """The ruled defaults composed with an optional operator document (the
+    ruling's composition: custom rules are ADDITIVE ON TOP).
+
+    ``custom is None`` → the defaults alone. Otherwise the merged rules are
+    ``defaults.rules + custom.rules`` under the evaluator's union — a
+    custom rule can select rows the defaults keep; NOTHING can loosen the
+    mcp-30d floor (pinning stays the keep-forever mechanism, the ruling's
+    "unless pinned"). A custom rule id equal to a default rule id refuses
+    with :data:`RULES_INVALID` (the loader's duplicate-id family:
+    deterministic evaluation needs unique sort keys across the merged set
+    too). ``interval_s``, ``orphan_grace_s`` and ``reserve_bytes`` are the
+    custom document's knobs — single-valued, so custom wins when set.
+    """
+    defaults = ruled_defaults()
+    if custom is None:
+        return defaults
+    default_ids = {rule.id for rule in defaults.rules}
+    collision = sorted(default_ids & {rule.id for rule in custom.rules})
+    if collision:
+        raise ValueError(
+            f"{RULES_INVALID} rule id {collision[0]!r} collides with a "
+            "shipped default rule id: rename the custom rule (deterministic "
+            "evaluation needs unique sort keys)"
+        )
+    return RetentionConfig(
+        interval_s=custom.interval_s,
+        orphan_grace_s=custom.orphan_grace_s,
+        reserve_bytes=custom.reserve_bytes,
+        rules=defaults.rules + custom.rules,
     )
 
 
