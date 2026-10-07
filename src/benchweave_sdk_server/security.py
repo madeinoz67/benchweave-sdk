@@ -279,7 +279,14 @@ class McpGuard(BaseHTTPMiddleware):
 
 
 class SecurityHeadersGuard(BaseHTTPMiddleware):
-    """CSP on HTML responses; no CORS header is ever set (NFR-S5)."""
+    """CSP on HTML responses; no CORS header is ever set (NFR-S5).
+
+    The guard's policy is the DEFAULT, not the authority: a route that
+    sets its own ``Content-Security-Policy`` is honoured (I4a's report
+    download serves ``script-src 'none'; style-src 'unsafe-inline'`` —
+    strictly stronger than the host default; a route may tighten, never
+    loosen — the guard still stamps every other HTML response).
+    """
 
     async def dispatch(
         self, request: Request, call_next: RequestResponseEndpoint
@@ -287,7 +294,10 @@ class SecurityHeadersGuard(BaseHTTPMiddleware):
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         content_type = response.headers.get("content-type", "")
-        if content_type.startswith("text/html"):
+        if (
+            content_type.startswith("text/html")
+            and "content-security-policy" not in response.headers
+        ):
             response.headers["Content-Security-Policy"] = CSP_POLICY
         return response
 

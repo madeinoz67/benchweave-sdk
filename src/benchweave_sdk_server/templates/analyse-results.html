@@ -1,0 +1,38 @@
+{# The analyse results partial: rendered inline by GET /analyse and
+   swapped by the htmx POST — one computation, two entry points. Every
+   statistics block carries the host-computed label, the definition id
+   and its denominators (the report's own caption discipline). #}
+{% if entries %}
+{% for entry in entries %}
+<section class="panel bw-analyse-series">
+  <h2><code>{{ entry.capture_id }}</code> ({{ entry.unit }})</h2>
+  {{ entry.figure }}
+  <table class="bw-stats" data-bw-capture="{{ entry.capture_id }}">
+    <caption>{{ entry.capture_id }} ({{ entry.unit }}) — host-computed ·
+      definition benchweave-analysis/1 · count {{ entry.count }} ·
+      null_count {{ entry.null_count }} · window {{ entry.window }}</caption>
+    <tbody>
+      {%- for name, value in entry.rows %}
+      <tr><th>{{ name }}</th><td>{{ value }}</td></tr>
+      {%- endfor %}
+    </tbody>
+  </table>
+  <p class="hint">Source manifest sha256 <code>{{ entry.sha256 }}</code>.</p>
+</section>
+{% endfor %}
+<form method="post" action="/analyse/export"
+      hx-post="/analyse/export" hx-headers='{"X-CSRF-Token": "{{ csrf_token }}"}'>
+  {%- for entry in entries %}
+  <input type="hidden" name="capture" value="{{ entry.capture_id }}">
+  {%- endfor %}
+  <input type="hidden" name="lo" value="{{ lo }}">
+  <input type="hidden" name="hi" value="{{ hi }}">
+  <button type="submit">Export report</button>
+  <p class="hint">Export renders the self-contained HTML report and pins every
+  source capture (SW-56). Identical inputs re-export to the same report.</p>
+</form>
+{% elif selected %}
+<p role="status">No results — the selection refused or matched nothing.</p>
+{% else %}
+<p role="status">Select captures to analyse.</p>
+{% endif %}

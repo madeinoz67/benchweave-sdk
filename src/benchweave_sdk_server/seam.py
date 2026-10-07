@@ -32,6 +32,7 @@ import json
 import logging
 import math
 import os
+import re
 import shutil
 import struct
 import time
@@ -186,6 +187,10 @@ _RAW_SAMPLE_CEILING = 10_000_000
 #: The primary-artifact extensions by manifest format (the manifest's
 #: ``format`` field stays the source of truth; the filename is derived).
 _PRIMARY_SUFFIXES = {"waveform_f64le": ".f64", "raw_binary": ".bin"}
+
+#: A well-formed persisted report id (content-addressed, the export's own
+#: shape): the download route's whole traversal defense.
+_REPORT_ID_RE = re.compile(r"rep-[0-9a-f]{16}")
 
 
 def sdk_version() -> str:
@@ -2486,6 +2491,68 @@ class StandaloneSeam:
                 for source in sources
             ],
         }
+
+    # --- the Analyse view's in-process reads (I4a; NOT catalogue rows) ------
+
+    def analysis_view(
+        self,
+        capture_ids: list[str],
+        lo: float | None,
+        hi: float | None,
+        correlation: str = "",
+    ) -> list[dict[str, Any]]:
+        """Load and scan one capture set for the web Analyse view.
+
+        Fork F-B's boundary: analysis reads are deliberately NOT catalogue
+        operations — no processed value is exposed over REST/MCP as a
+        measurement until the PRD §10 issue-4 ruling; the web view
+        computing through :mod:`.analysis` in-process is the sanctioned
+        surface, and the report embeds the same numbers from the same
+        functions (one computation, the fork's duplicated-maths defect
+        avoided). Raises ``SeamError`` with the ``standalone_report_*``
+        family under the same code map as the export path.
+        """
+        from .analysis import load_series_set, scan_series, series_samples
+        from .report import REPORT_PLOT_SAMPLE_CEILING
+
+        library = self._library(correlation)
+        try:
+            entries: list[dict[str, Any]] = []
+            for source in load_series_set(library.root, capture_ids):
+                stats, _ = scan_series(source, lo=lo, hi=hi)
+                points = [
+                    (t, value)
+                    for t, value in series_samples(source)
+                    if (lo is None or t >= lo) and (hi is None or t <= hi)
+                ]
+                if len(points) > REPORT_PLOT_SAMPLE_CEILING:
+                    raise ValueError(
+                        "standalone_report_window_too_large: "
+                        f"{source.capture_id} window holds {len(points)} samples "
+                        f"for plotting; the plot ceiling is "
+                        f"{REPORT_PLOT_SAMPLE_CEILING} (narrow the window)"
+                    )
+                entries.append(
+                    {
+                        "capture_id": source.capture_id,
+                        "unit": source.unit,
+                        "stats": stats,
+                        "points": points,
+                        "sha256": source.manifest_sha256,
+                    }
+                )
+        except ValueError as exc:
+            raise self._report_refusal(exc, correlation) from exc
+        return entries
+
+    def report_file(self, report_id: str) -> Path | None:
+        """The persisted report document for a well-formed report id,
+        ``None`` for a malformed or unknown id (the download route's whole
+        traversal defense: only ``rep-<16 hex>`` ever names a file)."""
+        if not _REPORT_ID_RE.fullmatch(report_id):
+            return None
+        path = self._library("").root / "reports" / f"{report_id}.html"
+        return path if path.is_file() else None
 
     def close(self) -> None:
         """Release host-owned resources: the capture library's root lock

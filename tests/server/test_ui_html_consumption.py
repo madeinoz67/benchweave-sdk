@@ -33,7 +33,7 @@ def _policy() -> GuardPolicy:
 def test_the_host_no_longer_carries_copies_of_the_renderer_assets() -> None:
     """I1-D5 closes: tokens.css/themes.css come from the installed
     benchweave_ui_html package; the host's ui_assets tree lists only
-    host-owned files."""
+    host-owned files (plus the analyse view's page-scoped brush, I4a)."""
     for name in ("tokens.css", "themes.css"):
         assert not (HOST_ASSETS / name).exists(), name
     inventory = json.loads((HOST_ASSETS / "inventory.json").read_text())
@@ -47,6 +47,7 @@ def test_the_host_no_longer_carries_copies_of_the_renderer_assets() -> None:
         "uplot-SOURCES.md",
         "bw-plot.js",
         "bw-events.js",
+        "analyse.js",
     }
 
 

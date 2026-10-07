@@ -17,6 +17,7 @@ import asyncio
 import contextlib
 import hmac
 import json
+import math
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -33,7 +34,7 @@ from fastapi.responses import (
     StreamingResponse,
 )
 from fastapi.templating import Jinja2Templates
-from markupsafe import Markup
+from markupsafe import Markup, escape
 
 from . import catalogue
 from . import presentation as presentation_module
@@ -184,6 +185,54 @@ def _add_rest_routes(app: FastAPI, seam: StandaloneSeam) -> None:
             methods=["POST"],
             name=f"rest_{row.name}",
         )
+
+
+def _figure_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    """One ``analysis_view`` entry shaped for the analyse templates: the
+    wrapper-shaped figure (the vendored hydrator's own markup — decimated
+    columns through the landed helper, NaN gaps served as null) and the
+    pre-formatted statistics rows (templates stay dumb)."""
+    from .plots import PLOT_COLUMNS, decimate_minmax
+    from .report import format_number
+
+    capture_id = str(entry["capture_id"])
+    unit = str(entry["unit"])
+    stats = entry["stats"]
+    reduced = decimate_minmax(list(entry["points"]), columns=PLOT_COLUMNS)
+    x_values = [t for t, _ in reduced]
+    y_values = [None if math.isnan(value) else value for _, value in reduced]
+    payload = json.dumps(
+        {"channels": [{"id": capture_id, "x": x_values, "y": y_values}], "x_unit": "s"}
+    )
+    title = str(escape(f"{capture_id} ({unit})"))
+    figure = Markup(
+        f'<div class="bw-plot-host" data-bw-plot-host '
+        f'data-bw-plot-slug="analyse-{capture_id}">\n'
+        f'<figure class="bw-plot" role="img" aria-label="{title}">\n'
+        f'  <div class="bw-plot__canvas" data-bw-axes="s;{unit}" '
+        f'data-bw-plot-title="{title}"></div>\n'
+        f"</figure>\n"
+        f'<script type="application/json" data-bw-plot-data>{payload}</script>\n'
+        f"</div>"
+    )
+    return {
+        "capture_id": capture_id,
+        "unit": unit,
+        "sha256": str(entry["sha256"]),
+        "figure": figure,
+        "count": stats.count,
+        "null_count": stats.null_count,
+        "window": f"[{format_number(stats.lo)}, {format_number(stats.hi)}]",
+        "rows": [
+            ("count", f"{stats.count}"),
+            ("null_count", f"{stats.null_count}"),
+            ("min", format_number(stats.min)),
+            ("mean", format_number(stats.mean)),
+            ("max", format_number(stats.max)),
+            ("rms", format_number(stats.rms)),
+            ("peak-to-peak", format_number(stats.pp)),
+        ],
+    }
 
 
 def _add_html_routes(
@@ -1085,6 +1134,151 @@ def _add_html_routes(
         with contextlib.suppress(SeamError):
             await _ui_call("capture_unpin", {"capture_id": capture_id})
         return RedirectResponse(url="/captures", status_code=303)
+
+    # --- the Analyse view and the report download (I4a, SW-52/53) -----------
+
+    #: The report document's own CSP, stronger than the host default
+    #: (NFR-S5): a report is script-free by construction and inlines its
+    #: styles — scripts cannot run in a report document at all.
+    _REPORT_CSP = "default-src 'none'; script-src 'none'; style-src 'unsafe-inline'"
+
+    async def _window_of(request: Request) -> tuple[list[str], str, str]:
+        """The form's selection and window text."""
+        form = await request.form()
+        selected = [str(value) for value in form.getlist("capture")]
+        lo_text = str(form.get("lo") or "").strip()
+        hi_text = str(form.get("hi") or "").strip()
+        return selected, lo_text, hi_text
+
+    def _parse_window(
+        lo_text: str, hi_text: str
+    ) -> tuple[float | None, float | None] | dict[str, Any]:
+        try:
+            lo = float(lo_text) if lo_text else None
+            hi = float(hi_text) if hi_text else None
+        except ValueError:
+            return {
+                "code": "invalid_request",
+                "message": (
+                    "standalone_report_window_invalid: lo/hi must be numbers "
+                    f"(got lo={lo_text!r}, hi={hi_text!r})"
+                ),
+            }
+        if lo is not None and hi is not None and lo > hi:
+            return {
+                "code": "invalid_request",
+                "message": (
+                    f"standalone_report_window_invalid: lo {lo} exceeds hi {hi}"
+                ),
+            }
+        return lo, hi
+
+    async def _analyse_context(
+        selected: list[str], lo_text: str, hi_text: str
+    ) -> dict[str, Any]:
+        """The analyse page's shared render context: the picker rows over
+        the landed capture_list (published waveform captures only — the
+        picker never offers a row the analysis would refuse), the current
+        selection, and the computed entries (or the rendered refusal)."""
+        rows = (await seam.call("capture_list", {}))["captures"]
+        picker = [
+            row
+            for row in rows
+            if row.get("state") == "published"
+            and row.get("format") == "waveform_f64le"
+        ]
+        entries: list[dict[str, Any]] = []
+        error: dict[str, Any] | None = None
+        if selected:
+            window = _parse_window(lo_text, hi_text)
+            if isinstance(window, dict):
+                error = window
+            else:
+                lo, hi = window
+                try:
+                    computed = seam.analysis_view(selected, lo, hi)
+                    entries = [_figure_entry(entry) for entry in computed]
+                except SeamError as exc:
+                    error = {"code": exc.code, "message": exc.message}
+        return {
+            "rows": picker,
+            "selected": selected,
+            "entries": entries,
+            "analyse_error": error,
+            "lo": lo_text,
+            "hi": hi_text,
+        }
+
+    @app.get("/analyse", response_class=HTMLResponse)
+    async def analyse_page(request: Request) -> Response:
+        """The Analyse view: the capture picker over the landed captures
+        list, the numeric window (the no-script path — analyse.js adds the
+        drag-brush on the plot), and the server-computed statistics under
+        definition benchweave-analysis/1."""
+        selected = [str(value) for value in request.query_params.getlist("capture")]
+        context = await _analyse_context(
+            selected,
+            str(request.query_params.get("lo") or "").strip(),
+            str(request.query_params.get("hi") or "").strip(),
+        )
+        return _TEMPLATES.TemplateResponse(
+            request=request,
+            name="analyse.html",
+            context=shared(**context),
+        )
+
+    @app.post("/analyse/stats", response_class=HTMLResponse)
+    async def analyse_stats(request: Request) -> Response:
+        """The stats partial (the htmx swap target): the same computation
+        the GET renders inline — one code path, two entry points."""
+        selected, lo_text, hi_text = await _window_of(request)
+        context = await _analyse_context(selected, lo_text, hi_text)
+        return _TEMPLATES.TemplateResponse(
+            request=request,
+            name="analyse-results.html",
+            context=shared(**context),
+        )
+
+    @app.post("/analyse/export")
+    async def analyse_export(request: Request) -> Response:
+        """Export the report over the ``report_export`` catalogue row and
+        land on the download; a refused export renders its refusal (the
+        delete route's idiom — never a silent redirect)."""
+        selected, lo_text, hi_text = await _window_of(request)
+        window = _parse_window(lo_text, hi_text)
+        if isinstance(window, dict):
+            return HTMLResponse(
+                f"{window['code']}: {window['message']}",
+                status_code=ERROR_HTTP_STATUS[str(window["code"])],
+            )
+        lo, hi = window
+        arguments: dict[str, Any] = {"capture_ids": selected}
+        if lo is not None:
+            arguments["lo"] = lo
+        if hi is not None:
+            arguments["hi"] = hi
+        try:
+            result = await _ui_call("report_export", arguments)
+        except SeamError as exc:
+            return HTMLResponse(
+                f"{exc.code}: {exc.message}",
+                status_code=ERROR_HTTP_STATUS[exc.code],
+            )
+        return RedirectResponse(
+            url=f"/reports/{result['report_id']}", status_code=303
+        )
+
+    @app.get("/reports/{report_id}", response_class=HTMLResponse)
+    async def report_download(report_id: str) -> Response:
+        """Serve the persisted report from the capture root. The id
+        pattern (rep-<16 hex>, the seam's own check) is the whole
+        traversal defense; the document carries its own stricter CSP."""
+        path = seam.report_file(report_id)
+        if path is None:
+            return HTMLResponse("not found", status_code=404)
+        response = HTMLResponse(path.read_text(encoding="utf-8"))
+        response.headers["Content-Security-Policy"] = _REPORT_CSP
+        return response
 
 
 #: The event kinds whose SSE payload is a human advisory rather than the

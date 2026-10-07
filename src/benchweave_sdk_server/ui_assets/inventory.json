@@ -2,44 +2,49 @@
   "api_version": 1,
   "assets": [
     {
+      "path": "analyse.js",
+      "sha256": "8fe7e224402b86b5f910e3aa89bf8ff9aed1b6f3dc87f96984f3508f90d55b8c",
+      "size": 2240
+    },
+    {
       "path": "bw-events.js",
-      "size": 1150,
-      "sha256": "851f3b2882e6431f01c05bbac53d895969d6fe89ed2f73ea15922db6e6fe3623"
+      "sha256": "851f3b2882e6431f01c05bbac53d895969d6fe89ed2f73ea15922db6e6fe3623",
+      "size": 1150
     },
     {
       "path": "bw-plot.js",
-      "size": 5219,
-      "sha256": "6e7a8839f3148df903e11b38d6c1105925b5e1e4aa315e6e41ea73de3b7fdc30"
+      "sha256": "6e7a8839f3148df903e11b38d6c1105925b5e1e4aa315e6e41ea73de3b7fdc30",
+      "size": 5219
     },
     {
       "path": "htmx.min.js",
-      "size": 50917,
-      "sha256": "e209dda5c8235479f3166defc7750e1dbcd5a5c1808b7792fc2e6733768fb447"
+      "sha256": "e209dda5c8235479f3166defc7750e1dbcd5a5c1808b7792fc2e6733768fb447",
+      "size": 50917
     },
     {
       "path": "standalone.css",
-      "size": 5124,
-      "sha256": "b1c05ab8d9600f8e24487509d37113b7800fae9a8b2bbca5eb25d98d2a36de60"
+      "sha256": "b1c05ab8d9600f8e24487509d37113b7800fae9a8b2bbca5eb25d98d2a36de60",
+      "size": 5124
     },
     {
       "path": "uplot-LICENCE",
-      "size": 1078,
-      "sha256": "8f989229699b4fe2f1a0432d0e9edc338a8a911e250e2d1b01ecd770a5f5b1bd"
+      "sha256": "8f989229699b4fe2f1a0432d0e9edc338a8a911e250e2d1b01ecd770a5f5b1bd",
+      "size": 1078
     },
     {
       "path": "uplot-SOURCES.md",
-      "size": 923,
-      "sha256": "630653202f2b60d08a6d047d22ccbefacb7edbcfc3fed2ef9ed16f0768e87588"
+      "sha256": "630653202f2b60d08a6d047d22ccbefacb7edbcfc3fed2ef9ed16f0768e87588",
+      "size": 923
     },
     {
       "path": "uplot.css",
-      "size": 1857,
-      "sha256": "df630c6a8d6f8eeaff264b50f73ce5b114f646ffd9a0bb74f049b0a00135fa04"
+      "sha256": "df630c6a8d6f8eeaff264b50f73ce5b114f646ffd9a0bb74f049b0a00135fa04",
+      "size": 1857
     },
     {
       "path": "uplot.min.js",
-      "size": 51081,
-      "sha256": "19c8d4c6ad88929a79f4ae49d6f7161566dfd0ba3d15cc495e974f787eb78f1f"
+      "sha256": "19c8d4c6ad88929a79f4ae49d6f7161566dfd0ba3d15cc495e974f787eb78f1f",
+      "size": 51081
     }
   ]
 }
