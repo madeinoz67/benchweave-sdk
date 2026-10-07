@@ -50,5 +50,5 @@ or hardware.
 The plugin SDK guide covers this in section "Local UI preview (simulated)".
 
 ---
-Maintained by benchweave-sdk 0.8.0; `benchweave-sdk upgrade`
+Maintained by benchweave-sdk 0.9.0; `benchweave-sdk upgrade`
 refreshes this skill.

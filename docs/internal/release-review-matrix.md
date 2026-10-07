@@ -173,3 +173,18 @@ the checklist is a matrix in `docs/internal`, and a skill walks it.
 | 7 | Contributor window `v0.4.1..HEAD` | empty — every author in the window is the owner (`sort -u` over `%an <%ae>` resolves to one entry); not even the changelog bot (the v0.4.1 changelog commit 714eab4 is owner-authored, not the app's). Recorded result. |
 | 8 | Gateway `uv.lock` SDK pin | recorded note — the gateway's pin and submodule pointer sit at the 0.4.1-era tree until its next pointer advance (its `packages/sdk/README.md` still stamps SDK 0.4.1); they move together per the AR-6 pairing |
 | 9 | Served-set bump class | n-a — no served-set motion in the window: carried rows (12), active rows and declared ranges are identical to v0.4.1's lock; only `compatibility.sdk` moved (the certified-version field). Neither stale pattern of this row can fire; the bump class is unconstrained by the sync. |
+
+## Result record — v0.9.0 (2026-10-07)
+
+| # | Surface | Result |
+|---|---------|--------|
+| 1 | README stamp | updated → SDK 0.9.0 by release-cut (occurrence-validated) |
+| 1b | User-guide "current SDK" sentence | walk confirms — n-a or updated; the wheel filename is a glob since #102 |
+| 2 | Website hero status | updated — SDK 0.9.0 by release-cut (occurrence-validated); OTDP / adapter-API stamps the walk confirms against the lock's active rows |
+| 3 | Docs selector | PHASE-2 — patch staged at `.release/phase2-v0.9.0.patch`; the tag commit applies it (registration precedes the tag) |
+| 4 | Compatibility tagline | updated — SDK 0.9.0 against the main-repository floor by release-cut (occurrence-validated) |
+| 5 | Standards badges | walk confirms — enumerate all six against the lock's ACTIVE rows |
+| 6 | great-docs.yml versions | PHASE-2 — the tag commit applies the staged patch (the ordering constraint) |
+| 7 | Contributor window `v0.8.0..HEAD` | 71 commits in the window — human authors other than the operator/bots: none; the walk acknowledges new human contributors and records an empty window as a result |
+| 8 | Gateway uv.lock SDK pin | recorded note — moves at the gateway's next lock run / pointer advance |
+| 9 | Served-set bump class | n-a — no served-set motion in the window: standards-lock.json is identical to v0.8.0's apart from compatibility.sdk (the certified-version field) |
