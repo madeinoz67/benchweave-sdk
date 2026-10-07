@@ -6,8 +6,9 @@ shared wrapper's markup + the vendored hydrator, statistics through
 ``analysis`` (definition ``benchweave-analysis/1``, denominators stated),
 the export through the ``report_export`` catalogue row (CSRF-guarded POST
 per NFR-S3 — the middleware's job), and the download from the capture
-root under a report-specific CSP stronger than the host default
-(``script-src 'none'``: scripts cannot run in a report document).
+root under a report-specific, script-free CSP (``script-src 'none'``;
+the style axis is deliberately looser — ``style-src 'unsafe-inline'`` —
+because a self-contained document has no external sheet).
 """
 
 from __future__ import annotations
@@ -29,7 +30,9 @@ TEST_HOST = "127.0.0.1"
 TEST_PORT = 8477
 
 
-def write_capture(root: Path, capture_id: str, *, values: tuple[float, ...]) -> Path:
+def write_capture(
+    root: Path, capture_id: str, *, values: tuple[float, ...], unit: str = "V"
+) -> Path:
     payload = b"".join(struct.pack("<d", value) for value in values)
     event = root / capture_id
     event.mkdir(parents=True)
@@ -46,7 +49,7 @@ def write_capture(root: Path, capture_id: str, *, values: tuple[float, ...]) -> 
                 "started_at": f"2026-10-07T12:00:00+00:00-{capture_id}",
                 "sample_count": len(values),
                 "sample_interval_s": 0.001,
-                "unit": "V",
+                "unit": unit,
                 "x-standalone-state": "finalised",
                 "x-standalone-manifest-version": 1,
             },
@@ -210,9 +213,10 @@ def test_analyse_js_is_served_under_the_inventory(client: TestClient) -> None:
     assert response.headers["content-type"].startswith("text/javascript")
     script = response.text
     # The brush is page-scoped and talks only to the wrapper's own
-    # conventions: no plugin knowledge, no fetch targets beyond the host.
+    # conventions plus the vendored uPlot's real hook/scale surface
+    # (B-F1): no plugin knowledge, no fetch targets beyond the host.
     assert "_bwPlot" in script
-    assert "posToVal" in script
+    assert "setScale" in script
 
 
 # --- fold wave 1: view admission, escaping, and the CSP pin (rows 2, 3, 8) ---------
@@ -321,3 +325,148 @@ def test_guard_preserves_a_route_set_csp_verbatim(plugin, capture_root: Path) ->
         assert preserved.headers["content-security-policy"] == (
             "default-src *; script-src *; style-src *"
         )
+
+
+# --- fold wave 2 (lane B): hostile units, non-finite windows, the live brush --------
+
+
+def test_hostile_unit_renders_escaped_in_the_figure(
+    client: TestClient, capture_root: Path
+) -> None:
+    """B-F2: the figure block is built inside Markup(...) (autoescape
+    bypass) — every interpolated slot must escape by hand. A hostile unit
+    that would break out of data-bw-axes and inject markup renders
+    escaped, exactly as the report renderer already treats it."""
+    hostile = 'V" onload="alert(1)" data-evil="1"><script>alert(2)</script>'
+    write_capture(capture_root, "fx-evilunit", values=(1.0, 2.0), unit=hostile)
+    page = client.get("/analyse", params={"capture": "fx-evilunit"}).text
+    assert 'onload="alert(1)' not in page
+    assert "<script>alert(2)" not in page
+    assert "&#34;" in page or "&quot;" in page
+
+
+def test_non_finite_window_refuses_on_the_web_surface(
+    client: TestClient, capture_root: Path
+) -> None:
+    """B-F4 (web arm): NaN/Infinity window bounds — parseable as floats
+    from the form text — refuse at admission, never reach the pin loop or
+    the sidecar."""
+    write_capture(capture_root, "fx-finite", values=(1.0, 2.0))
+    token = csrf_of(client)
+    for bad in ("nan", "inf", "-inf"):
+        response = client.post(
+            "/analyse/export",
+            data={"capture": "fx-finite", "lo": bad, "hi": ""},
+            headers={"X-CSRF-Token": token},
+        )
+        assert response.status_code == 400, bad
+        assert "standalone_report_window_invalid" in response.text
+        assert "finite" in response.text
+
+
+def test_the_brush_talks_to_the_real_vendored_uplot_api() -> None:
+    """B-F1 (static arm): every uPlot API token the brush uses exists in
+    the VENDORED bytes — the dead-code defect was analyse.js reading
+    ``plot.sel``, a property these bytes never expose."""
+    from benchweave_sdk_server.assets import ui_assets_root
+
+    script = (ui_assets_root() / "analyse.js").read_text(encoding="utf-8")
+    vendored = (ui_assets_root() / "uplot.min.js").read_text(encoding="utf-8")
+    for token in ("hooks", "scales", "setScale"):
+        assert token in script, f"the brush must use the {token} API"
+        assert token in vendored, f"the vendored bytes do not expose {token}"
+    import re as _re
+
+    assert not _re.search(r"plot\.sel\b", script), (
+        "plot.sel does not exist in the vendored bytes (B-F1's dead token)"
+    )
+
+
+def test_the_brush_handles_the_real_event_sequence(tmp_path: Path) -> None:
+    """B-F1 (handler arm): analyse.js driven under node against a shim
+    exposing the VENDORED API surface — mousedown arms, the drag-completion
+    setScale hook fires with the zoomed x extent, the window inputs fill
+    and the form submits. A resize-driven setScale while disarmed must NOT
+    submit. Skipped visibly where node is absent (the static arm still
+    holds the surface check)."""
+    import shutil
+    import subprocess
+
+    from benchweave_sdk_server.assets import ui_assets_root
+
+    if shutil.which("node") is None:
+        pytest.skip("node is not available to drive the brush handler")
+    harness = tmp_path / "harness.mjs"
+    harness.write_text(NODE_HARNESS)
+    script = ui_assets_root() / "analyse.js"
+    result = subprocess.run(
+        ["node", str(harness), str(script)],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["lo"] == "2.5" and payload["hi"] == "7.5"
+    assert payload["submitted"] is True
+    assert payload["resize_submits"] is False
+
+
+NODE_HARNESS = """
+import { readFileSync } from "node:fs";
+
+const script = readFileSync(process.argv[2], "utf8");
+const listeners = {};
+const form = {
+  elements: { lo: { value: "" }, hi: { value: "" } },
+  submitted: 0,
+  requestSubmit() { this.submitted += 1; },
+};
+const canvas = {
+  addEventListener(type, cb) { (listeners[type] = listeners[type] || []).push(cb); },
+};
+const plot = {
+  hooks: {},
+  scales: { x: { min: 0, max: 9.99 } },
+};
+const host = {
+  _bwPlot: plot,
+  dataset: {},
+  querySelector(selector) { return selector === ".bw-plot__canvas" ? canvas : null; },
+};
+globalThis.document = {
+  readyState: "complete",
+  getElementById(id) { return id === "analyse-form" ? form : null; },
+  querySelectorAll() { return [host]; },
+  body: { addEventListener() {} },
+};
+
+eval(script);
+
+function fire(type) { (listeners[type] || []).forEach((cb) => cb()); }
+function fireSetScale(min, max) {
+  plot.scales.x = { min, max };
+  (plot.hooks.setScale || []).forEach((cb) => cb("x"));
+}
+
+// A resize while disarmed must not submit (init/resize also fire setScale).
+fireSetScale(1.0, 2.0);
+const resizeSubmits = form.submitted;
+
+// The real drag sequence: mousedown (arm) -> drag end: uPlot's own mouseup
+// zooms and fires setScale synchronously -> the event bubbles to the
+// container mouseup afterwards.
+fire("mousedown");
+fireSetScale(2.5, 7.5);
+fire("mouseup");
+
+console.log(
+  JSON.stringify({
+    lo: form.elements.lo.value,
+    hi: form.elements.hi.value,
+    submitted: form.submitted > resizeSubmits,
+    resize_submits: resizeSubmits > 0,
+  })
+);
+"""

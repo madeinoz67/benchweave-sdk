@@ -423,3 +423,30 @@ def _fmt(value: float | None) -> str:
     from benchweave_sdk_server.report import format_number
 
     return format_number(value)
+
+
+# --- fold wave 2 (lane B): non-finite statistics rendering (row B-F8) ---------------
+
+
+def test_non_finite_statistics_are_never_rendered_as_absence(
+    tmp_path: Path,
+) -> None:
+    """B-F8 partial: a window whose data is present but whose statistics
+    compute to non-finite values (mean of +inf/-inf samples is NaN) must
+    render as non-finite, NEVER as the honest-absence dash — the dash is
+    reserved for count=0. The computation itself stays IEEE-conformant
+    (the lane's disclosed non-change)."""
+    write_capture(
+        tmp_path, "fx-infmix", values=(1.0, float("inf"), float("-inf"), 4.0)
+    )
+    document = _render(tmp_path, ["fx-infmix"])
+    block = _stats_block(document, "fx-infmix")
+    assert block is not None
+    assert "count 4" in block, "the samples ARE present"
+    assert "n/a (non-finite)" in block, (
+        "a computed non-finite statistic must say so, not borrow the "
+        "absence mark"
+    )
+    assert not re.search(r",[+-]?nan\b", document, re.IGNORECASE), (
+        "inf-extent series must not produce NaN path coordinates either"
+    )

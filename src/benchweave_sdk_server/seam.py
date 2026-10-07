@@ -2401,6 +2401,18 @@ class StandaloneSeam:
         capture_ids = [str(entry) for entry in arguments["capture_ids"]]
         lo = arguments.get("lo")
         hi = arguments.get("hi")
+        # B-F4: non-finite bounds (JSON NaN/Infinity literals parse as
+        # floats) refuse BEFORE any side effect — the pre-fold path ran the
+        # pin loop and created reports/ before the sidecar serializer
+        # crashed on them (orphans + false pins from a 500).
+        for name, value in (("lo", lo), ("hi", hi)):
+            if value is not None and not math.isfinite(float(value)):
+                raise self._fail(
+                    "invalid_request",
+                    f"standalone_report_window_invalid: {name} {value} is "
+                    "not finite; window bounds must be finite numbers",
+                    correlation,
+                )
         if lo is not None and hi is not None and float(lo) > float(hi):
             raise self._fail(
                 "invalid_request",
@@ -2449,39 +2461,50 @@ class StandaloneSeam:
         html_bytes = html.encode("utf-8")
         html_digest = hashlib.sha256(html_bytes).hexdigest()
         report_id = f"rep-{html_digest[:16]}"
+        # B-F4: the sidecar serialises INSIDE the guarded region so a
+        # non-serialisable value can never escape as a raw ValueError —
+        # with the finite admission above it cannot arise, but the guard
+        # holds for any future field.
+        try:
+            sidecar_bytes = json.dumps(
+                {
+                    "report_id": report_id,
+                    "params": {"lo": lo, "hi": hi},
+                    "sources": [
+                        {
+                            "capture_id": source.capture_id,
+                            "sha256": source.manifest_sha256,
+                        }
+                        for source in sources
+                    ],
+                    "assets": {
+                        "ui_html_version": ui_html_version,
+                        **asset_digests,
+                    },
+                    "sdk_version": sdk_version(),
+                    # The ONE clock read in the export: the rendered
+                    # document stays byte-stable across re-exports (AR-4d).
+                    "generated_at": datetime.now(UTC).isoformat(),
+                    "html_sha256": html_digest,
+                },
+                indent=2,
+                sort_keys=True,
+                allow_nan=False,
+            ).encode("utf-8")
+        except ValueError as exc:
+            raise self._report_refusal(exc, correlation) from exc
         reports = root / "reports"
         html_path = reports / f"{report_id}.html"
         sidecar_path = reports / f"{report_id}.json"
         created = not (html_path.is_file() and sidecar_path.is_file())
+        # B-F3: the pin runs on EVERY export, created or not — the wire
+        # result documents pinned:true unconditionally, so a re-export of
+        # identical inputs must re-pin sources unpinned in between (the
+        # pin is idempotent).
+        for capture_id in capture_ids:
+            library.set_pinned(capture_id, True)
         if created:
-            # Pin before the write: an export's sources are protected even
-            # if the write itself fails (a pin is only ever protective).
-            for capture_id in capture_ids:
-                library.set_pinned(capture_id, True)
-            sidecar = {
-                "report_id": report_id,
-                "params": {"lo": lo, "hi": hi},
-                "sources": [
-                    {
-                        "capture_id": source.capture_id,
-                        "sha256": source.manifest_sha256,
-                    }
-                    for source in sources
-                ],
-                "assets": {
-                    "ui_html_version": ui_html_version,
-                    **asset_digests,
-                },
-                "sdk_version": sdk_version(),
-                # The ONE clock read in the export: the rendered document
-                # stays byte-stable across re-exports (AR-4d).
-                "generated_at": datetime.now(UTC).isoformat(),
-                "html_sha256": html_digest,
-            }
             reports.mkdir(exist_ok=True)
-            sidecar_bytes = json.dumps(
-                sidecar, indent=2, sort_keys=True, allow_nan=False
-            ).encode("utf-8")
             for path, payload in (
                 (html_path, html_bytes),
                 (sidecar_path, sidecar_bytes),
@@ -2531,6 +2554,14 @@ class StandaloneSeam:
         from .analysis import load_series_set, scan_series, windowed_points
         from .report import REPORT_PLOT_SAMPLE_CEILING
 
+        for name, value in (("lo", lo), ("hi", hi)):
+            if value is not None and not math.isfinite(value):
+                raise self._fail(
+                    "invalid_request",
+                    f"standalone_report_window_invalid: {name} {value} is "
+                    "not finite; window bounds must be finite numbers",
+                    "",
+                )
         library = self._library(correlation)
         for capture_id in capture_ids:
             self._stale_row_refusal(library, capture_id, correlation)

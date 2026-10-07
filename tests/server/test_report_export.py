@@ -336,3 +336,99 @@ def test_capture_metadata_records_the_transport(seam: StandaloneSeam) -> None:
         {"count": 2}, "fx-meta-cap", {"count": 2}, "waveform_f64le"
     )
     assert metadata["transport"] == "mock"
+
+
+# --- fold wave 2 (lane B): re-pinning and non-finite windows (rows B-F3/B-F4) -------
+
+
+def test_re_export_re_pins_after_an_unpin(
+    seam: StandaloneSeam, capture_root: Path
+) -> None:
+    """B-F3: a re-export of identical inputs must RE-RUN the pin — the
+    wire claims pinned:true and the catalogue documents the field 'Always
+    true', so an unpinned-then-re-exported source with created:false and
+    library pinned=False was the wire lying."""
+    write_capture(capture_root, "fx-repin", values=(1.0, 2.0))
+    first = call(seam, "report_export", {"capture_ids": ["fx-repin"]})
+    call(seam, "capture_unpin", {"capture_id": "fx-repin"})
+    row = next(
+        row
+        for row in call(seam, "capture_list")["captures"]
+        if row["capture_id"] == "fx-repin"
+    )
+    assert row["pinned"] is False, "arrange: the unpin must hold first"
+    second = call(seam, "report_export", {"capture_ids": ["fx-repin"]})
+    assert second["report_id"] == first["report_id"]
+    assert second["created"] is False
+    assert all(entry["pinned"] is True for entry in second["captures"])
+    row = next(
+        row
+        for row in call(seam, "capture_list")["captures"]
+        if row["capture_id"] == "fx-repin"
+    )
+    assert row["pinned"] is True, "the re-export must re-pin the source"
+
+
+def test_non_finite_window_refuses_before_any_side_effect(
+    seam: StandaloneSeam, capture_root: Path
+) -> None:
+    """B-F4 (seam arm, the MCP dispatch path): NaN and inf window bounds
+    refuse invalid_request at admission — no pins applied, no reports/
+    artifacts (the pre-fold crash path pinned sources and created an
+    orphan empty reports/ before the sidecar's allow_nan=False blew up)."""
+    write_capture(capture_root, "fx-pinf", values=(1.0, 2.0))
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        arguments = {"capture_ids": ["fx-pinf"], "lo": bad}
+        with pytest.raises(SeamError) as caught:
+            call(seam, "report_export", arguments)
+        assert caught.value.code == "invalid_request", bad
+        assert "standalone_report_window_invalid" in caught.value.message
+        assert "finite" in caught.value.message
+        assert report_files(capture_root) == []
+        rows = {
+            row["capture_id"]: row["pinned"]
+            for row in call(seam, "capture_list")["captures"]
+        }
+        assert rows == {"fx-pinf": False}, "a refused export pins nothing"
+
+
+def test_non_finite_window_refuses_over_rest(
+    seam: StandaloneSeam, capture_root: Path
+) -> None:
+    """B-F4 (REST arm): the JSON body carries NaN/Infinity literals (the
+    stdlib parser accepts both); the typed refusal answers 400, never a
+    500 from the sidecar."""
+    from fastapi.testclient import TestClient
+
+    from benchweave_sdk_server.security import GuardPolicy, new_token
+    from benchweave_sdk_server.web import build_app
+
+    write_capture(capture_root, "fx-rest", values=(1.0, 2.0))
+    bearer = new_token()
+    app = build_app(
+        seam,
+        policy=GuardPolicy.complete(
+            bound_host="127.0.0.1",
+            bound_port=8477,
+            bearer_token=bearer,
+            csrf_token=new_token(),
+        ),
+    )
+    with TestClient(app, base_url="http://127.0.0.1:8477") as client:
+        for literal in ("NaN", "Infinity"):
+            # Raw JSON literals: the stdlib parser on the SERVER side
+            # accepts both (the strict test-client encoder refuses them,
+            # which is exactly why the arm sends raw bytes).
+            response = client.post(
+                "/v1/report_export",
+                content='{"capture_ids": ["fx-rest"], "lo": ' + literal
+                + ', "hi": 1.0}',
+                headers={
+                    "Authorization": f"Bearer {bearer}",
+                    "Content-Type": "application/json",
+                },
+            )
+            assert response.status_code == 400, literal
+            body = response.json()
+            assert body["error"]["code"] == "invalid_request"
+            assert "standalone_report_window_invalid" in body["error"]["message"]

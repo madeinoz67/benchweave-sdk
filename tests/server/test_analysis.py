@@ -371,3 +371,22 @@ def test_windowed_points_enforces_the_limit_incrementally(tmp_path: Path) -> Non
     assert windowed_points(source, lo=None, hi=None, limit=1000) == list(
         series_samples(source)
     )
+
+
+def test_windowed_points_refuses_a_primary_truncated_between_passes(
+    tmp_path: Path,
+) -> None:
+    """B-F5's truncation variant (converged with fold row 5): the second
+    pass verifies its OWN read — a primary truncated (not just mutated)
+    after the statistics pass refuses instead of drawing a partial
+    series."""
+    values = (1.0, 2.0, 3.0, 4.0, 5.0, 6.0)
+    event = write_capture(tmp_path, "fx-trunc", values=values)
+    source = load_series_set(tmp_path, ["fx-trunc"])[0]
+    stats, _ = scan_series(source)
+    assert stats.count == 6
+    (event / "fx-trunc.f64").write_bytes(
+        b"".join(struct.pack("<d", v) for v in values[:2])
+    )
+    with pytest.raises(ValueError, match="standalone_report_primary_mismatch"):
+        windowed_points(source, lo=None, hi=None, limit=100)

@@ -80,11 +80,16 @@ class ReportEntry:
 
 def format_number(value: float | None) -> str:
     """One deterministic, locale-free rendering for every number in the
-    document (``—`` for the honest absence, never a bare ``None``)."""
+    document. ``—`` is the HONEST ABSENCE (no data in the window) and is
+    reserved for it; a COMPUTED non-finite value (B-F8: a mean over
+    +inf/-inf samples is NaN) renders as ``n/a (non-finite)`` — data was
+    present, the IEEE-conformant statistic just has no finite value, and
+    borrowing the absence mark for that would say otherwise. ``inf``
+    itself is a value and renders as such."""
     if value is None:
         return "—"
     if math.isnan(value):
-        return "—"
+        return "n/a (non-finite)"
     return format(value, ".12g")
 
 
@@ -304,7 +309,7 @@ def _svg_plot(
         values = [
             value
             for _, value in series_["points"]
-            if not math.isnan(value)
+            if math.isfinite(value)
         ]
         if not values:
             continue
@@ -359,12 +364,14 @@ def _svg_plot(
             f'height="{plot_height}" fill="#4682b4" opacity="0.08"/>'
         )
     for series_ in series:
-        # Null samples are gaps, never coordinates (fold row 6: a NaN
-        # coordinate would render an invalid, silently-undrawn path).
+        # Non-finite samples are gaps, never coordinates (fold row 6: a
+        # NaN coordinate would render an invalid, silently-undrawn path;
+        # B-F8: an inf sample is undrawable on a finite axis too — the
+        # statistics still count it, the plot skips it).
         coordinates = [
             (t, value)
             for t, value in series_["points"]
-            if not math.isnan(value)
+            if math.isfinite(value)
         ]
         if not coordinates:
             continue

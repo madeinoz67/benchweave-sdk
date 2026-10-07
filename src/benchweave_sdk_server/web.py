@@ -205,15 +205,17 @@ def _figure_entry(entry: dict[str, Any]) -> dict[str, Any]:
         {"channels": [{"id": capture_id, "x": x_values, "y": y_values}], "x_unit": "s"}
     )
     title = str(escape(f"{capture_id} ({unit})"))
-    # Fold row 3: EVERY attribute slot escapes the capture id — the slug
-    # gets the same treatment as the title (a hand-mangled event name
-    # cannot break out of the attribute).
+    # Fold row 3 + B-F2: EVERY attribute slot escapes what it interpolates
+    # — the slug and the unit get the same treatment as the title (the
+    # figure block is built inside Markup, so autoescape does not apply;
+    # a hostile plugin unit cannot break out of data-bw-axes).
     slug = str(escape(f"analyse-{capture_id}"))
+    axes = str(escape(f"s;{unit}"))
     figure = Markup(
         f'<div class="bw-plot-host" data-bw-plot-host '
         f'data-bw-plot-slug="{slug}">\n'
         f'<figure class="bw-plot" role="img" aria-label="{title}">\n'
-        f'  <div class="bw-plot__canvas" data-bw-axes="s;{unit}" '
+        f'  <div class="bw-plot__canvas" data-bw-axes="{axes}" '
         f'data-bw-plot-title="{title}"></div>\n'
         f"</figure>\n"
         f'<script type="application/json" data-bw-plot-data>{payload}</script>\n'
@@ -1168,6 +1170,24 @@ def _add_html_routes(
                     f"(got lo={lo_text!r}, hi={hi_text!r})"
                 ),
             }
+        return _finite_window(lo, hi)
+
+    def _finite_window(
+        lo: float | None, hi: float | None
+    ) -> tuple[float | None, float | None] | dict[str, Any]:
+        """B-F4: non-finite bounds (``nan``/``inf`` parse as floats from
+        form text and JSON literals alike) refuse at admission — the
+        pre-fold path pinned sources and created the reports/ directory
+        before the sidecar serializer crashed on them."""
+        for name, value in (("lo", lo), ("hi", hi)):
+            if value is not None and not math.isfinite(value):
+                return {
+                    "code": "invalid_request",
+                    "message": (
+                        f"standalone_report_window_invalid: {name} {value} "
+                        "is not finite; window bounds must be finite numbers"
+                    ),
+                }
         if lo is not None and hi is not None and lo > hi:
             return {
                 "code": "invalid_request",

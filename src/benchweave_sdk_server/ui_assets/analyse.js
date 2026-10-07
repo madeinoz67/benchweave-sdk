@@ -2,11 +2,23 @@
  *
  * Page-scoped and closed like the wrapper it rides on: bw-plot.js stores
  * the uPlot instance on each plot host element as _bwPlot (its own
- * convention), so this script converts the drag extent through uPlot's
- * public posToVal, fills the numeric window inputs, and re-submits the
- * analysis form (htmx posts the partial; without script the form GETs —
- * the no-script path stays whole). No plugin knowledge; no requests
- * beyond the host's own routes. */
+ * convention). The brush talks ONLY to the vendored uPlot bytes' real
+ * API surface (fold wave 2, B-F1 — the original handler read a
+ * selection property these bytes never expose, making it dead code):
+ *
+ *  - the vendored defaults carry drag.setScale = true, so a finished drag
+ *    ZOOMS and fires the setScale hook synchronously INSIDE uPlot's own
+ *    mouseup processing (before any later listener could observe a
+ *    selection rect — uPlot resets it first);
+ *  - the zoomed x extent therefore IS the dragged region: the hook reads
+ *    plot.scales.x.min/max directly, no coordinate arithmetic;
+ *  - the hook is armed by a mousedown on the plot's canvas container, so
+ *    the setScale calls that init and window-resize also fire never
+ *    submit.
+ *
+ * The filled values re-submit the analysis form (htmx posts the partial;
+ * without script the form GETs — the no-script path stays whole). No
+ * plugin knowledge; no requests beyond the host's own routes. */
 (function () {
   "use strict";
 
@@ -17,24 +29,22 @@
   function arm(host) {
     var plot = host._bwPlot;
     var form = document.getElementById("analyse-form");
-    if (!plot || !form || !plot.over) return;
-    plot.over.addEventListener("mouseup", function () {
-      var sel = plot.sel;
-      if (!sel || sel.x0 == null || sel.x1 == null) return;
-      var left = Math.min(sel.x0, sel.x1);
-      var right = Math.max(sel.x0, sel.x1);
-      if (right - left < 2) return; /* a click, not a brush */
-      var lo = plot.posToVal(left, 0);
-      var hi = plot.posToVal(right, 0);
-      if (!(hi > lo)) return;
-      if (form.elements["lo"]) form.elements["lo"].value = micro(lo);
-      if (form.elements["hi"]) form.elements["hi"].value = micro(hi);
-      try {
-        plot.setSelect(null, false);
-      } catch (error) {
-        /* a uPlot build without setSelect keeps the selection visible;
-           the values are already set and the form still re-analyses. */
-      }
+    var canvas = host.querySelector(".bw-plot__canvas");
+    if (!plot || !form || !canvas || !plot.hooks || !plot.scales) return;
+    var armed = false;
+    canvas.addEventListener("mousedown", function () {
+      armed = true;
+    });
+    canvas.addEventListener("mouseup", function () {
+      armed = false;
+    });
+    plot.hooks.setScale = plot.hooks.setScale || [];
+    plot.hooks.setScale.push(function () {
+      if (!armed) return; /* init and resize fire setScale too */
+      var x = plot.scales.x;
+      if (!x || !(x.max > x.min)) return; /* a click, not a drag */
+      if (form.elements["lo"]) form.elements["lo"].value = micro(x.min);
+      if (form.elements["hi"]) form.elements["hi"].value = micro(x.max);
       if (typeof form.requestSubmit === "function") {
         form.requestSubmit();
       } else {
