@@ -13,7 +13,8 @@ from benchweave_sdk_server.errors import ERROR_CODES, ERROR_HTTP_STATUS
 #: SW-10's closed 18 (in catalogue order) PLUS fork F-2's disclosed delta —
 #: rows 19-21 (capture_delete/capture_pin/capture_unpin after events_get;
 #: SW-56/SW-59 name the capabilities, SW-10's list omits them — the owner
-#: fork is recorded in the I3b design record §7).
+#: fork is recorded in the I3b design record §7) — and I4a's row 22
+#: (report_export, the adopted fork F-C: SW-53/SW-56 name the capability).
 SW10_NAMES = [
     "host_info", "device_discover", "device_connect", "device_disconnect",
     "device_get", "parameter_read", "parameter_stage", "parameter_apply",
@@ -21,6 +22,7 @@ SW10_NAMES = [
     "capture_list", "capture_get", "capture_series", "capture_annotate",
     "artifact_read", "events_get",
     "capture_delete", "capture_pin", "capture_unpin",
+    "report_export",
 ]
 
 #: I3b's flip: every row is implemented — the capture family serves and

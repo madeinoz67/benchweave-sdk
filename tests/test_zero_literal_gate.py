@@ -156,7 +156,8 @@ class TestTwinCounter:
         serial.py, the 39th; #308 deletes preview_server.py and
         preview_tui.py back to 37; I3b adds library.py, the 38th; #385
         adds binding.py and I3c adds retention.py, the 39th and 40th; the
-        #422 inc1 env-file autoload adds env_file.py, the 41st) —
+        #422 inc1 env-file autoload adds env_file.py, the 41st; I4a adds
+        analysis.py and report.py, the 42nd and 43rd) —
         a scope change is a visible diff, never a silent denominator move.
         The server half is issue #309 slice A's scope extension: deleting
         the tree or narrowing the roots reds here."""
@@ -167,7 +168,8 @@ class TestTwinCounter:
             check=False,
         )
         assert result.returncode == 0, result.stdout + result.stderr
-        assert json.loads(result.stdout)["scanned"] == 41, (
+        assert json.loads(result.stdout)["scanned"] == 43, (
+
             "the scanned-file census moved — update this pin in the "
             "same commit as the tree change (the ratchet discipline)"
         )
