@@ -798,7 +798,9 @@ class PluginSession:
                     # one path that skipped it (a planted or stale binding
                     # row). Only declared conjuncts constrain: a descriptor
                     # that declares neither manufacturer nor model has
-                    # nothing to contradict.
+                    # nothing to contradict. Not caught: resolve still
+                    # applies no descriptor USB-hint check (this fold's
+                    # named deferral — the row is operator state).
                     declared = self._plugin.descriptor.get("identity")
                     if isinstance(declared, dict):
                         for field in ("manufacturer", "model"):
