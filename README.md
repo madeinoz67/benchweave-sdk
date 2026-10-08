@@ -253,6 +253,8 @@ The startup output prints the URL and a bearer token for each launch. REST mutat
 
 The listener rules are the same in every host command. The listener uses the loopback interface by default. The command rejects wildcard listeners. A non-loopback host needs `--allow-network`.
 
+Four lifecycle verbs manage the host process: `benchweave-sdk-server start`, `stop`, `restart` and `status`. `start` runs the serve child in the background, with stderr in `<bindings>.log` beside the resolved bindings document. The per-launch tokens land in a 0600 `<bindings>.tokens` sibling file instead of stdout, and `logs` never displays that file. `stop` writes a stop request and sends SIGTERM. A host that does not exit within the bounded wait gets one audited SIGKILL, and the command exits non-zero. `status` prints the pid verdict, the log destination and the tokens file. There is no `--protective` flag on this surface: no procedures run here, so nothing is at stake in a stop. The `service install` command is refused with a reason: a plugin-author preview server is not a boot daemon.
+
 ### Local UI preview
 
 `benchweave-sdk preview-ui <project>` is a second name for the standalone host. It serves the plugin project's pages on the scripted mock transport. `preview-ui` never leaves the mock transport. For real hardware, use `benchweave-sdk-server serve --transport serial` directly. The command needs the `[server]` extra. On a default installation, the command refuses with `benchweave_sdk_server_extras_missing:` and exit 2.
