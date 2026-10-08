@@ -82,6 +82,7 @@ def build_app(
     policy: GuardPolicy,
     authoring: bool = False,
     scenario: ScenarioSelection | None = None,
+    streams_closing: Any = None,
 ) -> FastAPI:
     """Compose the one app; the seam is the only thing routes talk to.
 
@@ -133,7 +134,7 @@ def build_app(
 
     _add_rest_routes(app, seam)
     _add_html_routes(app, seam, policy, scenario=scenario)
-    _add_events_route(app, seam)
+    _add_events_route(app, seam, streams_closing=streams_closing)
     _add_asset_routes(app)
     # REST routes are included BEFORE the "/" mount: a mount at "/" swallows
     # every route included after it, so /v1 must land first (app.py:1040-1048).
@@ -1329,11 +1330,19 @@ def _sse_data(row: dict[str, Any]) -> str:
     )
 
 
-def _add_events_route(app: FastAPI, seam: StandaloneSeam) -> None:
+def _add_events_route(
+    app: FastAPI, seam: StandaloneSeam, *, streams_closing: Any = None
+) -> None:
     """The SSE stream over the SAME sequence ``events_get`` serves (I2c
     §4.2): the browser, REST watchers and MCP see one order. Reconnecting
     clients resume from ``Last-Event-ID`` (the htmx SSE extension sends
-    it) or the ``after_id`` query parameter."""
+    it) or the ``after_id`` query parameter.
+
+    ``streams_closing`` (S2, the gateway's F2 twin): the supervised
+    serve's stop decision sets it and every live stream ends at its next
+    poll boundary — an open events tab can never hang the drain into the
+    kill rung. ``None`` (every non-supervised composition) keeps the
+    stream unbounded, exactly as before."""
 
     @app.get("/events")
     async def events(request: Request) -> Response:
@@ -1354,7 +1363,7 @@ def _add_events_route(app: FastAPI, seam: StandaloneSeam) -> None:
             # response task on disconnect, which ends this generator.
             yield ": connected\n\n"
             last = cursor
-            while True:
+            while streams_closing is None or not streams_closing.is_set():
                 rows = seam.events.after(last)
                 for row in rows:
                     yield f"id: {row['id']}\nevent: {row['kind']}\ndata: {_sse_data(row)}\n\n"

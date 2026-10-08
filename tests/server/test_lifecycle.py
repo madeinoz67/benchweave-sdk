@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import socket
 import subprocess
 import sys
@@ -244,3 +245,352 @@ def test_service_install_refused_with_the_recorded_reason() -> None:
     combined = result.output + (result.stderr or "")
     assert "benchweave_sdk_service_refused" in combined
     assert "not a boot daemon" in combined
+
+
+# --- the inc3 refute fold arms (2026-10-08): S1-S7 -------------------------------
+
+
+def _started(
+    starter_project: Path, bindings_file: Path, port: int
+) -> dict[str, object]:
+    """`start` the host and return its JSON payload (the S1 arm's shape)."""
+    started = _run(
+        "start", str(starter_project),
+        "--bindings", str(bindings_file),
+        "--host", "127.0.0.1", "--port", str(port),
+    )
+    assert started.returncode == 0, started.stdout + started.stderr
+    return dict(json.loads(started.stdout))
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def _journal_rows(bindings_file: Path) -> list[dict[str, object]]:
+    path = lifecycle.journal_path(bindings_file)
+    if not path.exists():
+        return []
+    return [
+        json.loads(line)
+        for line in path.read_text().splitlines()
+    ]
+
+
+@POSIX_ONLY
+def test_s1_stale_stop_request_is_not_the_new_daemons_to_consume(
+    starter_project: Path, bindings_file: Path
+) -> None:
+    """S1: a hand-written unconsumed request bound to a DEAD launch is
+    not the new host's to consume — era-bound requests only. RED against
+    the inc3 build: the host consumes it within one poll cadence and
+    stops itself (the stale-request suicide). The stale request lands
+    AFTER the boot (start's own clear would remove a pre-boot one — the
+    start leg has its own arm below); this arm pins the RUNNING host's
+    doorbell refusal."""
+    payload = _started(starter_project, bindings_file, _free_port())
+    pid = int(payload["pid"])  # type: ignore[arg-type]
+    try:
+        lifecycle.stop_path(bindings_file).write_text(
+            json.dumps(
+                {
+                    "schema": 1,
+                    "mode": "plain",
+                    "requested_wall": "2026-10-08T00:00:00Z",
+                    "actor_pid": os.getpid(),
+                    "target_pid": 999999,  # a launch that no longer exists
+                }
+            ),
+            encoding="utf-8",
+        )
+        # ≥ 3 doorbell cadences past the write: a consuming host is gone
+        # within one.
+        time.sleep(3.0)
+        assert _alive(pid), (
+            "the host consumed a request bound to a dead launch and "
+            "stopped itself (the stale-request suicide, S1)"
+        )
+        leftover = lifecycle.read_stop_file(bindings_file)
+        assert leftover is not None and "status" not in leftover, (
+            "a request not bound to this launch is never consumed"
+        )
+    finally:
+        subprocess.run(
+            [sys.executable, "-m", "benchweave_sdk_server.cli", "stop",
+             "--bindings", str(bindings_file)],
+            cwd=str(REPO), capture_output=True, text=True, timeout=60,
+        )
+
+
+def test_s1_start_clears_unconsumed_stale_requests(
+    starter_project: Path, bindings_file: Path
+) -> None:
+    """S1, the start leg: `start` clears unconsumed stale requests before
+    spawning (typed journal note) so the launch boots clean."""
+    lifecycle.stop_path(bindings_file).write_text(
+        json.dumps(
+            {
+                "schema": 1,
+                "mode": "plain",
+                "requested_wall": "2026-10-08T00:00:00Z",
+                "actor_pid": os.getpid(),
+                "target_pid": 999999,
+            }
+        ),
+        encoding="utf-8",
+    )
+    _started(starter_project, bindings_file, _free_port())
+    try:
+        cleared = [
+            row
+            for row in _journal_rows(bindings_file)
+            if row.get("event") == "stale_stop_request_cleared"
+        ]
+        assert cleared, (
+            "start journals the typed stale-request clear (S1): "
+            f"{_journal_rows(bindings_file)}"
+        )
+        assert not lifecycle.stop_path(bindings_file).exists(), (
+            "the stale request is gone before the child boots"
+        )
+    finally:
+        subprocess.run(
+            [sys.executable, "-m", "benchweave_sdk_server.cli", "stop",
+             "--bindings", str(bindings_file)],
+            cwd=str(REPO), capture_output=True, text=True, timeout=60,
+        )
+
+
+@POSIX_ONLY
+def test_s2_open_events_stream_does_not_wedge_the_stop(
+    starter_project: Path, bindings_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S2 (the gateway's F2 fix, twin): one open /events tab must not
+    route every stop to the kill rung — the stop decision closes live
+    SSE streams and the serve config carries an explicit
+    ``timeout_graceful_shutdown``. RED against the inc3 build: the open
+    stream hangs the drain past the wedge wait → the SIGKILL rung → a
+    non-zero exit over a HEALTHY host."""
+    import httpx
+
+    monkeypatch.setattr(lifecycle, "WEDGE_WAIT_S", 3.0)
+    payload = _started(starter_project, bindings_file, _free_port())
+    pid = int(payload["pid"])  # type: ignore[arg-type]
+    port = int(payload["port"])  # type: ignore[arg-type]
+    tokens = json.loads(
+        lifecycle.tokens_path(bindings_file).read_text()
+    )
+    bearer = str(tokens["bearer_token"])
+    try:
+        with (
+            httpx.Client(
+                base_url=f"http://127.0.0.1:{port}", timeout=5.0,
+                headers={"Authorization": f"Bearer {bearer}"},
+            ) as client,
+            client.stream("GET", "/events") as stream,
+        ):
+            assert stream.status_code == 200
+            result = CliRunner().invoke(
+                cli, ["stop", "--bindings", str(bindings_file)]
+            )
+            assert result.exit_code == 0, (
+                "the stop over one open /events tab must drain and "
+                f"exit 0, not escalate:{result.output}"
+                f"{(result.stderr or '')}"
+            )
+        kills = [
+            row for row in _journal_rows(bindings_file)
+            if row.get("event") == "sigkill_sent"
+        ]
+        assert not kills, (
+            "a healthy host with one open events tab was SIGKILLed — "
+            "the wedge the SSE close exists to prevent (S2)"
+        )
+    finally:
+        if _alive(pid):
+            os.kill(pid, signal.SIGKILL)
+
+
+def test_s3_ticks_null_identity_is_pid_unknown_not_stale(
+    bindings_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S3: a pid whose start time cannot be read — on EITHER side of the
+    comparison — is an UNKNOWN identity, never a stale one: `stop`
+    answers `supervision_pid_unknown:` (the conservative direction;
+    there is no hold to vouch). The recorded-null shape is the defect
+    the fold fixes: a pidfile written where ticks were unreadable is
+    not evidence of a recycled pid."""
+    child = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+
+    def _stage_pidfile(ticks: object) -> None:
+        lifecycle.pid_path(bindings_file).write_text(
+            json.dumps(
+                {
+                    "pid": child.pid,
+                    "server": "benchweave-sdk-server",
+                    "bindings": str(bindings_file),
+                    "started_wall": "2026-10-08T00:00:00Z",
+                    "started_ticks": ticks,
+                    "log_destination": "stderr",
+                    "schema": 1,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    try:
+        # Shape 1: the LIVE read is unobtainable.
+        _stage_pidfile(12345)
+        monkeypatch.setattr(lifecycle, "process_start_ticks", lambda pid: None)
+        result = CliRunner().invoke(
+            cli, ["stop", "--bindings", str(bindings_file)]
+        )
+        assert result.exit_code != 0
+        combined = result.output + (result.stderr or "")
+        assert "supervision_pid_unknown:" in combined, combined
+        assert "supervision_stale_pid:" not in combined, combined
+        # Shape 2: the RECORDED value is null, the live read obtainable —
+        # the comparison cannot be made either way.
+        _stage_pidfile(None)
+        monkeypatch.setattr(lifecycle, "process_start_ticks", lambda pid: 54321)
+        result = CliRunner().invoke(
+            cli, ["stop", "--bindings", str(bindings_file)]
+        )
+        assert result.exit_code != 0
+        combined = result.output + (result.stderr or "")
+        assert "supervision_pid_unknown:" in combined, combined
+        assert "supervision_stale_pid:" not in combined, combined
+        assert _alive(child.pid), "an unknown identity signals NOTHING"
+    finally:
+        child.terminate()
+        child.wait(timeout=10)
+
+
+@POSIX_ONLY
+def test_s4_mode_literal_and_the_cli_journals_the_consumption(
+    starter_project: Path, bindings_file: Path
+) -> None:
+    """S4: the request/verdict mode literal is `plain` (the one standard
+    the gateway vocabulary carries — `stop` names the VERB, never the
+    mode), and the DAEMON no longer writes the stop_consumed journal row
+    — the verdict file carries the fields and the CLI (the journal's one
+    writer) journals them on observation."""
+    payload = _started(starter_project, bindings_file, _free_port())
+    try:
+        stopped = _run("stop", "--bindings", str(bindings_file))
+        assert stopped.returncode == 0, stopped.stdout + stopped.stderr
+        consumed = lifecycle.read_stop_file(bindings_file) or {}
+        assert consumed.get("mode") == "plain", consumed
+        rows = _journal_rows(bindings_file)
+        consumed_rows = [
+            row for row in rows if row.get("event") == "stop_consumed"
+        ]
+        assert len(consumed_rows) == 1, rows
+        # The CLI-side observation carries the VERDICT's fields — the
+        # daemon-side row (pre-fold) carried only its own pid.
+        assert consumed_rows[0].get("server_pid") == payload["pid"], rows
+        assert consumed_rows[0].get("decided_wall"), rows
+        stopped_rows = [row for row in rows if row.get("event") == "stopped"]
+        assert stopped_rows and stopped_rows[-1].get("mode") == "plain", rows
+    finally:
+        subprocess.run(
+            [sys.executable, "-m", "benchweave_sdk_server.cli", "stop",
+             "--bindings", str(bindings_file)],
+            cwd=str(REPO), capture_output=True, text=True, timeout=60,
+        )
+
+
+def test_s5_read_only_parent_is_a_typed_refusal(
+    starter_project: Path, bindings_file: Path
+) -> None:
+    """S5: a supervision family whose parent directory is read-only is a
+    TYPED refusal — never a raw PermissionError traceback."""
+    parent = bindings_file.parent
+    parent.chmod(0o500)
+    try:
+        result = CliRunner().invoke(
+            cli, ["stop", "--bindings", str(bindings_file)]
+        )
+        assert result.exit_code != 0
+        combined = result.output + (result.stderr or "")
+        assert "supervision_refused_unwritable:" in combined, (
+            f"the read-only parent must refuse typed: {combined}"
+        )
+        assert "PermissionError" not in combined, (
+            "no raw traceback reaches the operator (S5)"
+        )
+    finally:
+        parent.chmod(0o700)
+
+
+def test_s6_probe_windows_reads_the_real_last_error() -> None:
+    """S6: the Windows probe's error classification only works through a
+    WinDLL created with ``use_last_error=True`` — ``ctypes.get_last_error``
+    reads the swap slot that flag maintains; the cached ``windll``
+    instance leaves it at 0 and every OpenProcess failure misreads
+    `unknown` (dead(87)/running(5) never fire). Pinned at source level:
+    the behavior arm rides the Windows CI leg (the W1 posture)."""
+    import inspect
+
+    source = inspect.getsource(lifecycle._probe_windows)
+    assert "use_last_error=True" in source, (
+        "the probe must create its WinDLL with use_last_error=True (S6)"
+    )
+
+
+@POSIX_ONLY
+def test_s7_tokens_file_lands_before_the_pidfile(
+    starter_project: Path, bindings_file: Path
+) -> None:
+    """S7: under `start`, the tokens file is written BEFORE the pidfile —
+    readiness (the pidfile naming the child) then implies the tokens were
+    deliverable. The observable: a boot that cannot protect the tokens
+    (a read-only parent) fails BEFORE any pidfile exists — no stale
+    handle is left over a boot that never became ready."""
+    parent = bindings_file.parent
+    parent.mkdir(parents=True, exist_ok=True)
+    parent.chmod(0o500)
+    try:
+        started = _run(
+            "start", str(starter_project),
+            "--bindings", str(bindings_file),
+            "--host", "127.0.0.1", "--port", str(_free_port()),
+            timeout=90,
+        )
+        assert started.returncode != 0, (
+            "a boot that cannot write the family must fail, not hang"
+        )
+        assert not lifecycle.pid_path(bindings_file).exists(), (
+            "the tokens write precedes the pidfile: a failed delivery "
+            "leaves NO readiness handle behind (S7)"
+        )
+    finally:
+        parent.chmod(0o700)
+
+
+def test_s7_source_order_tokens_before_pidfile() -> None:
+    """S7's ordering half, pinned at source level (the behavioral
+    observable — a failed tokens delivery leaving no pidfile — cannot
+    discriminate order on POSIX, where one read-only parent blocks both
+    writes equally): the supervised boot delivers the tokens BEFORE it
+    writes the readiness handle."""
+    import inspect
+
+    from benchweave_sdk_server import cli as cli_module
+
+    source = inspect.getsource(cli_module)
+    supervised_block = source[source.index("if supervised:"):]
+    tokens_at = supervised_block.index("deliver_tokens(")
+    pidfile_at = supervised_block.index("write_pidfile(")
+    assert tokens_at < pidfile_at, (
+        "the tokens file must land before the pidfile — readiness then "
+        "implies the tokens were deliverable (S7)"
+    )

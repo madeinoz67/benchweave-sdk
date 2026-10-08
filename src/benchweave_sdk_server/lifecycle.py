@@ -50,6 +50,15 @@ _POSIX = sys.platform != "win32"
 #: The CLI's verdict-wait bound (the daemon's poll cadence is ≤ 1 s).
 VERDICT_WAIT_S = 15.0
 
+#: The serve config's explicit connection-drain bound (S2, the gateway's
+#: F2 twin): uvicorn's default (`None`) waits for open connections
+#: forever, and one open /events tab would hang every stop into the kill
+#: rung. There is no commissioned window to respect on this surface (no
+#: procedures), so this is a service parameter — deliberately INSIDE the
+#: wedge wait so a healthy drain always beats the escalation rung.
+#: (int: uvicorn's Config types the field int | None.)
+GRACEFUL_TIMEOUT_S = 10
+
 #: The wedge ladder's bounded exit-wait before the SIGKILL rung (there is
 #: no commissioned window to respect — no procedures — so this is a
 #: service parameter, not a bench envelope).
@@ -131,7 +140,16 @@ def probe_process(pid: int) -> str:
 def _probe_windows(pid: int) -> str:
     import ctypes
 
-    kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+    if not hasattr(ctypes, "WinDLL"):
+        # A simulated win32 platform on a POSIX host (the test seam):
+        # there is no WinDLL to consult — indeterminate, never a crash.
+        return "unknown"
+    # use_last_error is LOAD-BEARING (S6): ctypes.get_last_error() reads
+    # the swap slot only a WinDLL created with the flag maintains — the
+    # cached windll instance leaves it at 0, and every OpenProcess
+    # failure misreads "unknown" (the dead(87)/running(5) classes never
+    # fire).
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     handle = kernel32.OpenProcess(0x1000, 0, pid)
     if not handle:
         error = int(ctypes.get_last_error())  # type: ignore[attr-defined]
@@ -178,6 +196,15 @@ def _ticks_linux(pid: int) -> int | None:
 
 
 def _ticks_darwin(pid: int) -> int | None:
+    """``sysctl(KERN_PROC_PID)`` → ``kp_proc.p_starttime`` (§2.4).
+
+    Disclosed horizon (S7): the plausible-start scan accepts a seconds
+    value within the LAST 30 DAYS — a process started longer ago than
+    that reads ``None`` (unknown identity, the conservative direction),
+    never a wrong match. The 30-day figure matches the longest plausible
+    preview-server uptime an author leaves running; raising it widens
+    the false-match window, lowering it strands long-lived hosts.
+    """
     import ctypes
     import struct as _struct
     import time as _time
@@ -202,7 +229,9 @@ def _ticks_darwin(pid: int) -> int | None:
 def _ticks_windows(pid: int) -> int | None:
     import ctypes
 
-    kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+    if not hasattr(ctypes, "WinDLL"):
+        return None  # the simulated-win32 seam (see _probe_windows)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # S6
     handle = kernel32.OpenProcess(0x1000, 0, pid)
     if not handle:
         return None
@@ -263,8 +292,12 @@ def remove_pidfile(bindings: Path) -> None:
 def verify_identity(bindings: Path) -> str:
     """The twin lattice, SIMPLER than the gateway's: no store hold exists
     to vouch or desync, so ``ours`` requires probe + start-time match;
-    ticks unobtainable is a REFUSAL (unknown — the conservative
-    direction; there is no hold to defer to)."""
+    ticks unobtainable on EITHER side (the live read or the pidfile's
+    own recorded value) is a REFUSAL (unknown — the conservative
+    direction; there is no hold to defer to). S3: a null RECORDED value
+    with an obtainable live read is the same unresolvable comparison —
+    unknown, never `not-ours` (a pidfile written where ticks were
+    unreadable is not evidence of a recycled pid)."""
     record = read_pidfile(bindings)
     if record is None:
         return "absent"
@@ -276,23 +309,48 @@ def verify_identity(bindings: Path) -> str:
         return "unknown"
     ticks = process_start_ticks(pid)
     recorded = record.get("started_ticks")
-    if ticks is None or not isinstance(recorded, int) or recorded != ticks:
-        return "not-ours" if ticks is not None else "unknown"
+    if ticks is None or not isinstance(recorded, int):
+        return "unknown"
+    if recorded != ticks:
+        return "not-ours"
     return "ours"
 
 
 # --- the doorbell (twin: no refusal, no modes beyond stop) --------------------------
 
 
-def write_stop_request(bindings: Path, *, actor_pid: int) -> dict[str, Any]:
+def write_stop_request(
+    bindings: Path, *, actor_pid: int, target_pid: int | None = None
+) -> dict[str, Any]:
+    """Write the stop REQUEST atomically (doorbell step 1).
+
+    ``mode`` is the gateway vocabulary's ``plain`` (S4: `stop` names the
+    VERB, never the mode — twin consistency with the one standard).
+    ``target_pid`` era-binds the request to its target launch (S1): the
+    daemon consumes only requests naming its own pid, and ``start``
+    clears unconsumed leftovers before spawning — a request a dead
+    launch never consumed can never stop the next one (the
+    stale-request suicide).
+    """
     payload: dict[str, Any] = {
         "schema": 1,
-        "mode": "stop",
+        "mode": "plain",
         "requested_wall": _now_wall(),
         "actor_pid": actor_pid,
     }
+    if target_pid is not None:
+        payload["target_pid"] = int(target_pid)
     _atomic_write_json(stop_path(bindings), payload)
     return payload
+
+
+def stop_request_is_bound_to(record: dict[str, Any], pid: int) -> bool:
+    """S1's era rule: the request is this launch's to consume only when
+    it names this pid. An unbound (legacy or hand-written) request is
+    NOT bound to this launch — the operator's next ``stop`` writes a
+    bound one; refusing is the conservative direction."""
+    target = record.get("target_pid")
+    return isinstance(target, int) and target == pid
 
 
 def read_stop_file(bindings: Path) -> dict[str, Any] | None:
@@ -307,22 +365,32 @@ def read_stop_file(bindings: Path) -> dict[str, Any] | None:
     return parsed if isinstance(parsed, dict) else None
 
 
-def answer_stop_request(bindings: Path) -> bool:
+def answer_stop_request(bindings: Path, *, daemon_pid: int | None = None) -> bool:
     """Consume ONE unconsumed stop request (the daemon-side twin): rewrite
     the file into the accepted verdict — the SDK host has no refusal
     machinery (nothing is at stake), so acceptance is the only verdict —
-    and return True when a request was consumed."""
+    and return True when a request was consumed.
+
+    S1's era rule: a request that does not name THIS launch is never
+    consumed (left exactly as it is; `start` clears it, the operator's
+    next `stop` writes a bound one). S4: the daemon writes NO journal
+    row here — the verdict file carries the fields and the CLI (the
+    journal's one writer) journals them on observation.
+    """
     record = read_stop_file(bindings)
     if record is None or "status" in record:
+        return False
+    pid = os.getpid() if daemon_pid is None else daemon_pid
+    if not stop_request_is_bound_to(record, pid):
         return False
     _atomic_write_json(
         stop_path(bindings),
         {
             "schema": 1,
             "status": "accepted",
-            "mode": "stop",
+            "mode": "plain",
             "decided_wall": _now_wall(),
-            "server_pid": os.getpid(),
+            "server_pid": pid,
         },
     )
     return True
@@ -346,15 +414,31 @@ def stop(bindings: Path) -> dict[str, Any]:
     """The twin stop: doorbell + SIGTERM → bounded exit-wait → one audited
     SIGKILL (the wedge ladder — no rung 2 exists by construction: no
     runs). A wedged host is killed and disclosed non-zero."""
+
+    def _unwritable(error: OSError, path: Path) -> LifecycleError:
+        # S5: a family the operator cannot write (a read-only parent) is
+        # a TYPED refusal — never a raw PermissionError traceback.
+        return LifecycleError(
+            f"supervision_refused_unwritable: cannot write {path} "
+            f"({error}) — the supervision family's parent is not "
+            "writable by this user; nothing was signaled"
+        )
+
+    def _journal(event: str, **fields: Any) -> None:
+        try:
+            journal_append(bindings, event, **fields)
+        except OSError as error:
+            raise _unwritable(error, journal_path(bindings)) from error
+
     verdict = verify_identity(bindings)
     if verdict == "absent":
-        journal_append(bindings, "stop_noop", reason="no pidfile")
+        _journal("stop_noop", reason="no pidfile")
         return {"stopped": False, "status": "not_running"}
     if verdict == "dead":
         remove_pidfile(bindings)
         with contextlib.suppress(OSError):
             stop_path(bindings).unlink()
-        journal_append(bindings, "stale_sidecars_cleared")
+        _journal("stale_sidecars_cleared")
         return {"stopped": False, "status": "not running (cleared stale sidecars)"}
     if verdict != "ours":
         detail = (
@@ -367,34 +451,54 @@ def stop(bindings: Path) -> dict[str, Any]:
 
     record = read_pidfile(bindings)
     pid = int((record or {}).get("pid", 0))
-    write_stop_request(bindings, actor_pid=os.getpid())
+    try:
+        write_stop_request(
+            bindings, actor_pid=os.getpid(), target_pid=pid
+        )
+    except OSError as error:
+        raise _unwritable(error, stop_path(bindings)) from error
     signal_name = "file-poll-only"
     if _POSIX:
         os.kill(pid, signal.SIGTERM)
         signal_name = "SIGTERM"
-    journal_append(
-        bindings, "stop_requested", target_pid=pid, signal_name=signal_name
-    )
+    _journal("stop_requested", target_pid=pid, signal_name=signal_name)
     # The doorbell is LOAD-BEARING on every platform (on Windows it is the
     # only channel; on POSIX it races the signal): observe the daemon's
     # OWN consumption — the request rewritten into an accepted verdict —
     # within the verdict window. A daemon that exits before consuming
     # (the signal won the race outright) is still stopped, and the report
     # says which path won instead of asserting the file was read.
+    #
+    # S2 disclosure: this verdict-wait BURNS INSIDE the later wedge wait
+    # (the exit window below starts only after it closes) — a daemon that
+    # never answers the doorbell costs VERDICT_WAIT_S + WEDGE_WAIT_S
+    # before the kill rung, by design (the file consumption is the thing
+    # the ladder audits; skipping the wait would assert it was read).
     verdict_status = "unobserved"
+    verdict_record: dict[str, Any] | None = None
     verdict_deadline = time.monotonic() + VERDICT_WAIT_S
     while time.monotonic() < verdict_deadline:
         stop_record = read_stop_file(bindings)
         if stop_record is not None and "status" in stop_record:
             verdict_status = str(stop_record.get("status"))
+            verdict_record = stop_record
             break
         if _exited(pid):
             break
         time.sleep(0.2)
+    if verdict_record is not None:
+        # S4: the CLI is the journal's ONE writer — the daemon's
+        # consumption reaches the journal here, as an observation
+        # carrying the verdict file's own fields.
+        _journal(
+            "stop_consumed",
+            server_pid=verdict_record.get("server_pid"),
+            decided_wall=verdict_record.get("decided_wall"),
+        )
     deadline = time.monotonic() + WEDGE_WAIT_S
     while time.monotonic() < deadline:
         if _exited(pid) or not pid_path(bindings).exists():
-            journal_append(bindings, "stopped", mode="stop", verdict=verdict_status)
+            _journal("stopped", mode="plain", verdict=verdict_status)
             return {
                 "stopped": True,
                 "status": "accepted",
@@ -403,12 +507,25 @@ def stop(bindings: Path) -> dict[str, Any]:
             }
         time.sleep(0.2)
     # The wedge ladder's last rung: the intent row BEFORE the kill (the
-    # gateway twin's F9 ordering), one SIGKILL, a bounded exit-wait, and a
-    # non-zero exit that discloses the kill.
-    journal_append(
-        bindings, "sigkill_sent", target_pid=pid, reason="wedge_wait_exceeded"
-    )
-    if _POSIX:
+    # gateway twin's F9 ordering), one kill (G6's twin discipline: POSIX
+    # SIGKILL, Windows os.kill(pid, 9) → TerminateProcess — SENT on every
+    # platform, and the row's signal field names what went out), a
+    # bounded exit-wait, and a non-zero exit that discloses the kill.
+    kill_signal = "TerminateProcess" if sys.platform == "win32" else "SIGKILL"
+    with contextlib.suppress(OSError):
+        # F9's proceed-on-failure ordering: the intent row is written
+        # BEFORE the kill and a failed append must not skip the kill (the
+        # disclosure rides the non-zero exit instead).
+        journal_append(
+            bindings,
+            "sigkill_sent",
+            target_pid=pid,
+            reason="wedge_wait_exceeded",
+            signal_name=kill_signal,
+        )
+    if sys.platform == "win32":
+        os.kill(pid, 9)  # TerminateProcess — the capability exists (G6 twin)
+    else:
         os.kill(pid, signal.SIGKILL)
     kill_deadline = time.monotonic() + KILL_WINDOW_S
     while time.monotonic() < kill_deadline and not _exited(pid):
@@ -417,7 +534,7 @@ def stop(bindings: Path) -> dict[str, Any]:
     raise LifecycleError(
         "supervision_sigkill: the host did not exit within "
         f"{WEDGE_WAIT_S:.0f}s of the stop (wedge_wait_exceeded); the CLI "
-        f"sent SIGKILL to pid {pid}"
+        f"sent {kill_signal} to pid {pid}"
         + ("; the process is STILL ALIVE" if still else "")
     )
 
@@ -447,6 +564,19 @@ def start(
         raise LifecycleError(
             "supervision_pid_unknown: the pidfile's process could not be "
             f"verified ({pid_path(bindings)}); nothing was signaled"
+        )
+    stale = read_stop_file(bindings)
+    if stale is not None and "status" not in stale:
+        # S1's era binding, the start leg: a request a dead launch never
+        # consumed is not the next launch's to honor — clear it (typed
+        # journal note) so the boot is clean; a stale VERDICT is not a
+        # request and stays (the next stop's request write replaces it).
+        with contextlib.suppress(OSError):
+            stop_path(bindings).unlink()
+        journal_append(
+            bindings,
+            "stale_stop_request_cleared",
+            target_pid=stale.get("target_pid"),
         )
     log = log_path(bindings)
     journal_append(bindings, "start_requested", host=host, port=port, log=str(log))

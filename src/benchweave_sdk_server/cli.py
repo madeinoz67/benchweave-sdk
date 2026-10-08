@@ -462,26 +462,54 @@ def serve(
         csrf_token=new_token(),
         operator_action_token=new_token(),
     )
-    app = build_app(seam, policy=policy, authoring=authoring, scenario=selection)
+    effective_bindings = _effective_bindings_path(bindings)
+    # S2 (the gateway's F2 twin): the stop decision closes live SSE
+    # streams through this event so an open /events tab can never hang
+    # the drain into the kill rung; None keeps the unarmed serve's
+    # stream posture unchanged.
+    streams_closing: Any = None
+    if supervised:
+        import threading
+
+        streams_closing = threading.Event()
+    app = build_app(
+        seam,
+        policy=policy,
+        authoring=authoring,
+        scenario=selection,
+        streams_closing=streams_closing,
+    )
     click.echo(f"Serving {seam.session.plugin.package} on http://{host}:{port}")
     # Issue #422 inc3 — the lifecycle twin's started mode (F5 fold): a
     # supervised spawn's stdout is devnull and its stderr lands in
     # <bindings>.log, so the per-launch tokens go to the 0600 delivery
     # file INSTEAD of the banner (never destroyed in devnull, never
     # leaked into the log; `logs` never displays the file).
-    effective_bindings = _effective_bindings_path(bindings)
     if supervised:
         from .lifecycle import deliver_tokens, write_pidfile
 
-        write_pidfile(effective_bindings, log_destination=os.environ.get(
-            "BENCHWEAVE_SDK_LOG_DESTINATION", "stderr"))
-        tokens_file = deliver_tokens(
-            effective_bindings,
-            bearer_token=policy.bearer_token,
-            operator_action_token=policy.operator_action_token,
-            host=host,
-            port=port,
-        )
+        try:
+            # S7: the tokens file lands BEFORE the pidfile — readiness
+            # (the pidfile naming this child) then implies the tokens
+            # were deliverable; a failed delivery leaves NO readiness
+            # handle behind. S5: an unwritable family refuses TYPED at
+            # the boot, never a raw PermissionError traceback.
+            tokens_file = deliver_tokens(
+                effective_bindings,
+                bearer_token=policy.bearer_token,
+                operator_action_token=policy.operator_action_token,
+                host=host,
+                port=port,
+            )
+            write_pidfile(effective_bindings, log_destination=os.environ.get(
+                "BENCHWEAVE_SDK_LOG_DESTINATION", "stderr"))
+        except OSError as error:
+            # A click-level typed refusal: the boot exits 1 with the
+            # prefix on stderr, never a raw PermissionError traceback.
+            raise click.ClickException(
+                f"supervision_refused_unwritable: cannot write the "
+                f"supervision family beside {effective_bindings} ({error})"
+            ) from error
         click.echo(f"Tokens file (mode 0600): {tokens_file}")
         launch_url = f"http://{host}:{port}"
     else:
@@ -524,7 +552,9 @@ def serve(
         if not opened:
             click.echo(f"Browser did not open; use {launch_url}", err=True)
     if supervised:
-        _run_supervised(app, host, port, effective_bindings)
+        _run_supervised(
+            app, host, port, effective_bindings, streams_closing=streams_closing
+        )
         return
     uvicorn.run(app, host=host, port=port, log_level="warning")
 
@@ -540,12 +570,23 @@ def _effective_bindings_path(bindings: Path | None) -> Path:
 
 
 def _run_supervised(
-    app: Any, host: str, port: int, bindings: Path
+    app: Any, host: str, port: int, bindings: Path,
+    streams_closing: Any = None,
 ) -> None:
     """The armed serve tail: doorbell poll + SIGTERM → the graceful
     shutdown DIRECTLY (``should_exit`` — never a captured-signal replay),
     pidfile removed at clean shutdown. The SDK twin has NO refusal
-    machinery (nothing is at stake) and no reconciliation (no store)."""
+    machinery (nothing is at stake) and no reconciliation (no store).
+
+    S2: the drain is BOUNDED explicitly (``timeout_graceful_shutdown`` —
+    uvicorn's default waits for open connections forever, and one open
+    /events tab would hang every stop into the kill rung) and the stop
+    decision CLOSES live SSE streams first (``streams_closing``).
+
+    S4: the daemon writes NO journal row on consuming a request — the
+    verdict file carries the fields; the CLI (the journal's one writer)
+    journals them on observation.
+    """
     import signal
     import threading
     import time as time_module
@@ -554,15 +595,27 @@ def _run_supervised(
 
     from . import lifecycle
 
-    config = uvicorn.Config(app, host=host, port=port, log_level="warning")
+    def _decide() -> None:
+        stop_seen.set()
+        if streams_closing is not None:
+            # S2: close live SSE streams at the decision — the drain must
+            # not wait on an open events tab.
+            streams_closing.set()
+        server.should_exit = True
+
+    config = uvicorn.Config(
+        app,
+        host=host,
+        port=port,
+        log_level="warning",
+        timeout_graceful_shutdown=lifecycle.GRACEFUL_TIMEOUT_S,
+    )
     server = uvicorn.Server(config)
     stop_seen = threading.Event()
 
     def _poll_once() -> None:
         if lifecycle.answer_stop_request(bindings):
-            lifecycle.journal_append(bindings, "stop_consumed", pid=os.getpid())
-            stop_seen.set()
-            server.should_exit = True
+            _decide()
 
     def _poll() -> None:
         while not stop_seen.is_set():
@@ -582,14 +635,14 @@ def _run_supervised(
             # doorbell file are ONE protocol — whichever arrives first
             # consumes the request (a POSIX drain can outrun the 1 s poll
             # cadence, so the handler answers the file too; on Windows
-            # the poll is the only channel).
+            # the poll is the only channel). S7's comment fix: nothing
+            # runs "during the drain" here — uvicorn's capture_signals
+            # restores this handler at context exit and REPLAYS the
+            # signal (raise_signal) AFTER the drain; should_exit set
+            # above is what ends the drain.
             with contextlib.suppress(OSError):
-                if lifecycle.answer_stop_request(bindings):
-                    lifecycle.journal_append(
-                        bindings, "stop_consumed", pid=os.getpid()
-                    )
-            stop_seen.set()
-            server.should_exit = True
+                lifecycle.answer_stop_request(bindings)
+            _decide()
 
         signal.signal(signal.SIGTERM, _handler)
     try:
@@ -597,6 +650,8 @@ def _run_supervised(
         server.run()
     finally:
         stop_seen.set()
+        if streams_closing is not None:
+            streams_closing.set()
         if previous_handler is not None:
             signal.signal(signal.SIGTERM, previous_handler)
         lifecycle.remove_pidfile(bindings)
