@@ -153,7 +153,7 @@ def _probe_windows(pid: int) -> str:
     handle = kernel32.OpenProcess(0x1000, 0, pid)
     if not handle:
         get_last_error = getattr(ctypes, "get_last_error", lambda: 0)
-    error = int(get_last_error())
+        error = int(get_last_error())
         if error == 5:
             return "running"
         if error == 87:
