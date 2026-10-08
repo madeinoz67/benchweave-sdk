@@ -113,6 +113,25 @@ def _deliver_operator_action_token(
         return None
 
 
+def _retention_for(retention_rules: Path | None) -> Any:
+    """Resolve the retention configuration both launch surfaces share
+    (I3c): an absent flag arms the RULED DEFAULTS (Q13, ruled 2026-10-07 —
+    mcp captures kept 30 days unless pinned, ui and rest kept until
+    deleted, the quota warning at 80% of a configured byte quota); a
+    document is validated and composed ON TOP of them (additive — the
+    ruling's composition). Any refusal exits 2 with the STD-4 prefix
+    before work starts."""
+    from .retention import effective_config, load_config
+
+    if retention_rules is None:
+        return effective_config(None)
+    try:
+        return effective_config(load_config(retention_rules))
+    except ValueError as exc:
+        click.echo(str(exc), err=True)
+        raise SystemExit(2) from exc
+
+
 def _build_seam(
     project: Path,
     *,
@@ -336,9 +355,11 @@ def cli() -> None:
     "--retention-rules",
     type=click.Path(path_type=Path, exists=True),
     default=None,
-    help="The retention rules document (JSON): prune rules, the sweep's "
-    "orphan grace, the in-host schedule interval and the storage reserve. "
-    "Without it the host keeps everything and the storage guard is inert.",
+    help="The retention rules document (JSON): prune rules composed ON TOP "
+    "of the shipped defaults, the sweep's orphan grace, the in-host "
+    "schedule interval and the storage reserve. Without it the shipped "
+    "ruled defaults apply (mcp captures kept 30 days unless pinned; ui and "
+    "rest kept until deleted) and the schedule runs daily.",
 )
 @click.option(
     "--env-file",
@@ -391,17 +412,10 @@ def serve(
         raise click.UsageError(
             "--unattended requires --authoring (Q11: it waives an operator gate)"
         )
-    retention: Any | None = None
-    if retention_rules is not None:
-        from .retention import load_config
-
-        try:
-            retention = load_config(retention_rules)
-        except ValueError as exc:
-            # Refuse before any work: a malformed rules document must not
-            # reach a half-armed host (STD-4's prefix carries the reason).
-            click.echo(str(exc), err=True)
-            raise SystemExit(2) from exc
+    # Refuse before any work: a malformed or colliding rules document must
+    # not reach a half-armed host (STD-4's prefix carries the reason), and
+    # an absent document arms the ruled defaults (Q13, ruled 2026-10-07).
+    retention = _retention_for(retention_rules)
     try:
         # All three ride the [server] extra: web and uvicorn directly, and
         # security through starlette's middleware base -- the module-level
@@ -542,8 +556,10 @@ def mcp(project: Path, authoring: bool, unattended: bool) -> None:
     "--retention-rules",
     type=click.Path(path_type=Path, exists=True),
     default=None,
-    help="The retention rules document (JSON). Without it the plan is empty "
-    "(keep-everything) and only the orphan sweep can remove anything.",
+    help="The retention rules document (JSON), composed ON TOP of the "
+    "shipped defaults. Without it the shipped ruled defaults apply: mcp "
+    "captures older than 30 days are pruned unless pinned; ui and rest "
+    "captures are kept until deleted; the orphan sweep runs.",
 )
 @click.option("--dry-run", is_flag=True, help="List the removals and their rule; change nothing.")
 @click.option("--json", "as_json", is_flag=True, help="Machine-comparable JSON output.")
@@ -569,18 +585,11 @@ def prune(
     from benchweave_sdk.capture import capture_root as resolve_capture_root
 
     from .library import CaptureLibrary
-    from .retention import LOG_NAME, load_config, plan, record, sweep_plan
+    from .retention import LOG_NAME, plan, record, sweep_plan
 
-    if retention_rules is not None:
-        try:
-            config = load_config(retention_rules)
-        except ValueError as exc:
-            click.echo(str(exc), err=True)
-            raise SystemExit(2) from exc
-    else:
-        config = None
-    rules = config.rules if config is not None else ()
-    grace_s = config.orphan_grace_s if config is not None else 900.0
+    config = _retention_for(retention_rules)
+    rules = config.rules
+    grace_s = config.orphan_grace_s
     try:
         root = resolve_capture_root(capture_root)
     except ValueError as exc:

@@ -178,7 +178,8 @@ def test_load_config_parses_the_full_document(tmp_path: Path) -> None:
 
 def test_load_config_defaults_when_keys_are_absent(tmp_path: Path) -> None:
     """Every top-level key optional; an empty rules list is a valid document
-    (keep-everything — the Q13/F-3 posture the engine ships)."""
+    (the engine's absent-key semantics — the SHIPPED default is the ruled
+    document, composed in effective_config, never a change to the loader)."""
     path = tmp_path / "rules.json"
     path.write_text(json.dumps({"reserve_bytes": 100}), encoding="utf-8")
     config = load_config(path)
@@ -555,16 +556,121 @@ def test_prune_removes_exactly_the_plan_and_logs_every_removal(
     assert (root / "cap-india").is_dir()
 
 
-def test_prune_without_a_rules_document_only_sweeps(tmp_path: Path) -> None:
-    """No document = keep-everything: the plan is empty and only the sweep
-    can remove anything (an orphan-free root keeps every capture)."""
+def test_prune_without_a_document_applies_the_ruled_defaults(
+    tmp_path: Path,
+) -> None:
+    """RD-1 at the CLI: no document is no longer keep-everything — the
+    shipped ruled defaults (Q13, ruled 2026-10-07) plan the unpinned mcp
+    rows older than 30 d, and only those; every ui/rest row, the pinned mcp
+    row, the 10-day mcp row and the unparseable row stand."""
     root = tmp_path / "captures"
     _write_corpus(root)
     result = CliRunner().invoke(
-        server_cli, ["prune", "--capture-root", str(root)]
+        server_cli,
+        ["prune", "--capture-root", str(root), "--dry-run", "--json"],
     )
     assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["removals"] == [
+        {"capture_id": capture_id, "rule": rule_id, "bytes": byte_length}
+        for capture_id, rule_id, byte_length in RULED_GOLDEN
+    ]
+    assert payload["summary"] == {"count": 2, "bytes": 250}
+    # The real prune removes exactly the ruled set and logs it.
+    result = CliRunner().invoke(server_cli, ["prune", "--capture-root", str(root)])
+    assert result.exit_code == 0, result.output
+    assert not (root / "cap-alpha").exists()
+    assert not (root / "cap-charlie").exists()
+    assert {row["capture_id"] for row in _rows(root)} == KEPT | _REMOVED - {
+        "cap-alpha",
+        "cap-charlie",
+    }
+    log_rows = [
+        json.loads(line)
+        for line in (root / "retention.log").read_text(encoding="utf-8").splitlines()
+    ]
+    assert [(row["capture_id"], row["rule"], row["trigger"]) for row in log_rows] == [
+        ("cap-alpha", "default-mcp-30d", "cli"),
+        ("cap-charlie", "default-mcp-30d", "cli"),
+    ]
+
+
+def test_prune_refuses_a_colliding_rules_document_with_exit_2(
+    tmp_path: Path,
+) -> None:
+    """RD-4 at the CLI: a custom rule id equal to a shipped default id
+    refuses with the prefix and exit 2, removing nothing."""
+    root = tmp_path / "captures"
+    _write_corpus(root)
+    colliding = tmp_path / "colliding-rules.json"
+    colliding.write_text(
+        json.dumps(
+            {"rules": [{"id": "default-mcp-30d", "source": "mcp", "max_age_d": 90}]}
+        ),
+        encoding="utf-8",
+    )
+    result = CliRunner().invoke(
+        server_cli,
+        ["prune", "--capture-root", str(root), "--retention-rules", str(colliding)],
+    )
+    assert result.exit_code == 2
+    assert "standalone_retention_rules_invalid:" in result.output
+    assert "collides with a shipped default rule id" in result.output
     assert {row["capture_id"] for row in _rows(root)} == KEPT | _REMOVED
+
+
+def test_serve_refuses_a_colliding_rules_document_before_any_bind(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RD-4 at serve: the refusal precedes the listener (exit 2 before any
+    bind) — the resolution runs at the top of the serve body. The stubbed
+    uvicorn makes a REGRESSION fail fast instead of binding a real
+    listener: with the refusal missing, serve proceeds to uvicorn.run and
+    the stub raises — a distinct exit code, never a hang."""
+    import sys
+    import types
+
+    from benchweave_sdk.scaffold import create_project
+
+    def _no_bind(*_args: Any, **_kwargs: Any) -> None:
+        raise SystemExit(3)  # "reached the listener" — never 2
+
+    stub = types.ModuleType("uvicorn")
+    stub.run = _no_bind  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "uvicorn", stub)
+    project = tmp_path / "proj"
+    create_project(project, "servecheck_plugin")
+    colliding = tmp_path / "colliding-rules.json"
+    colliding.write_text(
+        json.dumps(
+            {"rules": [{"id": "default-mcp-30d", "source": "mcp", "max_age_d": 90}]}
+        ),
+        encoding="utf-8",
+    )
+    result = CliRunner().invoke(
+        server_cli,
+        [
+            "serve",
+            str(project),
+            "--retention-rules",
+            str(colliding),
+            "--no-open",
+        ],
+    )
+    assert result.exit_code == 2
+    assert "collides with a shipped default rule id" in result.output
+
+
+def test_the_retention_resolution_arms_the_ruled_defaults() -> None:
+    """RD-1's serve-side unit arm: the one resolution point both hosts call
+    arms the ruled defaults when the flag is absent — serve's default-armed
+    schedule (a real serve invocation would bind a listener, so the helper
+    is the tested surface; the seam-level behavior is pinned above)."""
+    from benchweave_sdk_server.cli import _retention_for
+
+    config = _retention_for(None)
+    assert [rule.id for rule in config.rules] == ["default-mcp-30d"]
 
 
 def test_prune_refuses_an_invalid_rules_document_with_exit_2(
