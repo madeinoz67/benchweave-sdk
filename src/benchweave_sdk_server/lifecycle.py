@@ -47,6 +47,14 @@ PIDFILE_SCHEMA = 1
 
 _POSIX = sys.platform != "win32"
 
+#: The win32 daemon creationflags — the ``start_new_session`` twin (see
+#: ``start``). Defined as literals because a POSIX ``subprocess`` module
+#: does not carry them (they exist only under CPython's Windows build);
+#: the values are the frozen Win32 API constants ``subprocess`` itself
+#: defines there: DETACHED_PROCESS 0x8, CREATE_NEW_PROCESS_GROUP 0x200.
+_WIN32_DETACHED_PROCESS = 0x00000008
+_WIN32_CREATE_NEW_PROCESS_GROUP = 0x00000200
+
 #: The CLI's verdict-wait bound (the daemon's poll cadence is ≤ 1 s).
 VERDICT_WAIT_S = 15.0
 
@@ -69,6 +77,16 @@ KILL_WINDOW_S = 30.0
 
 #: ``start``'s readiness window (pidfile names the child).
 START_READINESS_S = 30.0
+
+#: The Windows tokens-protection consults' per-call budget (whoami, then
+#: icacls). Both run in the child's PRE-readiness path, so the combined
+#: budget must fit INSIDE ``START_READINESS_S``: a stuck consult whose own
+#: timeout exceeds the parent's readiness window is structurally
+#: unwitnessable — the parent times out with an empty log tail while the
+#: child sits silently inside its own bounded wait (the windows CI shape
+#: ``start_failed: no readiness within 30s; log tail: (empty)``). At the
+#: previous 30 s per call, 2 x 30 > 30 was exactly that defect.
+_ACL_CONSULT_TIMEOUT_S = 10.0
 
 
 class LifecycleError(RuntimeError):
@@ -601,13 +619,27 @@ def start(
     # transport.
     env["BENCHWEAVE_STANDALONE_BINDINGS"] = str(_resolved(bindings))
     env["BENCHWEAVE_SDK_LOG_DESTINATION"] = str(log)
+    # The detachment is platform-split: CPython SILENTLY IGNORES
+    # ``start_new_session`` on win32 (the Windows ``_execute_child``
+    # receives it as ``unused_start_new_session``), so the unconditional
+    # kwarg claimed a detachment that did not exist there — the child
+    # shared the parent's console and process group. The Windows twin is
+    # the conventional daemon pair: DETACHED_PROCESS (no console) |
+    # CREATE_NEW_PROCESS_GROUP (isolated from the parent's ctrl events).
+    spawn_kwargs: dict[str, Any] = {}
+    if _POSIX:
+        spawn_kwargs["start_new_session"] = True
+    else:
+        spawn_kwargs["creationflags"] = (
+            _WIN32_DETACHED_PROCESS | _WIN32_CREATE_NEW_PROCESS_GROUP
+        )
     try:
         proc = subprocess.Popen(  # noqa: S603 — fixed argv, this interpreter
             argv,
-            start_new_session=True,
             stdout=subprocess.DEVNULL,
             stderr=handle,
             env=env,
+            **spawn_kwargs,
         )
     finally:
         os.close(handle)
@@ -762,7 +794,8 @@ def _restrict_windows(path: Path) -> None:
     try:
         identity = _subprocess.run(  # noqa: S603 — fixed argv, absolute path
             [str(system32 / "whoami.exe"), "/user", "/fo", "csv", "/nh"],
-            capture_output=True, text=True, check=False, timeout=30,
+            capture_output=True, text=True, check=False,
+            timeout=_ACL_CONSULT_TIMEOUT_S,
         )
         row = next(csv.reader(identity.stdout.splitlines()), [])
         sid = row[-1].strip() if row else ""
@@ -774,7 +807,8 @@ def _restrict_windows(path: Path) -> None:
         restricted = _subprocess.run(  # noqa: S603 — fixed argv, absolute path
             [str(system32 / "icacls.exe"), str(path),
              "/inheritance:r", "/grant:r", f"*{sid}:F"],
-            capture_output=True, text=True, check=False, timeout=30,
+            capture_output=True, text=True, check=False,
+            timeout=_ACL_CONSULT_TIMEOUT_S,
         )
     except (OSError, _subprocess.TimeoutExpired) as error:
         raise LifecycleError(f"cannot protect {path}: {error}") from error

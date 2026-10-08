@@ -486,7 +486,7 @@ def serve(
     # file INSTEAD of the banner (never destroyed in devnull, never
     # leaked into the log; `logs` never displays the file).
     if supervised:
-        from .lifecycle import deliver_tokens, write_pidfile
+        from .lifecycle import LifecycleError, deliver_tokens, write_pidfile
 
         try:
             # S7: the tokens file lands BEFORE the pidfile — readiness
@@ -503,9 +503,15 @@ def serve(
             )
             write_pidfile(effective_bindings, log_destination=os.environ.get(
                 "BENCHWEAVE_SDK_LOG_DESTINATION", "stderr"))
-        except OSError as error:
+        except (OSError, LifecycleError) as error:
             # A click-level typed refusal: the boot exits 1 with the
             # prefix on stderr, never a raw PermissionError traceback.
+            # LifecycleError rides the same refusal class because the
+            # WINDOWS delivery path refuses through it (an unreadable SID,
+            # a failed ACL restriction, a stuck consult —
+            # lifecycle._restrict_windows): without it in the tuple the
+            # windows boot dies a raw traceback, unreachable by S5's
+            # typed-refusal doctrine.
             raise click.ClickException(
                 f"supervision_refused_unwritable: cannot write the "
                 f"supervision family beside {effective_bindings} ({error})"

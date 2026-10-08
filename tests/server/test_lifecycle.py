@@ -508,6 +508,18 @@ def test_s4_mode_literal_and_the_cli_journals_the_consumption(
         )
 
 
+requires_posix_mode_bits = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason=(
+        "Path.chmod(0o500) cannot make a directory unwritable on Windows "
+        "(the read-only attribute applies to files, not directories), so "
+        "the E2E provocation is POSIX-only; the refusal path itself is "
+        "pinned cross-platform by test_s5_typed_refusal_is_cross_platform"
+    ),
+)
+
+
+@requires_posix_mode_bits
 def test_s5_read_only_parent_is_a_typed_refusal(
     starter_project: Path, bindings_file: Path
 ) -> None:
@@ -594,3 +606,140 @@ def test_s7_source_order_tokens_before_pidfile() -> None:
         "the tokens file must land before the pidfile — readiness then "
         "implies the tokens were deliverable (S7)"
     )
+
+
+# --- the windows-fix wave arms (2026-10-08, fix wave 2) ----------------------------
+
+
+def test_s5_typed_refusal_is_cross_platform(
+    bindings_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """S5's refusal PATH with no mode bits (the E2E provocation above is
+    POSIX-only): an unwritable family surfaces as the TYPED refusal on
+    every platform — the refusal machinery (stop's `_unwritable` wrapper
+    + the CLI's LifecycleError catch), not chmod semantics, is what S5
+    pins. Windows CI evidence: the chmod arm read `assert 0 != 0` there
+    because 0o500 leaves a directory writable on win32."""
+    from benchweave_sdk_server import lifecycle as lifecycle_module
+
+    def _denied(*args: object, **kwargs: object) -> None:
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(lifecycle_module, "journal_append", _denied)
+    result = CliRunner().invoke(cli, ["stop", "--bindings", str(bindings_file)])
+    assert result.exit_code != 0, result.output + (result.stderr or "")
+    combined = result.output + (result.stderr or "")
+    assert "supervision_refused_unwritable:" in combined, combined
+    assert "PermissionError" not in combined, "no raw traceback (S5)"
+
+
+def test_w3_acl_consult_budget_fits_the_readiness_window() -> None:
+    """The Windows tokens-protection consults (whoami + icacls) are BOUNDED
+    subprocess calls in the child's PRE-readiness path. Their combined
+    budget must fit inside start's readiness window, or a stuck consult is
+    structurally unwitnessable: the parent times out at 30s with an empty
+    log tail while the child sits silently inside its own 30s timeout —
+    exactly the windows CI failure shape (`start_failed: no readiness
+    within 30s; log tail: (empty)`). 2 x 30 > 30 was that defect."""
+    budget = getattr(lifecycle, "_ACL_CONSULT_TIMEOUT_S", None)
+    assert budget is not None, "the consults carry a named budget constant"
+    assert 2 * budget < lifecycle.START_READINESS_S, (
+        f"2 x {budget}s of bounded consults must fit inside the "
+        f"{lifecycle.START_READINESS_S:.0f}s readiness window, or a stuck "
+        "consult can only surface as the parent's silent timeout"
+    )
+
+
+def test_w3_windows_refused_tokens_delivery_is_typed_not_raw(
+    starter_project: Path, bindings_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The supervised boot's refusal catch covers the WINDOWS token path:
+    `_restrict_windows` refuses with LifecycleError (unreadable SID,
+    failed ACL restriction, stuck consult) — NOT OSError — and that must
+    surface as the typed `supervision_refused_unwritable` refusal, never
+    a raw LifecycleError traceback. Windows CI evidence: the failing boot
+    died silent, so this path had no cross-platform pin at all."""
+    monkeypatch.setenv(
+        "BENCHWEAVE_STANDALONE_BINDINGS", str(bindings_file.resolve())
+    )
+
+    def _refuse(*args: object, **kwargs: object) -> None:
+        raise lifecycle.LifecycleError(
+            "cannot protect the tokens file: the current user's SID was "
+            "unreadable — no token file was written"
+        )
+
+    monkeypatch.setattr(lifecycle, "deliver_tokens", _refuse)
+    result = CliRunner().invoke(
+        cli,
+        ["serve", str(starter_project), "--no-open", "--supervised"],
+    )
+    assert result.exit_code != 0, result.output + (result.stderr or "")
+    combined = result.output + (result.stderr or "")
+    assert "supervision_refused_unwritable" in combined, (
+        "the windows refusal path must carry the typed prefix, not a raw "
+        f"traceback: {combined}"
+    )
+    assert result.exception is None or isinstance(result.exception, SystemExit), (
+        f"must be a handled refusal, not a raw exception: "
+        f"{result.exception!r}"
+    )
+
+
+def test_w3_spawn_kwargs_are_platform_honest(
+    starter_project: Path, bindings_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`start`'s detachment is platform-split: POSIX keeps
+    start_new_session (setsid); win32 passes the DETACHED_PROCESS |
+    CREATE_NEW_PROCESS_GROUP creationflags instead — CPython SILENTLY
+    IGNORES start_new_session on win32 (its Windows _execute_child takes
+    it as `unused_start_new_session`), so the unconditional kwarg claimed
+    a detachment that did not exist there."""
+    captured: dict[str, object] = {}
+
+    class _FakeProc:
+        pid = 4242
+        returncode = 1
+
+        def poll(self) -> int:
+            return 1  # exit the readiness loop on the first check
+
+        def terminate(self) -> None:
+            return None
+
+        def wait(self, timeout: float | None = None) -> int:
+            return 1
+
+    def _capture(argv: list[str], **kwargs: object) -> object:
+        captured.clear()
+        captured.update(kwargs)
+        return _FakeProc()
+
+    monkeypatch.setattr(
+        lifecycle.subprocess, "Popen", _capture
+    )
+    # POSIX branch: setsid detachment, no creationflags.
+    monkeypatch.setattr(lifecycle, "_POSIX", True)
+    with pytest.raises(lifecycle.LifecycleError, match="start_failed"):
+        lifecycle.start(
+            starter_project, bindings=bindings_file, host="127.0.0.1",
+            port=8477, transport="mock", device=None, scenario=None,
+        )
+    assert captured.get("start_new_session") is True, captured
+    assert "creationflags" not in captured, captured
+    # Windows branch: the ignored kwarg is GONE, the creationflags twin
+    # carries the detachment instead.
+    monkeypatch.setattr(lifecycle, "_POSIX", False)
+    with pytest.raises(lifecycle.LifecycleError, match="start_failed"):
+        lifecycle.start(
+            starter_project, bindings=bindings_file, host="127.0.0.1",
+            port=8477, transport="mock", device=None, scenario=None,
+        )
+    assert "start_new_session" not in captured, (
+        "CPython silently ignores start_new_session on win32 — passing "
+        f"it claims a detachment that does not exist: {captured}"
+    )
+    # The frozen Win32 API constants (a POSIX subprocess module does not
+    # carry them, so the literal is the honest cross-host spelling):
+    # DETACHED_PROCESS 0x8 | CREATE_NEW_PROCESS_GROUP 0x200.
+    assert captured.get("creationflags") == 0x00000208, captured
