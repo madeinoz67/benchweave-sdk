@@ -25,10 +25,15 @@ from click.testing import CliRunner
 from benchweave_sdk_server.cli import cli as server_cli
 from benchweave_sdk_server.library import CaptureLibrary
 from benchweave_sdk_server.retention import (
+    DEFAULT_GRACE_S,
+    QUOTA_FRACTION,
     QuotaLatch,
     QuotaUsage,
+    RetentionRule,
+    effective_config,
     load_config,
     plan,
+    quota_usages,
     record,
     sweep_plan,
 )
@@ -173,7 +178,8 @@ def test_load_config_parses_the_full_document(tmp_path: Path) -> None:
 
 def test_load_config_defaults_when_keys_are_absent(tmp_path: Path) -> None:
     """Every top-level key optional; an empty rules list is a valid document
-    (keep-everything — the Q13/F-3 posture the engine ships)."""
+    (the engine's absent-key semantics — the SHIPPED default is the ruled
+    document, composed in effective_config, never a change to the loader)."""
     path = tmp_path / "rules.json"
     path.write_text(json.dumps({"reserve_bytes": 100}), encoding="utf-8")
     config = load_config(path)
@@ -278,11 +284,198 @@ def test_a_poisoned_plan_including_the_in_flight_capture_is_not_the_plan(
 
 
 def test_plan_with_no_rules_keeps_everything(tmp_path: Path) -> None:
-    """The Q13/F-3 fork: no rules document, no removals — the engine is
-    rule-driven and ships keep-everything."""
+    """The engine's own keep-by-default: an EMPTY rule set plans nothing
+    (deletion needs a selecting rule — the shipped default is the ruled
+    document, composed in effective_config, never a change here)."""
     root = tmp_path / "captures"
     _write_corpus(root)
     assert plan((), _rows(root), now=NOW) == []
+
+
+# --- the ruled defaults (Q13, ruled 2026-10-07: RD-1..RD-4) --------------------
+
+
+#: The ruled default plan over the golden corpus: the unpinned mcp rows
+#: older than 30 d — alpha (45 d) and charlie (35 d). bravo is mcp at 10 d,
+#: hotel is mcp PINNED, every ui/rest row is kept until deleted (lima 80 d
+#: and golf 60 d included), mangle's age is unparseable (kept by default).
+RULED_GOLDEN: tuple[tuple[str, str, int], ...] = (
+    ("cap-alpha", "default-mcp-30d", 100),
+    ("cap-charlie", "default-mcp-30d", 150),
+)
+
+
+def test_the_packaged_defaults_are_the_ruled_set() -> None:
+    """RD-1: effective_config(None) is exactly the ruled set — one rule,
+    mcp-source, 30 days — parsed from the packaged document through the
+    same validator an operator's document passes; no ruled interval, grace
+    override, reserve or byte quota exists."""
+    config = effective_config(None)
+    assert config.rules == (
+        RetentionRule("default-mcp-30d", "mcp", None, 30.0, None, None),
+    )
+    assert config.interval_s is None
+    assert config.orphan_grace_s == DEFAULT_GRACE_S
+    assert config.reserve_bytes is None
+
+
+def test_the_ruled_defaults_plan_over_the_corpus(tmp_path: Path) -> None:
+    """RD-1: the ruled defaults alone — ui and rest kept until deleted,
+    unpinned mcp older than 30 d selected, the pinned mcp row and the
+    10-day mcp row kept."""
+    root = tmp_path / "captures"
+    _write_corpus(root)
+    removals = plan(effective_config(None).rules, _rows(root), now=NOW)
+    assert [(m.capture_id, m.rule_id, m.bytes) for m in removals] == [
+        (capture_id, rule_id, byte_length)
+        for capture_id, rule_id, byte_length in RULED_GOLDEN
+    ]
+
+
+def test_an_unreadable_packaged_defaults_document_refuses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RD-1's posture control: a packaging defect refuses loudly with the
+    prefix — never a silent fallback to keep-everything."""
+    import benchweave_sdk_server.retention as retention_module
+
+    monkeypatch.setattr(
+        retention_module, "DEFAULTS_DOCUMENT_NAME", "no-such-document.json"
+    )
+    with pytest.raises(ValueError) as caught:
+        retention_module.ruled_defaults()
+    assert str(caught.value).startswith("standalone_retention_rules_invalid:")
+    assert "packaged ruled-defaults document" in str(caught.value)
+
+
+def test_a_custom_document_is_additive_on_the_ruled_defaults(
+    tmp_path: Path,
+) -> None:
+    """RD-3: a custom rule selects rows the defaults keep (a ui rule
+    overrides the default-keep for ITS matches — cap-foxtrot is ui, 20 d),
+    on top of the defaults' own selections (union, first-in-id-order
+    attribution: a-ui-7d sorts before default-mcp-30d)."""
+    root = tmp_path / "captures"
+    _write_corpus(root)
+    custom = tmp_path / "custom-rules.json"
+    custom.write_text(
+        json.dumps({"rules": [{"id": "a-ui-7d", "source": "ui", "max_age_d": 7}]}),
+        encoding="utf-8",
+    )
+    removals = plan(
+        effective_config(load_config(custom)).rules, _rows(root), now=NOW
+    )
+    assert [(m.capture_id, m.rule_id, m.bytes) for m in removals] == [
+        ("cap-alpha", "default-mcp-30d", 100),
+        ("cap-charlie", "default-mcp-30d", 150),
+        ("cap-foxtrot", "a-ui-7d", 180),
+    ]
+
+
+def test_a_custom_rule_cannot_loosen_the_ruled_mcp_floor(
+    tmp_path: Path,
+) -> None:
+    """RD-3: the composition is a union of selections — a custom mcp rule
+    with a LOOSER age (90 d) adds nothing and removes nothing: the 35- and
+    45-day mcp rows are still selected, attributed to the default rule.
+    Pinning stays the only keep-forever mechanism (the ruling's "unless
+    pinned")."""
+    root = tmp_path / "captures"
+    _write_corpus(root)
+    custom = tmp_path / "custom-rules.json"
+    custom.write_text(
+        json.dumps({"rules": [{"id": "a-mcp-90d", "source": "mcp", "max_age_d": 90}]}),
+        encoding="utf-8",
+    )
+    removals = plan(
+        effective_config(load_config(custom)).rules, _rows(root), now=NOW
+    )
+    assert [(m.capture_id, m.rule_id) for m in removals] == [
+        ("cap-alpha", "default-mcp-30d"),
+        ("cap-charlie", "default-mcp-30d"),
+    ]
+
+
+def test_effective_config_carries_the_custom_knobs(tmp_path: Path) -> None:
+    """RD-3: interval, grace and reserve are the custom document's
+    single-valued operational knobs — custom wins when given."""
+    custom = tmp_path / "custom-rules.json"
+    custom.write_text(
+        json.dumps(
+            {
+                "interval_s": 3600,
+                "orphan_grace_s": 60,
+                "reserve_bytes": 1000,
+                "rules": [{"id": "a-ui-7d", "source": "ui", "max_age_d": 7}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    config = effective_config(load_config(custom))
+    assert config.interval_s == 3600.0
+    assert config.orphan_grace_s == 60.0
+    assert config.reserve_bytes == 1000
+    assert [rule.id for rule in config.rules] == [
+        "default-mcp-30d",
+        "a-ui-7d",
+    ]
+
+
+def test_a_custom_rule_id_colliding_with_a_default_refuses(
+    tmp_path: Path,
+) -> None:
+    """RD-4: a custom id equal to a default id refuses with the prefix
+    (the loader's duplicate-id family — deterministic evaluation needs
+    unique sort keys across the merged set too)."""
+    custom = tmp_path / "custom-rules.json"
+    custom.write_text(
+        json.dumps(
+            {"rules": [{"id": "default-mcp-30d", "source": "mcp", "max_age_d": 90}]}
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError) as caught:
+        effective_config(load_config(custom))
+    assert str(caught.value).startswith("standalone_retention_rules_invalid:")
+    assert "collides with a shipped default rule id" in str(caught.value)
+
+
+def test_the_ruled_defaults_prune_through_the_seam_schedule(
+    tmp_path: Path,
+) -> None:
+    """RD-1 (the serve side's engine arm): a seam under effective_config(
+    None) — exactly what serve arms with no --retention-rules — prunes the
+    ruled set through run_retention_once, records trigger ``scheduled``
+    rows, and publishes one retention_pruned event."""
+    from test_capture_lifecycle import _host
+
+    root = tmp_path / "captures"
+    _write_corpus(root)
+    host = _host(tmp_path, mode="ok", retention=effective_config(None))
+    payload = host.run_retention_once(now=NOW, clock=NOW.timestamp())
+    assert payload == {
+        "count": 2,
+        "bytes": 250,
+        "by_rule": {"default-mcp-30d": 2},
+    }
+    events = _kinds(host, "retention_pruned")
+    assert len(events) == 1
+    assert events[0]["data"] == payload
+    log_rows = [
+        json.loads(line)
+        for line in (root / "retention.log").read_text(encoding="utf-8").splitlines()
+    ]
+    assert [(row["capture_id"], row["rule"], row["trigger"]) for row in log_rows] == [
+        ("cap-alpha", "default-mcp-30d", "scheduled"),
+        ("cap-charlie", "default-mcp-30d", "scheduled"),
+    ]
+    # Everything else stands, including every ui/rest row and the pinned
+    # mcp row.
+    assert (root / "cap-bravo").is_dir()
+    assert (root / "cap-hotel").is_dir()
+    assert (root / "cap-lima").is_dir()
+    assert (root / "cap-golf").is_dir()
+    assert (root / "cap-mangle").is_dir()
 
 
 def test_plan_is_deterministic_across_row_order(tmp_path: Path) -> None:
@@ -363,15 +556,141 @@ def test_prune_removes_exactly_the_plan_and_logs_every_removal(
     assert (root / "cap-india").is_dir()
 
 
-def test_prune_without_a_rules_document_only_sweeps(tmp_path: Path) -> None:
-    """No document = keep-everything: the plan is empty and only the sweep
-    can remove anything (an orphan-free root keeps every capture)."""
+def test_prune_without_a_document_applies_the_ruled_defaults(
+    tmp_path: Path,
+) -> None:
+    """RD-1 at the CLI: no document is no longer keep-everything — the
+    shipped ruled defaults (Q13, ruled 2026-10-07) plan the unpinned mcp
+    rows older than 30 d, and only those; every ui/rest row, the pinned mcp
+    row, the 10-day mcp row and the unparseable row stand."""
     root = tmp_path / "captures"
     _write_corpus(root)
     result = CliRunner().invoke(
-        server_cli, ["prune", "--capture-root", str(root)]
+        server_cli,
+        ["prune", "--capture-root", str(root), "--dry-run", "--json"],
     )
     assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["removals"] == [
+        {"capture_id": capture_id, "rule": rule_id, "bytes": byte_length}
+        for capture_id, rule_id, byte_length in RULED_GOLDEN
+    ]
+    assert payload["summary"] == {"count": 2, "bytes": 250}
+    # The real prune removes exactly the ruled set and logs it.
+    result = CliRunner().invoke(server_cli, ["prune", "--capture-root", str(root)])
+    assert result.exit_code == 0, result.output
+    assert not (root / "cap-alpha").exists()
+    assert not (root / "cap-charlie").exists()
+    assert {row["capture_id"] for row in _rows(root)} == KEPT | _REMOVED - {
+        "cap-alpha",
+        "cap-charlie",
+    }
+    log_rows = [
+        json.loads(line)
+        for line in (root / "retention.log").read_text(encoding="utf-8").splitlines()
+    ]
+    assert [(row["capture_id"], row["rule"], row["trigger"]) for row in log_rows] == [
+        ("cap-alpha", "default-mcp-30d", "cli"),
+        ("cap-charlie", "default-mcp-30d", "cli"),
+    ]
+
+
+def test_prune_refuses_a_colliding_rules_document_with_exit_2(
+    tmp_path: Path,
+) -> None:
+    """RD-4 at the CLI: a custom rule id equal to a shipped default id
+    refuses with the prefix and exit 2, removing nothing."""
+    root = tmp_path / "captures"
+    _write_corpus(root)
+    colliding = tmp_path / "colliding-rules.json"
+    colliding.write_text(
+        json.dumps(
+            {"rules": [{"id": "default-mcp-30d", "source": "mcp", "max_age_d": 90}]}
+        ),
+        encoding="utf-8",
+    )
+    result = CliRunner().invoke(
+        server_cli,
+        ["prune", "--capture-root", str(root), "--retention-rules", str(colliding)],
+    )
+    assert result.exit_code == 2
+    assert "standalone_retention_rules_invalid:" in result.output
+    assert "collides with a shipped default rule id" in result.output
+    assert {row["capture_id"] for row in _rows(root)} == KEPT | _REMOVED
+
+
+def test_serve_refuses_a_colliding_rules_document_before_any_bind(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """RD-4 at serve: the refusal precedes the listener (exit 2 before any
+    bind) — the resolution runs at the top of the serve body. The stubbed
+    uvicorn makes a REGRESSION fail fast instead of binding a real
+    listener: with the refusal missing, serve proceeds to uvicorn.run and
+    the stub raises — a distinct exit code, never a hang."""
+    import sys
+    import types
+
+    from benchweave_sdk.scaffold import create_project
+
+    def _no_bind(*_args: Any, **_kwargs: Any) -> None:
+        raise SystemExit(3)  # "reached the listener" — never 2
+
+    stub = types.ModuleType("uvicorn")
+    stub.run = _no_bind  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "uvicorn", stub)
+    project = tmp_path / "proj"
+    create_project(project, "servecheck_plugin")
+    colliding = tmp_path / "colliding-rules.json"
+    colliding.write_text(
+        json.dumps(
+            {"rules": [{"id": "default-mcp-30d", "source": "mcp", "max_age_d": 90}]}
+        ),
+        encoding="utf-8",
+    )
+    result = CliRunner().invoke(
+        server_cli,
+        [
+            "serve",
+            str(project),
+            "--retention-rules",
+            str(colliding),
+            "--no-open",
+        ],
+    )
+    assert result.exit_code == 2
+    assert "collides with a shipped default rule id" in result.output
+
+
+def test_the_retention_resolution_arms_the_ruled_defaults() -> None:
+    """RD-1's serve-side unit arm: the one resolution point both hosts call
+    arms the ruled defaults when the flag is absent — serve's default-armed
+    schedule (a real serve invocation would bind a listener, so the helper
+    is the tested surface; the seam-level behavior is pinned above)."""
+    from benchweave_sdk_server.cli import _retention_for
+
+    config = _retention_for(None)
+    assert [rule.id for rule in config.rules] == ["default-mcp-30d"]
+
+
+def test_prune_without_a_document_refuses_a_corrupt_packaged_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The refute fold's row 1: the NO-FLAG path maps a corrupt packaged
+    document to the SAME exit-2 refusal the with-document path has — never
+    an uncaught traceback (exit 1). The refusal removes nothing."""
+    import benchweave_sdk_server.retention as retention_module
+
+    root = tmp_path / "captures"
+    _write_corpus(root)
+    monkeypatch.setattr(
+        retention_module, "DEFAULTS_DOCUMENT_NAME", "no-such-document.json"
+    )
+    result = CliRunner().invoke(server_cli, ["prune", "--capture-root", str(root)])
+    assert result.exit_code == 2
+    assert "standalone_retention_rules_invalid:" in result.output
+    assert "packaged ruled-defaults document" in result.output
     assert {row["capture_id"] for row in _rows(root)} == KEPT | _REMOVED
 
 
@@ -549,6 +868,29 @@ def test_quota_latch_zero_cap_is_above_only_with_bytes() -> None:
     assert latch.crossings([QuotaUsage("zero-cap", 1, 0)]) == [
         QuotaUsage("zero-cap", 1, 0)
     ]
+
+
+def test_quota_warning_threshold_is_the_ruled_80_percent() -> None:
+    """RD-2: the ruled warning threshold, pinned — "warn at 80% of the byte
+    quota" (Q13, ruled 2026-10-07). A usage at exactly 0.8 of its cap
+    crosses (>=); 0.79 does not. The latch's edge semantics above carry the
+    exactly-once behavior; this arm pins the THRESHOLD the ruling names."""
+    assert QUOTA_FRACTION == 0.8
+    latch = QuotaLatch()
+    under = [QuotaUsage("ruled-80", 790, 1000)]
+    assert latch.crossings(under) == []
+    at_threshold = [QuotaUsage("ruled-80", 800, 1000)]
+    assert latch.crossings(at_threshold) == at_threshold
+
+
+def test_the_ruled_defaults_carry_no_byte_quota(tmp_path: Path) -> None:
+    """RD-2: the ruling names no default byte-quota NUMBER — the ruled set
+    carries no max_bytes rule, so quota_usages over the defaults is empty
+    and the warning guards a quota an OPERATOR configures (the same A02
+    posture as the reserve: no un-ruled constant ships)."""
+    root = tmp_path / "captures"
+    _write_corpus(root)
+    assert quota_usages(effective_config(None).rules, _rows(root)) == []
 
 
 # --- capture_delete + the recorder (SW-59, I3b ruling 9) ----------------------

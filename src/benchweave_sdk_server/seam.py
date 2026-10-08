@@ -238,10 +238,12 @@ class StandaloneSeam:
         self._bindings = bindings
         self._capture_root = capture_root
         # The retention configuration (I3c): rules, sweep grace, scheduler
-        # interval and the storage reserve. None (or no reserve_bytes) is
-        # the keep-everything posture — the guard is inert by default (A02:
-        # a hardcoded reserve would impose one bench's storage policy on
-        # every bench; the reserve is commissioned configuration).
+        # interval and the storage reserve. None is the keep-everything
+        # posture for DIRECT constructors (tests, embedded hosts); the CLI
+        # always arms the ruled defaults (Q13, ruled 2026-10-07) composed
+        # with any operator document. No reserve_bytes leaves the guard
+        # inert (A02: a hardcoded reserve would impose one bench's storage
+        # policy on every bench; the reserve is commissioned configuration).
         self._retention = retention
         # The schedule's quota latch: edge-triggered per max_bytes rule,
         # created with the first scheduled evaluation (host state).

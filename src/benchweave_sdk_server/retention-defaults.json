@@ -1,0 +1,9 @@
+{
+  "rules": [
+    {
+      "id": "default-mcp-30d",
+      "source": "mcp",
+      "max_age_d": 30
+    }
+  ]
+}
