@@ -152,7 +152,8 @@ def _probe_windows(pid: int) -> str:
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     handle = kernel32.OpenProcess(0x1000, 0, pid)
     if not handle:
-        error = int(ctypes.get_last_error())  # type: ignore[attr-defined]
+        get_last_error = getattr(ctypes, "get_last_error", lambda: 0)
+    error = int(get_last_error())
         if error == 5:
             return "running"
         if error == 87:
@@ -700,7 +701,7 @@ def _exited(pid: int) -> bool:
     exited; a pid that is not our child falls back to the probe alone."""
     if probe_process(pid) != "running":
         return True
-    if _POSIX:
+    if sys.platform != "win32":  # mypy narrows this; _POSIX does not
         try:
             waited, _ = os.waitpid(pid, os.WNOHANG)
             return waited != 0
