@@ -673,6 +673,27 @@ def test_the_retention_resolution_arms_the_ruled_defaults() -> None:
     assert [rule.id for rule in config.rules] == ["default-mcp-30d"]
 
 
+def test_prune_without_a_document_refuses_a_corrupt_packaged_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The refute fold's row 1: the NO-FLAG path maps a corrupt packaged
+    document to the SAME exit-2 refusal the with-document path has — never
+    an uncaught traceback (exit 1). The refusal removes nothing."""
+    import benchweave_sdk_server.retention as retention_module
+
+    root = tmp_path / "captures"
+    _write_corpus(root)
+    monkeypatch.setattr(
+        retention_module, "DEFAULTS_DOCUMENT_NAME", "no-such-document.json"
+    )
+    result = CliRunner().invoke(server_cli, ["prune", "--capture-root", str(root)])
+    assert result.exit_code == 2
+    assert "standalone_retention_rules_invalid:" in result.output
+    assert "packaged ruled-defaults document" in result.output
+    assert {row["capture_id"] for row in _rows(root)} == KEPT | _REMOVED
+
+
 def test_prune_refuses_an_invalid_rules_document_with_exit_2(
     tmp_path: Path,
 ) -> None:

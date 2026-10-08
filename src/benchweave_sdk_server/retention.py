@@ -241,9 +241,13 @@ def ruled_defaults() -> RetentionConfig:
     byte quota, reserve or interval was ruled — the warning threshold is
     :data:`QUOTA_FRACTION` over a quota an operator configures, the
     reserve stays commissioned configuration (A02), and the schedule's
-    86400 s default stands. An unreadable packaged document refuses with
-    the :data:`RULES_INVALID` prefix — a packaging defect is loud, never a
-    silent fallback to keep-everything.
+    86400 s default stands. An unreadable or unparseable packaged document
+    refuses with the :data:`RULES_INVALID` prefix — never a silent
+    fallback to keep-everything. What runtime does NOT catch: a document
+    that is VALID JSON with mutated CONTENT (an emptied ``{"rules": []}``
+    degrades silently to keep-everything) — content integrity is pinned by
+    the suite's exact-rule-set arm (the design record's RD-1), not checked
+    here.
     """
     path = Path(__file__).with_name(DEFAULTS_DOCUMENT_NAME)
     try:

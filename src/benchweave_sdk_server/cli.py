@@ -123,9 +123,13 @@ def _retention_for(retention_rules: Path | None) -> Any:
     before work starts."""
     from .retention import effective_config, load_config
 
-    if retention_rules is None:
-        return effective_config(None)
+    # Both paths share the refusal mapping (the refute fold's row 1): a
+    # corrupt packaged document on the NO-flag path must exit 2 with the
+    # one-line STD-4 refusal exactly as a malformed custom document does —
+    # never an uncaught ValueError traceback (exit 1).
     try:
+        if retention_rules is None:
+            return effective_config(None)
         return effective_config(load_config(retention_rules))
     except ValueError as exc:
         click.echo(str(exc), err=True)

@@ -159,3 +159,43 @@ Tier 3 by the standing rubric (deletion-semantics surface + refusal paths;
 STD-4 vocabulary unchanged — the existing prefix gains messages, not new
 prefixes). The eight-keyword scan rides the review lanes against the real
 diff.
+
+## Addendum (2026-10-08, the refute fold)
+
+The refute lane HELD the floor (union composition, pinned/in-flight
+exclusion, the 0.8 threshold) and returned three findings. Dispositions:
+
+1. **Exit-code divergence on the no-flag path (MEDIUM) — fixed.**
+   `_retention_for` called `effective_config(None)` OUTSIDE its refusal
+   mapping: with a corrupt/unreadable packaged document, a no-flag
+   `prune`/`serve` died as an uncaught ValueError traceback (exit 1) while
+   the with-document branch refused cleanly (exit 2) — refuting this
+   record's §1 "every refusal is exit 2 with the prefix". Fixed by mapping
+   BOTH paths through the same exit-2 refusal. RED arm:
+   `test_prune_without_a_document_refuses_a_corrupt_packaged_default`
+   (monkeypatched `DEFAULTS_DOCUMENT_NAME`; pre-fix verbatim
+   `assert 1 == 2 + where 1 = <Result ValueError("standalone_retention_
+   rules_invalid: the packaged ruled-defaults document …")>.exit_code`).
+2. **The loud-refusal claim covered transport, not content (LOW) — fixed
+   as claim accuracy (G4).** A packaged document that is VALID JSON with
+   mutated content (an emptied `{"rules": []}`) degrades SILENTLY to
+   keep-everything at runtime; "a packaging defect refuses loudly" was
+   true only for the unreadable/unparseable classes. The `ruled_defaults`
+   docstring now names exactly what runtime does not catch; content
+   integrity is pinned by RD-1's exact-rule-set arm, not checked at
+   runtime.
+3. **The upgrade path has no first-run interlock (MEDIUM) — DISCLOSURE
+   ONLY; the product behavior is the owner's row-call, disclosed in the PR
+   body.** Characterized by the refute lane on a 90-day agent-built
+   capture root: the first no-flag `prune --dry-run` planned 61 of 94
+   captures for removal (strictly older than 30 days; a capture at
+   exactly 30.0 days is KEPT — the evaluator's `started < cutoff`), under
+   `serve` the first removals land ~24 h after host start (the scheduler
+   sleeps one interval before its first evaluation), and NOTHING warns
+   before them — no event, log banner or dry-run gate; the captures
+   page's next-effect labels are the only pre-view. Each removal rmtree's
+   the capture directory (manifest, metadata, bytes) with its index row;
+   the retention log preserves capture_id + sha256 + rule + time +
+   trigger only. README and the user guide now carry the upgrade note
+   (pin what you keep; `prune --dry-run` first). An interlock, first-run
+   dry-run gate or acknowledgment is deliberately NOT built here.
