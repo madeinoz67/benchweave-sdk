@@ -48,6 +48,21 @@ from typing import Any
 #: object: the numbers mean exactly this computation, nothing else.
 ANALYSIS_DEFINITION = "benchweave-analysis/1"
 
+#: The edge-timing definition (I4b.1 AR-2): rise/settle numbers mean
+#: exactly the fork-compatible step computation pinned in the I4b design
+#: record §1.1 — nothing else.
+EDGE_DEFINITION = "benchweave-edge/1"
+
+#: The assertion definition (I4b.1 AR-7): a verdict means exactly this
+#: min/max evaluation over the entry's window statistics.
+ASSERT_DEFINITION = "benchweave-assert/1"
+
+#: The settle band's display default (the fork's own fallback): an
+#: operator-editable statistical band parameter printed on every block,
+#: explicitly NOT a commissioned envelope (A02: nothing protective keys
+#: on it).
+SETTLE_PCT_DEFAULT = 2.0
+
 #: Samples read per chunk (64 KiB): the loader's memory bound. A
 #: presentation constant, not a commissioned envelope (A02 posture).
 _CHUNK_SAMPLES = 8192
@@ -98,6 +113,68 @@ class RegionStats:
     pp: float | None
     mean: float | None
     rms: float | None
+    uncertainty: str
+
+
+@dataclass(frozen=True)
+class EdgeTiming:
+    """Edge timing for one window per :data:`EDGE_DEFINITION` (I4b.1).
+
+    The region is the window's NON-NULL samples in acquisition order (the
+    fork's ``regionPoints`` semantics — nulls drop out before the count).
+    ``detected`` is ``False`` for a region of fewer than 3 samples or a
+    flat step (the guard); the timing fields are then ``None`` — an
+    honest negative, never a zero rise. ``rise_time`` is ``None`` when
+    either crossing is absent; ``settle_time`` is ``0.0`` when nothing in
+    scope left the band, ``None`` when the region's last sample is still
+    outside it ("not settled within the region"). Every row carries its
+    denominators (``n``, ``head_n``, ``tail_n``, ``settle_pct``, the
+    window).
+    """
+
+    definition: str
+    lo: float | None
+    hi: float | None
+    n: int
+    head_n: int
+    tail_n: int
+    settle_pct: float
+    detected: bool
+    rising: bool | None
+    baseline: float | None
+    final: float | None
+    step: float | None
+    t10: float | None
+    t90: float | None
+    rise_time: float | None
+    settle_time: float | None
+    uncertainty: str
+
+
+@dataclass(frozen=True)
+class AssertionResult:
+    """One min/max assertion's verdict per :data:`ASSERT_DEFINITION`
+    (I4b.1 AR-7).
+
+    ``not_evaluated`` is the honest verdict for an empty window (count 0
+    — the target series contributed no samples): never ``pass``. A failed
+    row names its machine-readable ``reasons`` (``below_min``,
+    ``above_max``); verdicts carry the window denominators they were
+    computed over.
+    """
+
+    definition: str
+    capture_id: str
+    verdict: str
+    min: float | None
+    max: float | None
+    actual_min: float | None
+    actual_max: float | None
+    reasons: tuple[str, ...]
+    lo: float | None
+    hi: float | None
+    count: int
+    null_count: int
     uncertainty: str
 
 
@@ -330,3 +407,207 @@ def windowed_points(
             f"{source.manifest_sha256}; the capture changed after publication"
         )
     return points
+
+
+def _cross_time(
+    region: list[tuple[float, float]], level: float, rising: bool
+) -> float | None:
+    """The first interpolated crossing of ``level`` in the step direction
+    (linear between bracketing samples; a level the region never crosses
+    yields ``None``). A bracketing segment with no span (both samples at
+    the level) crosses at the segment's first sample."""
+    for (ta, va), (tb, vb) in zip(region, region[1:], strict=False):
+        if rising:
+            if va <= level <= vb:
+                span = vb - va
+                if span == 0:
+                    return ta
+                return ta + (level - va) * (tb - ta) / span
+        elif va >= level >= vb:
+            span = va - vb
+            if span == 0:
+                return ta
+            return ta + (va - level) * (tb - ta) / span
+    return None
+
+
+def edge_analysis(
+    samples: Iterator[tuple[float, float]],
+    *,
+    lo: float | None,
+    hi: float | None,
+    settle_pct: float,
+) -> EdgeTiming:
+    """Edge timing over one window per :data:`EDGE_DEFINITION` (I4b.1 AR-2).
+
+    Pure and single-pass over ``samples``: the region is the window's
+    non-null samples in acquisition order, the baseline/final are the
+    means of the first/last ``max(1, floor(n * 0.15))`` region samples,
+    and the flat guard ``|step| < 0.005 * max(|baseline|, |final|, 1e-12)``
+    (a NaN step fails the comparison and stays non-flat only through
+    non-finite means — see the fx-step-nocross arm) yields an honest
+    ``detected: False``. The caller bounds the sample count it passes
+    (the report's plot ceiling already bounds the windowed stream).
+
+    ``settle_pct`` is the band percentage around ``final``; the scan runs
+    from ``t10`` (or the region start when the crossing is absent) and
+    ``settle_time`` measures from that same origin.
+    """
+    region = [
+        (t, value)
+        for t, value in samples
+        if (lo is None or t >= lo)
+        and (hi is None or t <= hi)
+        and not math.isnan(value)
+    ]
+    n = len(region)
+    head_n = max(1, math.floor(n * 0.15)) if n else 0
+    tail_n = max(1, math.floor(n * 0.15)) if n else 0
+
+    def row(
+        *,
+        detected: bool,
+        rising: bool | None = None,
+        baseline: float | None = None,
+        final: float | None = None,
+        step: float | None = None,
+        t10: float | None = None,
+        t90: float | None = None,
+        rise_time: float | None = None,
+        settle_time: float | None = None,
+    ) -> EdgeTiming:
+        return EdgeTiming(
+            definition=EDGE_DEFINITION,
+            lo=lo,
+            hi=hi,
+            n=n,
+            head_n=head_n,
+            tail_n=tail_n,
+            settle_pct=settle_pct,
+            detected=detected,
+            rising=rising,
+            baseline=baseline,
+            final=final,
+            step=step,
+            t10=t10,
+            t90=t90,
+            rise_time=rise_time,
+            settle_time=settle_time,
+            uncertainty="unknown",
+        )
+
+    if n < 3:
+        return row(detected=False)
+    baseline = sum(value for _, value in region[:head_n]) / head_n
+    final = sum(value for _, value in region[n - tail_n :]) / tail_n
+    step = final - baseline
+    if abs(step) < 0.005 * max(abs(baseline), abs(final), 1e-12):
+        # The flat guard, exactly as pinned. A NON-FINITE step compares
+        # False against its own reference (inf < inf is False, NaN < x is
+        # False) and so does NOT take this branch: the row stays a
+        # transition carrying the non-finite means and null crossings
+        # rather than laundering them into "no edge" (the fx-step-nocross
+        # arm pins that outcome).
+        return row(detected=False, baseline=baseline, final=final, step=step)
+    rising = step > 0
+    t10 = _cross_time(region, baseline + 0.10 * step, rising)
+    t90 = _cross_time(region, baseline + 0.90 * step, rising)
+    rise_time = t90 - t10 if t10 is not None and t90 is not None else None
+    band = settle_pct / 100.0 * abs(step)
+    low_band, high_band = final - band, final + band
+    scope = 0
+    if t10 is not None:
+        # The region is t-ascending: the scope starts at the first sample
+        # at or after the interpolated t10.
+        while scope < n and region[scope][0] < t10:
+            scope += 1
+    t0 = t10 if t10 is not None else region[0][0]
+    last_outside: int | None = None
+    for index in range(scope, n):
+        value = region[index][1]
+        if value < low_band or value > high_band:
+            last_outside = index
+    if last_outside is None:
+        settle_time: float | None = 0.0
+    elif last_outside == n - 1:
+        settle_time = None  # not settled within the region
+    else:
+        settle_time = region[last_outside + 1][0] - t0
+    return row(
+        detected=True,
+        rising=rising,
+        baseline=baseline,
+        final=final,
+        step=step,
+        t10=t10,
+        t90=t90,
+        rise_time=rise_time,
+        settle_time=settle_time,
+    )
+
+
+def evaluate_assertions(
+    spec: list[dict[str, Any]], entries: dict[str, RegionStats]
+) -> list[AssertionResult]:
+    """Evaluate min/max assertion rows against the request's own window
+    statistics (I4b.1 AR-7).
+
+    Each spec row is ``{capture_id, min?, max?}`` with at least one
+    bound. The target must be one of the request's source captures — the
+    miss is refused (``standalone_report_assert_target``) rather than
+    rendered ``found: false`` forever; bounds must be finite and at least
+    one present (``standalone_report_assert_bound``, the B-F4 family
+    refused at admission like the window). The verdict reads the entry's
+    window ``RegionStats``: ``pass`` iff every present bound holds,
+    ``fail`` with machine-readable reasons otherwise, and
+    ``not_evaluated`` when the window counted no samples — never
+    ``pass``.
+    """
+    results: list[AssertionResult] = []
+    for row in spec:
+        capture_id = str(row.get("capture_id", ""))
+        if capture_id not in entries:
+            raise AnalysisRefusal(
+                f"standalone_report_assert_target: {capture_id} is not among "
+                f"the request's captures ({', '.join(entries)})"
+            )
+        minimum = row.get("min")
+        maximum = row.get("max")
+        if minimum is None and maximum is None:
+            raise AnalysisRefusal(
+                f"standalone_report_assert_bound: {capture_id} carries "
+                "neither min nor max; at least one bound is required"
+            )
+        for name, bound in (("min", minimum), ("max", maximum)):
+            if bound is not None and not math.isfinite(float(bound)):
+                raise AnalysisRefusal(
+                    f"standalone_report_assert_bound: {capture_id} {name} "
+                    f"{bound} is not finite; bounds must be finite numbers"
+                )
+        stats = entries[capture_id]
+        reasons: list[str] = []
+        if stats.count > 0:
+            if minimum is not None and (stats.min is None or stats.min < minimum):
+                reasons.append("below_min")
+            if maximum is not None and (stats.max is None or stats.max > maximum):
+                reasons.append("above_max")
+        results.append(
+            AssertionResult(
+                definition=ASSERT_DEFINITION,
+                capture_id=capture_id,
+                verdict="not_evaluated" if stats.count == 0 else (
+                    "fail" if reasons else "pass"
+                ),
+                min=minimum,
+                max=maximum,
+                actual_min=stats.min if stats.count else None,
+                actual_max=stats.max if stats.count else None,
+                reasons=tuple(reasons),
+                lo=stats.lo,
+                hi=stats.hi,
+                count=stats.count,
+                null_count=stats.null_count,
+                uncertainty="unknown",
+            )
+        )
+    return results
