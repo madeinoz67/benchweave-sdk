@@ -3,8 +3,8 @@
   "assets": [
     {
       "path": "analyse.js",
-      "sha256": "438b80b3ba18e83f115ae14b7d4593289f2d301f51bc3afad8629203ba32b630",
-      "size": 2812
+      "sha256": "1bfa71ad24bf3d295355102a2fcad4488ca31993b684b946ad21e0dd87ca4504",
+      "size": 5068
     },
     {
       "path": "bw-events.js",

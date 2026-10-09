@@ -467,6 +467,7 @@ const host = {
 };
 globalThis.document = {
   readyState: "complete",
+  addEventListener() {},
   getElementById(id) { return id === "analyse-form" ? form : null; },
   querySelectorAll() { return [host]; },
   body: { addEventListener() {} },
@@ -500,3 +501,118 @@ console.log(
   })
 );
 """
+
+
+# --- I4b.1 AR-8: the marker editor and click-to-place ------------------------------
+
+
+def test_marker_editor_renders_for_a_single_capture_selection(
+    client: TestClient, capture_root: Path
+) -> None:
+    write_capture(capture_root, "fx-mark-one", values=(1.0, 2.0, 3.0))
+    write_capture(capture_root, "fx-mark-two", values=(4.0,))
+    single = client.get("/analyse", params={"capture": "fx-mark-one"}).text
+    assert 'id="marker-fieldset"' in single
+    assert 'name="marker_label"' in single
+    assert 'formaction="/analyse/markers"' in single
+    # The editor is per-capture: a multi-capture selection renders the
+    # hint, not the fieldset (the I4b.1 single-series cut).
+    both = client.get(
+        "/analyse", params={"capture": ["fx-mark-one", "fx-mark-two"]}
+    ).text
+    assert 'id="marker-fieldset"' not in both
+    assert "one capture at a time" in both
+
+
+def test_marker_save_round_trips_through_the_page_route(
+    client: TestClient, capture_root: Path
+) -> None:
+    write_capture(capture_root, "fx-mark-save", values=(1.0, 2.0, 3.0))
+    token = csrf_of(client)
+    response = client.post(
+        "/analyse/markers",
+        data={
+            "capture": "fx-mark-save",
+            "lo": "",
+            "hi": "",
+            "marker_label": ["A", "B"],
+            "marker_t": ["0.0", "0.001"],
+            "marker_note": ["first", "second"],
+        },
+        headers={"X-CSRF-Token": token},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert response.headers["location"] == "/analyse?capture=fx-mark-save"
+    import json as _json
+
+    overlay = _json.loads(
+        (capture_root / "fx-mark-save" / "analysis.json").read_text()
+    )
+    assert overlay["format"] == "standalone-analysis/1"
+    assert overlay["markers"] == [
+        {"label": "A", "t": 0.0, "note": "first"},
+        {"label": "B", "t": 0.001, "note": "second"},
+    ]
+    # The re-rendered view prefills the editor from the stored overlay.
+    page = client.get("/analyse", params={"capture": "fx-mark-save"}).text
+    assert 'value="A"' in page and 'value="first"' in page
+
+
+def test_marker_save_refusal_renders_the_refusal(
+    client: TestClient, capture_root: Path
+) -> None:
+    write_capture(capture_root, "fx-mark-bad", values=(1.0, 2.0, 3.0))
+    token = csrf_of(client)
+    page = client.post(
+        "/analyse/markers",
+        data={
+            "capture": "fx-mark-bad",
+            "marker_label": ["AA"],
+            "marker_t": ["0.0"],
+            "marker_note": [""],
+        },
+        headers={"X-CSRF-Token": token},
+    )
+    assert page.status_code == 400
+    assert "standalone_report_marker_invalid" in page.text
+
+
+def test_marker_rows_ride_the_stats_post_as_form_state(
+    client: TestClient, capture_root: Path
+) -> None:
+    """The htmx stats POST carries the editor's unsaved rows: the swapped
+    partial echoes them into the export form's hidden fields, so unsaved
+    markers flow into the export (the design's form-state rule)."""
+    write_capture(capture_root, "fx-mark-state", values=(1.0, 2.0))
+    token = csrf_of(client)
+    partial = client.post(
+        "/analyse/stats",
+        data={
+            "capture": "fx-mark-state",
+            "lo": "",
+            "hi": "",
+            "marker_label": ["A"],
+            "marker_t": ["0.0"],
+            "marker_note": ["unsaved"],
+        },
+        headers={"X-CSRF-Token": token},
+    )
+    assert partial.status_code == 200
+    assert 'name="marker_capture" value="fx-mark-state"' in partial.text
+    assert 'name="marker_label" value="A"' in partial.text
+    assert 'name="marker_note" value="unsaved"' in partial.text
+
+
+def test_click_to_place_talks_to_the_real_vendored_uplot_api() -> None:
+    """The placement arm's static half (B-F1's discipline): every uPlot
+    API token the click-to-place uses exists in the VENDORED bytes, and
+    the numeric fields remain the complete no-script path."""
+    from benchweave_sdk_server.assets import ui_assets_root
+
+    script = (ui_assets_root() / "analyse.js").read_text(encoding="utf-8")
+    vendored = (ui_assets_root() / "uplot.min.js").read_text(encoding="utf-8")
+    for token in ("posToVal", "setScale"):
+        assert token in script, f"the placement must use the {token} API"
+        assert token in vendored, f"the vendored bytes do not expose {token}"
+    assert "bw-marker-t" in script

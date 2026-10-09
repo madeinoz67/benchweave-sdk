@@ -38,8 +38,9 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 import struct
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -56,6 +57,15 @@ EDGE_DEFINITION = "benchweave-edge/1"
 #: The assertion definition (I4b.1 AR-7): a verdict means exactly this
 #: min/max evaluation over the entry's window statistics.
 ASSERT_DEFINITION = "benchweave-assert/1"
+
+#: The per-event analysis overlay's format id (I4b.1 AR-8): the file
+#: holds operator annotation only (markers now, additive keys later);
+#: absent or unparseable reads as no overlay, never a load precondition.
+ANALYSIS_OVERLAY_FORMAT = "standalone-analysis/1"
+
+#: A marker label is one uppercase A-Z character (the fork's own regex
+#: shape) — 26 rows bound the overlay.
+MARKER_LABEL_RE = re.compile(r"^[A-Z]$")
 
 #: The settle band's display default (the fork's own fallback): an
 #: operator-editable statistical band parameter printed on every block,
@@ -611,3 +621,101 @@ def evaluate_assertions(
             )
         )
     return results
+
+
+def read_markers(event: Path) -> list[dict[str, Any]]:
+    """The event's stored marker rows, ``[]`` when absent or unparseable
+    (the library's honest-defaults rule: the overlay is operator
+    annotation, never a load precondition). Only well-formed rows
+    survive — anything else in the file reads as no overlay rather than
+    half an overlay."""
+    try:
+        payload = json.loads((event / "analysis.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    if not isinstance(payload, dict):
+        return []
+    rows = payload.get("markers")
+    if not isinstance(rows, list):
+        return []
+    kept: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        label, t = row.get("label"), row.get("t")
+        note = row.get("note", "")
+        if (
+            isinstance(label, str)
+            and MARKER_LABEL_RE.fullmatch(label) is not None
+            and isinstance(t, (int, float))
+            and not isinstance(t, bool)
+            and math.isfinite(float(t))
+            and isinstance(note, str)
+        ):
+            kept.append({"label": label, "t": float(t), "note": note})
+    return sorted(kept, key=lambda row: row["label"])
+
+
+def resolve_markers(
+    manifest: dict[str, Any], rows: Iterable[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Validate and normalise incoming marker rows against the capture's
+    own time base: labels are single uppercase A-Z (one row per label,
+    the LAST duplicate wins — the fork's ``placeMarker`` semantics), ``t``
+    is finite and lies inside ``[0, (sample_count - 1) *
+    sample_interval_s]`` (a marker that names no point the capture can
+    display refuses), and the stored rows are sorted by label so
+    re-export is stable. ``note`` is free text (no invented cap) and
+    escapes at render, never here."""
+    count = manifest.get("sample_count")
+    interval = manifest.get("sample_interval_s")
+    if (
+        type(count) is not int
+        or count < 1
+        or isinstance(interval, bool)
+        or not isinstance(interval, (int, float))
+        or not interval > 0
+        or not math.isfinite(float(interval))
+    ):
+        raise AnalysisRefusal(
+            "standalone_report_marker_invalid: the capture's manifest "
+            "declares no usable sample grid (sample_count/sample_interval_s)"
+        )
+    span = (count - 1) * float(interval)
+    resolved: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            raise AnalysisRefusal(
+                "standalone_report_marker_invalid: a marker row is not an "
+                "object ({label, t, note})"
+            )
+        label = row.get("label")
+        if not isinstance(label, str) or MARKER_LABEL_RE.fullmatch(label) is None:
+            raise AnalysisRefusal(
+                f"standalone_report_marker_invalid: label {label!r} is not a "
+                "single uppercase character A-Z"
+            )
+        t = row.get("t")
+        if (
+            isinstance(t, bool)
+            or not isinstance(t, (int, float))
+            or not math.isfinite(float(t))
+        ):
+            raise AnalysisRefusal(
+                f"standalone_report_marker_invalid: marker {label} carries a "
+                f"non-finite t ({t!r})"
+            )
+        if not 0.0 <= float(t) <= span:
+            raise AnalysisRefusal(
+                f"standalone_report_marker_invalid: marker {label} names t "
+                f"{float(t)} outside the capture's displayable time base "
+                f"[0, {span}] ((sample_count - 1) x sample_interval_s)"
+            )
+        note = row.get("note", "")
+        if not isinstance(note, str):
+            raise AnalysisRefusal(
+                f"standalone_report_marker_invalid: marker {label} carries a "
+                "non-string note"
+            )
+        resolved[label] = {"label": label, "t": float(t), "note": note}
+    return [resolved[label] for label in sorted(resolved)]

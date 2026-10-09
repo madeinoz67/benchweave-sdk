@@ -2258,6 +2258,53 @@ class StandaloneSeam:
     ) -> dict[str, Any]:
         return await self._op_capture_pin(arguments, correlation, pinned=False)
 
+    async def _op_capture_analysis(
+        self, arguments: dict[str, Any], correlation: str
+    ) -> dict[str, Any]:
+        """Rewrite one capture's marker overlay (I4b.1 AR-8, row 23).
+
+        Admission is ``_stale_row_refusal`` (the ``capture_annotate``
+        shape); the rows validate against the event's own manifest grid
+        and the write is the library's atomic temp-write + ``os.replace``
+        discipline (the ``_write_metadata`` precedent) — one call rewrites
+        exactly one authority file, so every rewrite is atomic. The echo
+        is the stored rows: operator annotation, not a processed value
+        (#423's boundary holds — no analysis READ became a catalogue
+        operation).
+        """
+        from .analysis import ANALYSIS_OVERLAY_FORMAT, resolve_markers
+
+        capture_id = str(arguments["capture_id"])
+        library = self._library(correlation)
+        self._stale_row_refusal(library, capture_id, correlation)
+        event = self._event_dir(capture_id, correlation)
+        manifest_path = event / "manifest.json"
+        if not manifest_path.is_file():
+            raise self._fail(
+                "not_found", f"no published capture: {capture_id}", correlation
+            )
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except ValueError as exc:
+            raise self._fail(
+                "not_found",
+                f"capture {capture_id} has an unparseable manifest",
+                correlation,
+            ) from exc
+        try:
+            markers = resolve_markers(manifest, arguments["markers"])
+        except ValueError as exc:
+            raise self._report_refusal(exc, correlation) from exc
+        payload = json.dumps(
+            {"format": ANALYSIS_OVERLAY_FORMAT, "markers": markers},
+            indent=2,
+            sort_keys=True,
+        ).encode("utf-8")
+        temp = event / "analysis.json.tmp"
+        temp.write_bytes(payload)
+        os.replace(temp, event / "analysis.json")
+        return {"capture_id": capture_id, "markers": markers}
+
     async def _op_capture_delete(
         self, arguments: dict[str, Any], correlation: str
     ) -> dict[str, Any]:
@@ -2351,6 +2398,9 @@ class StandaloneSeam:
         "standalone_report_sources_empty": "invalid_request",
         "standalone_report_units_unsupported": "invalid_request",
         "standalone_report_window_too_large": "payload_too_large",
+        "standalone_report_marker_invalid": "invalid_request",
+        "standalone_report_assert_target": "invalid_request",
+        "standalone_report_assert_bound": "invalid_request",
     }
 
     def _report_refusal(self, exc: ValueError, correlation: str) -> SeamError:
@@ -2598,6 +2648,16 @@ class StandaloneSeam:
             return None
         path = self._library("").root / "reports" / f"{report_id}.html"
         return path if path.is_file() else None
+
+    def markers_of(self, capture_id: str) -> list[dict[str, Any]]:
+        """One capture's stored marker rows — the Analyse view's editor
+        prefill read (I4b.1). NOT a catalogue operation: operator
+        annotation, not a processed value (#423's boundary — analysis
+        reads stay off REST/MCP). Honest-default ``[]``; the id runs
+        through the same safe-segment guard as every event-dir read."""
+        from .analysis import read_markers
+
+        return read_markers(self._event_dir(capture_id, ""))
 
     def close(self) -> None:
         """Release host-owned resources: the capture library's root lock

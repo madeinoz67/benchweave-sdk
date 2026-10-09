@@ -46,6 +46,7 @@ def test_host_info_discloses_the_standalone_truth(seam) -> None:
         "artifact_read", "events_get",
         "capture_delete", "capture_pin", "capture_unpin",
         "report_export",
+        "capture_analysis",
     ]
     assert info["deferred_operations"] == []
     assert info["plugin"]["package"] == "example_plugin"

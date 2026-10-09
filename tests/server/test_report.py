@@ -389,6 +389,7 @@ def test_ar6_module_census_no_adapter_or_plugin_coupling() -> None:
         "math",
         "markupsafe",
         "pathlib",
+        "re",
         "struct",
         "typing",
     }

@@ -152,6 +152,15 @@ def _tool_handlers(seam: StandaloneSeam) -> dict[str, Callable[..., Any]]:
             arguments["tags"] = tags
         return await _dispatch(seam, "capture_annotate", arguments)
 
+    async def capture_analysis(
+        capture_id: str, markers: list[dict[str, Any]]
+    ) -> Any:
+        return await _dispatch(
+            seam,
+            "capture_analysis",
+            {"capture_id": capture_id, "markers": markers},
+        )
+
     async def capture_pin(capture_id: str) -> Any:
         return await _dispatch(seam, "capture_pin", {"capture_id": capture_id})
 
@@ -196,6 +205,7 @@ def _tool_handlers(seam: StandaloneSeam) -> dict[str, Callable[..., Any]]:
         "capture_get": capture_get,
         "capture_series": capture_series,
         "capture_annotate": capture_annotate,
+        "capture_analysis": capture_analysis,
         "capture_pin": capture_pin,
         "capture_unpin": capture_unpin,
         "capture_delete": capture_delete,
