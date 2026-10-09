@@ -1589,3 +1589,119 @@ def test_only_the_requested_mode_computes(tmp_path: Path) -> None:
     assert result.load_step is not None
     assert result.battery is None and result.dcdc is None and result.sleep is None
     assert result.mode == "load-step"
+
+
+# --- the I4b.2 fold wave (rows A-F1/A-F2+B-F3/B-F2/A-F3) ----------------------------
+
+
+def test_mixed_inf_power_renders_non_finite_never_a_crash(tmp_path: Path) -> None:
+    """A-F1: mixed +inf/-inf samples must never raise out of the power
+    family — CPython's ``-inf + inf in fsum`` ValueError used to escape
+    through the seam as an untyped invalid_request, refusing the whole
+    export while every other family renders its honest n/a (non-finite)
+    marks. The exact-summation helper now falls back to the sequential
+    IEEE sum for the one case fsum cannot express, so a mean over both
+    signs of infinity is NaN (data present, statistic non-finite — the
+    B-F8 posture) and peak stays a value."""
+    write_capture(
+        tmp_path,
+        "fx-mix-i",
+        values=(1.0, 1.0, math.inf, 1.0, -math.inf, 1.0, 1.0, 1.0),
+        interval=0.01,
+        unit="A",
+    )
+    write_capture(
+        tmp_path, "fx-mix-v", values=(5.0,) * 8, interval=0.01, unit="V"
+    )
+    result = power_analysis(
+        _power_set(tmp_path, ("fx-mix-v", "fx-mix-i")),
+        mode="battery",
+        lo=None,
+        hi=None,
+    )
+    rail = result.rails[0]
+    assert rail.count == 8  # inf samples are VALUES (B-F8), counted
+    assert rail.mean_p is not None and math.isnan(rail.mean_p)
+    assert rail.peak_p == math.inf
+    assert rail.wh.value is not None and math.isnan(rail.wh.value)
+    assert rail.ah.value is not None and math.isnan(rail.ah.value)
+    battery = result.battery
+    assert battery is not None
+    assert battery.mean_i is not None and math.isnan(battery.mean_i)
+    assert battery.runtime_h is None  # a non-finite divisor yields no runtime
+
+
+def test_rail_length_mismatch_refuses_pairing(tmp_path: Path) -> None:
+    """A-F2 + B-F3 (converged): a rail whose sides declare the SAME
+    interval but DIFFERENT sample counts (one instrument stopped early)
+    used to pair silently over the zip truncation — overlap-only means
+    presented as window rows with null_count 0 lying, and the reverse
+    orientation pairing count 100 against an Ah span from all 360. Both
+    orientations refuse typed in the power_pairing family."""
+    write_capture(
+        tmp_path, "fx-len-v", values=(2.0,) * 360, interval=0.01, unit="V"
+    )
+    write_capture(
+        tmp_path, "fx-len-i", values=(3.0,) * 100, interval=0.01, unit="A"
+    )
+    with pytest.raises(ValueError, match="standalone_report_power_pairing"):
+        power_analysis(
+            _power_set(tmp_path, ("fx-len-v", "fx-len-i")),
+            mode="battery",
+            lo=None,
+            hi=None,
+        )
+    write_capture(
+        tmp_path, "fx-len2-v", values=(2.0,) * 100, interval=0.01, unit="V"
+    )
+    write_capture(
+        tmp_path, "fx-len2-i", values=(3.0,) * 360, interval=0.01, unit="A"
+    )
+    with pytest.raises(ValueError, match="standalone_report_power_pairing"):
+        power_analysis(
+            _power_set(tmp_path, ("fx-len2-v", "fx-len2-i")),
+            mode="battery",
+            lo=None,
+            hi=None,
+        )
+
+
+def test_product_unit_labels_derive_from_the_rails() -> None:
+    """B-F2: the power-unit label derives from the rail's ACTUAL units —
+    W only for base V·A; any scaled rail prints its unit product, never
+    asserting W over a mW-scale value (numeric scaling itself stays a
+    row-call; the LABEL must be honest now)."""
+    from benchweave_sdk_server.analysis import product_unit
+
+    assert product_unit("V", "A") == "W"
+    assert product_unit("mV", "A") == "mV·A"
+    assert product_unit("V", "mA") == "V·mA"
+    assert product_unit("mV", "µA") == "mV·µA"
+
+
+def test_full_input_pinned_coverage_asymmetry(tmp_path: Path) -> None:
+    """A-F3's PIN (the fold's call: pin, don't redesign): the module's
+    contract names pre-windowed points (both real callers pass the
+    request's windowed lists). Fed FULL point lists, the Ah integral
+    follows the trapezoid definition and clips its boundary segments
+    with interpolation, while the paired stream windows sample-wise —
+    two coverages, one window, exactly as the docstring states."""
+    write_capture(
+        tmp_path, "fx-pin-v", values=(2.0,) * 100, interval=0.01, unit="V"
+    )
+    write_capture(
+        tmp_path, "fx-pin-i", values=(3.0,) * 100, interval=0.01, unit="A"
+    )
+    result = power_analysis(
+        _power_set(tmp_path, ("fx-pin-v", "fx-pin-i")),
+        mode="battery",
+        lo=0.205,
+        hi=0.805,
+    )
+    rail = result.rails[0]
+    # Ah clips: segments straddling the bounds integrate partially —
+    # [0.205, 0.805] spans 0.6 s of grid.
+    assert _ulp(rail.ah.integrated_span_s, 0.6)
+    # Wh windows sample-wise: pairs exist only at t = 0.21 … 0.80, so
+    # the counted span is the 0.59 s between them.
+    assert _ulp(rail.wh.integrated_span_s, 0.59)

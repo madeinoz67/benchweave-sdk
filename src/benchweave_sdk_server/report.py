@@ -50,6 +50,7 @@ from .analysis import (
     RegionStats,
     SeriesSource,
     SleepMode,
+    product_unit,
 )
 
 #: The SVG canvas (the fork's own report geometry): wide enough for a
@@ -718,25 +719,36 @@ def _power_rail_table(rail: PowerRail) -> str:
     coverage denominators (AR-10 — a gapped integral is visibly partial),
     and the partial-pair reason when the rail has no voltage side."""
     left = rail.v_id if rail.v_id is not None else "—"
+    # B-F2: every unit label derives from the rail's ACTUAL units —
+    # W/Ah/Wh only for base-unit rails, the unit product otherwise
+    # (numeric scaling is a disclosed row-call; the labels are honest).
+    power_label = product_unit(rail.v_unit, rail.i_unit)
+    charge_label = "Ah" if rail.i_unit == "A" else f"{rail.i_unit}·h"
+    energy_label = (
+        "Wh" if power_label == "W" else f"{rail.v_unit}·{rail.i_unit}·h"
+    )
     caption = (
-        f"{_text(left)} × {_text(rail.i_id)} — host-computed · "
+        f"{_text(left)} ({_text(rail.v_unit or '—')}) × "
+        f"{_text(rail.i_id)} ({_text(rail.i_unit)}) — host-computed · "
         f"definition {POWER_DEFINITION} · count {rail.count} · "
         f"null_count {rail.null_count} · "
         f"window [{format_number(rail.lo)}, {format_number(rail.hi)}]"
     )
     rows: list[tuple[str, str]] = [
-        ("mean power (W)", format_number(rail.mean_p)),
-        ("peak power (W)", format_number(rail.peak_p)),
-        ("mean V", format_number(rail.mean_v)),
-        ("min V", format_number(rail.min_v)),
-        ("mean I", format_number(rail.mean_i)),
-        ("peak I", format_number(rail.peak_i)),
-        ("charge (Ah)", format_number(rail.ah.value)),
-        ("Ah integrated span (s)", format_number(rail.ah.integrated_span_s)),
-        ("Ah dropped segments", f"{rail.ah.dropped_segments}"),
-        ("energy (Wh)", format_number(rail.wh.value)),
-        ("Wh integrated span (s)", format_number(rail.wh.integrated_span_s)),
-        ("Wh dropped segments", f"{rail.wh.dropped_segments}"),
+        (f"mean power ({power_label})", format_number(rail.mean_p)),
+        (f"peak power ({power_label})", format_number(rail.peak_p)),
+        (f"mean V ({rail.v_unit})", format_number(rail.mean_v)),
+        (f"min V ({rail.v_unit})", format_number(rail.min_v)),
+        (f"mean I ({rail.i_unit})", format_number(rail.mean_i)),
+        (f"peak I ({rail.i_unit})", format_number(rail.peak_i)),
+        (f"charge ({charge_label})", format_number(rail.ah.value)),
+        (f"{charge_label} integrated span (s)",
+         format_number(rail.ah.integrated_span_s)),
+        (f"{charge_label} dropped segments", f"{rail.ah.dropped_segments}"),
+        (f"energy ({energy_label})", format_number(rail.wh.value)),
+        (f"{energy_label} integrated span (s)",
+         format_number(rail.wh.integrated_span_s)),
+        (f"{energy_label} dropped segments", f"{rail.wh.dropped_segments}"),
     ]
     if rail.reason is not None:
         rows.append(("reason", _text(rail.reason)))
@@ -758,26 +770,34 @@ def _battery_table(block: BatteryMode) -> str:
         f"null_count {block.null_count} · window "
         f"[{format_number(block.lo)}, {format_number(block.hi)}]"
     )
+    charge_label = "Ah" if block.i_unit == "A" else f"{block.i_unit}·h"
+    power_label = product_unit(block.v_unit, block.i_unit)
+    energy_label = (
+        "Wh" if power_label == "W" else f"{block.v_unit}·{block.i_unit}·h"
+    )
+    runtime_label = (
+        "h" if block.i_unit == "A" else f"capacity Ah / mean {block.i_unit}"
+    )
     rows: list[tuple[str, str]] = [
-        ("charge (Ah)", format_number(block.ah)),
-        ("energy (Wh)", format_number(block.wh)),
-        ("mean I (A)", format_number(block.mean_i)),
-        ("peak I (A)", format_number(block.peak_i)),
-        ("mean V", format_number(block.mean_v)),
-        ("min V", format_number(block.min_v)),
-        ("mean power (W)", format_number(block.mean_p)),
-        ("peak power (W)", format_number(block.peak_p)),
+        (f"charge ({charge_label})", format_number(block.ah)),
+        (f"energy ({energy_label})", format_number(block.wh)),
+        (f"mean I ({block.i_unit})", format_number(block.mean_i)),
+        (f"peak I ({block.i_unit})", format_number(block.peak_i)),
+        (f"mean V ({block.v_unit})", format_number(block.mean_v)),
+        (f"min V ({block.v_unit})", format_number(block.min_v)),
+        (f"mean power ({power_label})", format_number(block.mean_p)),
+        (f"peak power ({power_label})", format_number(block.peak_p)),
     ]
     if block.capacity_ah is not None:
         rows.append(
             (
-                "runtime (h)",
+                f"runtime ({runtime_label})",
                 format_number(block.runtime_h),
             )
         )
         caption += (
             f" · capacity {format_number(block.capacity_ah)} Ah · mean I "
-            f"{format_number(block.mean_i)} A"
+            f"{format_number(block.mean_i)} {block.i_unit}"
         )
     if block.reason is not None:
         rows.append(("reason", _text(block.reason)))
@@ -790,11 +810,19 @@ def _dcdc_table(block: DcDcMode) -> str:
     caption = (
         f"dc-dc · in {_text(block.in_v_id or '—')}/{_text(block.in_i_id or '—')} "
         f"→ out {_text(block.out_v_id or '—')}/{_text(block.out_i_id or '—')} — "
-        f"host-computed · definition {POWER_DEFINITION}"
+        f"host-computed · definition {POWER_DEFINITION} · "
+        f"in count {block.in_count} · out count {block.out_count} · "
+        f"window [{format_number(block.lo)}, {format_number(block.hi)}]"
     )
     rows: list[tuple[str, str]] = [
-        ("input power (W)", format_number(block.pin)),
-        ("output power (W)", format_number(block.pout)),
+        (
+            f"input power ({block.in_unit or '—'})",
+            format_number(block.pin),
+        ),
+        (
+            f"output power ({block.out_unit or '—'})",
+            format_number(block.pout),
+        ),
         ("η (%)", format_number(block.eta_pct)),
     ]
     if block.reason is not None:
@@ -811,7 +839,7 @@ def _sleep_table(block: SleepMode) -> str:
         f"definition {POWER_DEFINITION}"
     )
     rows: list[tuple[str, str]] = [
-        ("threshold", format_number(block.threshold)),
+        (f"threshold ({block.i_unit})", format_number(block.threshold)),
         ("verdict", _text(verdict)),
         ("classified samples", "—" if block.count is None else f"{block.count}"),
         ("duty (%)", format_number(block.duty_pct)),
@@ -832,18 +860,22 @@ def _sleep_table(block: SleepMode) -> str:
 def _load_step_table(block: LoadStepMode) -> str:
     """The load-step presentation: the 15% head/tail means on both series,
     ΔV, ΔI and R = −ΔV/ΔI (absent when |ΔI| ≤ 1e-9, never inf)."""
+    r_label = "Ω" if (block.v_unit == "V" and block.i_unit == "A") else (
+        f"{block.v_unit}/{block.i_unit}"
+    )
     caption = (
         f"load-step · {_text(block.i_id)} — host-computed · "
-        f"definition {POWER_DEFINITION} · V n {block.v_n} · I n {block.i_n}"
+        f"definition {POWER_DEFINITION} · V n {block.v_n} · I n {block.i_n} · "
+        f"window [{format_number(block.lo)}, {format_number(block.hi)}]"
     )
     rows = (
-        ("V head mean", format_number(block.v_head)),
-        ("V tail mean", format_number(block.v_tail)),
-        ("I head mean", format_number(block.i_head)),
-        ("I tail mean", format_number(block.i_tail)),
-        ("ΔV", format_number(block.dv)),
-        ("ΔI", format_number(block.di)),
-        ("R (Ω)", format_number(block.r)),
+        (f"V head mean ({block.v_unit})", format_number(block.v_head)),
+        (f"V tail mean ({block.v_unit})", format_number(block.v_tail)),
+        (f"I head mean ({block.i_unit})", format_number(block.i_head)),
+        (f"I tail mean ({block.i_unit})", format_number(block.i_tail)),
+        (f"ΔV ({block.v_unit})", format_number(block.dv)),
+        (f"ΔI ({block.i_unit})", format_number(block.di)),
+        (f"R ({r_label})", format_number(block.r)),
     )
     return _table("bw-power-mode", caption, rows)
 

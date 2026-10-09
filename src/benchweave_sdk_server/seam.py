@@ -2405,6 +2405,7 @@ class StandaloneSeam:
         "standalone_report_power_rails": "invalid_request",
         "standalone_report_power_param": "invalid_request",
         "standalone_report_power_pairing": "invalid_request",
+        "standalone_report_capture_duplicated": "invalid_request",
     }
 
     def _report_refusal(self, exc: ValueError, correlation: str) -> SeamError:
@@ -2745,6 +2746,7 @@ class StandaloneSeam:
         unindexed directory refuses identically on both surfaces.
         """
         from .analysis import (
+            AnalysisRefusal,
             load_series_set,
             power_analysis,
             scan_series,
@@ -2764,6 +2766,20 @@ class StandaloneSeam:
         for capture_id in capture_ids:
             self._stale_row_refusal(library, capture_id, correlation)
         try:
+            # A-F4 (the fold): a duplicated id used to fall through the
+            # default pairing as a duplicate i-only rail (the reuse
+            # guard covers explicit rails only); the export surface's
+            # schema uniqueItems refuses the same shape — the view
+            # refuses it typed, never silently.
+            seen: set[str] = set()
+            for capture_id in capture_ids:
+                if capture_id in seen:
+                    raise AnalysisRefusal(
+                        f"standalone_report_capture_duplicated: {capture_id} "
+                        "appears more than once in the request; the export "
+                        "schema's uniqueItems refuses the same shape"
+                    )
+                seen.add(capture_id)
             entries: list[dict[str, Any]] = []
             sources_points: list[tuple[Any, list[tuple[float, float]]]] = []
             for source in load_series_set(library.root, capture_ids):

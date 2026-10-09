@@ -522,8 +522,9 @@ def test_power_export_without_current_series_renders_reason(
 def test_power_export_refusals(seam: StandaloneSeam, capture_root: Path) -> None:
     """The pairing/power refusal family on the wire: unknown mode and
     out-of-set rails (invalid_request), a non-finite threshold that the
-    schema's number type admits (the pure layer's B-F4 mirror), and the
-    schema's own exclusiveMinimum on capacity_ah."""
+    schema's number type admits (the pure layer's B-F4 mirror), and a
+    non-positive capacity (the schema is shape-only — the seam's typed
+    standalone_report_power_param is the gate on every surface)."""
     _write_pair(capture_root, n=10)
     ids = ["fx-px-v", "fx-px-i"]
     with pytest.raises(SeamError) as caught:
@@ -570,3 +571,33 @@ def test_power_export_schema_rejects_unknown_power_keys(
              "power": {"mode": "battery", "volts": 1}},
         )
     assert caught.value.code == "invalid_request"
+
+
+# --- the I4b.2 fold wave (row A-F2+B-F3's wire arm) ----------------------------------
+
+
+def test_power_length_mismatch_refuses_on_the_wire(
+    seam: StandaloneSeam, capture_root: Path
+) -> None:
+    """A rail whose sides share the interval but not the sample count
+    refuses typed on the export surface (the zip truncation used to pair
+    the overlap silently)."""
+    write_capture(
+        capture_root, "fx-wl-v", values=(2.0,) * 360, unit="V", interval=0.01
+    )
+    write_capture(
+        capture_root, "fx-wl-i", values=(3.0,) * 100, unit="A", interval=0.01
+    )
+    with pytest.raises(SeamError) as caught:
+        call(
+            seam,
+            "report_export",
+            {
+                "capture_ids": ["fx-wl-v", "fx-wl-i"],
+                "power": {"mode": "battery"},
+            },
+        )
+    assert caught.value.code == "invalid_request"
+    assert "standalone_report_power_pairing" in caught.value.message
+    assert "sample_count" in caught.value.message
+    assert report_files(capture_root) == []

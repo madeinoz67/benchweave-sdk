@@ -28,7 +28,8 @@
   {%- else %}
   {%- for rail in power.rails %}
   <table class="bw-stats">
-    <caption>{{ rail.v if rail.v else '—' }} × {{ rail.i }} — host-computed ·
+    <caption>{{ rail.v if rail.v else '—' }} ({{ rail.v_unit if rail.v_unit else '—' }})
+      × {{ rail.i }} ({{ rail.i_unit }}) — host-computed ·
       definition benchweave-power/1 · count {{ rail.count }} ·
       null_count {{ rail.null_count }} · window {{ power.window }}</caption>
     <tbody>

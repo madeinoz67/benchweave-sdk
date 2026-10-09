@@ -259,6 +259,22 @@ def _power_params(fields: dict[str, str]) -> dict[str, Any] | dict[str, Any]:
     the stats and export routes; non-finite PARSES fine and the pure
     layer refuses it - the seam is the finite gate, the B-F4 posture)."""
     if not fields["mode"]:
+        present = [
+            f"{name}={fields[name]!r}"
+            for name in ("capacity_ah", "threshold")
+            if fields[name]
+        ]
+        if present:
+            # B-F5: REST's schema refuses a power object without its
+            # required mode — the view refuses the same shape typed, it
+            # never drops the operator's parameters silently.
+            return {
+                "code": "invalid_request",
+                "message": (
+                    "standalone_report_power_mode: a power mode is required "
+                    f"when power parameters are given ({', '.join(present)})"
+                ),
+            }
         return {}
     params: dict[str, Any] = {"mode": fields["mode"]}
     for name in ("capacity_ah", "threshold"):
@@ -283,28 +299,36 @@ def _power_entry(power: Any) -> dict[str, Any]:
     and the mode block pre-formatted (templates stay dumb, the
     _figure_entry discipline); the caption text carries the SRF-4
     denominators the report renders."""
+    from .analysis import product_unit
     from .report import format_number
 
     def rail_rows(rail: Any) -> list[tuple[str, str]]:
+        # B-F2: the unit labels derive from the rail's ACTUAL units
+        # (the report's logic through the same product_unit helper).
+        power_label = product_unit(rail.v_unit, rail.i_unit)
+        charge_label = "Ah" if rail.i_unit == "A" else f"{rail.i_unit}·h"
+        energy_label = (
+            "Wh" if power_label == "W" else f"{rail.v_unit}·{rail.i_unit}·h"
+        )
         rows = [
-            ("mean power (W)", format_number(rail.mean_p)),
-            ("peak power (W)", format_number(rail.peak_p)),
-            ("mean V", format_number(rail.mean_v)),
-            ("min V", format_number(rail.min_v)),
-            ("mean I", format_number(rail.mean_i)),
-            ("peak I", format_number(rail.peak_i)),
-            ("charge (Ah)", format_number(rail.ah.value)),
+            (f"mean power ({power_label})", format_number(rail.mean_p)),
+            (f"peak power ({power_label})", format_number(rail.peak_p)),
+            (f"mean V ({rail.v_unit})", format_number(rail.mean_v)),
+            (f"min V ({rail.v_unit})", format_number(rail.min_v)),
+            (f"mean I ({rail.i_unit})", format_number(rail.mean_i)),
+            (f"peak I ({rail.i_unit})", format_number(rail.peak_i)),
+            (f"charge ({charge_label})", format_number(rail.ah.value)),
             (
-                "Ah integrated span (s)",
+                f"{charge_label} integrated span (s)",
                 format_number(rail.ah.integrated_span_s),
             ),
-            ("Ah dropped segments", f"{rail.ah.dropped_segments}"),
-            ("energy (Wh)", format_number(rail.wh.value)),
+            (f"{charge_label} dropped segments", f"{rail.ah.dropped_segments}"),
+            (f"energy ({energy_label})", format_number(rail.wh.value)),
             (
-                "Wh integrated span (s)",
+                f"{energy_label} integrated span (s)",
                 format_number(rail.wh.integrated_span_s),
             ),
-            ("Wh dropped segments", f"{rail.wh.dropped_segments}"),
+            (f"{energy_label} dropped segments", f"{rail.wh.dropped_segments}"),
         ]
         if rail.reason is not None:
             rows.append(("reason", rail.reason))
@@ -315,25 +339,33 @@ def _power_entry(power: Any) -> dict[str, Any]:
     mode_title = power.mode
     if power.battery is not None:
         b = power.battery
+        power_label = product_unit(b.v_unit, b.i_unit)
+        charge_label = "Ah" if b.i_unit == "A" else f"{b.i_unit}·h"
+        energy_label = (
+            "Wh" if power_label == "W" else f"{b.v_unit}·{b.i_unit}·h"
+        )
+        runtime_label = (
+            "h" if b.i_unit == "A" else f"capacity Ah / mean {b.i_unit}"
+        )
         mode_rows = [
-            ("charge (Ah)", format_number(b.ah)),
-            ("energy (Wh)", format_number(b.wh)),
-            ("mean I (A)", format_number(b.mean_i)),
-            ("peak I (A)", format_number(b.peak_i)),
-            ("mean V", format_number(b.mean_v)),
-            ("min V", format_number(b.min_v)),
-            ("mean power (W)", format_number(b.mean_p)),
-            ("peak power (W)", format_number(b.peak_p)),
+            (f"charge ({charge_label})", format_number(b.ah)),
+            (f"energy ({energy_label})", format_number(b.wh)),
+            (f"mean I ({b.i_unit})", format_number(b.mean_i)),
+            (f"peak I ({b.i_unit})", format_number(b.peak_i)),
+            (f"mean V ({b.v_unit})", format_number(b.mean_v)),
+            (f"min V ({b.v_unit})", format_number(b.min_v)),
+            (f"mean power ({power_label})", format_number(b.mean_p)),
+            (f"peak power ({power_label})", format_number(b.peak_p)),
         ]
         if b.capacity_ah is not None:
-            mode_rows.append(("runtime (h)", format_number(b.runtime_h)))
+            mode_rows.append((f"runtime ({runtime_label})", format_number(b.runtime_h)))
         if b.reason is not None:
             mode_rows.append(("reason", b.reason))
     elif power.dcdc is not None:
         d = power.dcdc
         mode_rows = [
-            ("input power (W)", format_number(d.pin)),
-            ("output power (W)", format_number(d.pout)),
+            (f"input power ({d.in_unit or '—'})", format_number(d.pin)),
+            (f"output power ({d.out_unit or '—'})", format_number(d.pout)),
             ("η (%)", format_number(d.eta_pct)),
         ]
         if d.reason is not None:
@@ -346,7 +378,7 @@ def _power_entry(power: Any) -> dict[str, Any]:
             else f"{sl.verdict}: {sl.reason}"
         )
         mode_rows = [
-            ("threshold", format_number(sl.threshold)),
+            (f"threshold ({sl.i_unit})", format_number(sl.threshold)),
             ("verdict", verdict),
             (
                 "classified samples",
@@ -366,16 +398,22 @@ def _power_entry(power: Any) -> dict[str, Any]:
         ]
     elif power.load_step is not None:
         ls = power.load_step
+        r_label = "Ω" if (ls.v_unit == "V" and ls.i_unit == "A") else (
+            f"{ls.v_unit}/{ls.i_unit}"
+        )
         mode_rows = [
-            ("V head mean", format_number(ls.v_head)),
-            ("V tail mean", format_number(ls.v_tail)),
-            ("I head mean", format_number(ls.i_head)),
-            ("I tail mean", format_number(ls.i_tail)),
-            ("ΔV", format_number(ls.dv)),
-            ("ΔI", format_number(ls.di)),
-            ("R (Ω)", format_number(ls.r)),
+            (f"V head mean ({ls.v_unit})", format_number(ls.v_head)),
+            (f"V tail mean ({ls.v_unit})", format_number(ls.v_tail)),
+            (f"I head mean ({ls.i_unit})", format_number(ls.i_head)),
+            (f"I tail mean ({ls.i_unit})", format_number(ls.i_tail)),
+            (f"ΔV ({ls.v_unit})", format_number(ls.dv)),
+            (f"ΔI ({ls.i_unit})", format_number(ls.di)),
+            (f"R ({r_label})", format_number(ls.r)),
         ]
-        mode_title = f"load-step · V n {ls.v_n} · I n {ls.i_n}"
+        mode_title = (
+            f"load-step · V n {ls.v_n} · I n {ls.i_n} · window "
+            f"[{format_number(ls.lo)}, {format_number(ls.hi)}]"
+        )
     return {
         "mode": power.mode,
         "mode_title": mode_title,
@@ -384,7 +422,9 @@ def _power_entry(power: Any) -> dict[str, Any]:
         "rails": [
             {
                 "v": rail.v_id,
+                "v_unit": rail.v_unit,
                 "i": rail.i_id,
+                "i_unit": rail.i_unit,
                 "count": rail.count,
                 "null_count": rail.null_count,
                 "rows": rail_rows(rail),

@@ -3,48 +3,48 @@
   "assets": [
     {
       "path": "analyse.js",
-      "sha256": "e657c3bc65288ede64a189c62637fbfd9a567b1d330e3cb681304a7c260aa84e",
-      "size": 7957
+      "size": 9447,
+      "sha256": "63684132de4d73ee5097c6113e17a3f73422ccb52adcc92f47bc34aa32116b71"
     },
     {
       "path": "bw-events.js",
-      "sha256": "851f3b2882e6431f01c05bbac53d895969d6fe89ed2f73ea15922db6e6fe3623",
-      "size": 1150
+      "size": 1150,
+      "sha256": "851f3b2882e6431f01c05bbac53d895969d6fe89ed2f73ea15922db6e6fe3623"
     },
     {
       "path": "bw-plot.js",
-      "sha256": "6e7a8839f3148df903e11b38d6c1105925b5e1e4aa315e6e41ea73de3b7fdc30",
-      "size": 5219
+      "size": 5219,
+      "sha256": "6e7a8839f3148df903e11b38d6c1105925b5e1e4aa315e6e41ea73de3b7fdc30"
     },
     {
       "path": "htmx.min.js",
-      "sha256": "e209dda5c8235479f3166defc7750e1dbcd5a5c1808b7792fc2e6733768fb447",
-      "size": 50917
+      "size": 50917,
+      "sha256": "e209dda5c8235479f3166defc7750e1dbcd5a5c1808b7792fc2e6733768fb447"
     },
     {
       "path": "standalone.css",
-      "sha256": "b1c05ab8d9600f8e24487509d37113b7800fae9a8b2bbca5eb25d98d2a36de60",
-      "size": 5124
+      "size": 5124,
+      "sha256": "b1c05ab8d9600f8e24487509d37113b7800fae9a8b2bbca5eb25d98d2a36de60"
     },
     {
       "path": "uplot-LICENCE",
-      "sha256": "8f989229699b4fe2f1a0432d0e9edc338a8a911e250e2d1b01ecd770a5f5b1bd",
-      "size": 1078
+      "size": 1078,
+      "sha256": "8f989229699b4fe2f1a0432d0e9edc338a8a911e250e2d1b01ecd770a5f5b1bd"
     },
     {
       "path": "uplot-SOURCES.md",
-      "sha256": "630653202f2b60d08a6d047d22ccbefacb7edbcfc3fed2ef9ed16f0768e87588",
-      "size": 923
+      "size": 923,
+      "sha256": "630653202f2b60d08a6d047d22ccbefacb7edbcfc3fed2ef9ed16f0768e87588"
     },
     {
       "path": "uplot.css",
-      "sha256": "df630c6a8d6f8eeaff264b50f73ce5b114f646ffd9a0bb74f049b0a00135fa04",
-      "size": 1857
+      "size": 1857,
+      "sha256": "df630c6a8d6f8eeaff264b50f73ce5b114f646ffd9a0bb74f049b0a00135fa04"
     },
     {
       "path": "uplot.min.js",
-      "sha256": "19c8d4c6ad88929a79f4ae49d6f7161566dfd0ba3d15cc495e974f787eb78f1f",
-      "size": 51081
+      "size": 51081,
+      "sha256": "19c8d4c6ad88929a79f4ae49d6f7161566dfd0ba3d15cc495e974f787eb78f1f"
     }
   ]
 }

@@ -873,6 +873,34 @@ def unit_kind(unit: str) -> str:
     return "other"
 
 
+def product_unit(v_unit: str | None, i_unit: str) -> str:
+    """The power label for one rail, derived from the rail's ACTUAL units
+    (the B-F2 fold): ``W`` only when both sides are base units (V·A is W
+    by definition); any scaled rail prints its unit product — ``V·mA``,
+    ``mV·A`` — and the section never asserts W over a mW-scale value.
+    Numeric unit SCALING is deliberately absent (a disclosed row-call:
+    the labels are honest, the magnitudes stay raw)."""
+    if v_unit == "V" and i_unit == "A":
+        return "W"
+    return f"{v_unit}·{i_unit}" if v_unit is not None else i_unit
+
+
+def _fsum(terms: Sequence[float]) -> float:
+    """Exact summation with the one-case fallback (the A-F1 fold):
+    ``math.fsum`` raises ``ValueError`` on mixed +inf/-inf — the only
+    input whose EXACT sum does not exist — and that CPython message
+    used to escape to the wire as an untyped refusal. The fallback is
+    the sequential IEEE sum, which yields the family's honest
+    non-finite (nan for both signs of infinity, the same value the
+    landed statistics' accumulator produces) — rendered as
+    ``n/a (non-finite)``, never laundered to a number and never raised
+    (B-F8: inf is a value; a mean over both signs of it is NaN)."""
+    try:
+        return math.fsum(terms)
+    except ValueError:
+        return sum(terms)
+
+
 @dataclass(frozen=True)
 class IntegralResult:
     """One trapezoidal integral with its coverage denominators (AR-10).
@@ -938,15 +966,16 @@ def trapezoid_integral(
         spans.append(b - a)
     # Exact summation (the record's <=4-ulp rule): a running float sum
     # over hundreds of segments drifts past 4 ulp of the closed form on
-    # the uniform grid (measured: ~40 ulp at N = 360); math.fsum sums the
-    # per-segment terms exactly, and each per-segment span is itself
-    # exact by Sterbenz (consecutive grid times differ by far less than
-    # a factor of two), so the total lands within 1 ulp.
+    # the uniform grid (measured: ~40 ulp at N = 360); _fsum sums the
+    # per-segment terms exactly (mixed +/-inf falls back to the honest
+    # non-finite), and each per-segment span is itself exact by Sterbenz
+    # (consecutive grid times differ by far less than a factor of two),
+    # so the total lands within 1 ulp.
     counted = len(areas)
     return IntegralResult(
         definition=POWER_DEFINITION,
-        value=math.fsum(areas) if counted else None,
-        integrated_span_s=math.fsum(spans),
+        value=_fsum(areas) if counted else None,
+        integrated_span_s=_fsum(spans),
         counted_segments=counted,
         dropped_segments=dropped,
         uncertainty="unknown",
@@ -969,6 +998,8 @@ class PowerRail:
     definition: str
     v_id: str | None
     i_id: str
+    v_unit: str | None
+    i_unit: str
     lo: float | None
     hi: float | None
     count: int
@@ -996,6 +1027,8 @@ class BatteryMode:
     definition: str
     v_id: str | None
     i_id: str
+    v_unit: str | None
+    i_unit: str
     lo: float | None
     hi: float | None
     capacity_ah: float | None
@@ -1027,6 +1060,12 @@ class DcDcMode:
     in_i_id: str | None
     out_v_id: str | None
     out_i_id: str | None
+    in_unit: str | None
+    out_unit: str | None
+    lo: float | None
+    hi: float | None
+    in_count: int
+    out_count: int
     pin: float | None
     pout: float | None
     eta_pct: float | None
@@ -1045,6 +1084,7 @@ class SleepMode:
 
     definition: str
     i_id: str
+    i_unit: str
     threshold: float | None
     verdict: str
     reason: str | None
@@ -1067,6 +1107,10 @@ class LoadStepMode:
     definition: str
     v_id: str | None
     i_id: str
+    v_unit: str | None
+    i_unit: str
+    lo: float | None
+    hi: float | None
     v_n: int
     i_n: int
     v_head: float | None
@@ -1200,6 +1244,18 @@ def _rail_row(
             f"{i.sample_interval_s}; a rail pairs samples on a shared "
             "uniform grid"
         )
+    if v is not None and v.sample_count != i.sample_count:
+        # A-F2 + B-F3 (the fold): the interval-mismatch check's unguarded
+        # sibling — the same interval with DIFFERENT sample counts (one
+        # instrument stopped early) used to pair silently over the zip
+        # truncation, presenting overlap-only means as window rows. A
+        # rail pairs whole captures or refuses.
+        raise AnalysisRefusal(
+            f"standalone_report_power_pairing: {v.capture_id} and {i.capture_id} "
+            f"declare sample_count {v.sample_count} and {i.sample_count}; a "
+            "rail pairs whole captures on a shared grid (the overlap alone "
+            "would misstate the window)"
+        )
     count = 0
     null_count = 0
     powers: list[float] = []
@@ -1210,7 +1266,7 @@ def _rail_row(
     i_peak: float | None = None
     power_nodes: list[tuple[float, float]] = []
     if v is not None:
-        for (t, vv), (_, ii) in zip(v_points, i_points, strict=False):
+        for (t, vv), (_, ii) in zip(v_points, i_points, strict=True):
             if lo is not None and t < lo:
                 continue
             if hi is not None and t > hi:
@@ -1247,17 +1303,20 @@ def _rail_row(
         definition=POWER_DEFINITION,
         v_id=v.capture_id if v is not None else None,
         i_id=i.capture_id,
+        v_unit=v.unit if v is not None else None,
+        i_unit=i.unit,
         lo=lo,
         hi=hi,
         count=count,
         null_count=null_count,
         # Exact summation for every mean (the record's <=4-ulp rule —
-        # same reasoning as trapezoid_integral).
-        mean_p=math.fsum(powers) / count if count else None,
+        # same reasoning as trapezoid_integral; _fsum's fallback keeps
+        # mixed +/-inf honest instead of raising).
+        mean_p=_fsum(powers) / count if count else None,
         peak_p=p_peak,
-        mean_v=math.fsum(voltages) / count if count else None,
+        mean_v=_fsum(voltages) / count if count else None,
         min_v=v_low,
-        mean_i=math.fsum(currents) / count if count else None,
+        mean_i=_fsum(currents) / count if count else None,
         peak_i=i_peak,
         # Ah integrates the current series ALONE over its own grid — the
         # record's rule; the V side never gates it.
@@ -1289,13 +1348,14 @@ def _head_tail_means(values: Sequence[float]) -> tuple[int, float | None, float 
     if n == 0:
         return 0, None, None
     side = max(1, math.floor(n * 0.15))
-    head = math.fsum(values[:side]) / side
-    tail = math.fsum(values[n - side :]) / side
+    head = _fsum(values[:side]) / side
+    tail = _fsum(values[n - side :]) / side
     return n, head, tail
 
 
 def _sleep_mode(
     i_id: str,
+    i_unit: str,
     i_points: list[tuple[float, float]],
     threshold: float | None,
     *,
@@ -1308,6 +1368,7 @@ def _sleep_mode(
         return SleepMode(
             definition=POWER_DEFINITION,
             i_id=i_id,
+            i_unit=i_unit,
             threshold=None,
             verdict="not_evaluated",
             reason="no threshold",
@@ -1326,14 +1387,15 @@ def _sleep_mode(
     return SleepMode(
         definition=POWER_DEFINITION,
         i_id=i_id,
+        i_unit=i_unit,
         threshold=threshold,
         verdict="evaluated",
         reason=None,
         count=count,
         above_count=len(above),
-        above_mean=math.fsum(above) / len(above) if above else None,
+        above_mean=_fsum(above) / len(above) if above else None,
         below_count=len(below),
-        below_mean=math.fsum(below) / len(below) if below else None,
+        below_mean=_fsum(below) / len(below) if below else None,
         duty_pct=(len(above) / count * 100.0) if count else None,
         uncertainty="unknown",
     )
@@ -1351,9 +1413,16 @@ def power_analysis(
 ) -> PowerAnalysis:
     """The whole power family over one capture set (the record §1.4).
 
-    ``series`` is each loaded source with its (digest-verified) point
-    list — windowed or full; the window is applied here. Scalar params
-    refuse typed (``standalone_report_power_mode`` /
+    ``series`` is each loaded source with its (digest-verified) WINDOWED
+    point list — the contract both real callers meet (the seam's export
+    path and the view pass the request's own windowed points, so every
+    pair and segment names a sample inside the window). Full point lists
+    are also accepted, with one pinned coverage asymmetry (A-F3's pin
+    test): the Ah integral then follows the trapezoid definition and
+    CLIPS its boundary segments with interpolation, while the paired
+    stream windows sample-wise — two coverages of one window, exactly as
+    ``test_full_input_pinned_coverage_asymmetry`` pins.
+    Scalar params refuse typed (``standalone_report_power_mode`` /
     ``standalone_report_power_param``) and rails resolve through
     :func:`resolve_power_rails`. The result carries every rail's rows,
     the ``power_unavailable`` reason when the set holds no current
@@ -1434,6 +1503,8 @@ def power_analysis(
             definition=POWER_DEFINITION,
             v_id=first.v_id,
             i_id=first.i_id,
+            v_unit=first.v_unit,
+            i_unit=first.i_unit,
             lo=lo,
             hi=hi,
             capacity_ah=float(capacity_ah) if capacity_ah is not None else None,
@@ -1469,6 +1540,16 @@ def power_analysis(
             in_i_id=first.i_id,
             out_v_id=second.v_id if second is not None else None,
             out_i_id=second.i_id if second is not None else None,
+            in_unit=product_unit(first.v_unit, first.i_unit),
+            out_unit=(
+                product_unit(second.v_unit, second.i_unit)
+                if second is not None
+                else None
+            ),
+            lo=lo,
+            hi=hi,
+            in_count=first.count,
+            out_count=second.count if second is not None else 0,
             pin=pin,
             pout=pout,
             eta_pct=eta,
@@ -1477,7 +1558,8 @@ def power_analysis(
         )
     elif mode == "sleep":
         sleep = _sleep_mode(
-            first.i_id, points_of[first.i_id], threshold, lo=lo, hi=hi
+            first.i_id, first.i_unit, points_of[first.i_id], threshold,
+            lo=lo, hi=hi,
         )
     else:  # "load-step" — the only remaining POWER_MODES member
         v_values = (
@@ -1497,6 +1579,10 @@ def power_analysis(
             definition=POWER_DEFINITION,
             v_id=first.v_id,
             i_id=first.i_id,
+            v_unit=first.v_unit,
+            i_unit=first.i_unit,
+            lo=lo,
+            hi=hi,
             v_n=v_n,
             i_n=i_n,
             v_head=v_head,

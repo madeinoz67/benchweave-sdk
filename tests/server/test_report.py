@@ -919,3 +919,64 @@ def test_power_render_is_deterministic(power_set: Path) -> None:
     first = _render_power(power_set, ["fx-rail-v", "fx-rail-i"], "battery")
     second = _render_power(power_set, ["fx-rail-v", "fx-rail-i"], "battery")
     assert first == second
+
+
+# --- the I4b.2 fold wave (rows B-F2/A-F6) --------------------------------------------
+
+
+def test_scaled_unit_rails_never_label_a_scaled_value_as_w(
+    tmp_path: Path, power_set: Path
+) -> None:
+    """B-F2: label honesty — a 2 V x 3 mA rail renders its unit product
+    (V·mA), its current rows label (mA), its charge row (mA·h): the
+    section never asserts (W)/(Ah) over mW/mAh-scale values (numeric
+    SCALING stays a disclosed row-call — the labels are what must be
+    honest now)."""
+    write_capture(
+        tmp_path, "fx-scale-v", values=(2.0,) * 8, interval=0.01, unit="V"
+    )
+    write_capture(
+        tmp_path, "fx-scale-i", values=(3.0,) * 8, interval=0.01, unit="mA"
+    )
+    document = _render_power(tmp_path, ["fx-scale-v", "fx-scale-i"], "battery")
+    assert "mean power (W)" not in document
+    assert "peak power (W)" not in document
+    assert "energy (Wh)" not in document
+    assert "charge (Ah)" not in document
+    assert "mean power (V·mA)" in document
+    assert "energy (V·mA·h)" in document
+    assert "charge (mA·h)" in document
+    assert "peak I (mA)" in document
+    # The base-unit rails keep their conventional labels.
+    base = _render_power(power_set, ["fx-rail-v", "fx-rail-i"], "battery")
+    assert "mean power (W)" in base and "energy (Wh)" in base
+
+
+def test_dcdc_and_loadstep_captions_carry_denominators(tmp_path: Path) -> None:
+    """A-F6: the dc-dc and load-step captions carry the window and count
+    denominators their sibling power blocks state (SRF-4 consistency)."""
+    write_capture(
+        tmp_path, "fx-cap-in-v", values=(12.0,) * 20, interval=0.01, unit="V"
+    )
+    write_capture(
+        tmp_path, "fx-cap-in-i", values=(1.0,) * 20, interval=0.01, unit="A"
+    )
+    write_capture(
+        tmp_path, "fx-cap-out-v", values=(5.0,) * 20, interval=0.01, unit="V"
+    )
+    write_capture(
+        tmp_path, "fx-cap-out-i", values=(2.0,) * 20, interval=0.01, unit="A"
+    )
+    dcdc = _render_power(
+        tmp_path,
+        ["fx-cap-in-v", "fx-cap-in-i", "fx-cap-out-v", "fx-cap-out-i"],
+        "dc-dc",
+    )
+    assert re.search(r"dc-dc[^<]*window \[", dcdc), (
+        "the dc-dc caption must state its window"
+    )
+    assert "count 20" in dcdc
+    step = _render_power(tmp_path, ["fx-cap-in-v", "fx-cap-in-i"], "load-step")
+    assert re.search(r"load-step[^<]*window \[", step), (
+        "the load-step caption must state its window"
+    )

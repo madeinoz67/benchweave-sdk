@@ -41,13 +41,13 @@ fields are the no-script path.</p>
     </select>
     <label for="a-capacity">Battery capacity (Ah)</label>
     <input id="a-capacity" name="capacity_ah" value="{{ power_capacity }}" inputmode="decimal">
-    <label for="a-threshold">Sleep threshold (A)</label>
+    <label for="a-threshold">Sleep threshold</label>
     <input id="a-threshold" name="threshold" value="{{ power_threshold }}" inputmode="decimal">
     <p class="hint">Power modes pair the set's voltage-class and current-class
     captures by unit (definition <code>benchweave-power/1</code>); the resolved
     rails are recorded in the exported report's sidecar. Battery mode uses the
-    capacity for runtime; sleep mode needs a threshold (absent →
-    not_evaluated).</p>
+    capacity for runtime; sleep mode needs a threshold in the rail's own
+    current unit (absent → not_evaluated).</p>
     {% if marker_capture %}
     <fieldset class="bw-markers" id="marker-fieldset"
               data-bw-marker-capture="{{ marker_capture }}">

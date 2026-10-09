@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 import struct
 from pathlib import Path
@@ -1000,3 +1001,259 @@ def test_export_carries_the_power_params(
     report = client.get(response.headers["Location"])
     assert "benchweave-power/1" in report.text
     assert "R (Ω)" in report.text
+
+
+# --- the I4b.2 fold wave (rows A-F1/A-F2+B-F3/B-F1/B-F2/A-F4/B-F5) -------------------
+
+
+def test_view_mixed_inf_renders_non_finite_not_cpython_text(
+    client: TestClient, capture_root: Path
+) -> None:
+    """A-F1's view arm: mixed +inf/-inf samples render the block's honest
+    n/a (non-finite) marks — CPython's ``-inf + inf in fsum`` text never
+    reaches the page (it used to refuse the whole view)."""
+    write_capture(
+        capture_root,
+        "fx-view-mix-i",
+        values=(1.0, 1.0, math.inf, 1.0, -math.inf, 1.0, 1.0, 1.0),
+        interval=0.01,
+        unit="A",
+    )
+    write_capture(
+        capture_root, "fx-view-mix-v", values=(5.0,) * 8, interval=0.01, unit="V"
+    )
+    token = csrf_of(client)
+    response = client.post(
+        "/analyse/stats",
+        data={"capture": ["fx-view-mix-v", "fx-view-mix-i"], "power_mode": "battery"},
+        headers={"X-CSRF-Token": token},
+    )
+    assert response.status_code == 200
+    assert "benchweave-power/1" in response.text
+    assert "n/a (non-finite)" in response.text
+    assert "fsum" not in response.text
+    assert "Refused" not in response.text
+
+
+def test_view_length_mismatch_refuses(client: TestClient, capture_root: Path) -> None:
+    """A-F2+B-F3's view arm: the same typed refusal renders on the view."""
+    write_capture(
+        capture_root, "fx-view-len-v", values=(2.0,) * 360, interval=0.01, unit="V"
+    )
+    write_capture(
+        capture_root, "fx-view-len-i", values=(3.0,) * 100, interval=0.01, unit="A"
+    )
+    response = client.get(
+        "/analyse",
+        params=[
+            ("capture", "fx-view-len-v"),
+            ("capture", "fx-view-len-i"),
+            ("power_mode", "battery"),
+        ],
+    )
+    assert "standalone_report_power_pairing" in response.text
+    assert "sample_count" in response.text
+
+
+def test_view_duplicate_capture_ids_refuse(client: TestClient, capture_root: Path) -> None:
+    """A-F4: a duplicated capture id on the view path refuses typed (the
+    default pairing used to mint a duplicate i-only rail from it; the
+    export surface's schema uniqueItems already refuses the same shape)."""
+    write_capture(
+        capture_root, "fx-dup-v", values=(2.0,) * 8, interval=0.01, unit="V"
+    )
+    write_capture(
+        capture_root, "fx-dup-i", values=(3.0,) * 8, interval=0.01, unit="A"
+    )
+    response = client.get(
+        "/analyse",
+        params=[
+            ("capture", "fx-dup-v"),
+            ("capture", "fx-dup-i"),
+            ("capture", "fx-dup-i"),
+        ],
+    )
+    assert "standalone_report_capture_duplicated" in response.text
+
+
+def test_view_power_params_without_mode_refuse(
+    client: TestClient, capture_root: Path
+) -> None:
+    """B-F5: capacity/threshold without a mode refuse typed on the view
+    (they used to drop silently — REST's schema refuses the same shape;
+    the surfaces stay consistent)."""
+    _write_power_pair(capture_root)
+    response = client.get(
+        "/analyse",
+        params=[
+            ("capture", "fx-view-v"),
+            ("capture", "fx-view-i"),
+            ("capacity_ah", "2"),
+        ],
+    )
+    assert "standalone_report_power_mode" in response.text
+    export = client.post(
+        "/analyse/export",
+        data={"capture": ["fx-view-v", "fx-view-i"], "capacity_ah": "2"},
+        headers={"X-CSRF-Token": csrf_of(client)},
+    )
+    assert export.status_code == 400
+    assert "standalone_report_power_mode" in export.text
+
+
+def test_view_scaled_units_never_label_as_w(
+    client: TestClient, capture_root: Path
+) -> None:
+    """B-F2's view arm: the mA rail's rows label (V·mA)/(mA) — the
+    section never asserts (W) over a mW-scale value."""
+    write_capture(
+        capture_root, "fx-view-sv", values=(2.0,) * 8, interval=0.01, unit="V"
+    )
+    write_capture(
+        capture_root, "fx-view-si", values=(3.0,) * 8, interval=0.01, unit="mA"
+    )
+    token = csrf_of(client)
+    response = client.post(
+        "/analyse/stats",
+        data={"capture": ["fx-view-sv", "fx-view-si"], "power_mode": "battery"},
+        headers={"X-CSRF-Token": token},
+    )
+    assert response.status_code == 200
+    assert "mean power (V·mA)" in response.text
+    assert "mean power (W)" not in response.text
+    # The threshold hint no longer hardcodes amperes.
+    assert 'name="threshold"' in client.get("/analyse").text
+    page = client.get("/analyse").text
+    assert "Sleep threshold (A)" not in page
+
+
+def test_analyse_js_syncs_the_power_fields_into_the_export(tmp_path: Path) -> None:
+    """B-F1 (the fold): the visible power inputs live in #analyse-form;
+    the export form's hiddens are server-rendered snapshots. A stats
+    POST (battery/2) then an edit (sleep + threshold) then a DIRECT
+    export used to launder the stale battery params into the pinned
+    content-addressed document — the marker submit/input sync now covers
+    the three power fields too (driven under node, the placement
+    harness's shape)."""
+    import shutil
+    import subprocess
+
+    from benchweave_sdk_server.assets import ui_assets_root
+
+    if shutil.which("node") is None:
+        pytest.skip("node is not available to drive the submit sync")
+    harness = tmp_path / "harness.mjs"
+    harness.write_text(POWER_SYNC_HARNESS)
+    script = ui_assets_root() / "analyse.js"
+    result = subprocess.run(
+        ["node", str(harness), str(script)],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["export_mode"] == "sleep", (
+        "the export form must mirror the EDITED mode at submit time"
+    )
+    assert payload["export_threshold"] == "0.01", payload
+    assert payload["export_capacity"] == "", (
+        "the edited-away capacity must not survive as a stale hidden"
+    )
+
+
+POWER_SYNC_HARNESS = """
+import { readFileSync } from "node:fs";
+
+const script = readFileSync(process.argv[2], "utf8");
+
+/* The live (visible) analyse-form power controls, edited AFTER the
+ * stats POST rendered the export form's stale snapshot. */
+const powerMode = { value: "battery" };
+const capacity = { value: "2" };
+const threshold = { value: "" };
+const form = {
+  elements: {
+    lo: { value: "" },
+    hi: { value: "" },
+    power_mode: powerMode,
+    capacity_ah: capacity,
+    threshold: threshold,
+  },
+  requestSubmit() {},
+  submit() {},
+  querySelectorAll() { return []; },
+};
+
+/* The export form's server-rendered snapshot: battery / capacity 2. */
+const exportForm = {
+  id: "export-form",
+  hidden: [
+    { name: "power_mode", value: "battery" },
+    { name: "capacity_ah", value: "2" },
+    { name: "threshold", value: "" },
+  ],
+  addEventListener() {},
+  querySelectorAll(selector) {
+    const names = [];
+    for (const field of ["power_mode", "capacity_ah", "threshold", "marker_label",
+                         "marker_t", "marker_note", "marker_capture"]) {
+      if (selector.indexOf(field) >= 0) names.push(field);
+    }
+    return this.hidden.filter((node) => names.indexOf(node.name) >= 0);
+  },
+  appendChild(node) {
+    node.parentNode = this;
+    this.hidden.push(node);
+    return node;
+  },
+  removeChild(node) {
+    this.hidden = this.hidden.filter((entry) => entry !== node);
+    return node;
+  },
+};
+exportForm.hidden.forEach((node) => { node.parentNode = exportForm; });
+
+const documentListeners = {};
+globalThis.document = {
+  readyState: "complete",
+  addEventListener(type, cb) {
+    (documentListeners[type] = documentListeners[type] || []).push(cb);
+  },
+  getElementById(id) {
+    if (id === "analyse-form") return form;
+    if (id === "export-form") return exportForm;
+    return null;
+  },
+  querySelectorAll() { return []; },
+  createElement() { return { type: "", name: "", value: "" }; },
+  body: { addEventListener() {} },
+};
+
+eval(script);
+
+function fireDocument(type, event) {
+  (documentListeners[type] || []).forEach((cb) => cb(event));
+}
+
+/* The operator edits battery/2 -> sleep + threshold 0.01 ... */
+powerMode.value = "sleep";
+capacity.value = "";
+threshold.value = "0.01";
+/* ... the input sync fires for the edit ... */
+fireDocument("input", { target: { closest: () => null, name: "threshold" } });
+/* ... and the export submits directly (no stats re-POST in between). */
+fireDocument("submit", { target: exportForm });
+
+const byName = (name) => exportForm.hidden
+  .filter((node) => node.name === name)
+  .map((node) => node.value)
+  .join(",");
+
+console.log(JSON.stringify({
+  export_mode: byName("power_mode"),
+  export_capacity: byName("capacity_ah"),
+  export_threshold: byName("threshold"),
+}));
+"""
