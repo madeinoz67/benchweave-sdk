@@ -39,10 +39,17 @@ from .analysis import (
     ANALYSIS_DEFINITION,
     ASSERT_DEFINITION,
     EDGE_DEFINITION,
+    POWER_DEFINITION,
     AssertionResult,
+    BatteryMode,
+    DcDcMode,
     EdgeTiming,
+    LoadStepMode,
+    PowerAnalysis,
+    PowerRail,
     RegionStats,
     SeriesSource,
+    SleepMode,
 )
 
 #: The SVG canvas (the fork's own report geometry): wide enough for a
@@ -121,6 +128,7 @@ def build_report(
     sdk_version: str,
     markers: Mapping[str, Sequence[dict[str, Any]]] | None = None,
     assertions: Sequence[AssertionResult] = (),
+    power: PowerAnalysis | None = None,
 ) -> str:
     """Render the one self-contained HTML document (pure: no I/O, no
     clock; the caller owns asset bytes and versions).
@@ -172,7 +180,13 @@ def build_report(
     parts.append(
         f"<p>Statistics definition <code>{ANALYSIS_DEFINITION}</code>; edge "
         f"timing <code>{EDGE_DEFINITION}</code>; assertions "
-        f"<code>{ASSERT_DEFINITION}</code>. "
+        f"<code>{ASSERT_DEFINITION}</code>"
+        + (
+            f"; power <code>{POWER_DEFINITION}</code>"
+            if power is not None
+            else ""
+        )
+        + ". "
         "Processed values are host-computed (uncertainty: unknown); every "
         "block states its denominators.</p>"
     )
@@ -255,6 +269,8 @@ def build_report(
     for entry in entries:
         parts.append(_edge_table(entry))
     parts.append("</section>")
+    if power is not None:
+        parts.append(_power_section(power))
     if assertions:
         parts.append('<section class="bw-report-assertions">')
         parts.append("<h2>Assertions</h2>")
@@ -652,6 +668,184 @@ def _assertions_table(assertions: Sequence[AssertionResult]) -> str:
         f"<caption>{caption}</caption>\n"
         f"<thead>\n{head}</thead>\n<tbody>\n{body}</tbody>\n</table>"
     )
+
+
+def _table(
+    class_name: str,
+    caption: str,
+    rows: Sequence[tuple[str, str]],
+    **attributes: str,
+) -> str:
+    """One captioned two-column table (the stats/edge block shape); the
+    power family's blocks reuse it so every caption reads the same."""
+    body = "".join(
+        f"<tr><th>{name}</th><td>{value}</td></tr>" for name, value in rows
+    )
+    attrs = "".join(f' {key}="{_text(value)}"' for key, value in attributes.items())
+    return (
+        f'<table class="{class_name}"{attrs}>\n'
+        f"<caption>{caption}</caption>\n<tbody>\n{body}\n</tbody>\n</table>"
+    )
+
+
+def _power_section(power: PowerAnalysis) -> str:
+    """The power section (I4b.2): the unavailable reason or the rail rows,
+    then the ONE requested mode's presentation — every block captioned per
+    SRF-4 (host-computed, the definition id, the denominators)."""
+    parts = ['<section class="bw-report-power">']
+    parts.append(f"<h2>Power — {_text(power.mode)}</h2>")
+    if power.unavailable is not None:
+        parts.append(
+            '<p class="bw-power-unavailable">'
+            f"{_text(power.unavailable)}</p>"
+        )
+    for rail in power.rails:
+        parts.append(_power_rail_table(rail))
+    if power.battery is not None:
+        parts.append(_battery_table(power.battery))
+    elif power.dcdc is not None:
+        parts.append(_dcdc_table(power.dcdc))
+    elif power.sleep is not None:
+        parts.append(_sleep_table(power.sleep))
+    elif power.load_step is not None:
+        parts.append(_load_step_table(power.load_step))
+    parts.append("</section>")
+    return "\n".join(parts)
+
+
+def _power_rail_table(rail: PowerRail) -> str:
+    """One rail's rows: the paired statistics, both integrals with their
+    coverage denominators (AR-10 — a gapped integral is visibly partial),
+    and the partial-pair reason when the rail has no voltage side."""
+    left = rail.v_id if rail.v_id is not None else "—"
+    caption = (
+        f"{_text(left)} × {_text(rail.i_id)} — host-computed · "
+        f"definition {POWER_DEFINITION} · count {rail.count} · "
+        f"null_count {rail.null_count} · "
+        f"window [{format_number(rail.lo)}, {format_number(rail.hi)}]"
+    )
+    rows: list[tuple[str, str]] = [
+        ("mean power (W)", format_number(rail.mean_p)),
+        ("peak power (W)", format_number(rail.peak_p)),
+        ("mean V", format_number(rail.mean_v)),
+        ("min V", format_number(rail.min_v)),
+        ("mean I", format_number(rail.mean_i)),
+        ("peak I", format_number(rail.peak_i)),
+        ("charge (Ah)", format_number(rail.ah.value)),
+        ("Ah integrated span (s)", format_number(rail.ah.integrated_span_s)),
+        ("Ah dropped segments", f"{rail.ah.dropped_segments}"),
+        ("energy (Wh)", format_number(rail.wh.value)),
+        ("Wh integrated span (s)", format_number(rail.wh.integrated_span_s)),
+        ("Wh dropped segments", f"{rail.wh.dropped_segments}"),
+    ]
+    if rail.reason is not None:
+        rows.append(("reason", _text(rail.reason)))
+    return _table(
+        "bw-power",
+        caption,
+        rows,
+        **{"data-bw-v": left, "data-bw-i": rail.i_id},
+    )
+
+
+def _battery_table(block: BatteryMode) -> str:
+    """The battery presentation over rail 1: the rail's carried values
+    plus the runtime row — present ONLY when the operator supplied a
+    capacity (never a default capacity)."""
+    caption = (
+        f"battery · {_text(block.i_id)} — host-computed · "
+        f"definition {POWER_DEFINITION} · count {block.count} · "
+        f"null_count {block.null_count} · window "
+        f"[{format_number(block.lo)}, {format_number(block.hi)}]"
+    )
+    rows: list[tuple[str, str]] = [
+        ("charge (Ah)", format_number(block.ah)),
+        ("energy (Wh)", format_number(block.wh)),
+        ("mean I (A)", format_number(block.mean_i)),
+        ("peak I (A)", format_number(block.peak_i)),
+        ("mean V", format_number(block.mean_v)),
+        ("min V", format_number(block.min_v)),
+        ("mean power (W)", format_number(block.mean_p)),
+        ("peak power (W)", format_number(block.peak_p)),
+    ]
+    if block.capacity_ah is not None:
+        rows.append(
+            (
+                "runtime (h)",
+                format_number(block.runtime_h),
+            )
+        )
+        caption += (
+            f" · capacity {format_number(block.capacity_ah)} Ah · mean I "
+            f"{format_number(block.mean_i)} A"
+        )
+    if block.reason is not None:
+        rows.append(("reason", _text(block.reason)))
+    return _table("bw-power-mode", caption, rows)
+
+
+def _dcdc_table(block: DcDcMode) -> str:
+    """The dc-dc presentation: input/output powers and η — absent with a
+    reason when the rails or powers are missing (never inf, never 0)."""
+    caption = (
+        f"dc-dc · in {_text(block.in_v_id or '—')}/{_text(block.in_i_id or '—')} "
+        f"→ out {_text(block.out_v_id or '—')}/{_text(block.out_i_id or '—')} — "
+        f"host-computed · definition {POWER_DEFINITION}"
+    )
+    rows: list[tuple[str, str]] = [
+        ("input power (W)", format_number(block.pin)),
+        ("output power (W)", format_number(block.pout)),
+        ("η (%)", format_number(block.eta_pct)),
+    ]
+    if block.reason is not None:
+        rows.append(("reason", _text(block.reason)))
+    return _table("bw-power-mode", caption, rows)
+
+
+def _sleep_table(block: SleepMode) -> str:
+    """The sleep presentation: the threshold split, duty % and the class
+    means/counts — the not_evaluated verdict carries its reason inline."""
+    verdict = block.verdict if block.reason is None else f"{block.verdict}: {block.reason}"
+    caption = (
+        f"sleep · {_text(block.i_id)} — host-computed · "
+        f"definition {POWER_DEFINITION}"
+    )
+    rows: list[tuple[str, str]] = [
+        ("threshold", format_number(block.threshold)),
+        ("verdict", _text(verdict)),
+        ("classified samples", "—" if block.count is None else f"{block.count}"),
+        ("duty (%)", format_number(block.duty_pct)),
+        (
+            "above count",
+            "—" if block.above_count is None else f"{block.above_count}",
+        ),
+        ("above mean", format_number(block.above_mean)),
+        (
+            "below count",
+            "—" if block.below_count is None else f"{block.below_count}",
+        ),
+        ("below mean", format_number(block.below_mean)),
+    ]
+    return _table("bw-power-mode", caption, rows)
+
+
+def _load_step_table(block: LoadStepMode) -> str:
+    """The load-step presentation: the 15% head/tail means on both series,
+    ΔV, ΔI and R = −ΔV/ΔI (absent when |ΔI| ≤ 1e-9, never inf)."""
+    caption = (
+        f"load-step · {_text(block.i_id)} — host-computed · "
+        f"definition {POWER_DEFINITION} · V n {block.v_n} · I n {block.i_n}"
+    )
+    rows = (
+        ("V head mean", format_number(block.v_head)),
+        ("V tail mean", format_number(block.v_tail)),
+        ("I head mean", format_number(block.i_head)),
+        ("I tail mean", format_number(block.i_tail)),
+        ("ΔV", format_number(block.dv)),
+        ("ΔI", format_number(block.di)),
+        ("R (Ω)", format_number(block.r)),
+    )
+    return _table("bw-power-mode", caption, rows)
 
 
 def _markers_table(

@@ -770,3 +770,152 @@ def test_a_f1_edge_block_never_claims_instant_settlement(tmp_path: Path) -> None
     assert settle_row.group(1) != "0", (
         "a non-finite means row must never render settle_time 0"
     )
+
+
+# --- I4b.2: the power section (the record §1.6 — SRF-4 caption discipline) ----------
+
+
+def _power_result(
+    root: Path,
+    capture_ids: list[str],
+    mode: str,
+    *,
+    lo: float | None = None,
+    hi: float | None = None,
+    **params: Any,
+) -> Any:
+    from benchweave_sdk_server.analysis import power_analysis
+
+    entries = _entries(root, capture_ids, lo=lo, hi=hi)
+    return power_analysis(
+        [(entry.source, entry.points) for entry in entries],
+        mode=mode,
+        lo=lo,
+        hi=hi,
+        **params,
+    )
+
+
+def _render_power(
+    root: Path,
+    capture_ids: list[str],
+    mode: str,
+    *,
+    lo: float | None = None,
+    hi: float | None = None,
+    **params: Any,
+) -> str:
+    return build_report(
+        _entries(root, capture_ids, lo=lo, hi=hi),
+        lo=lo,
+        hi=hi,
+        styles=STYLES,
+        pin_version=PIN_VERSION,
+        sdk_version=SDK_VERSION,
+        power=_power_result(root, capture_ids, mode, lo=lo, hi=hi, **params),
+    )
+
+
+@pytest.fixture(scope="module")
+def power_set(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    root = tmp_path_factory.mktemp("report-power")
+    write_capture(root, "fx-rail-v", values=(2.0,) * 360, interval=0.01, unit="V")
+    write_capture(root, "fx-rail-i", values=(3.0,) * 360, interval=0.01, unit="A")
+    return root
+
+
+def test_power_section_carries_the_caption_discipline(power_set: Path) -> None:
+    """SRF-4 on the power family: the rail rows carry host-computed, the
+    benchweave-power/1 definition and their denominators (window, pair
+    count, null-pair count), and the integral rows carry their coverage
+    (integrated span, dropped segments) beside Ah/Wh."""
+    document = _render_power(power_set, ["fx-rail-v", "fx-rail-i"], "battery")
+    assert "benchweave-power/1" in document
+    assert "host-computed" in document
+    assert 'class="bw-power"' in document
+    # The rail caption names both sides and the pair denominators.
+    assert "fx-rail-v" in document and "fx-rail-i" in document
+    assert "count 360" in document and "null_count 0" in document
+    # The integral coverage rows render beside the values.
+    assert "Ah" in document and "Wh" in document
+    assert "integrated" in document and "dropped" in document
+    # The amended AR-3 figure renders.
+    assert "0.00598333333333" in document
+
+
+def test_power_section_absent_without_power(power_set: Path) -> None:
+    document = _render(power_set, ["fx-rail-v", "fx-rail-i"])
+    assert "benchweave-power/1" not in document
+    assert 'class="bw-power"' not in document
+
+
+def test_power_unavailable_renders_the_reason_never_zero(tmp_path: Path) -> None:
+    """AR-3's arm at the renderer: no current series → the unavailable
+    reason renders and no rail row launders a 0 W."""
+    write_capture(tmp_path, "fx-nocur-a", values=(1.0,) * 10, unit="V")
+    write_capture(tmp_path, "fx-nocur-b", values=(2.0,) * 10, unit="V")
+    document = _render_power(tmp_path, ["fx-nocur-a", "fx-nocur-b"], "battery")
+    assert "power_unavailable: no current series" in document
+    assert "mean power (W)" not in document
+
+
+def test_battery_runtime_row_only_with_capacity(power_set: Path) -> None:
+    # mean I = 3 A on this fixture: capacity 12 Ah -> runtime 4 h.
+    with_cap = _render_power(
+        power_set, ["fx-rail-v", "fx-rail-i"], "battery", capacity_ah=12.0
+    )
+    assert "runtime (h)" in with_cap and ">4<" in with_cap
+    without_cap = _render_power(power_set, ["fx-rail-v", "fx-rail-i"], "battery")
+    assert "runtime (h)" not in without_cap
+
+
+def test_sleep_not_evaluated_renders_reason(power_set: Path) -> None:
+    document = _render_power(power_set, ["fx-rail-v", "fx-rail-i"], "sleep")
+    assert "not_evaluated" in document and "no threshold" in document
+
+
+def test_loadstep_r_renders_and_abscends(tmp_path: Path) -> None:
+    write_capture(
+        tmp_path,
+        "fx-lsr-v",
+        values=(5.0,) * 100 + (4.0,) * 100,
+        interval=0.01,
+        unit="V",
+    )
+    write_capture(
+        tmp_path,
+        "fx-lsr-i",
+        values=(0.010,) * 100 + (0.110,) * 100,
+        interval=0.01,
+        unit="A",
+    )
+    stepped = _render_power(tmp_path, ["fx-lsr-v", "fx-lsr-i"], "load-step")
+    assert "R (Ω)" in stepped and ">10<" in stepped
+    write_capture(
+        tmp_path, "fx-lsr-flat", values=(0.05,) * 200, interval=0.01, unit="A"
+    )
+    flat = _render_power(tmp_path, ["fx-lsr-v", "fx-lsr-flat"], "load-step")
+    assert ">inf<" not in flat and ">nan<" not in flat
+
+
+def test_power_block_escapes_hostile_ids(tmp_path: Path) -> None:
+    """The fold's escaping rule on the new block: every interpolated id
+    goes through the report's _text (a hostile capture id cannot break
+    out of a caption or a cell)."""
+    write_capture(
+        tmp_path, "fx-evil<i>", values=(2.0,) * 10, interval=0.01, unit="V"
+    )
+    write_capture(
+        tmp_path, "fx-evil&amp;i", values=(3.0,) * 10, interval=0.01, unit="A"
+    )
+    document = _render_power(tmp_path, ["fx-evil<i>", "fx-evil&amp;i"], "battery")
+    assert "<i>fx-evil" not in document
+    assert "fx-evil&lt;i&gt;" in document
+
+
+def test_power_render_is_deterministic(power_set: Path) -> None:
+    """The power section keeps the document clock-free: two renders of
+    the same power inputs are byte-identical."""
+    first = _render_power(power_set, ["fx-rail-v", "fx-rail-i"], "battery")
+    second = _render_power(power_set, ["fx-rail-v", "fx-rail-i"], "battery")
+    assert first == second

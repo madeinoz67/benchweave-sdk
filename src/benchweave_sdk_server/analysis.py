@@ -996,6 +996,8 @@ class BatteryMode:
     definition: str
     v_id: str | None
     i_id: str
+    lo: float | None
+    hi: float | None
     capacity_ah: float | None
     count: int
     null_count: int
@@ -1432,6 +1434,8 @@ def power_analysis(
             definition=POWER_DEFINITION,
             v_id=first.v_id,
             i_id=first.i_id,
+            lo=lo,
+            hi=hi,
             capacity_ah=float(capacity_ah) if capacity_ah is not None else None,
             count=first.count,
             null_count=first.null_count,
