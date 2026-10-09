@@ -901,16 +901,119 @@ def test_loadstep_r_renders_and_abscends(tmp_path: Path) -> None:
 def test_power_block_escapes_hostile_ids(tmp_path: Path) -> None:
     """The fold's escaping rule on the new block: every interpolated id
     goes through the report's _text (a hostile capture id cannot break
-    out of a caption or a cell)."""
+    out of a caption, an attribute slot, or a cell).
+
+    Portability (wave 2): the render-seam arm drives build_report with
+    the FULL hostile payload — angle brackets, double quotes, single
+    quotes, ampersands — as an in-memory PowerAnalysis, because minting
+    a real directory named with Windows-illegal characters reddens the
+    windows CI lane (OSError WinError 123, the I4a wave-3 class). The
+    on-disk end-to-end variant keeps a hostile-but-LEGAL name class
+    (single quotes) so both platforms run the loader round trip."""
+    from benchweave_sdk_server.analysis import (
+        POWER_DEFINITION,
+        BatteryMode,
+        IntegralResult,
+        PowerAnalysis,
+        PowerRail,
+    )
+
+    write_capture(tmp_path, "fx-plain-v", values=(2.0,) * 10, interval=0.01)
+    hostile_v = "fx-evil<i>\"x'y&z>"
+    hostile_i = "fx-more<i>\"x'y&z>"
+    integral = IntegralResult(
+        definition=POWER_DEFINITION,
+        value=1.0,
+        integrated_span_s=0.09,
+        counted_segments=9,
+        dropped_segments=0,
+        uncertainty="unknown",
+    )
+    rail = PowerRail(
+        definition=POWER_DEFINITION,
+        v_id=hostile_v,
+        i_id=hostile_i,
+        v_unit="V",
+        i_unit="A",
+        lo=None,
+        hi=None,
+        count=10,
+        null_count=0,
+        mean_p=6.0,
+        peak_p=6.0,
+        mean_v=2.0,
+        min_v=2.0,
+        mean_i=3.0,
+        peak_i=3.0,
+        ah=integral,
+        wh=integral,
+        reason=None,
+        uncertainty="unknown",
+    )
+    power = PowerAnalysis(
+        definition=POWER_DEFINITION,
+        mode="battery",
+        lo=None,
+        hi=None,
+        threshold=None,
+        capacity_ah=None,
+        rails=(rail,),
+        unavailable=None,
+        battery=BatteryMode(
+            definition=POWER_DEFINITION,
+            v_id=hostile_v,
+            i_id=hostile_i,
+            v_unit="V",
+            i_unit="A",
+            lo=None,
+            hi=None,
+            capacity_ah=None,
+            count=10,
+            null_count=0,
+            ah=1.0,
+            wh=1.0,
+            mean_i=3.0,
+            peak_i=3.0,
+            mean_v=2.0,
+            min_v=2.0,
+            mean_p=6.0,
+            peak_p=6.0,
+            runtime_h=None,
+            reason=None,
+            uncertainty="unknown",
+        ),
+        dcdc=None,
+        sleep=None,
+        load_step=None,
+        uncertainty="unknown",
+    )
+    document = build_report(
+        _entries(tmp_path, ["fx-plain-v"]),
+        lo=None,
+        hi=None,
+        styles=STYLES,
+        pin_version=PIN_VERSION,
+        sdk_version=SDK_VERSION,
+        power=power,
+    )
+    escaped = "fx-evil&lt;i&gt;&#34;x&#39;y&amp;z&gt;"
+    assert escaped in document
+    assert 'fx-evil<i>"' not in document, "the raw payload must never render"
+    # The battery block's caption escapes the same payload too.
+    assert "battery · fx-more&lt;i&gt;" in document
+
+    # The on-disk round trip keeps the hostile-but-legal name class
+    # (single quotes are path-legal on both platforms).
     write_capture(
-        tmp_path, "fx-evil<i>", values=(2.0,) * 10, interval=0.01, unit="V"
+        tmp_path, "fx-evil'q'v", values=(2.0,) * 10, interval=0.01, unit="V"
     )
     write_capture(
-        tmp_path, "fx-evil&amp;i", values=(3.0,) * 10, interval=0.01, unit="A"
+        tmp_path, "fx-evil'q'i", values=(3.0,) * 10, interval=0.01, unit="A"
     )
-    document = _render_power(tmp_path, ["fx-evil<i>", "fx-evil&amp;i"], "battery")
-    assert "<i>fx-evil" not in document
-    assert "fx-evil&lt;i&gt;" in document
+    round_trip = _render_power(
+        tmp_path, ["fx-evil'q'v", "fx-evil'q'i"], "battery"
+    )
+    assert "fx-evil&#39;q&#39;v" in round_trip
 
 
 def test_power_render_is_deterministic(power_set: Path) -> None:
