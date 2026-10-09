@@ -511,6 +511,46 @@ _REPORT_EXPORT_INPUT = _object(
             "description": "Inclusive window end, seconds from each "
             "capture's own start",
         },
+        # I4b.1: the resolved marker rows (present rows REPLACE the
+        # sources' overlays for this export), the assertion spec, and the
+        # settle band's percentage. The sidecar records the EFFECTIVE
+        # params so re-export reproduces the document.
+        "markers": {
+            "type": "array",
+            "items": _object(
+                {
+                    "capture_id": {"type": "string", "minLength": 1},
+                    "label": {"type": "string"},
+                    "t": {"type": "number"},
+                    "note": {"type": "string"},
+                },
+                ["capture_id", "label", "t"],
+            ),
+            "description": "Resolved marker rows; absent -> each source's "
+            "own analysis.json overlay",
+        },
+        "assertions": {
+            "type": "array",
+            "items": _object(
+                {
+                    "capture_id": {"type": "string", "minLength": 1},
+                    "min": {"type": "number"},
+                    "max": {"type": "number"},
+                },
+                ["capture_id"],
+            ),
+            "description": "Min/max assertion spec rows over the request's "
+            "own captures (at least one bound per row, enforced at "
+            "evaluation)",
+        },
+        "settle_pct": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 100,
+            "default": 2,
+            "description": "The settle band's percentage of the step around "
+            "final (a display parameter, not a commissioned envelope)",
+        },
     },
     ["capture_ids"],
 )
@@ -555,6 +595,55 @@ _REPORT_EXPORT_RESULT = _object(
         },
     },
     ["report_id", "created", "html_sha256", "captures"],
+)
+
+# --- the analysis overlay (I4b.1): the fifth disclosed delta -----------------------
+
+#: One marker row: the label's A-Z shape and ``t``'s span are enforced at
+#: the seam against the capture's own manifest grid, so the refusal
+#: carries the typed ``standalone_report_marker_invalid`` prefix (STD-4's
+#: family) instead of an anonymous schema finding — the schema carries
+#: only the JSON shape.
+_MARKER_ROW = _object(
+    {
+        "label": {"type": "string"},
+        "t": {"type": "number"},
+        "note": {"type": "string"},
+    },
+    ["label", "t"],
+)
+
+_CAPTURE_ANALYSIS_INPUT = _object(
+    {
+        "capture_id": {"type": "string", "minLength": 1},
+        "markers": {
+            "type": "array",
+            "items": _MARKER_ROW,
+            "description": "The FULL marker set for this capture (the write "
+            "replaces the overlay); one row per label, sorted on store",
+        },
+    },
+    ["capture_id", "markers"],
+)
+
+_CAPTURE_ANALYSIS_RESULT = _object(
+    {
+        "capture_id": {"type": "string", "minLength": 1},
+        "markers": {
+            "type": "array",
+            "items": _object(
+                {
+                    "label": {"type": "string", "pattern": "^[A-Z]$"},
+                    "t": {"type": "number"},
+                    "note": {"type": "string"},
+                },
+                ["label", "t", "note"],
+            ),
+            "description": "The stored rows (sorted by label) — the echo of "
+            "the operator's annotations, not a processed value",
+        },
+    },
+    ["capture_id", "markers"],
 )
 
 
@@ -852,6 +941,24 @@ CATALOGUE: tuple[OperationSpec, ...] = (
         ),
         _REPORT_EXPORT_INPUT,
         _REPORT_EXPORT_RESULT,
+    ),
+    # I4b.1's disclosed delta (F-C's adopted posture, the record's §1.3):
+    # row 23 — SW-50 names the capability (markers are index content whose
+    # copy of record lives in the root), the closed list omits it.
+    _spec(
+        "capture_analysis",
+        (
+            "Rewrite one capture's analysis overlay (analysis.json, format "
+            "standalone-analysis/1) with the request's FULL marker set: "
+            "labels are single uppercase A-Z with one row per label "
+            "(replace-on-duplicate), t must lie inside the capture's own "
+            "displayable time base, and the stored rows are sorted by label. "
+            "The echo is the stored operator annotation, not a processed "
+            "value. One overlay per call — a request mixing markers with "
+            "notes/tags refuses."
+        ),
+        _CAPTURE_ANALYSIS_INPUT,
+        _CAPTURE_ANALYSIS_RESULT,
     ),
 )
 

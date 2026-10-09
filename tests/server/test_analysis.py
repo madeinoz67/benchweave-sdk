@@ -25,7 +25,12 @@ import pytest
 
 from benchweave_sdk_server.analysis import (
     ANALYSIS_DEFINITION,
+    ASSERT_DEFINITION,
+    EDGE_DEFINITION,
     RegionStats,
+    decimated_extent,
+    edge_analysis,
+    evaluate_assertions,
     load_series_set,
     region_stats,
     scan_series,
@@ -390,3 +395,561 @@ def test_windowed_points_refuses_a_primary_truncated_between_passes(
     )
     with pytest.raises(ValueError, match="standalone_report_primary_mismatch"):
         windowed_points(source, lo=None, hi=None, limit=100)
+
+
+# --- I4b.1 AR-2: edge timing (definition benchweave-edge/1) ------------------------
+#
+# Fixtures at 1 kHz per the pre-committed rule. The closed forms are
+# computed in-test from the fixture's own construction (the ramp slope and
+# the head/tail plateau values), and the tolerance is the record's: within
+# ONE sample interval for the timing arms.
+
+
+def _step_fixture(
+    *,
+    baseline: float = 0.0,
+    ramp_samples: int = 50,
+    slope: float = 0.02,
+    head: int = 400,
+    before_excursion: int = 550,
+    excursion: tuple[float, ...] = (),
+    tail: int = 0,
+) -> tuple[tuple[float, ...], int]:
+    """One step fixture: ``baseline`` plateau (``head`` samples), a linear
+    ramp of ``slope`` per sample, the ramp's top plateau
+    (``before_excursion`` samples), then an optional scripted excursion
+    and a closing top plateau (``tail``). ``head`` and the post-excursion
+    plateau are each at least 150 samples (n=1000, head_n=tail_n=150), so
+    the head/tail means land EXACTLY on the plateau values. The ramp is
+    the continuous line v(i) = (i - head + 1) * slope, so the closed-form
+    crossing of level L sits at index head - 1 + L / slope."""
+    top = ramp_samples * slope
+    ramp = tuple(k * slope for k in range(1, ramp_samples + 1))
+    values = (
+        [baseline] * head + list(ramp) + [top] * before_excursion
+        + list(excursion) + [top] * tail
+    )
+    assert len(values) >= head + ramp_samples + before_excursion
+    return tuple(values), head
+
+
+def test_fx_step_rise_matches_the_closed_form(tmp_path: Path) -> None:
+    """1 kHz, N=1000, head/tail means exact over the plateaus: t10/t90 are
+    the interpolated crossings of 0.10/0.90 of the step, so rise_time is
+    (0.90 - 0.10) / slope sample intervals — within one interval of the
+    closed form (the record's tolerance; the fixture lands exact)."""
+    slope = 0.02
+    values, head = _step_fixture(ramp_samples=50, slope=slope)
+    write_capture(tmp_path, "fx-step-rise", values=values)
+    source = load_series_set(tmp_path, ["fx-step-rise"])[0]
+    edge = edge_analysis(series_samples(source), lo=None, hi=None, settle_pct=2.0)
+    assert edge.detected is True
+    assert edge.rising is True
+    assert edge.n == 1000 and edge.head_n == 150 and edge.tail_n == 150
+    interval = _INTERVAL
+    expected_rise = (0.90 - 0.10) / slope * interval
+    assert edge.rise_time is not None
+    assert abs(edge.rise_time - expected_rise) <= interval
+    expected_t10 = (head - 1 + 0.10 / slope) * interval
+    expected_t90 = (head - 1 + 0.90 / slope) * interval
+    assert edge.t10 is not None and abs(edge.t10 - expected_t10) <= interval / 2
+    assert edge.t90 is not None and abs(edge.t90 - expected_t90) <= interval / 2
+    assert edge.baseline == 0.0 and edge.final == 1.0
+    # The ramp below the settle band leaves it, so settle_time is a real
+    # span (never None): the last out-of-band sample is the last ramp
+    # sample under 0.98, and settle runs from t10 to the sample after it.
+    assert edge.settle_time is not None
+
+
+def test_nothing_left_the_band_settles_at_zero(tmp_path: Path) -> None:
+    """The pinned edge outcome: settle_time is 0.0 exactly when nothing in
+    scope ever left the band — at settle_pct 100 the band spans the whole
+    step (baseline sits ON its lower edge), so no sample is outside."""
+    values, _ = _step_fixture()
+    write_capture(tmp_path, "fx-step-wide-band", values=values)
+    source = load_series_set(tmp_path, ["fx-step-wide-band"])[0]
+    edge = edge_analysis(series_samples(source), lo=None, hi=None, settle_pct=100.0)
+    assert edge.detected is True
+    assert edge.settle_time == 0.0
+
+
+def test_fx_step_settle_matches_the_closed_form(tmp_path: Path) -> None:
+    """An overshoot excursion of known extent above the 2% band:
+    settle_time runs from t10 to the first sample after the LAST
+    out-of-band sample — within one interval of the closed form."""
+    slope = 0.02
+    # head(400) + ramp(50) + top(150) + 1.05 x 20 + top(380) = 1000. The
+    # tail window (last 150) sits entirely on the closing 1.0 plateau, so
+    # final is exactly 1.0 and the band is [0.98, 1.02]; the 20 samples
+    # at 1.05 are the last out-of-band excursion.
+    values, head = _step_fixture(
+        ramp_samples=50, slope=slope, before_excursion=150,
+        excursion=(1.05,) * 20, tail=380,
+    )
+    write_capture(tmp_path, "fx-step-settle", values=values)
+    source = load_series_set(tmp_path, ["fx-step-settle"])[0]
+    edge = edge_analysis(series_samples(source), lo=None, hi=None, settle_pct=2.0)
+    assert edge.detected is True
+    assert edge.final == 1.0
+    interval = _INTERVAL
+    expected_t10 = (head - 1 + 0.10 / slope) * interval
+    last_outside_index = head + 50 + 150 + 19
+    expected_settle = (last_outside_index + 1) * interval - expected_t10
+    assert edge.settle_time is not None
+    assert abs(edge.settle_time - expected_settle) <= interval
+
+
+def test_fx_step_fall_is_rising_false_with_equal_rise_magnitude(
+    tmp_path: Path,
+) -> None:
+    rise_values, _ = _step_fixture(ramp_samples=50, slope=0.02)
+    values = tuple(1.0 - value for value in rise_values)
+    write_capture(tmp_path, "fx-step-fall", values=values)
+    write_capture(tmp_path, "fx-step-up", values=rise_values)
+    fall = edge_analysis(
+        series_samples(load_series_set(tmp_path, ["fx-step-fall"])[0]),
+        lo=None, hi=None, settle_pct=2.0,
+    )
+    rise = edge_analysis(
+        series_samples(load_series_set(tmp_path, ["fx-step-up"])[0]),
+        lo=None, hi=None, settle_pct=2.0,
+    )
+    assert fall.detected is True
+    assert fall.rising is False
+    assert rise.rising is True
+    # A fall of the same shape has equal |riseTime|: for a fall the 10%
+    # crossing comes FIRST in time, so t90 - t10 stays positive and the
+    # magnitude matches the rise.
+    assert fall.rise_time is not None and rise.rise_time is not None
+    assert abs(abs(fall.rise_time) - abs(rise.rise_time)) <= _INTERVAL
+    assert fall.rise_time > 0
+
+
+def test_flat_series_is_not_detected(tmp_path: Path) -> None:
+    write_capture(tmp_path, "fx-step-flat", values=(3.7,) * 1000)
+    source = load_series_set(tmp_path, ["fx-step-flat"])[0]
+    edge = edge_analysis(series_samples(source), lo=None, hi=None, settle_pct=2.0)
+    assert edge.detected is False
+    assert edge.rise_time is None and edge.settle_time is None
+
+
+def test_two_sample_region_is_not_detected(tmp_path: Path) -> None:
+    write_capture(tmp_path, "fx-step-two", values=(0.0, 1.0))
+    source = load_series_set(tmp_path, ["fx-step-two"])[0]
+    edge = edge_analysis(series_samples(source), lo=None, hi=None, settle_pct=2.0)
+    assert edge.detected is False
+
+
+def test_fx_step_nullpad_matches_the_null_free_closed_form(
+    tmp_path: Path,
+) -> None:
+    """The region count is the NON-NULL in-window count (the fork's
+    regionPoints semantics): nulls in both plateaus drop out BEFORE the
+    head/tail split, so a padded rise still detects and matches the
+    null-free closed form."""
+    clean, head = _step_fixture(ramp_samples=50, slope=0.02)
+    ramp_end = head + 50
+    padded = tuple(
+        math.nan if (index < head or index >= ramp_end) and index % 3 == 0 else value
+        for index, value in enumerate(clean)
+    )
+    # Nulls only in the plateaus; the ramp (head..head+49) is null-free.
+    assert all(not math.isnan(padded[index]) for index in range(head, ramp_end))
+    write_capture(tmp_path, "fx-step-nullpad", values=padded)
+    write_capture(tmp_path, "fx-step-clean", values=clean)
+    edge = edge_analysis(
+        series_samples(load_series_set(tmp_path, ["fx-step-nullpad"])[0]),
+        lo=None, hi=None, settle_pct=2.0,
+    )
+    reference = edge_analysis(
+        series_samples(load_series_set(tmp_path, ["fx-step-clean"])[0]),
+        lo=None, hi=None, settle_pct=2.0,
+    )
+    assert edge.detected is True
+    assert edge.n < 1000  # the nulls dropped out of the region count
+    assert edge.n == sum(1 for value in padded if not math.isnan(value))
+    assert edge.rise_time is not None and reference.rise_time is not None
+    assert abs(edge.rise_time - reference.rise_time) <= _INTERVAL
+
+
+def test_fx_step_nocross_reports_null_rise_time_never_zero(
+    tmp_path: Path,
+) -> None:
+    """A region whose computed crossing levels can never be bracketed
+    reports ``rise_time: None``, never 0. Construction disclosure: for
+    FINITE samples a non-flat region always brackets both levels (each
+    level lies strictly between the head and tail means, which lie inside
+    the sample range, and the head precedes the tail in time) — the only
+    data-driven absence is a non-finite-poisoned mean, which makes the
+    levels NaN and every bracket comparison false. The pinned claim is
+    the record's own: the absent crossing is NULL, never coerced to 0."""
+    values = (float("inf"),) * 150 + (0.0,) * 850
+    write_capture(tmp_path, "fx-step-nocross", values=values)
+    source = load_series_set(tmp_path, ["fx-step-nocross"])[0]
+    edge = edge_analysis(series_samples(source), lo=None, hi=None, settle_pct=2.0)
+    assert edge.detected is True  # the flat guard cannot clear an inf step
+    assert edge.t10 is None and edge.t90 is None
+    assert edge.rise_time is None
+    assert edge.rise_time != 0.0
+
+
+def test_fx_step_settle_open_reports_null_settle_time(tmp_path: Path) -> None:
+    """The region's LAST sample is still outside the band: not settled
+    within the region — settle_time is None."""
+    slope = 0.02
+    # head(400) + ramp(50) + top(549) + one 1.05 sample = 1000. The tail
+    # window holds 149 samples at 1.0 plus the final 1.05 sample, so
+    # final is 1.0033.. and the 2% band tops at ~1.0204 — the region's
+    # last sample (1.05) is still outside it.
+    values, head = _step_fixture(
+        ramp_samples=50, slope=slope, before_excursion=549, excursion=(1.05,),
+    )
+    assert len(values) == 1000
+    write_capture(tmp_path, "fx-step-settle-open", values=values)
+    source = load_series_set(tmp_path, ["fx-step-settle-open"])[0]
+    edge = edge_analysis(series_samples(source), lo=None, hi=None, settle_pct=2.0)
+    assert edge.detected is True
+    assert edge.settle_time is None
+
+
+def test_edge_rows_carry_the_definition_and_denominators(
+    tmp_path: Path,
+) -> None:
+    values, _ = _step_fixture()
+    write_capture(tmp_path, "fx-step-labelled", values=values, interval=0.001)
+    source = load_series_set(tmp_path, ["fx-step-labelled"])[0]
+    edge = edge_analysis(series_samples(source), lo=0.1, hi=0.9, settle_pct=2.0)
+    assert edge.definition == EDGE_DEFINITION == "benchweave-edge/1"
+    assert edge.uncertainty == "unknown"
+    assert edge.lo == 0.1 and edge.hi == 0.9
+    assert edge.settle_pct == 2.0
+    assert edge.head_n >= 1 and edge.tail_n >= 1
+
+
+# --- I4b.1 AR-7: min/max assertions (definition benchweave-assert/1) ---------------
+
+
+def _assert_entries(root: Path, capture_id: str) -> dict[str, RegionStats]:
+    (stats, _) = _scan(root, capture_id)
+    return {capture_id: stats}
+
+
+def test_fx_assert_pass(tmp_path: Path) -> None:
+    write_capture(tmp_path, "fx-assert-pass", values=(1.0, 2.0, 3.0))
+    results = evaluate_assertions(
+        [{"capture_id": "fx-assert-pass", "min": 1.0, "max": 3.0}],
+        _assert_entries(tmp_path, "fx-assert-pass"),
+    )
+    assert len(results) == 1
+    row = results[0]
+    assert row.verdict == "pass"
+    assert row.reasons == ()
+    assert row.actual_min == 1.0 and row.actual_max == 3.0
+
+
+def test_fx_assert_low_and_high_name_their_reasons(tmp_path: Path) -> None:
+    write_capture(tmp_path, "fx-assert-low", values=(0.5, 2.0))
+    write_capture(tmp_path, "fx-assert-high", values=(1.0, 3.5))
+    write_capture(tmp_path, "fx-assert-both", values=(0.5, 3.5))
+    entries = {
+        **_assert_entries(tmp_path, "fx-assert-low"),
+        **_assert_entries(tmp_path, "fx-assert-high"),
+        **_assert_entries(tmp_path, "fx-assert-both"),
+    }
+    low = evaluate_assertions(
+        [{"capture_id": "fx-assert-low", "min": 1.0, "max": 4.0}], entries
+    )[0]
+    assert low.verdict == "fail"
+    assert low.reasons == ("below_min",)
+    high = evaluate_assertions(
+        [{"capture_id": "fx-assert-high", "min": 0.0, "max": 3.0}], entries
+    )[0]
+    assert high.verdict == "fail"
+    assert high.reasons == ("above_max",)
+    both = evaluate_assertions(
+        [{"capture_id": "fx-assert-both", "min": 1.0, "max": 3.0}], entries
+    )[0]
+    assert both.verdict == "fail"
+    assert both.reasons == ("below_min", "above_max")
+
+
+def test_fx_assert_single_bound_never_consults_the_absent_one(
+    tmp_path: Path,
+) -> None:
+    """min-only / max-only: the absent bound is never consulted, so a
+    value that would break it cannot flip the verdict."""
+    write_capture(tmp_path, "fx-assert-min-only", values=(0.5, 2.0, 2.5))
+    write_capture(tmp_path, "fx-assert-max-only", values=(0.5, 2.0, 2.5))
+    entries = {
+        **_assert_entries(tmp_path, "fx-assert-min-only"),
+        **_assert_entries(tmp_path, "fx-assert-max-only"),
+    }
+    # min-only passes even though the max (2.5) would break a max bound
+    # of 2.0; max-only passes even though the min (0.5) would break a min
+    # bound of 1.0.
+    min_only = evaluate_assertions(
+        [{"capture_id": "fx-assert-min-only", "min": 0.4}], entries
+    )[0]
+    assert min_only.verdict == "pass"
+    max_only = evaluate_assertions(
+        [{"capture_id": "fx-assert-max-only", "max": 2.6}], entries
+    )[0]
+    assert max_only.verdict == "pass"
+    failing_min = evaluate_assertions(
+        [{"capture_id": "fx-assert-min-only", "min": 0.6}], entries
+    )[0]
+    assert failing_min.verdict == "fail"
+
+
+def test_fx_assert_empty_window_is_not_evaluated_and_never_passes(
+    tmp_path: Path,
+) -> None:
+    """The honesty crux: an empty window is ``not_evaluated`` — the pass
+    count does NOT include it."""
+    write_capture(tmp_path, "fx-assert-empty", values=(1.0, 2.0, 3.0), interval=1.0)
+    source = load_series_set(tmp_path, ["fx-assert-empty"])[0]
+    stats = region_stats(series_samples(source), lo=100.0, hi=200.0)
+    assert stats.count == 0
+    results = evaluate_assertions(
+        [{"capture_id": "fx-assert-empty", "min": 0.0}], {"fx-assert-empty": stats}
+    )
+    assert results[0].verdict == "not_evaluated"
+    passed = [row for row in results if row.verdict == "pass"]
+    assert passed == []
+
+
+def test_assertion_target_outside_the_request_set_refuses(tmp_path: Path) -> None:
+    write_capture(tmp_path, "fx-assert-in", values=(1.0,))
+    entries = _assert_entries(tmp_path, "fx-assert-in")
+    with pytest.raises(
+        ValueError, match="standalone_report_assert_target: fx-assert-out"
+    ):
+        evaluate_assertions(
+            [{"capture_id": "fx-assert-out", "min": 0.0}], entries
+        )
+
+
+def test_assertion_bounds_must_be_finite_and_at_least_one(tmp_path: Path) -> None:
+    write_capture(tmp_path, "fx-assert-bounds", values=(1.0,))
+    entries = _assert_entries(tmp_path, "fx-assert-bounds")
+    with pytest.raises(ValueError, match="standalone_report_assert_bound"):
+        evaluate_assertions(
+            [{"capture_id": "fx-assert-bounds", "min": float("nan")}], entries
+        )
+    with pytest.raises(ValueError, match="standalone_report_assert_bound"):
+        evaluate_assertions(
+            [{"capture_id": "fx-assert-bounds", "max": float("inf")}], entries
+        )
+    with pytest.raises(ValueError, match="standalone_report_assert_bound"):
+        evaluate_assertions([{"capture_id": "fx-assert-bounds"}], entries)
+
+
+def test_assert_rows_carry_the_definition_and_denominators(
+    tmp_path: Path,
+) -> None:
+    write_capture(tmp_path, "fx-assert-labelled", values=(1.0, 2.0))
+    row = evaluate_assertions(
+        [{"capture_id": "fx-assert-labelled", "max": 5.0}],
+        _assert_entries(tmp_path, "fx-assert-labelled"),
+    )[0]
+    assert row.definition == ASSERT_DEFINITION == "benchweave-assert/1"
+    assert row.uncertainty == "unknown"
+    assert row.lo is None and row.hi is None
+    assert row.count == 2 and row.null_count == 0
+
+
+# --- I4b.1 AR-9e: the streaming full-extent reducer's decimate parity ----------------
+
+
+def test_decimated_extent_equals_decimate_minmax_point_for_point(
+    tmp_path: Path,
+) -> None:
+    """AR-9e: the streaming reducer over the WHOLE series equals
+    ``decimate_minmax(list(series_samples(source)), columns)`` — the
+    tie-breaks (first min, last max, single-point column emits one point)
+    are load-bearing, on the alternating fixture and the spike fixture
+    (whose single high point must survive any reduction)."""
+    from benchweave_sdk_server.plots import decimate_minmax
+
+    for capture_id, values in (
+        ("fx-alt", tuple(float(index % 2) for index in range(10_000))),
+        ("fx-spike", tuple(10.0 if index == 5000 else 0.0 for index in range(10_000))),
+    ):
+        write_capture(tmp_path, capture_id, values=values)
+        source = load_series_set(tmp_path, [capture_id])[0]
+        for columns in (600, 7, 1):
+            streaming = decimated_extent(source, columns)
+            materialised = decimate_minmax(list(series_samples(source)), columns=columns)
+            assert streaming == materialised, (capture_id, columns)
+
+
+def test_decimated_extent_identity_below_the_budget(tmp_path: Path) -> None:
+    """At or below the column budget the reduction is the identity — the
+    whole (bounded) list, verified against the same digest check."""
+    from benchweave_sdk_server.plots import decimate_minmax
+
+    write_capture(tmp_path, "fx-tiny", values=(1.0, 9.0, 4.0))
+    source = load_series_set(tmp_path, ["fx-tiny"])[0]
+    assert decimated_extent(source, 8) == list(series_samples(source))
+    assert decimated_extent(source, 8) == decimate_minmax(
+        list(series_samples(source)), columns=8
+    )
+
+
+def test_decimated_extent_single_sample_takes_the_identity_branch(
+    tmp_path: Path,
+) -> None:
+    """count == 1 sits at or below any positive column budget, so BOTH
+    paths take the identity branch and emit the point ONCE (decimate's
+    degenerate double-emission branch needs len(points) > columns with a
+    degenerate x extent — unreachable for the loader's strictly
+    increasing uniform grid; the reducer keeps the branch only for
+    structural parity with decimate's own shape)."""
+    from benchweave_sdk_server.plots import decimate_minmax
+
+    write_capture(tmp_path, "fx-one", values=(5.5,))
+    source = load_series_set(tmp_path, ["fx-one"])[0]
+    expected = decimate_minmax(list(series_samples(source)), columns=600)
+    assert expected == [(0.0, 5.5)]
+    assert decimated_extent(source, 600) == expected
+
+
+def test_decimated_extent_parity_survives_nulls(tmp_path: Path) -> None:
+    """Nulls (NaN samples) ride both paths: the parity holds point-for-
+    point including the columns whose first or last point is NaN — the
+    reducer mirrors decimate's max-over-reversed exactly (a NaN survives
+    as a column's maximum only when it is that column's FINAL point).
+    The comparator is NaN-aware: tuple ``==`` is False for NaN elements,
+    so a plain list compare would report a divergence that is not one."""
+    from benchweave_sdk_server.plots import decimate_minmax
+
+    def same_points(
+        left: list[tuple[float, float]], right: list[tuple[float, float]]
+    ) -> bool:
+        return len(left) == len(right) and all(
+            ta == tb and (va == vb or (math.isnan(va) and math.isnan(vb)))
+            for (ta, va), (tb, vb) in zip(left, right, strict=True)
+        )
+
+    values = tuple(
+        float(index % 3) if index % 97 else math.nan for index in range(3000)
+    )
+    write_capture(tmp_path, "fx-ext-nulls", values=values)
+    source = load_series_set(tmp_path, ["fx-ext-nulls"])[0]
+    for columns in (600, 13):
+        assert same_points(
+            decimated_extent(source, columns),
+            decimate_minmax(list(series_samples(source)), columns=columns),
+        ), columns
+
+
+def test_decimated_extent_verifies_the_digest(tmp_path: Path) -> None:
+    """The streaming pass hashes as it reads: a primary mutated after
+    load refuses instead of feeding unverified bytes to the context
+    chart (the windowed_points discipline)."""
+    values = tuple(float(index % 5) for index in range(2000))
+    event = write_capture(tmp_path, "fx-ext-tamper", values=values)
+    source = load_series_set(tmp_path, ["fx-ext-tamper"])[0]
+    (event / "fx-ext-tamper.f64").write_bytes(
+        b"".join(struct.pack("<d", v) for v in values[:-1]) + struct.pack("<d", 9.0)
+    )
+    with pytest.raises(ValueError, match="standalone_report_primary_mismatch"):
+        decimated_extent(source, 600)
+
+
+# --- the refute fold (I4b.1): A-F1 non-finite timing, A-F7 type guard, A-15 ---------
+#
+# The fold's RED controls are the tests themselves against the pre-fold
+# tree (each below reddens without its mechanism) plus the named
+# neutralizations run during the fold.
+
+
+def test_a_f1_non_finite_means_null_the_whole_timing_family(
+    tmp_path: Path,
+) -> None:
+    """A-F1: inf/overflow means give the timing family real values where
+    the contract names null (settle_time 0.0 = "settled instantly" with
+    detected=yes, and NaN FLOAT crossings). The whole timing family —
+    crossings AND settle — is null whenever baseline/final/step are
+    non-finite. Shapes: the inf head, the inf tail, and the finite
+    overflow (1e308 plateau whose head sum overflows). The mixed +/-inf
+    shape has FINITE means and belongs to the crossings arm below."""
+    shapes = {
+        "fx-nf-head": (float("inf"),) * 150 + (0.0,) * 850,
+        "fx-nf-tail": (0.0,) * 850 + (float("inf"),) * 150,
+        "fx-nf-overflow": (1e308,) * 150 + (1.0,) * 850,
+    }
+    for capture_id, values in shapes.items():
+        write_capture(tmp_path, capture_id, values=values)
+        source = load_series_set(tmp_path, [capture_id])[0]
+        edge = edge_analysis(series_samples(source), lo=None, hi=None, settle_pct=2.0)
+        assert edge.t10 is None, capture_id
+        assert edge.t90 is None, capture_id
+        assert edge.rise_time is None, capture_id
+        assert edge.settle_time is None, (
+            f"{capture_id}: non-finite means must never claim settlement "
+            f"(got {edge.settle_time})"
+        )
+        for field in (edge.rise_time, edge.settle_time, edge.t10, edge.t90):
+            assert field is None or math.isfinite(field), capture_id
+
+
+def test_a_f1_crossings_are_never_nan_floats(tmp_path: Path) -> None:
+    """A-F1's second consequence: a bracket whose interpolation divides by
+    a non-finite span (-inf -> +inf under a finite level) must yield the
+    absent crossing (None), never a NaN float where the contract names
+    null."""
+    values = (
+        (0.0,) * 300
+        + (float("-inf"), float("inf")) * 50
+        + (1.0,) * 300
+    )
+    write_capture(tmp_path, "fx-nf-bracket", values=values)
+    source = load_series_set(tmp_path, ["fx-nf-bracket"])[0]
+    edge = edge_analysis(series_samples(source), lo=None, hi=None, settle_pct=2.0)
+    for field in (edge.t10, edge.t90, edge.rise_time, edge.settle_time):
+        assert field is None or math.isfinite(field)
+
+
+def test_fx_step_nocross_pins_settle_time_null_too(tmp_path: Path) -> None:
+    """The nocross arm extended (the fold): the absent-crossing shape
+    pins settle_time as NULL as well — the pre-fold code computed a
+    non-finite-band settle that claimed settlement."""
+    values = (float("inf"),) * 150 + (0.0,) * 850
+    write_capture(tmp_path, "fx-step-nocross", values=values)
+    source = load_series_set(tmp_path, ["fx-step-nocross"])[0]
+    edge = edge_analysis(series_samples(source), lo=None, hi=None, settle_pct=2.0)
+    assert edge.detected is True
+    assert edge.t10 is None and edge.t90 is None
+    assert edge.rise_time is None
+    assert edge.settle_time is None
+    assert edge.settle_time != 0.0
+
+
+def test_settle_zero_is_reachable_at_the_default_band(tmp_path: Path) -> None:
+    """Deviation-4 arm rebuilt (the fold): settle_time == 0.0 IS reachable
+    at settle_pct=2 — an instantaneous step (the first in-scope sample is
+    already on the final plateau) has nothing outside the band. The 0
+    outcome is pinned where it actually occurs."""
+    values = (0.0,) * 500 + (1.0,) * 500
+    write_capture(tmp_path, "fx-step-instant", values=values)
+    source = load_series_set(tmp_path, ["fx-step-instant"])[0]
+    edge = edge_analysis(series_samples(source), lo=None, hi=None, settle_pct=2.0)
+    assert edge.detected is True
+    assert edge.rise_time is not None and edge.rise_time > 0
+    assert edge.settle_time == 0.0
+
+
+def test_a_f7_assertion_bounds_refuse_bools_and_strings(tmp_path: Path) -> None:
+    """A-F7: a bool bound launders to 1.0 via float(); a numeric STRING
+    passes the isfinite(float()) pre-check and then raises TypeError
+    outside the ValueError mapping. Both refuse typed inside the
+    ValueError family (unreachable through seam.call today — the schema
+    fronts them — so this arm guards the pure function directly)."""
+    write_capture(tmp_path, "fx-assert-types", values=(1.0,))
+    entries = _assert_entries(tmp_path, "fx-assert-types")
+    for bad in (True, "1.0"):
+        with pytest.raises(ValueError, match="standalone_report_assert_bound"):
+            evaluate_assertions(
+                [{"capture_id": "fx-assert-types", "min": bad}], entries
+            )

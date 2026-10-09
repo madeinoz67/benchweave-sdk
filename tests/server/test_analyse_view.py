@@ -467,6 +467,7 @@ const host = {
 };
 globalThis.document = {
   readyState: "complete",
+  addEventListener() {},
   getElementById(id) { return id === "analyse-form" ? form : null; },
   querySelectorAll() { return [host]; },
   body: { addEventListener() {} },
@@ -498,5 +499,382 @@ console.log(
     submitted: form.submitted > resizeSubmits,
     resize_submits: resizeSubmits > 0,
   })
+);
+"""
+
+
+# --- I4b.1 AR-8: the marker editor and click-to-place ------------------------------
+
+
+def test_marker_editor_renders_for_a_single_capture_selection(
+    client: TestClient, capture_root: Path
+) -> None:
+    write_capture(capture_root, "fx-mark-one", values=(1.0, 2.0, 3.0))
+    write_capture(capture_root, "fx-mark-two", values=(4.0,))
+    single = client.get("/analyse", params={"capture": "fx-mark-one"}).text
+    assert 'id="marker-fieldset"' in single
+    assert 'name="marker_label"' in single
+    assert 'formaction="/analyse/markers"' in single
+    # The editor is per-capture: a multi-capture selection renders the
+    # hint, not the fieldset (the I4b.1 single-series cut).
+    both = client.get(
+        "/analyse", params={"capture": ["fx-mark-one", "fx-mark-two"]}
+    ).text
+    assert 'id="marker-fieldset"' not in both
+    assert "one capture at a time" in both
+
+
+def test_marker_save_round_trips_through_the_page_route(
+    client: TestClient, capture_root: Path
+) -> None:
+    write_capture(capture_root, "fx-mark-save", values=(1.0, 2.0, 3.0))
+    token = csrf_of(client)
+    response = client.post(
+        "/analyse/markers",
+        data={
+            "capture": "fx-mark-save",
+            "lo": "",
+            "hi": "",
+            "marker_label": ["A", "B"],
+            "marker_t": ["0.0", "0.001"],
+            "marker_note": ["first", "second"],
+        },
+        headers={"X-CSRF-Token": token},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert response.headers["location"] == "/analyse?capture=fx-mark-save"
+    import json as _json
+
+    overlay = _json.loads(
+        (capture_root / "fx-mark-save" / "analysis.json").read_text()
+    )
+    assert overlay["format"] == "standalone-analysis/1"
+    assert overlay["markers"] == [
+        {"label": "A", "t": 0.0, "note": "first"},
+        {"label": "B", "t": 0.001, "note": "second"},
+    ]
+    # The re-rendered view prefills the editor from the stored overlay.
+    page = client.get("/analyse", params={"capture": "fx-mark-save"}).text
+    assert 'value="A"' in page and 'value="first"' in page
+
+
+def test_marker_save_refusal_renders_the_refusal(
+    client: TestClient, capture_root: Path
+) -> None:
+    write_capture(capture_root, "fx-mark-bad", values=(1.0, 2.0, 3.0))
+    token = csrf_of(client)
+    page = client.post(
+        "/analyse/markers",
+        data={
+            "capture": "fx-mark-bad",
+            "marker_label": ["AA"],
+            "marker_t": ["0.0"],
+            "marker_note": [""],
+        },
+        headers={"X-CSRF-Token": token},
+    )
+    assert page.status_code == 400
+    assert "standalone_report_marker_invalid" in page.text
+
+
+def test_marker_rows_ride_the_stats_post_as_form_state(
+    client: TestClient, capture_root: Path
+) -> None:
+    """The htmx stats POST carries the editor's unsaved rows: the swapped
+    partial echoes them into the export form's hidden fields, so unsaved
+    markers flow into the export (the design's form-state rule)."""
+    write_capture(capture_root, "fx-mark-state", values=(1.0, 2.0))
+    token = csrf_of(client)
+    partial = client.post(
+        "/analyse/stats",
+        data={
+            "capture": "fx-mark-state",
+            "lo": "",
+            "hi": "",
+            "marker_label": ["A"],
+            "marker_t": ["0.0"],
+            "marker_note": ["unsaved"],
+        },
+        headers={"X-CSRF-Token": token},
+    )
+    assert partial.status_code == 200
+    assert 'name="marker_capture" value="fx-mark-state"' in partial.text
+    assert 'name="marker_label" value="A"' in partial.text
+    assert 'name="marker_note" value="unsaved"' in partial.text
+
+
+def test_click_to_place_talks_to_the_real_vendored_uplot_api() -> None:
+    """The placement arm's static half (B-F1's discipline): every uPlot
+    API token the click-to-place uses exists in the VENDORED bytes, and
+    the numeric fields remain the complete no-script path."""
+    from benchweave_sdk_server.assets import ui_assets_root
+
+    script = (ui_assets_root() / "analyse.js").read_text(encoding="utf-8")
+    vendored = (ui_assets_root() / "uplot.min.js").read_text(encoding="utf-8")
+    for token in ("posToVal", "setScale"):
+        assert token in script, f"the placement must use the {token} API"
+        assert token in vendored, f"the vendored bytes do not expose {token}"
+    assert "bw-marker-t" in script
+
+
+# --- the refute fold (I4b.1): A-F5, B-reflected, B-303, B-F2, B-F3 -----------------
+
+
+def test_a_f5_unparseable_marker_rows_refuse_on_export_too(
+    client: TestClient, capture_root: Path
+) -> None:
+    """A-F5: the export route silently DROPPED unparseable marker rows
+    while the save route 400ed the same input — the operator's unsaved
+    edits vanished from the report while stored overlay markers rendered.
+    Both routes now refuse with the same diagnostic family."""
+    write_capture(capture_root, "fx-drop-row", values=(1.0, 2.0))
+    token = csrf_of(client)
+    response = client.post(
+        "/analyse/export",
+        data={
+            "capture": "fx-drop-row",
+            "lo": "",
+            "hi": "",
+            "marker_capture": "fx-drop-row",
+            "marker_label": ["A"],
+            "marker_t": ["not-a-number"],
+            "marker_note": ["x"],
+        },
+        headers={"X-CSRF-Token": token},
+    )
+    assert response.status_code == 400
+    assert "marker t must be a number" in response.text
+
+
+def test_b_reflected_marker_refusal_pages_escape_their_operands(
+    client: TestClient, capture_root: Path
+) -> None:
+    """B-reflected: the marker refusal pages interpolated label/row text
+    raw into the 400 body. Every interpolated operand now escapes (the
+    analyse view's established discipline) — CSP/CSRF contained it, the
+    page must not reflect it."""
+    write_capture(capture_root, "fx-reflect", values=(1.0, 2.0))
+    token = csrf_of(client)
+    hostile = "<img src=x onerror=alert(1)>"
+    page = client.post(
+        "/analyse/markers",
+        data={
+            "capture": "fx-reflect",
+            "marker_label": [hostile],
+            "marker_t": ["0.0"],
+            "marker_note": [""],
+        },
+        headers={"X-CSRF-Token": token},
+    )
+    assert page.status_code == 400
+    assert "<img" not in page.text
+    assert "&lt;img" in page.text
+
+
+def test_b_303_save_redirect_url_encodes_its_params(
+    client: TestClient, capture_root: Path
+) -> None:
+    """B-303: an unencoded & in lo_text injected query parameters into
+    the post-save Location. The redirect's params are URL-encoded."""
+    write_capture(capture_root, "fx-redirect", values=(1.0, 2.0, 3.0))
+    token = csrf_of(client)
+    response = client.post(
+        "/analyse/markers",
+        data={
+            "capture": "fx-redirect",
+            "lo": "0&evil=1",
+            "hi": "",
+            "marker_label": ["A"],
+            "marker_t": ["0.0"],
+            "marker_note": [""],
+        },
+        headers={"X-CSRF-Token": token},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    location = response.headers["location"]
+    assert "&evil=1" not in location, f"the & must not be a separator: {location}"
+    assert "%26" in location, f"the & must be percent-encoded: {location}"
+
+
+def test_b_f2_and_b_f3_the_driven_placement_sequence(tmp_path: Path) -> None:
+    """B-F2 + B-F3 driven (the brush harness's discipline): a click on
+    the axis gutter (event.offsetX is target-relative, and the .u-axis
+    div poisons the over-div convention posToVal expects) fills NOTHING;
+    a click inside the over-div places the selected row's t; and the
+    export form's hidden fields then carry the placed marker — the
+    visible editor and the export form are never independent copies."""
+    import shutil
+    import subprocess
+
+    from benchweave_sdk_server.assets import ui_assets_root
+
+    if shutil.which("node") is None:
+        pytest.skip("node is not available to drive the placement handler")
+    harness = tmp_path / "placement.mjs"
+    harness.write_text(PLACEMENT_HARNESS)
+    script = ui_assets_root() / "analyse.js"
+    result = subprocess.run(
+        ["node", str(harness), str(script)],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["axis_click_filled"] == "", (
+        "a click on the axis gutter must never place a marker"
+    )
+    assert payload["placed"] == "3.75", payload
+    assert payload["export_carries"] == "3.75", (
+        "the export form must mirror the placed marker at submit time"
+    )
+
+
+PLACEMENT_HARNESS = """
+import { readFileSync } from "node:fs";
+
+const script = readFileSync(process.argv[2], "utf8");
+
+const tInput = { value: "" };
+const labelInput = { value: "A" };
+const noteInput = { value: "" };
+const row = {
+  isConnected: true,
+  querySelector(selector) {
+    if (selector === ".bw-marker-t") return tInput;
+    if (selector === "input[name='marker_label']") return labelInput;
+    return noteInput;
+  },
+};
+const fieldset = {
+  querySelectorAll(selector) {
+    return selector === ".bw-marker-row" ? [row] : [];
+  },
+  getAttribute(name) {
+    return name === "data-bw-marker-capture" ? "fx-cap" : null;
+  },
+};
+
+const exportForm = {
+  id: "export-form",
+  hidden: [
+    { name: "marker_capture", value: "fx-cap" },
+    { name: "marker_label", value: "" },
+    { name: "marker_t", value: "" },
+    { name: "marker_note", value: "" },
+  ],
+  addEventListener() {},
+  querySelectorAll(selector) {
+    const names = [];
+    if (selector.indexOf("marker_label") >= 0) names.push("marker_label");
+    if (selector.indexOf("marker_t") >= 0) names.push("marker_t");
+    if (selector.indexOf("marker_note") >= 0) names.push("marker_note");
+    if (selector.indexOf("marker_capture") >= 0) names.push("marker_capture");
+    return this.hidden.filter((node) => names.indexOf(node.name) >= 0);
+  },
+  appendChild(node) {
+    node.parentNode = this;
+    this.hidden.push(node);
+    return node;
+  },
+  removeChild(node) {
+    this.hidden = this.hidden.filter((entry) => entry !== node);
+    return node;
+  },
+};
+exportForm.hidden.forEach((node) => { node.parentNode = exportForm; });
+
+const form = {
+  id: "analyse-form",
+  elements: { lo: { value: "" }, hi: { value: "" } },
+  requestSubmit() {},
+  submit() {},
+  querySelectorAll(selector) {
+    return selector === ".bw-marker-row" ? [row] : [];
+  },
+};
+
+const over = { closest: (selector) => (selector === ".u-over" ? over : null) };
+const canvasEl = {
+  _l: {},
+  closest: (selector) => (selector === ".u-over" ? over : null),
+  addEventListener(type, cb) {
+    (this._l[type] = this._l[type] || []).push(cb);
+  },
+  querySelector(selector) {
+    return selector === ".u-over" ? over : null;
+  },
+};
+const axisTick = { closest: () => null }; /* inside .u-axis, NOT .u-over */
+const plot = {
+  hooks: {},
+  scales: { x: { min: 0, max: 9.99 } },
+  posToVal(left) {
+    return (left / 400) * 5; /* a stable fake pixel -> value map */
+  },
+};
+const host = {
+  _bwPlot: plot,
+  dataset: {},
+  querySelector(selector) {
+    return selector === ".bw-plot__canvas" ? canvasEl : null;
+  },
+};
+
+const documentListeners = {};
+globalThis.document = {
+  readyState: "complete",
+  addEventListener(type, cb) {
+    (documentListeners[type] = documentListeners[type] || []).push(cb);
+  },
+  getElementById(id) {
+    if (id === "analyse-form") return form;
+    if (id === "marker-fieldset") return fieldset;
+    if (id === "export-form") return exportForm;
+    return null;
+  },
+  querySelectorAll() {
+    return [host];
+  },
+  createElement() {
+    return { type: "", name: "", value: "" };
+  },
+  body: { addEventListener() {} },
+};
+
+eval(script);
+
+function fire(type, event) {
+  (canvasEl._l[type] || []).forEach((cb) => cb(event));
+}
+function fireDocument(type, event) {
+  (documentListeners[type] || []).forEach((cb) => cb(event));
+}
+
+// Focus the marker row so the placement knows its target.
+fireDocument("focusin", { target: { closest: () => row } });
+
+// A click on the AXIS GUTTER must fill nothing (B-F2).
+fire("mousedown", { offsetX: 50, target: axisTick });
+fire("click", { offsetX: 50, target: axisTick });
+const axisClickFilled = tInput.value;
+
+// A click inside the over-div places the selected row's t (300px -> 3.75).
+fire("mousedown", { offsetX: 300, target: canvasEl });
+fire("click", { offsetX: 300, target: canvasEl });
+const placed = tInput.value;
+
+// The export form mirrors the placed marker at submit time (B-F3).
+fireDocument("submit", { target: exportForm });
+const exportCarries = exportForm.hidden
+  .filter((node) => node.name === "marker_t")
+  .map((node) => node.value)
+  .join(",");
+
+console.log(
+  JSON.stringify({ axis_click_filled: axisClickFilled, placed, export_carries: exportCarries })
 );
 """

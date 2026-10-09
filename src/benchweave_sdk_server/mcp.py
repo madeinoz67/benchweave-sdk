@@ -152,6 +152,15 @@ def _tool_handlers(seam: StandaloneSeam) -> dict[str, Callable[..., Any]]:
             arguments["tags"] = tags
         return await _dispatch(seam, "capture_annotate", arguments)
 
+    async def capture_analysis(
+        capture_id: str, markers: list[dict[str, Any]]
+    ) -> Any:
+        return await _dispatch(
+            seam,
+            "capture_analysis",
+            {"capture_id": capture_id, "markers": markers},
+        )
+
     async def capture_pin(capture_id: str) -> Any:
         return await _dispatch(seam, "capture_pin", {"capture_id": capture_id})
 
@@ -169,13 +178,24 @@ def _tool_handlers(seam: StandaloneSeam) -> dict[str, Callable[..., Any]]:
         )
 
     async def report_export(
-        capture_ids: list[str], lo: float | None = None, hi: float | None = None
+        capture_ids: list[str],
+        lo: float | None = None,
+        hi: float | None = None,
+        markers: list[dict[str, Any]] | None = None,
+        assertions: list[dict[str, Any]] | None = None,
+        settle_pct: float | None = None,
     ) -> Any:
         arguments: dict[str, Any] = {"capture_ids": capture_ids}
         if lo is not None:
             arguments["lo"] = lo
         if hi is not None:
             arguments["hi"] = hi
+        if markers is not None:
+            arguments["markers"] = markers
+        if assertions is not None:
+            arguments["assertions"] = assertions
+        if settle_pct is not None:
+            arguments["settle_pct"] = settle_pct
         return await _dispatch(seam, "report_export", arguments)
 
     handlers: dict[str, Callable[..., Any]] = {
@@ -196,6 +216,7 @@ def _tool_handlers(seam: StandaloneSeam) -> dict[str, Callable[..., Any]]:
         "capture_get": capture_get,
         "capture_series": capture_series,
         "capture_annotate": capture_annotate,
+        "capture_analysis": capture_analysis,
         "capture_pin": capture_pin,
         "capture_unpin": capture_unpin,
         "capture_delete": capture_delete,

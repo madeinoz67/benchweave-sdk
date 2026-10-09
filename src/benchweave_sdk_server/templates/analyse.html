@@ -32,6 +32,30 @@ fields are the no-script path.</p>
     <input id="a-lo" name="lo" value="{{ lo }}" inputmode="decimal">
     <label for="a-hi">Window end (s)</label>
     <input id="a-hi" name="hi" value="{{ hi }}" inputmode="decimal">
+    {% if marker_capture %}
+    <fieldset class="bw-markers" id="marker-fieldset"
+              data-bw-marker-capture="{{ marker_capture }}">
+      <legend>Markers — <code>{{ marker_capture }}</code></legend>
+      <p class="hint">Labels are single letters A–Z, one marker per label; t is
+      seconds from the capture's own start. Click a plot to place the selected
+      row's t. Saving rewrites the capture's analysis.json overlay.</p>
+      {%- for row in marker_rows %}
+      <div class="bw-marker-row">
+        <input name="marker_label" maxlength="1" value="{{ row.label }}"
+               aria-label="Marker label" size="1">
+        <input name="marker_t" class="bw-marker-t" value="{{ row.t }}"
+               inputmode="decimal" aria-label="Marker t (s)" size="8">
+        <input name="marker_note" value="{{ row.note }}"
+               aria-label="Marker note">
+      </div>
+      {%- endfor %}
+      <button type="submit" formmethod="post" formaction="/analyse/markers"
+              hx-post="/analyse/markers">Save markers</button>
+    </fieldset>
+    {% elif selected %}
+    <p class="hint">Markers edit one capture at a time — select a single
+    capture to mark it.</p>
+    {% endif %}
     <button type="submit">Analyse</button>
   </form>
 </section>

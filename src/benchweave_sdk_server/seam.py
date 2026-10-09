@@ -2258,6 +2258,53 @@ class StandaloneSeam:
     ) -> dict[str, Any]:
         return await self._op_capture_pin(arguments, correlation, pinned=False)
 
+    async def _op_capture_analysis(
+        self, arguments: dict[str, Any], correlation: str
+    ) -> dict[str, Any]:
+        """Rewrite one capture's marker overlay (I4b.1 AR-8, row 23).
+
+        Admission is ``_stale_row_refusal`` (the ``capture_annotate``
+        shape); the rows validate against the event's own manifest grid
+        and the write is the library's atomic temp-write + ``os.replace``
+        discipline (the ``_write_metadata`` precedent) — one call rewrites
+        exactly one authority file, so every rewrite is atomic. The echo
+        is the stored rows: operator annotation, not a processed value
+        (#423's boundary holds — no analysis READ became a catalogue
+        operation).
+        """
+        from .analysis import ANALYSIS_OVERLAY_FORMAT, resolve_markers
+
+        capture_id = str(arguments["capture_id"])
+        library = self._library(correlation)
+        self._stale_row_refusal(library, capture_id, correlation)
+        event = self._event_dir(capture_id, correlation)
+        manifest_path = event / "manifest.json"
+        if not manifest_path.is_file():
+            raise self._fail(
+                "not_found", f"no published capture: {capture_id}", correlation
+            )
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except ValueError as exc:
+            raise self._fail(
+                "not_found",
+                f"capture {capture_id} has an unparseable manifest",
+                correlation,
+            ) from exc
+        try:
+            markers = resolve_markers(manifest, arguments["markers"])
+        except ValueError as exc:
+            raise self._report_refusal(exc, correlation) from exc
+        payload = json.dumps(
+            {"format": ANALYSIS_OVERLAY_FORMAT, "markers": markers},
+            indent=2,
+            sort_keys=True,
+        ).encode("utf-8")
+        temp = event / "analysis.json.tmp"
+        temp.write_bytes(payload)
+        os.replace(temp, event / "analysis.json")
+        return {"capture_id": capture_id, "markers": markers}
+
     async def _op_capture_delete(
         self, arguments: dict[str, Any], correlation: str
     ) -> dict[str, Any]:
@@ -2351,6 +2398,9 @@ class StandaloneSeam:
         "standalone_report_sources_empty": "invalid_request",
         "standalone_report_units_unsupported": "invalid_request",
         "standalone_report_window_too_large": "payload_too_large",
+        "standalone_report_marker_invalid": "invalid_request",
+        "standalone_report_assert_target": "invalid_request",
+        "standalone_report_assert_bound": "invalid_request",
     }
 
     def _report_refusal(self, exc: ValueError, correlation: str) -> SeamError:
@@ -2392,17 +2442,42 @@ class StandaloneSeam:
 
         Every refusal — window shape, unknown source, unreadable or
         incomplete manifest, unsupported format, tampered primary, plot
-        ceiling, unit count — happens BEFORE anything is written: a
-        refused export leaves no ``reports/`` directory (AR-5's no-orphans
-        rule). The handler performs no ``await`` between the stale-row
-        check and the write, so nothing interleaves with the pin.
+        ceiling, unit count, marker/assertion shape — happens BEFORE
+        anything is written: a refused export leaves no ``reports/``
+        directory (AR-5's no-orphans rule). The handler performs no
+        ``await`` between the stale-row check and the write, so nothing
+        interleaves with the pin.
+
+        I4b.1: ``markers`` resolves against each target's manifest grid
+        (present rows replace that capture's overlay for this export;
+        absent -> the overlay), ``assertions`` evaluate against the
+        request's own window statistics, and ``settle_pct`` feeds the
+        edge blocks — the sidecar records the EFFECTIVE params so
+        re-export reproduces the document (AR-4d/9f).
         """
-        from .analysis import load_series_set, scan_series, windowed_points
-        from .report import REPORT_PLOT_SAMPLE_CEILING, ReportEntry, build_report
+        from .analysis import (
+            SETTLE_PCT_DEFAULT,
+            AnalysisRefusal,
+            decimated_extent,
+            edge_analysis,
+            evaluate_assertions,
+            load_series_set,
+            read_markers,
+            resolve_markers,
+            scan_series,
+            windowed_points,
+        )
+        from .report import (
+            REPORT_PLOT_COLUMNS,
+            REPORT_PLOT_SAMPLE_CEILING,
+            ReportEntry,
+            build_report,
+        )
 
         capture_ids = [str(entry) for entry in arguments["capture_ids"]]
         lo = arguments.get("lo")
         hi = arguments.get("hi")
+        settle_pct = arguments.get("settle_pct", SETTLE_PCT_DEFAULT)
         # B-F4: non-finite bounds (JSON NaN/Infinity literals parse as
         # floats) refuse BEFORE any side effect — the pre-fold path ran the
         # pin loop and created reports/ before the sidecar serializer
@@ -2421,6 +2496,21 @@ class StandaloneSeam:
                 f"standalone_report_window_invalid: lo {lo} exceeds hi {hi}",
                 correlation,
             )
+        if (
+            isinstance(settle_pct, bool)
+            or not isinstance(settle_pct, (int, float))
+            or not math.isfinite(float(settle_pct))
+            or not 0 < float(settle_pct) <= 100
+        ):
+            # A-F8: the seam-level bound mirrors the schema's (0, 100]
+            # (the schema fronts REST/MCP, but a direct seam call must
+            # not see a negative or out-of-range band pass admission).
+            raise self._fail(
+                "invalid_request",
+                f"standalone_report_window_invalid: settle_pct {settle_pct} "
+                "must be a finite percentage in (0, 100]",
+                correlation,
+            )
         library = self._library(correlation)
         root = library.root
         for capture_id in capture_ids:
@@ -2437,7 +2527,44 @@ class StandaloneSeam:
             )
         try:
             sources = load_series_set(root, capture_ids)
+            # Marker resolution: present request rows replace the named
+            # capture's overlay; captures without request rows keep their
+            # own (the overlay is the copy of record, SW-50).
+            request_markers: dict[str, list[dict[str, Any]]] = {}
+            for row in arguments.get("markers") or []:
+                target = str(row.get("capture_id", ""))
+                if target not in {source.capture_id for source in sources}:
+                    raise AnalysisRefusal(
+                        f"standalone_report_marker_invalid: marker row names "
+                        f"{target}, which is not among the request's captures"
+                    )
+                request_markers.setdefault(target, []).append(
+                    {
+                        "label": row.get("label"),
+                        "t": row.get("t"),
+                        "note": row.get("note", ""),
+                    }
+                )
+            resolved_markers: dict[str, list[dict[str, Any]]] = {}
+            for source in sources:
+                rows = request_markers.get(source.capture_id)
+                if rows is None:
+                    # A-F3 (the converge): the overlay READ runs the same
+                    # discipline as the request path — a hand-edited row
+                    # outside the span/label contract refuses typed at
+                    # export (and duplicates collapse as the write path
+                    # does), never rendering an off-canvas glyph whose
+                    # own replay would refuse.
+                    resolved_markers[source.capture_id] = resolve_markers(
+                        source.manifest,
+                        read_markers(root / source.capture_id),
+                    )
+                else:
+                    resolved_markers[source.capture_id] = resolve_markers(
+                        source.manifest, rows
+                    )
             entries: list[ReportEntry] = []
+            stats_by_capture: dict[str, Any] = {}
             for source in sources:
                 stats, _ = scan_series(source, lo=lo, hi=hi)
                 points = windowed_points(
@@ -2447,8 +2574,22 @@ class StandaloneSeam:
                     limit=REPORT_PLOT_SAMPLE_CEILING,
                 )
                 entries.append(
-                    ReportEntry(source=source, stats=stats, points=points)
+                    ReportEntry(
+                        source=source,
+                        stats=stats,
+                        points=points,
+                        edge=edge_analysis(
+                            iter(points), lo=lo, hi=hi, settle_pct=settle_pct
+                        ),
+                        context_points=decimated_extent(
+                            source, REPORT_PLOT_COLUMNS
+                        ),
+                    )
                 )
+                stats_by_capture[source.capture_id] = stats
+            assertions = evaluate_assertions(
+                list(arguments.get("assertions") or []), stats_by_capture
+            )
             styles, ui_html_version, asset_digests = self._report_assets()
             html = build_report(
                 entries,
@@ -2457,6 +2598,8 @@ class StandaloneSeam:
                 styles=styles,
                 pin_version=ui_html_version,
                 sdk_version=sdk_version(),
+                markers=resolved_markers,
+                assertions=assertions,
             )
         except ValueError as exc:
             raise self._report_refusal(exc, correlation) from exc
@@ -2466,12 +2609,27 @@ class StandaloneSeam:
         # B-F4: the sidecar serialises INSIDE the guarded region so a
         # non-serialisable value can never escape as a raw ValueError —
         # with the finite admission above it cannot arise, but the guard
-        # holds for any future field.
+        # holds for any future field. A-F4: the params are a VERBATIM
+        # replayable report_export input — the schema's capture-scoped
+        # markers array (the resolved rows), unbounded lo/hi OMITTED
+        # (absence is unbounded; a null would fail "number"), so feeding
+        # them back reproduces the document byte-for-byte.
+        replay_params: dict[str, Any] = {"settle_pct": settle_pct}
+        if lo is not None:
+            replay_params["lo"] = lo
+        if hi is not None:
+            replay_params["hi"] = hi
+        replay_params["markers"] = [
+            {"capture_id": capture_id, **row}
+            for capture_id, rows in sorted(resolved_markers.items())
+            for row in rows
+        ]
+        replay_params["assertions"] = list(arguments.get("assertions") or [])
         try:
             sidecar_bytes = json.dumps(
                 {
                     "report_id": report_id,
-                    "params": {"lo": lo, "hi": hi},
+                    "params": replay_params,
                     "sources": [
                         {
                             "capture_id": source.capture_id,
@@ -2598,6 +2756,16 @@ class StandaloneSeam:
             return None
         path = self._library("").root / "reports" / f"{report_id}.html"
         return path if path.is_file() else None
+
+    def markers_of(self, capture_id: str) -> list[dict[str, Any]]:
+        """One capture's stored marker rows — the Analyse view's editor
+        prefill read (I4b.1). NOT a catalogue operation: operator
+        annotation, not a processed value (#423's boundary — analysis
+        reads stay off REST/MCP). Honest-default ``[]``; the id runs
+        through the same safe-segment guard as every event-dir read."""
+        from .analysis import read_markers
+
+        return read_markers(self._event_dir(capture_id, ""))
 
     def close(self) -> None:
         """Release host-owned resources: the capture library's root lock

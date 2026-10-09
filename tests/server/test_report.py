@@ -26,6 +26,7 @@ import pytest
 
 from benchweave_sdk_server.analysis import (
     ANALYSIS_DEFINITION,
+    AssertionResult,
     load_series_set,
     scan_series,
     series_samples,
@@ -83,6 +84,12 @@ def write_capture(
 def _entries(
     root: Path, capture_ids: list[str], *, lo: float | None = None, hi: float | None = None
 ) -> list[ReportEntry]:
+    from benchweave_sdk_server.analysis import (
+        SETTLE_PCT_DEFAULT,
+        decimated_extent,
+        edge_analysis,
+    )
+
     entries: list[ReportEntry] = []
     for capture_id in capture_ids:
         source = load_series_set(root, [capture_id])[0]
@@ -92,7 +99,17 @@ def _entries(
             for t, value in series_samples(source)
             if (lo is None or t >= lo) and (hi is None or t <= hi)
         ]
-        entries.append(ReportEntry(source=source, stats=stats, points=points))
+        entries.append(
+            ReportEntry(
+                source=source,
+                stats=stats,
+                points=points,
+                edge=edge_analysis(
+                    iter(points), lo=lo, hi=hi, settle_pct=SETTLE_PCT_DEFAULT
+                ),
+                context_points=decimated_extent(source, REPORT_PLOT_COLUMNS),
+            )
+        )
     return entries
 
 
@@ -314,12 +331,17 @@ def test_more_than_two_distinct_units_refuse(tmp_path: Path) -> None:
 def test_plot_points_ceiling_refuses(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """The presentation ceiling binds the ZOOM path (the windowed points
+    a zoom chart decimates). I4b.1's context/zoom split moved the check
+    onto that path — a full-extent render draws no windowed chart (the
+    context chart streams), and the export's own windowed_points limit
+    still refuses an oversized window before any render."""
     write_capture(tmp_path, "fx-huge", values=(1.0,) * 1000)
     from benchweave_sdk_server import report as report_module
 
     monkeypatch.setattr(report_module, "REPORT_PLOT_SAMPLE_CEILING", 10)
     with pytest.raises(ValueError, match="standalone_report_window_too_large"):
-        _render(tmp_path, ["fx-huge"])
+        _render(tmp_path, ["fx-huge"], lo=0.0, hi=0.5)
 
 
 # --- fold wave 1: plot scales and null rendering (rows 1 and 6) --------------------
@@ -389,6 +411,7 @@ def test_ar6_module_census_no_adapter_or_plugin_coupling() -> None:
         "math",
         "markupsafe",
         "pathlib",
+        "re",
         "struct",
         "typing",
     }
@@ -449,4 +472,301 @@ def test_non_finite_statistics_are_never_rendered_as_absence(
     )
     assert not re.search(r",[+-]?nan\b", document, re.IGNORECASE), (
         "inf-extent series must not produce NaN path coordinates either"
+    )
+
+
+# --- I4b.1 AR-9: the context/zoom pair, marker glyphs, edge/assert blocks -----------
+
+
+def _render_full(
+    root: Path,
+    capture_ids: list[str],
+    *,
+    markers: dict | None = None,
+    assertions: tuple = (),
+    **window: float | None,
+) -> str:
+    lo, hi = window.get("lo"), window.get("hi")
+    return build_report(
+        _entries(root, capture_ids, lo=lo, hi=hi),
+        lo=lo,
+        hi=hi,
+        styles=STYLES,
+        pin_version=PIN_VERSION,
+        sdk_version=SDK_VERSION,
+        markers=markers,
+        assertions=assertions,
+    )
+
+
+def _chart_of(document: str, kind: str) -> str:
+    match = re.search(
+        rf'<svg[^>]*data-bw-chart="{kind}".*?</svg>', document, re.DOTALL
+    )
+    return match.group(0) if match is not None else ""
+
+
+@pytest.fixture(scope="module")
+def marked_set(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    root = tmp_path_factory.mktemp("report-marked")
+    values = tuple(float(index % 23) for index in range(2000))
+    write_capture(root, "fx-marked", values=values)
+    return root
+
+
+def test_ar9a_markers_render_as_glyphs_and_escaped_notes(
+    marked_set: Path,
+) -> None:
+    """In-window markers draw as labelled glyphs on both charts; a
+    hostile note renders escaped with inert braces (AR-4e extended); an
+    out-of-window marker stays in the notes list and never reaches the
+    zoom chart it cannot (the context chart spans the extent, so it CAN
+    reach it there)."""
+    hostile = "<script>alert('x')</script> {{7*7}}"
+    markers = {
+        "fx-marked": [
+            {"label": "A", "t": 0.5, "note": "load applied"},
+            {"label": "B", "t": 1.905, "note": hostile},
+        ]
+    }
+    document = _render_full(marked_set, ["fx-marked"], markers=markers, lo=0.2, hi=1.0)
+    context, zoom = _chart_of(document, "context"), _chart_of(document, "zoom")
+    assert context and zoom
+    # The window is shaded ON the context chart (the zoom chart IS the
+    # window — shading it would shade the whole canvas).
+    assert 'class="bw-window-shade"' in context
+    assert 'class="bw-window-shade"' not in zoom
+    assert 'data-bw-marker="A"' in context and 'data-bw-marker="A"' in zoom
+    # B is inside the capture's extent (context) but OUTSIDE the window
+    # (zoom): the zoom chart cannot reach it.
+    assert 'data-bw-marker="B"' in context
+    assert 'data-bw-marker="B"' not in zoom
+    # The notes list carries every row, escaped, braces inert.
+    assert "&lt;script&gt;" in document
+    assert "<script>" not in document
+    assert "{{7*7}}" in document
+    assert "load applied" in document
+
+
+def test_ar9b_edge_and_assertion_blocks_carry_labels_and_denominators(
+    marked_set: Path,
+) -> None:
+    assertions = (
+        AssertionResult(
+            definition="benchweave-assert/1",
+            capture_id="fx-marked",
+            verdict="pass",
+            min=0.0,
+            max=22.0,
+            actual_min=0.0,
+            actual_max=22.0,
+            reasons=(),
+            lo=0.2,
+            hi=1.0,
+            count=800,
+            null_count=0,
+            uncertainty="unknown",
+        ),
+    )
+    document = _render_full(
+        marked_set, ["fx-marked"], assertions=assertions, lo=0.2, hi=1.0
+    )
+    edge_block = re.search(
+        r'<table class="bw-edge".*?</table>', document, re.DOTALL
+    )
+    assert edge_block is not None
+    edge_text = edge_block.group(0)
+    assert "benchweave-edge/1" in edge_text
+    assert "host-computed" in edge_text
+    assert re.search(r"\bn \d+", edge_text)
+    assert "head_n" in edge_text and "tail_n" in edge_text and "settle_pct" in edge_text
+    assert re.search(r"window \[", edge_text)
+    assert_block = re.search(
+        r'<table class="bw-assertions".*?</table>', document, re.DOTALL
+    )
+    assert assert_block is not None
+    assert "benchweave-assert/1" in assert_block.group(0)
+    assert "host-computed" in assert_block.group(0)
+    assert ">pass<" in assert_block.group(0)
+
+
+def test_ar9c_zoom_renders_iff_the_window_is_a_proper_subset(
+    marked_set: Path,
+) -> None:
+    """A full-extent export renders ONE chart (the context chart) and no
+    zoom section; a proper-subset window renders the pair."""
+    full = _render_full(marked_set, ["fx-marked"])
+    assert full.count("<svg") == 1, "a full-extent export renders one chart"
+    assert "bw-report-zoom" not in full
+    assert 'data-bw-chart="context"' in full
+    windowed = _render_full(marked_set, ["fx-marked"], lo=0.2, hi=1.0)
+    assert windowed.count("<svg") == 2
+    assert "bw-report-zoom" in windowed
+    assert "Zoom 0.2 → 1" in windowed
+    # A window that covers the whole extent (0 to t_max) is NOT a proper
+    # subset: one chart, exactly as the full-extent export.
+    t_max = 1999 * 0.001
+    covering = _render_full(marked_set, ["fx-marked"], lo=0.0, hi=t_max)
+    assert covering.count("<svg") == 1
+
+
+def test_ar9d_both_charts_are_structurally_complete(marked_set: Path) -> None:
+    document = _render_full(marked_set, ["fx-marked"], lo=0.2, hi=1.0)
+    for kind in ("context", "zoom"):
+        chart = _chart_of(document, kind)
+        assert chart, kind
+        assert 'role="img"' in chart
+        assert "<desc>" in chart
+        assert "t (s)" in chart
+        assert 'class="bw-axis-label"' in chart
+        assert "stroke-dasharray" in chart or "bw-legend-label" in chart
+    assert "seconds from" in document and "own start" in document
+    assert f"{REPORT_PLOT_COLUMNS}" in document
+
+
+def test_ar9f_identical_inputs_with_markers_and_assertions_render_identical(
+    marked_set: Path,
+) -> None:
+    markers = {"fx-marked": [{"label": "A", "t": 0.5, "note": "same"}]}
+    assertions = (
+        AssertionResult(
+            definition="benchweave-assert/1",
+            capture_id="fx-marked",
+            verdict="fail",
+            min=0.0,
+            max=1.0,
+            actual_min=0.0,
+            actual_max=22.0,
+            reasons=("above_max",),
+            lo=None,
+            hi=None,
+            count=2000,
+            null_count=0,
+            uncertainty="unknown",
+        ),
+    )
+    first = _render_full(
+        marked_set, ["fx-marked"], markers=markers, assertions=assertions
+    )
+    second = _render_full(
+        marked_set, ["fx-marked"], markers=markers, assertions=assertions
+    )
+    assert first == second
+
+
+# --- the refute fold (I4b.1): A-F2 zoom gate, B-F1 zoom domain, A-F1 render ---------
+
+
+def _tail_gap_values(count: int = 2400) -> tuple[float, ...]:
+    """A capture whose decimated context list ends SHORT of the grid end:
+    the last column's min and max both sit before the final sample, so
+    the reduced pair's last x is a column-short of the true extent. The
+    precondition is asserted against the INDEPENDENT decimate function
+    in the arms below, not assumed."""
+    values = [2.0] * count
+    values[count - 4] = 5.0  # the last column's max
+    values[count - 3] = 1.0  # the last column's min
+    values[count - 2] = 2.0
+    values[count - 1] = 2.0  # neither min nor max -> the pair drops it
+    return tuple(values)
+
+
+def test_a_f2_tail_gap_window_renders_the_zoom_section(tmp_path: Path) -> None:
+    """A-F2: the zoom gate's t_max must come from the SOURCE GRID
+    ((sample_count - 1) x interval), not the decimated context points —
+    whose last emitted x can be a column-short of the true end (the
+    column's pair orders by x, so the min and max points can both sit
+    before the final sample). A window that trims ONLY the tail gap (lo
+    at 0) is a proper subset of the grid extent and must render the
+    zoom."""
+    from benchweave_sdk_server.analysis import decimated_extent
+
+    values = _tail_gap_values()
+    write_capture(tmp_path, "fx-tail-gap", values=values, interval=0.001)
+    source = load_series_set(tmp_path, ["fx-tail-gap"])[0]
+    reduced = decimated_extent(source, REPORT_PLOT_COLUMNS)
+    grid_end = (len(values) - 1) * 0.001
+    assert reduced[-1][0] < grid_end, (
+        "fixture precondition: the decimated list must end short of the "
+        f"grid end (got {reduced[-1][0]} vs {grid_end})"
+    )
+    hi = (reduced[-1][0] + grid_end) / 2.0  # inside the tail gap
+    document = _render(tmp_path, ["fx-tail-gap"], lo=0.0, hi=hi)
+    assert "bw-report-zoom" in document, (
+        "a window past the decimated last x but inside the grid extent "
+        "must still render the zoom section"
+    )
+    assert document.count("<svg") == 2
+
+
+def test_a_f2_markers_in_the_tail_gap_draw_inside_the_chart(
+    tmp_path: Path,
+) -> None:
+    """A-F2's marker half: the context chart's x domain is the grid
+    extent, so a marker beyond the decimated last x still lands INSIDE
+    the plot box — never extrapolated past its right edge."""
+    from benchweave_sdk_server.analysis import decimated_extent
+
+    values = _tail_gap_values()
+    write_capture(tmp_path, "fx-gap-mark", values=values, interval=0.001)
+    source = load_series_set(tmp_path, ["fx-gap-mark"])[0]
+    reduced = decimated_extent(source, REPORT_PLOT_COLUMNS)
+    grid_end = (len(values) - 1) * 0.001
+    assert reduced[-1][0] < grid_end
+    marker_t = (reduced[-1][0] + grid_end) / 2.0
+    markers = {"fx-gap-mark": [{"label": "A", "t": marker_t, "note": "tail"}]}
+    document = _render_full(tmp_path, ["fx-gap-mark"], markers=markers)
+    context = _chart_of(document, "context")
+    assert 'data-bw-marker="A"' in context
+    glyph = re.search(r'<line class="bw-marker"[^>]*x1="([0-9.]+)"', context)
+    assert glyph is not None
+    assert float(glyph.group(1)) <= 830.0, (
+        "a marker inside the capture's extent must land inside the plot "
+        f"box (got x {glyph.group(1)})"
+    )
+
+
+def test_b_f1_zoom_chart_x_domain_is_the_window(tmp_path: Path) -> None:
+    """B-F1: "Zoom 9 -> 10" must draw the window ACROSS the chart, not
+    squeezed into the right 10% of a [0, hi] axis. The zoom path's x
+    extent and tick labels lie inside the windowed domain."""
+    values = tuple(float(index % 7) for index in range(1000))
+    write_capture(tmp_path, "fx-zoom-domain", values=values, interval=0.01)
+    # Window [9, 9.9] over a [0, 9.99] capture.
+    document = _render(tmp_path, ["fx-zoom-domain"], lo=9.0, hi=9.9)
+    zoom = _chart_of(document, "zoom")
+    assert zoom, "the zoom section must render"
+    xs = [float(x) for x in re.findall(r'[ML]([0-9.]+),', zoom)]
+    assert xs, "the zoom chart must draw path coordinates"
+    assert min(xs) >= 69.0 and max(xs) <= 831.0, xs[:3]
+    # Every path x sits inside the plot box AND the path starts at the
+    # left edge region (the window's lo maps to the plot's left).
+    assert min(xs) < 100.0, (
+        f"the window's lo must map to the chart's left edge (got min x {min(xs)})"
+    )
+    # The x ticks (the first six tick labels — the y axes follow) span
+    # the window, not [0, hi].
+    ticks = re.findall(
+        r'class="bw-axis-tick">([0-9.]+)</text>', zoom
+    )
+    tick_values = [float(tick) for tick in ticks]
+    assert len(tick_values) >= 6, "the zoom chart must label its x ticks"
+    x_ticks = tick_values[:6]
+    assert min(x_ticks) >= 8.5 and max(x_ticks) <= 10.0, x_ticks
+
+
+def test_a_f1_edge_block_never_claims_instant_settlement(tmp_path: Path) -> None:
+    """A-F1's render consequence: an edge block whose baseline is inf
+    must render settle_time as the honest absence — never 0."""
+    values = (float("inf"),) * 150 + (0.0,) * 850
+    write_capture(tmp_path, "fx-edge-inf", values=values)
+    document = _render(tmp_path, ["fx-edge-inf"])
+    block = re.search(r'<table class="bw-edge".*?</table>', document, re.DOTALL)
+    assert block is not None
+    text = block.group(0)
+    assert "inf" in text, "the non-finite mean is a value and renders as such"
+    settle_row = re.search(r"<th>settle_time \(s\)</th><td>([^<]*)</td>", text)
+    assert settle_row is not None
+    assert settle_row.group(1) != "0", (
+        "a non-finite means row must never render settle_time 0"
     )

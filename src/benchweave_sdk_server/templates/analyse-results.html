@@ -20,13 +20,23 @@
   <p class="hint">Source manifest sha256 <code>{{ entry.sha256 }}</code>.</p>
 </section>
 {% endfor %}
-<form method="post" action="/analyse/export"
+<form method="post" action="/analyse/export" id="export-form"
       hx-post="/analyse/export" hx-headers='{"X-CSRF-Token": "{{ csrf_token }}"}'>
   {%- for entry in entries %}
   <input type="hidden" name="capture" value="{{ entry.capture_id }}">
   {%- endfor %}
   <input type="hidden" name="lo" value="{{ lo }}">
   <input type="hidden" name="hi" value="{{ hi }}">
+  {%- if marker_capture %}
+  {#- The editor's unsaved rows ride the export as resolved markers for
+      the capture they belong to (form state carried through the swap). -#}
+  <input type="hidden" name="marker_capture" value="{{ marker_capture }}">
+  {%- for row in marker_rows %}
+  <input type="hidden" name="marker_label" value="{{ row.label }}">
+  <input type="hidden" name="marker_t" value="{{ row.t }}">
+  <input type="hidden" name="marker_note" value="{{ row.note }}">
+  {%- endfor %}
+  {%- endif %}
   <button type="submit">Export report</button>
   <p class="hint">Export renders the self-contained HTML report and pins every
   source capture (SW-56). Identical inputs re-export to the same report.</p>

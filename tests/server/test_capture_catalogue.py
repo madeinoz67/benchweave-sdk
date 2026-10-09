@@ -31,6 +31,8 @@ FLIPPED = [
 NEW_ROWS = ["capture_delete", "capture_pin", "capture_unpin"]
 #: I4a's disclosed delta (adopted fork F-C): row 22.
 REPORT_ROWS = ["report_export"]
+#: I4b.1's disclosed delta (F-C's adopted posture): row 23.
+ANALYSIS_ROWS = ["capture_analysis"]
 
 
 def call(seam: StandaloneSeam, operation: str, arguments: dict | None = None) -> dict:
@@ -45,7 +47,7 @@ def validate(instance: object, schema: dict) -> list[str]:
 
 
 def test_capture_rows_are_served() -> None:
-    for name in FLIPPED + NEW_ROWS + REPORT_ROWS:
+    for name in FLIPPED + NEW_ROWS + REPORT_ROWS + ANALYSIS_ROWS:
         row = catalogue.spec(name)
         assert row is not None, name
         assert row.implemented, name
@@ -55,10 +57,11 @@ def test_capture_rows_are_served() -> None:
 
 def test_new_rows_sit_after_sw10s_closed_18() -> None:
     """Fork F-2's disclosure: rows 19-21 follow SW-10's closed 18; I4a's
-    report_export (adopted fork F-C) is row 22."""
+    report_export (adopted fork F-C) is row 22; I4b.1's capture_analysis
+    (F-C's adopted posture) is row 23."""
     names = [row.name for row in catalogue.CATALOGUE]
-    assert names[18:] == NEW_ROWS + REPORT_ROWS
-    assert len(names) == 22
+    assert names[18:] == NEW_ROWS + REPORT_ROWS + ANALYSIS_ROWS
+    assert len(names) == 23
 
 
 def test_capture_start_requires_exactly_one_bound() -> None:

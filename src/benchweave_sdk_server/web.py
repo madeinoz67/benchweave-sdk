@@ -22,6 +22,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 from uuid import uuid4
 
 from fastapi import FastAPI, Request
@@ -1149,13 +1150,54 @@ def _add_html_routes(
     #: styles — scripts cannot run in a report document at all.
     _REPORT_CSP = "default-src 'none'; script-src 'none'; style-src 'unsafe-inline'"
 
-    async def _window_of(request: Request) -> tuple[list[str], str, str]:
-        """The form's selection and window text."""
-        form = await request.form()
-        selected = [str(value) for value in form.getlist("capture")]
-        lo_text = str(form.get("lo") or "").strip()
-        hi_text = str(form.get("hi") or "").strip()
-        return selected, lo_text, hi_text
+    def _marker_rows_of(source: Any) -> list[dict[str, str]]:
+        """The request's marker-row form state (I4b.1): parallel
+        ``marker_label``/``marker_t``/``marker_note`` multi-values, rows
+        with every field empty dropped. The rows ride the GET query and
+        the htmx stats POST as form state, so unsaved edits survive a
+        no-JS re-submit and flow into the export."""
+        labels = [str(value) for value in source.getlist("marker_label")]
+        times = [str(value) for value in source.getlist("marker_t")]
+        notes = [str(value) for value in source.getlist("marker_note")]
+        count = max(len(labels), len(times), len(notes))
+        rows: list[dict[str, str]] = []
+        for index in range(count):
+            label = labels[index] if index < len(labels) else ""
+            t = times[index] if index < len(times) else ""
+            note = notes[index] if index < len(notes) else ""
+            if not (label or t or note):
+                continue
+            rows.append({"label": label, "t": t, "note": note})
+        return rows
+
+    def _marker_editor_rows(
+        capture_id: str | None, request_rows: list[dict[str, str]]
+    ) -> list[dict[str, str]]:
+        """The marker fieldset's display rows: the request's unsaved rows
+        when the form carried any, else the capture's stored overlay,
+        padded with blank rows to three. The editor renders for a
+        single-capture selection only (markers are per-capture and I4b.1
+        is the single-series cut)."""
+        if capture_id is None:
+            return []
+        rows = list(request_rows)
+        if not rows:
+            try:
+                stored = seam.markers_of(capture_id)
+            except SeamError:
+                stored = []
+            # The overlay read is RAW (A-F3: the discipline runs at
+            # export); the EDITOR shows what is stored so the operator
+            # can fix it — non-dict entries cannot display and skip.
+            rows = [
+                {"label": str(row.get("label", "")), "t": str(row.get("t", "")),
+                 "note": str(row.get("note", ""))}
+                for row in stored
+                if isinstance(row, dict)
+            ]
+        while len(rows) < 3:
+            rows.append({"label": "", "t": "", "note": ""})
+        return rows[:26]
 
     def _parse_window(
         lo_text: str, hi_text: str
@@ -1199,12 +1241,16 @@ def _add_html_routes(
         return lo, hi
 
     async def _analyse_context(
-        selected: list[str], lo_text: str, hi_text: str
+        selected: list[str],
+        lo_text: str,
+        hi_text: str,
+        marker_rows: list[dict[str, str]] | None = None,
     ) -> dict[str, Any]:
         """The analyse page's shared render context: the picker rows over
         the landed capture_list (published waveform captures only — the
         picker never offers a row the analysis would refuse), the current
-        selection, and the computed entries (or the rendered refusal)."""
+        selection, the computed entries (or the rendered refusal), and
+        the single-capture marker editor's rows (I4b.1 AR-8)."""
         rows = (await seam.call("capture_list", {}))["captures"]
         picker = [
             row
@@ -1212,6 +1258,10 @@ def _add_html_routes(
             if row.get("state") == "published"
             and row.get("format") == "waveform_f64le"
         ]
+        picker_ids = {str(row["capture_id"]) for row in picker}
+        marker_capture = (
+            selected[0] if len(selected) == 1 and selected[0] in picker_ids else None
+        )
         entries: list[dict[str, Any]] = []
         error: dict[str, Any] | None = None
         if selected:
@@ -1232,19 +1282,23 @@ def _add_html_routes(
             "analyse_error": error,
             "lo": lo_text,
             "hi": hi_text,
+            "marker_capture": marker_capture,
+            "marker_rows": _marker_editor_rows(marker_capture, marker_rows or []),
         }
 
     @app.get("/analyse", response_class=HTMLResponse)
     async def analyse_page(request: Request) -> Response:
         """The Analyse view: the capture picker over the landed captures
         list, the numeric window (the no-script path — analyse.js adds the
-        drag-brush on the plot), and the server-computed statistics under
-        definition benchweave-analysis/1."""
+        drag-brush and the marker click-to-place on the plot), the
+        single-capture marker editor, and the server-computed statistics
+        under definition benchweave-analysis/1."""
         selected = [str(value) for value in request.query_params.getlist("capture")]
         context = await _analyse_context(
             selected,
             str(request.query_params.get("lo") or "").strip(),
             str(request.query_params.get("hi") or "").strip(),
+            _marker_rows_of(request.query_params),
         )
         return _TEMPLATES.TemplateResponse(
             request=request,
@@ -1256,12 +1310,89 @@ def _add_html_routes(
     async def analyse_stats(request: Request) -> Response:
         """The stats partial (the htmx swap target): the same computation
         the GET renders inline — one code path, two entry points."""
-        selected, lo_text, hi_text = await _window_of(request)
-        context = await _analyse_context(selected, lo_text, hi_text)
+        form = await request.form()
+        selected = [str(value) for value in form.getlist("capture")]
+        context = await _analyse_context(
+            selected,
+            str(form.get("lo") or "").strip(),
+            str(form.get("hi") or "").strip(),
+            _marker_rows_of(form),
+        )
         return _TEMPLATES.TemplateResponse(
             request=request,
             name="analyse-results.html",
             context=shared(**context),
+        )
+
+    def _marker_rows_or_400(
+        rows: list[dict[str, str]],
+    ) -> list[dict[str, Any]] | Response:
+        """One diagnostic family for the marker rows' t parse — the save
+        and export routes refuse identically (A-F5: the export used to
+        silently DROP unparseable rows while save 400ed), and every
+        interpolated operand escapes (B-reflected: the refusal pages
+        reflect the row's own text)."""
+        parsed: list[dict[str, Any]] = []
+        for row in rows:
+            try:
+                t = float(row["t"])
+            except ValueError:
+                t = None
+            if t is None:
+                return HTMLResponse(
+                    str(
+                        escape(
+                            "invalid_request: marker t must be a number "
+                            f"(got {row['t']!r} for label {row['label']!r})"
+                        )
+                    ),
+                    status_code=400,
+                )
+            parsed.append({"label": row["label"], "t": t, "note": row["note"]})
+        return parsed
+
+    @app.post("/analyse/markers", response_class=HTMLResponse)
+    async def analyse_markers(request: Request) -> Response:
+        """Save the marker editor's rows through the ``capture_analysis``
+        catalogue row (I4b.1 AR-8) and land back on the view re-rendered
+        from the stored overlay; a refused save renders its refusal (the
+        export route's idiom — never a silent redirect)."""
+        form = await request.form()
+        selected = [str(value) for value in form.getlist("capture")]
+        rows = _marker_rows_of(form)
+        if len(selected) != 1:
+            return HTMLResponse(
+                str(
+                    escape(
+                        "invalid_request: the marker editor saves exactly one "
+                        "capture's overlay — select a single capture"
+                    )
+                ),
+                status_code=400,
+            )
+        markers = _marker_rows_or_400(rows)
+        if isinstance(markers, Response):
+            return markers
+        try:
+            await _ui_call(
+                "capture_analysis", {"capture_id": selected[0], "markers": markers}
+            )
+        except SeamError as exc:
+            return HTMLResponse(
+                f"{str(escape(exc.code))}: {str(escape(exc.message))}",
+                status_code=ERROR_HTTP_STATUS[exc.code],
+            )
+        # B-303: the redirect's params are URL-encoded — an unencoded &
+        # in lo_text must never become a query separator.
+        query = {"capture": selected[0]}
+        lo_text = str(form.get("lo") or "").strip()
+        hi_text = str(form.get("hi") or "").strip()
+        if lo_text:
+            query["lo"] = lo_text
+        if hi_text:
+            query["hi"] = hi_text
+        return RedirectResponse(
+            url=f"/analyse?{urlencode(query)}", status_code=303
         )
 
     @app.post("/analyse/export")
@@ -1269,7 +1400,10 @@ def _add_html_routes(
         """Export the report over the ``report_export`` catalogue row and
         land on the download; a refused export renders its refusal (the
         delete route's idiom — never a silent redirect)."""
-        selected, lo_text, hi_text = await _window_of(request)
+        form = await request.form()
+        selected = [str(value) for value in form.getlist("capture")]
+        lo_text = str(form.get("lo") or "").strip()
+        hi_text = str(form.get("hi") or "").strip()
         window = _parse_window(lo_text, hi_text)
         if isinstance(window, dict):
             return HTMLResponse(
@@ -1282,11 +1416,26 @@ def _add_html_routes(
             arguments["lo"] = lo
         if hi is not None:
             arguments["hi"] = hi
+        marker_capture = str(form.get("marker_capture") or "")
+        if marker_capture and marker_capture in selected:
+            # The editor's unsaved rows ride the export as resolved
+            # markers for the capture they belong to (present rows
+            # replace that capture's overlay for this export). A-F5: an
+            # unparseable row refuses with the save route's diagnostic —
+            # never a silent drop that loses the operator's edits.
+            parsed_rows = _marker_rows_or_400(_marker_rows_of(form))
+            if isinstance(parsed_rows, Response):
+                return parsed_rows
+            resolved = [
+                {"capture_id": marker_capture, **row} for row in parsed_rows
+            ]
+            if resolved:
+                arguments["markers"] = resolved
         try:
             result = await _ui_call("report_export", arguments)
         except SeamError as exc:
             return HTMLResponse(
-                f"{exc.code}: {exc.message}",
+                f"{str(escape(exc.code))}: {str(escape(exc.message))}",
                 status_code=ERROR_HTTP_STATUS[exc.code],
             )
         return RedirectResponse(
