@@ -146,8 +146,10 @@ with permanent planted-violation arms R-5c). The generated plugin runtime has **
 - **[SRF-4]** (the I4a design record's new row; the maintainer assigns the final ID at
   landing) A processed value is never rendered without its definition id, its
   denominators (count, null_count, window) and the `host-computed` label — anchors:
-  `benchweave_sdk_server/analysis.py` (the statistics carry their own denominators),
-  `report.py` (every statistics block's caption), `templates/analyse-results.html`
+  `benchweave_sdk_server/analysis.py` (the statistics carry their own denominators;
+  I4b.1 extends the same rule to the edge-timing and assertion families under
+  `benchweave-edge/1` and `benchweave-assert/1`), `report.py` (every statistics,
+  edge and assertion block's caption), `templates/analyse-results.html`
   (the view's same caption discipline); pinned by the AR-4(c) arms in
   `tests/server/test_report.py`. *Without it, a report number means whatever the reader
   assumes — the evidence-exactness crux of a reporting slice.*
