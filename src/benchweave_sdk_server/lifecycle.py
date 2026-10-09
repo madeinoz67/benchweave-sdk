@@ -837,11 +837,17 @@ LOGS_LINES_DOMAIN = "logs_lines_domain:"
 LOGS_DESTINATION_CREDENTIAL = "logs_destination_credential:"
 LOGS_DESTINATION_STDERR = "logs_destination_stderr:"
 LOGS_UNREADABLE = "logs_unreadable:"
+LOGS_WINDOW_CAP = "logs_window_cap:"
 LOGS_NO_DESTINATION = "logs_no_destination:"
 
 #: The tail's first read window (a service parameter like the gateway's,
 #: never a bench envelope — A02).
 TAIL_WINDOW_BYTES = 64 * 1024
+
+#: The doubling window's cap (service parameter, A02 — the same class as
+#: ``TAIL_WINDOW_BYTES``). The window never grows past this, so a blob
+#: that defeats line-splitting is refused, never read whole (W1).
+TAIL_WINDOW_CAP_BYTES = 8 * 1024 * 1024
 
 
 def _twin_row(check: str, verdict: str, detail: str,
@@ -872,11 +878,17 @@ def _journal_problems(path: Path) -> tuple[list[str], list[str]]:
     line is the crash-tear shape (a NOTE); an unparseable non-final line
     is only reachable by tampering (a problem); an unreadable journal is
     the ``supervision_journal_unreadable:`` problem the caller maps to
-    ``unknown``."""
+    ``unknown``.
+
+    The classifier (W3, l2 F1 — the literal twin): torn ONLY when the
+    raw tail does not end ``"\\n"``. A single-write+fsync append cannot
+    end with its own newline, so a NEWLINE-TERMINATED unparseable line —
+    final or not — is TAMPERING, never the crash-tear pass."""
     try:
         raw = path.read_text(encoding="utf-8", errors="replace")
     except OSError as error:
         return ([f"supervision_journal_unreadable: cannot read it: {error}"], [])
+    torn_final_possible = not raw.endswith("\n")
     lines = raw.split("\n")
     if lines and lines[-1] == "":
         lines.pop()
@@ -888,7 +900,7 @@ def _journal_problems(path: Path) -> tuple[list[str], list[str]]:
         try:
             json.loads(line)
         except json.JSONDecodeError:
-            if index == len(lines) - 1:
+            if index == len(lines) - 1 and torn_final_possible:
                 notes.append(
                     "the journal's final line is torn — the known crash-tear "
                     "shape (appends are single-write+fsync)"
@@ -896,8 +908,9 @@ def _journal_problems(path: Path) -> tuple[list[str], list[str]]:
             else:
                 problems.append(
                     f"the journal's line {index + 1} is unparseable — "
-                    "mid-file tears cannot occur by construction, so this "
-                    "is tampering"
+                    "every line here is newline-terminated (a completed "
+                    "single-write+fsync append), so this is tampering, not "
+                    "a crash tear (only an unterminated final line can tear)"
                 )
     return (problems, notes)
 
@@ -1073,8 +1086,17 @@ def doctor(bindings: Path) -> dict[str, Any]:
 
 def _tail_lines(path: Path, lines: int) -> list[str]:
     """The seek-bounded windowed tail (the gateway twin's shape): read
-    from ``max(0, size - 64 KiB)``, doubling on undercount — never a
-    whole-file read; decode ``errors="replace"``."""
+    from ``max(0, size - window)``, doubling on undercount up to
+    ``TAIL_WINDOW_CAP_BYTES`` — windowed WITH a cap (a whole-file read
+    happens only for a file inside the first window); decode
+    ``errors="replace"``.
+
+    The refusal rule (W1, the gateway twin): when the windowed ladder
+    cannot produce ``lines`` complete rows and the window had to grow
+    past its first read window to get there, the requested lines cannot
+    be served within the windowed tail: typed
+    :data:`LOGS_WINDOW_CAP`. A file that fits the first window and
+    simply has fewer lines than requested returns what it has."""
     with path.open("rb") as handle:
         handle.seek(0, os.SEEK_END)
         size = handle.tell()
@@ -1088,9 +1110,42 @@ def _tail_lines(path: Path, lines: int) -> list[str]:
                 rows = rows[1:]  # the leading partial line at a mid-file seek
             if rows and rows[-1] == "":
                 rows.pop()  # the final newline's empty remainder
-            if len(rows) >= lines or offset == 0:
+            if len(rows) >= lines:
                 return rows[-lines:]
-            window *= 2
+            if offset == 0 or window >= TAIL_WINDOW_CAP_BYTES:
+                if window > TAIL_WINDOW_BYTES:
+                    raise LifecycleError(
+                        f"{LOGS_WINDOW_CAP} the requested {lines} line(s) "
+                        "cannot be served within the windowed read "
+                        f"(window cap {TAIL_WINDOW_CAP_BYTES // (1024 * 1024)} "
+                        f"MiB; {path}) — the file has fewer complete lines "
+                        "than requested beyond the first read window; try a "
+                        "smaller --lines"
+                    )
+                return rows[-lines:]
+            window = min(window * 2, TAIL_WINDOW_CAP_BYTES)
+
+
+def _is_credential_destination(destination: Path, credential: Path) -> bool:
+    """The credential guard (the R3 fold, widened by W4 — the gateway
+    twin's literal shape): the pidfile field is operator-steerable
+    through ``BENCHWEAVE_SDK_LOG_DESTINATION`` and pointed at
+    ``<bindings>.tokens`` the tail would otherwise read the bearer. The
+    compare is ``(st_dev, st_ino)`` AFTER resolve — identity, not path
+    equality — so it covers the symlink alias AND the hardlink and
+    case-variant aliases (same inode, different spelling). What it
+    covers: both rungs of the resolution ladder — the pidfile-named
+    destination and the post-mortem ``<bindings>.log`` sibling. What it
+    does NOT catch: a copied (distinct-inode) credential file named like
+    a log — only identity is refused."""
+    try:
+        dest_stat = destination.resolve().stat()
+        cred_stat = credential.resolve().stat()
+    except OSError:
+        # A path that cannot be stat'ed is not the credential (the tail
+        # path reports its own typed unreadable/no-destination outcome).
+        return False
+    return (dest_stat.st_dev, dest_stat.st_ino) == (cred_stat.st_dev, cred_stat.st_ino)
 
 
 def logs(bindings: Path, lines: int) -> dict[str, Any]:
@@ -1120,7 +1175,7 @@ def logs(bindings: Path, lines: int) -> dict[str, Any]:
                     "surface (service install is refused here)"
                 )
             tokens = tokens_path(bindings)
-            if Path(raw).resolve() == tokens.resolve():
+            if _is_credential_destination(Path(raw), tokens):
                 raise LifecycleError(
                     f"{LOGS_DESTINATION_CREDENTIAL} the resolved destination "
                     f"is the tokens file ({tokens}) — the pidfile's "
@@ -1132,6 +1187,16 @@ def logs(bindings: Path, lines: int) -> dict[str, Any]:
             return _tail_payload(Path(raw), lines, post_mortem=False)
     log = log_path(bindings)
     if log.is_file():
+        # W4: the post-mortem rung rides the same guard — a
+        # <bindings>.log symlink or hardlink of the tokens file is the
+        # credential however it is named.
+        if _is_credential_destination(log, tokens_path(bindings)):
+            raise LifecycleError(
+                f"{LOGS_DESTINATION_CREDENTIAL} the resolved destination is "
+                f"the tokens file ({tokens_path(bindings)}) — a "
+                "<bindings>.log that is a symlink or hardlink of it is "
+                "refused as a tail source; point the log at a real log file"
+            )
         return _tail_payload(log, lines, post_mortem=True)
     raise LifecycleError(
         f"{LOGS_NO_DESTINATION} no pidfile names a destination and no "
