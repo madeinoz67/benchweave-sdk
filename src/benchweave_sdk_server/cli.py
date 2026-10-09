@@ -17,6 +17,7 @@ default install's entry point degrades honestly instead of tracebacking).
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import sys
@@ -377,6 +378,18 @@ def cli() -> None:
         "Flags and the process environment always win."
     ),
 )
+@click.option(
+    "--supervised",
+    "supervised",
+    is_flag=True,
+    hidden=True,
+    help=(
+        "INTERNAL (set by `start`): arm the lifecycle surface — write the "
+        "pidfile beside the bindings document, deliver the per-launch "
+        "tokens to a 0600 sibling file instead of stdout, and answer the "
+        "stop doorbell."
+    ),
+)
 def serve(
     project: Path,
     host: str,
@@ -392,6 +405,7 @@ def serve(
     unattended: bool,
     retention_rules: Path | None,
     env_file: Path | None,
+    supervised: bool,
 ) -> None:
     """Serve UI, REST and MCP over one plugin project."""
     if env_file is not None:
@@ -466,29 +480,86 @@ def serve(
         csrf_token=new_token(),
         operator_action_token=new_token(),
     )
-    app = build_app(seam, policy=policy, authoring=authoring, scenario=selection)
+    effective_bindings = _effective_bindings_path(bindings)
+    # S2 (the gateway's F2 twin): the stop decision closes live SSE
+    # streams through this event so an open /events tab can never hang
+    # the drain into the kill rung; None keeps the unarmed serve's
+    # stream posture unchanged.
+    streams_closing: Any = None
+    if supervised:
+        import threading
+
+        streams_closing = threading.Event()
+    app = build_app(
+        seam,
+        policy=policy,
+        authoring=authoring,
+        scenario=selection,
+        streams_closing=streams_closing,
+    )
     click.echo(f"Serving {seam.session.plugin.package} on http://{host}:{port}")
-    click.echo(f"Bearer token (REST mutations and MCP over HTTP): {policy.bearer_token}")
-    # trust-1: the per-launch operator action token, minted for every serve
-    # (uniform and fail-closed — the routes refuse everything without one)
-    # but DELIVERED only where it has a consumer: the serial transport's
-    # bind/unbind routes. Two out-of-band channels, never a page GET: the
-    # banner line below, and a file under the capture-root family.
-    launch_url = f"http://{host}:{port}"
-    if transport == "serial":
-        click.echo(
-            "Operator action token (endpoint bind/unbind in the UI): "
-            f"{policy.operator_action_token}"
-        )
-        token_file = _deliver_operator_action_token(
-            capture_root, policy.operator_action_token, host, port
-        )
-        if token_file is not None:
-            click.echo(f"Operator action token file: {token_file}")
-        # The launch URL carries the token as a QUERY: the page view it
-        # opens is the armed view (the forms' headers carry it), while a
-        # GET without the credential never yields it.
-        launch_url = f"http://{host}:{port}/?operator_action={policy.operator_action_token}"
+    # Issue #422 inc3 — the lifecycle twin's started mode (F5 fold): a
+    # supervised spawn's stdout is devnull and its stderr lands in
+    # <bindings>.log, so the per-launch tokens go to the 0600 delivery
+    # file INSTEAD of the banner (never destroyed in devnull, never
+    # leaked into the log; `logs` never displays the file).
+    if supervised:
+        from .lifecycle import LifecycleError, deliver_tokens, write_pidfile
+
+        try:
+            # S7: the tokens file lands BEFORE the pidfile — readiness
+            # (the pidfile naming this child) then implies the tokens
+            # were deliverable; a failed delivery leaves NO readiness
+            # handle behind. S5: an unwritable family refuses TYPED at
+            # the boot, never a raw PermissionError traceback.
+            tokens_file = deliver_tokens(
+                effective_bindings,
+                bearer_token=policy.bearer_token,
+                operator_action_token=policy.operator_action_token,
+                host=host,
+                port=port,
+            )
+            write_pidfile(effective_bindings, log_destination=os.environ.get(
+                "BENCHWEAVE_SDK_LOG_DESTINATION", "stderr"))
+        except (OSError, LifecycleError) as error:
+            # A click-level typed refusal: the boot exits 1 with the
+            # prefix on stderr, never a raw PermissionError traceback.
+            # LifecycleError rides the same refusal class because the
+            # WINDOWS delivery path refuses through it (an unreadable SID,
+            # a failed ACL restriction, a stuck consult —
+            # lifecycle._restrict_windows): without it in the tuple the
+            # windows boot dies a raw traceback, unreachable by S5's
+            # typed-refusal doctrine.
+            raise click.ClickException(
+                f"supervision_refused_unwritable: cannot write the "
+                f"supervision family beside {effective_bindings} ({error})"
+            ) from error
+        click.echo(f"Tokens file (mode 0600): {tokens_file}")
+        launch_url = f"http://{host}:{port}"
+    else:
+        click.echo(f"Bearer token (REST mutations and MCP over HTTP): {policy.bearer_token}")
+        # trust-1: the per-launch operator action token, minted for every serve
+        # (uniform and fail-closed — the routes refuse everything without one)
+        # but DELIVERED only where it has a consumer: the serial transport's
+        # bind/unbind routes. Two out-of-band channels, never a page GET: the
+        # banner line below, and a file under the capture-root family.
+        launch_url = f"http://{host}:{port}"
+        if transport == "serial":
+            click.echo(
+                "Operator action token (endpoint bind/unbind in the UI): "
+                f"{policy.operator_action_token}"
+            )
+            token_file = _deliver_operator_action_token(
+                capture_root, policy.operator_action_token, host, port
+            )
+            if token_file is not None:
+                click.echo(f"Operator action token file: {token_file}")
+            # The launch URL carries the token as a QUERY: the page view it
+            # opens is the armed view (the forms' headers carry it), while a
+            # GET without the credential never yields it.
+            launch_url = (
+                f"http://{host}:{port}/?operator_action={policy.operator_action_token}"
+            )
     if not no_open:
         import webbrowser
 
@@ -504,7 +575,110 @@ def serve(
             opened = False
         if not opened:
             click.echo(f"Browser did not open; use {launch_url}", err=True)
+    if supervised:
+        _run_supervised(
+            app, host, port, effective_bindings, streams_closing=streams_closing
+        )
+        return
     uvicorn.run(app, host=host, port=port, log_level="warning")
+
+
+def _effective_bindings_path(bindings: Path | None) -> Path:
+    """The supervision family's anchor: the resolved bindings document
+    (``--bindings`` → ``BENCHWEAVE_STANDALONE_BINDINGS`` →
+    ``device-bindings.json`` under the working directory — the one
+    resolver ``binding.bindings_path`` applies, resolved once here)."""
+    from .binding import bindings_path
+
+    return bindings_path(bindings).resolve()
+
+
+def _run_supervised(
+    app: Any, host: str, port: int, bindings: Path,
+    streams_closing: Any = None,
+) -> None:
+    """The armed serve tail: doorbell poll + SIGTERM → the graceful
+    shutdown DIRECTLY (``should_exit`` — never a captured-signal replay),
+    pidfile removed at clean shutdown. The SDK twin has NO refusal
+    machinery (nothing is at stake) and no reconciliation (no store).
+
+    S2: the drain is BOUNDED explicitly (``timeout_graceful_shutdown`` —
+    uvicorn's default waits for open connections forever, and one open
+    /events tab would hang every stop into the kill rung) and the stop
+    decision CLOSES live SSE streams first (``streams_closing``).
+
+    S4: the daemon writes NO journal row on consuming a request — the
+    verdict file carries the fields; the CLI (the journal's one writer)
+    journals them on observation.
+    """
+    import signal
+    import threading
+    import time as time_module
+
+    import uvicorn
+
+    from . import lifecycle
+
+    def _decide() -> None:
+        stop_seen.set()
+        if streams_closing is not None:
+            # S2: close live SSE streams at the decision — the drain must
+            # not wait on an open events tab.
+            streams_closing.set()
+        server.should_exit = True
+
+    config = uvicorn.Config(
+        app,
+        host=host,
+        port=port,
+        log_level="warning",
+        timeout_graceful_shutdown=lifecycle.GRACEFUL_TIMEOUT_S,
+    )
+    server = uvicorn.Server(config)
+    stop_seen = threading.Event()
+
+    def _poll_once() -> None:
+        if lifecycle.answer_stop_request(bindings):
+            _decide()
+
+    def _poll() -> None:
+        while not stop_seen.is_set():
+            time_module.sleep(1.0)
+            with contextlib.suppress(OSError):
+                # a transient read races the writer's replace
+                _poll_once()
+
+    poller = threading.Thread(target=_poll, name="sdk-supervision-poll", daemon=True)
+    previous_handler: Any = None
+    if sys.platform != "win32" and threading.current_thread() is threading.main_thread():
+        previous_handler = signal.getsignal(signal.SIGTERM)
+
+        def _handler(signum: int, frame: Any) -> None:
+            # The SDK decision is a flag set (no refusal, no wait): the
+            # scheduled form of the F12 discipline. The signal and the
+            # doorbell file are ONE protocol — whichever arrives first
+            # consumes the request (a POSIX drain can outrun the 1 s poll
+            # cadence, so the handler answers the file too; on Windows
+            # the poll is the only channel). S7's comment fix: nothing
+            # runs "during the drain" here — uvicorn's capture_signals
+            # restores this handler at context exit and REPLAYS the
+            # signal (raise_signal) AFTER the drain; should_exit set
+            # above is what ends the drain.
+            with contextlib.suppress(OSError):
+                lifecycle.answer_stop_request(bindings)
+            _decide()
+
+        signal.signal(signal.SIGTERM, _handler)
+    try:
+        poller.start()
+        server.run()
+    finally:
+        stop_seen.set()
+        if streams_closing is not None:
+            streams_closing.set()
+        if previous_handler is not None:
+            signal.signal(signal.SIGTERM, previous_handler)
+        lifecycle.remove_pidfile(bindings)
 
 
 @cli.command()
@@ -545,6 +719,170 @@ def mcp(project: Path, authoring: bool, unattended: bool) -> None:
         # The interrupt itself propagates after this block.
         asyncio.run(seam.settle_capture_for_shutdown())
         seam.close()
+
+
+# --- the lifecycle twins (issue #422 inc3 — one standard, per-surface
+# --- application; the recorded divergences are named in lifecycle.py) --------------
+
+
+@cli.command()
+@click.argument("project", type=click.Path(path_type=Path, exists=True))
+@click.option("--host", default="127.0.0.1", show_default=True)
+@click.option("--port", default=8477, type=click.IntRange(1, 65535), show_default=True)
+@click.option(
+    "--bindings",
+    type=click.Path(path_type=Path),
+    default=None,
+    help=(
+        "The bindings document the supervision family anchors beside "
+        "(default: the serve surface's own resolution — "
+        "BENCHWEAVE_STANDALONE_BINDINGS, then device-bindings.json under "
+        "the working directory)."
+    ),
+)
+@click.option(
+    "--transport",
+    type=click.Choice(["mock", "serial"]),
+    default="mock",
+    show_default=True,
+)
+@click.option("--device", default=None, help="Serial device path (serial transport only).")
+@click.option("--scenario", type=click.Choice(_scenario_ids()), default=None,
+              help="Serve one of the nine baseline states (mock transport only).")
+def start(
+    project: Path,
+    host: str,
+    port: int,
+    bindings: Path | None,
+    transport: str,
+    device: str | None,
+    scenario: str | None,
+) -> None:
+    """Start the host detached (supervised; stderr to <bindings>.log).
+
+    The per-launch bearer tokens land in a 0600 <bindings>.tokens sibling
+    (never devnull, never the log). Readiness is the pidfile naming the
+    child."""
+    from . import lifecycle
+    from .binding import bindings_path
+
+    try:
+        payload = lifecycle.start(
+            project,
+            bindings=bindings_path(bindings),
+            host=host,
+            port=port,
+            transport=transport,
+            device=device,
+            scenario=scenario,
+        )
+    except lifecycle.LifecycleError as exc:
+        click.echo(str(exc), err=True)
+        raise SystemExit(1) from exc
+    click.echo(json.dumps(payload, indent=2, sort_keys=True))
+
+
+@cli.command()
+@click.option(
+    "--bindings",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="The bindings document the supervision family anchors beside.",
+)
+def stop(bindings: Path | None) -> None:
+    """Stop the host (doorbell + SIGTERM; one audited SIGKILL past the
+    bounded wedge wait). No refusal machinery — nothing is ever at stake
+    on this surface (no runs)."""
+    from . import lifecycle
+    from .binding import bindings_path
+
+    try:
+        payload = lifecycle.stop(bindings_path(bindings))
+    except lifecycle.LifecycleError as exc:
+        click.echo(str(exc), err=True)
+        raise SystemExit(1) from exc
+    click.echo(json.dumps(payload, indent=2, sort_keys=True))
+
+
+@cli.command()
+@click.argument("project", type=click.Path(path_type=Path, exists=True))
+@click.option("--host", default="127.0.0.1", show_default=True)
+@click.option("--port", default=8477, type=click.IntRange(1, 65535), show_default=True)
+@click.option(
+    "--bindings",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="The bindings document the supervision family anchors beside.",
+)
+@click.option(
+    "--transport",
+    type=click.Choice(["mock", "serial"]),
+    default="mock",
+    show_default=True,
+)
+@click.option("--device", default=None, help="Serial device path (serial transport only).")
+@click.option("--scenario", type=click.Choice(_scenario_ids()), default=None)
+def restart(
+    project: Path,
+    host: str,
+    port: int,
+    bindings: Path | None,
+    transport: str,
+    device: str | None,
+    scenario: str | None,
+) -> None:
+    """Stop then start (a stop refusal propagates: nothing starts)."""
+    from . import lifecycle
+    from .binding import bindings_path
+
+    try:
+        payload = lifecycle.restart(
+            project,
+            bindings=bindings_path(bindings),
+            host=host,
+            port=port,
+            transport=transport,
+            device=device,
+            scenario=scenario,
+        )
+    except lifecycle.LifecycleError as exc:
+        click.echo(str(exc), err=True)
+        raise SystemExit(1) from exc
+    click.echo(json.dumps(payload, indent=2, sort_keys=True))
+
+
+@cli.command()
+@click.option(
+    "--bindings",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="The bindings document the supervision family anchors beside.",
+)
+def status(bindings: Path | None) -> None:
+    """The lifecycle verdicts for this host (pid identity, log, tokens file)."""
+    from . import lifecycle
+    from .binding import bindings_path
+
+    payload = lifecycle.status(bindings_path(bindings))
+    click.echo(json.dumps(payload, indent=2, sort_keys=True))
+
+
+@cli.command("service")
+@click.argument("action", type=click.Choice(["install"]), required=True)
+def service(action: str) -> None:
+    """REFUSED on this surface (the recorded divergence, §5).
+
+    A plugin-author preview server is not a boot daemon: no commissioned
+    policy, no procedures, nothing for a service manager's stop ladder to
+    respect. An operator who wants one supervised writes their own unit
+    (documented in the gateway's deploy tree)."""
+    click.echo(
+        "benchweave_sdk_service_refused: a plugin-author preview server is "
+        "not a boot daemon — no commissioned policy, no procedures; an "
+        "operator who wants one supervised writes their own unit",
+        err=True,
+    )
+    raise SystemExit(2)
 
 
 @cli.command()
