@@ -551,6 +551,58 @@ _REPORT_EXPORT_INPUT = _object(
             "description": "The settle band's percentage of the step around "
             "final (a display parameter, not a commissioned envelope)",
         },
+        # I4b.2: the power family's params (the record §1.6). The rails'
+        # membership/class/interval discipline and the scalars' finiteness
+        # are enforced at the seam with the typed
+        # standalone_report_power_* prefixes (the schema carries the JSON
+        # shape only, the marker-row precedent).
+        "power": _object(
+            {
+                "mode": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The ONE named power presentation over "
+                    "the rail rows: battery, dc-dc, sleep or load-step "
+                    "(an unknown name refuses typed at evaluation)",
+                },
+                "rails": {
+                    "type": "array",
+                    "items": _object(
+                        {
+                            "v": {
+                                "type": "string",
+                                "minLength": 1,
+                                "description": "The rail's voltage-side "
+                                "capture (omitted on an i-only rail)",
+                            },
+                            "i": {
+                                "type": "string",
+                                "minLength": 1,
+                                "description": "The rail's current-side "
+                                "capture",
+                            },
+                        },
+                        ["i"],
+                    ),
+                    "description": "The RESOLVED V/I rails (capture_id-keyed "
+                    "— never series names); absent -> the deterministic "
+                    "request-order default. The sidecar records the "
+                    "resolved pairing so re-export reproduces it",
+                },
+                "capacity_ah": {
+                    "type": "number",
+                    "description": "The battery presentation's capacity for "
+                    "runtime_h (positive and finite, enforced at "
+                    "evaluation; absent capacity -> no runtime row)",
+                },
+                "threshold": {
+                    "type": "number",
+                    "description": "The sleep presentation's current "
+                    "threshold; absent -> not_evaluated: no threshold",
+                },
+            },
+            ["mode"],
+        ),
     },
     ["capture_ids"],
 )

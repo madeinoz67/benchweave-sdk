@@ -31,7 +31,12 @@ TEST_PORT = 8477
 
 
 def write_capture(
-    root: Path, capture_id: str, *, values: tuple[float, ...], unit: str = "V"
+    root: Path,
+    capture_id: str,
+    *,
+    values: tuple[float, ...],
+    unit: str = "V",
+    interval: float = 0.001,
 ) -> Path:
     payload = b"".join(struct.pack("<d", value) for value in values)
     event = root / capture_id
@@ -48,7 +53,7 @@ def write_capture(
                 "sha256": digest,
                 "started_at": f"2026-10-07T12:00:00+00:00-{capture_id}",
                 "sample_count": len(values),
-                "sample_interval_s": 0.001,
+                "sample_interval_s": interval,
                 "unit": unit,
                 "x-standalone-state": "finalised",
                 "x-standalone-manifest-version": 1,
@@ -878,3 +883,120 @@ console.log(
   JSON.stringify({ axis_click_filled: axisClickFilled, placed, export_carries: exportCarries })
 );
 """
+
+
+# --- I4b.2: the Analyse view's power mode surface (the record §1.4/§1.6) ------------
+
+
+def _write_power_pair(root: Path) -> None:
+    write_capture(
+        root, "fx-view-v", values=(2.0,) * 360, interval=0.01, unit="V"
+    )
+    write_capture(
+        root, "fx-view-i", values=(3.0,) * 360, interval=0.01, unit="A"
+    )
+
+
+def test_analyse_page_offers_the_power_mode_fields(
+    client: TestClient, capture_root: Path
+) -> None:
+    _write_power_pair(capture_root)
+    page = client.get("/analyse").text
+    assert 'name="power_mode"' in page
+    for mode in ("battery", "dc-dc", "sleep", "load-step"):
+        assert f'>{mode}<' in page
+    assert 'name="capacity_ah"' in page and 'name="threshold"' in page
+
+
+def test_stats_partial_renders_the_power_block(
+    client: TestClient, capture_root: Path
+) -> None:
+    _write_power_pair(capture_root)
+    token = csrf_of(client)
+    response = client.post(
+        "/analyse/stats",
+        data={
+            "capture": ["fx-view-v", "fx-view-i"],
+            "power_mode": "battery",
+            "capacity_ah": "12",
+        },
+        headers={"X-CSRF-Token": token},
+    )
+    assert response.status_code == 200
+    assert "benchweave-power/1" in response.text
+    assert "host-computed" in response.text
+    assert "runtime (h)" in response.text and ">4<" in response.text
+    # The export form carries the power fields through the swap.
+    assert 'name="power_mode" value="battery"' in response.text
+
+
+def test_sleep_not_evaluated_renders_on_the_view(
+    client: TestClient, capture_root: Path
+) -> None:
+    _write_power_pair(capture_root)
+    token = csrf_of(client)
+    response = client.post(
+        "/analyse/stats",
+        data={"capture": ["fx-view-v", "fx-view-i"], "power_mode": "sleep"},
+        headers={"X-CSRF-Token": token},
+    )
+    assert response.status_code == 200
+    assert "not_evaluated" in response.text and "no threshold" in response.text
+
+
+def test_unparseable_power_number_renders_the_refusal(
+    client: TestClient, capture_root: Path
+) -> None:
+    """An unparseable power number follows the WINDOW idiom on the stats
+    partial (the refused notice renders in the page) and the marker
+    idiom on the export route (a 400 page, never a silent drop)."""
+    _write_power_pair(capture_root)
+    token = csrf_of(client)
+    # The full page renders the refused notice (the swapped partial keeps
+    # its I4a shape: "No results — the selection refused").
+    response = client.get(
+        "/analyse",
+        params=[
+            ("capture", "fx-view-v"),
+            ("capture", "fx-view-i"),
+            ("power_mode", "battery"),
+            ("capacity_ah", "twelve"),
+        ],
+    )
+    assert response.status_code == 200
+    assert "Refused" in response.text
+    assert "standalone_report_power_param" in response.text
+    export = client.post(
+        "/analyse/export",
+        data={
+            "capture": ["fx-view-v", "fx-view-i"],
+            "power_mode": "battery",
+            "capacity_ah": "twelve",
+        },
+        headers={"X-CSRF-Token": token},
+    )
+    assert export.status_code == 400
+    assert "standalone_report_power_param" in export.text
+
+
+def test_export_carries_the_power_params(
+    client: TestClient, capture_root: Path
+) -> None:
+    """The export POST forwards the view's power fields; the rendered
+    report carries the power section (the two surfaces share the one
+    computation)."""
+    _write_power_pair(capture_root)
+    token = csrf_of(client)
+    response = client.post(
+        "/analyse/export",
+        data={
+            "capture": ["fx-view-v", "fx-view-i"],
+            "power_mode": "load-step",
+        },
+        headers={"X-CSRF-Token": token},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    report = client.get(response.headers["Location"])
+    assert "benchweave-power/1" in report.text
+    assert "R (Ω)" in report.text

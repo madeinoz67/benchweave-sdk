@@ -148,8 +148,11 @@ with permanent planted-violation arms R-5c). The generated plugin runtime has **
   denominators (count, null_count, window) and the `host-computed` label — anchors:
   `benchweave_sdk_server/analysis.py` (the statistics carry their own denominators;
   I4b.1 extends the same rule to the edge-timing and assertion families under
-  `benchweave-edge/1` and `benchweave-assert/1`), `report.py` (every statistics,
-  edge and assertion block's caption), `templates/analyse-results.html`
+  `benchweave-edge/1` and `benchweave-assert/1`; I4b.2 extends it to the power family
+  under `benchweave-power/1`, whose integral rows additionally carry their coverage —
+  `integrated_span_s` and `dropped_segments` beside Ah/Wh, a gapped integral is
+  visibly partial), `report.py` (every statistics, edge, assertion and power block's
+  caption), `templates/analyse-results.html`
   (the view's same caption discipline); pinned by the AR-4(c) arms in
   `tests/server/test_report.py`. *Without it, a report number means whatever the reader
   assumes — the evidence-exactness crux of a reporting slice.*

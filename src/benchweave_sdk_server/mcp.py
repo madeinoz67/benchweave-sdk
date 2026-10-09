@@ -184,6 +184,7 @@ def _tool_handlers(seam: StandaloneSeam) -> dict[str, Callable[..., Any]]:
         markers: list[dict[str, Any]] | None = None,
         assertions: list[dict[str, Any]] | None = None,
         settle_pct: float | None = None,
+        power: dict[str, Any] | None = None,
     ) -> Any:
         arguments: dict[str, Any] = {"capture_ids": capture_ids}
         if lo is not None:
@@ -196,6 +197,8 @@ def _tool_handlers(seam: StandaloneSeam) -> dict[str, Callable[..., Any]]:
             arguments["assertions"] = assertions
         if settle_pct is not None:
             arguments["settle_pct"] = settle_pct
+        if power is not None:
+            arguments["power"] = power
         return await _dispatch(seam, "report_export", arguments)
 
     handlers: dict[str, Callable[..., Any]] = {
