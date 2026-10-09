@@ -750,3 +750,204 @@ def test_w3_spawn_kwargs_are_platform_honest(
     # carry them, so the literal is the honest cross-host spelling):
     # DETACHED_PROCESS 0x8 | CREATE_NEW_PROCESS_GROUP 0x200.
     assert captured.get("creationflags") == 0x00000208, captured
+
+
+# --- the doctor + logs twins (issue #422 increment 4 — one standard,
+# --- per-surface application; the gateway record's §3 as folded) -------------------
+
+
+def _stage_twin_pidfile(bindings_file: Path, log_destination: str) -> None:
+    lifecycle.pid_path(bindings_file).write_text(
+        json.dumps(
+            {
+                "pid": os.getpid(),
+                "server": "benchweave-sdk-server",
+                "bindings": str(bindings_file),
+                "started_wall": "2026-10-09T00:00:00Z",
+                "started_ticks": lifecycle.process_start_ticks(os.getpid()),
+                "log_destination": log_destination,
+                "schema": 1,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _stage_tokens(bindings_file: Path, bearer: str = "sdk-tok-9d2f") -> str:
+    lifecycle.tokens_path(bindings_file).write_text(
+        json.dumps({"bearer_token": bearer, "url": "http://127.0.0.1:8477"}),
+        encoding="utf-8",
+    )
+    lifecycle.tokens_path(bindings_file).chmod(0o600)
+    return bearer
+
+
+def _twins_combined(result: object) -> str:
+    output = getattr(result, "output", "")
+    try:
+        err = getattr(result, "stderr", "") or ""
+    except ValueError:
+        err = ""
+    return output + err
+
+
+def _twin_rows(result: object) -> list[dict[str, object]]:
+    parsed = json.loads(cast(str, getattr(result, "output", "")))
+    return list(cast(dict[str, object], parsed).get("checks", []))
+
+
+def _twin_row(result: object, check: str) -> dict[str, object]:
+    rows = [row for row in _twin_rows(result) if row.get("check") == check]
+    assert len(rows) == 1, f"expected one {check!r} row: {rows}"
+    return rows[0]
+
+
+def test_s5_doctor_happy_path(bindings_file: Path) -> None:
+    """S5: a staged pidfile naming this process (ours), a staged log with
+    the path destination, a 0600 tokens file — every row passes, exit 0;
+    the bearer VALUE never reaches output."""
+    log = lifecycle.log_path(bindings_file)
+    log.parent.mkdir(parents=True, exist_ok=True)
+    log.write_text("serve line\n", encoding="utf-8")
+    _stage_twin_pidfile(bindings_file, str(log))
+    bearer = _stage_tokens(bindings_file)
+    result = CliRunner().invoke(cli, ["doctor", "--bindings", str(bindings_file)])
+    assert result.exit_code == 0, _twins_combined(result)
+    payload = json.loads(result.output)
+    assert payload["ok"] is True
+    assert len(payload["checks"]) == 5, payload["checks"]
+    for row in payload["checks"]:
+        assert row["verdict"] == "pass", row
+    assert bearer not in _twins_combined(result)
+    assert _twin_row(result, "pid")["verdict"] == "pass"
+    assert _twin_row(result, "log_destination")["verdict"] == "pass"
+    assert _twin_row(result, "tokens")["verdict"] == "pass"
+
+
+@requires_posix_mode_bits
+def test_s6_group_readable_tokens_fails_without_leaking_the_bearer(
+    bindings_file: Path,
+) -> None:
+    """S6: tokens chmod 0644 — the tokens row fails (the perms check is
+    the whole reason this check exists SDK-side) and the bearer VALUE is
+    absent from output. POSIX-only provocation (mode bits; on Windows the
+    check is skip-with-disclosure and deliver_tokens restricts the ACL at
+    write time)."""
+    _stage_twin_pidfile(bindings_file, "stderr")
+    bearer = _stage_tokens(bindings_file)
+    lifecycle.tokens_path(bindings_file).chmod(0o644)
+    result = CliRunner().invoke(cli, ["doctor", "--bindings", str(bindings_file)])
+    assert result.exit_code == 1, _twins_combined(result)
+    row = _twin_row(result, "tokens")
+    assert row["verdict"] == "fail"
+    assert bearer not in _twins_combined(result)
+
+
+def test_s7_logs_tails_the_staged_log(
+    starter_project: Path, bindings_file: Path
+) -> None:
+    """S7: logs tails a staged <bindings>.log through the pidfile's path
+    destination; the payload names the destination and carries the
+    lines."""
+    log = lifecycle.log_path(bindings_file)
+    log.parent.mkdir(parents=True, exist_ok=True)
+    log.write_text(
+        "\n".join(f"twin-line-{index:03d}" for index in range(10)) + "\n",
+        encoding="utf-8",
+    )
+    _stage_twin_pidfile(bindings_file, str(log))
+    result = CliRunner().invoke(
+        cli,
+        ["logs", str(starter_project), "--bindings", str(bindings_file),
+         "--lines", "4"],
+    )
+    assert result.exit_code == 0, _twins_combined(result)
+    payload = json.loads(result.output)
+    assert payload["destination"] == str(log)
+    assert payload["lines"] == [
+        "twin-line-006", "twin-line-007", "twin-line-008", "twin-line-009",
+    ]
+    # The domain refusal is typed on this surface too (the R8 fold).
+    bad = CliRunner().invoke(
+        cli,
+        ["logs", str(starter_project), "--bindings", str(bindings_file),
+         "--lines", "0"],
+    )
+    assert bad.exit_code == 1, _twins_combined(bad)
+    assert "logs_lines_domain:" in _twins_combined(bad)
+
+
+def test_s8_tokens_file_is_never_a_destination(
+    starter_project: Path, bindings_file: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """S8: (rung 1) a pidfile destination naming the tokens file is a
+    typed ``logs_destination_credential:`` refusal and the bearer never
+    reaches output (the R3 fold's twin coverage); (rung 2) with the
+    pidfile ABSENT and a staged log, a POISONED tokens file — read_text
+    raising on it — changes nothing: the tokens file is structurally
+    never a destination candidate at rung 2."""
+    bearer = _stage_tokens(bindings_file)
+    _stage_twin_pidfile(bindings_file, str(lifecycle.tokens_path(bindings_file)))
+    refused = CliRunner().invoke(
+        cli, ["logs", str(starter_project), "--bindings", str(bindings_file)]
+    )
+    assert refused.exit_code == 1, _twins_combined(refused)
+    assert "logs_destination_credential:" in _twins_combined(refused)
+    assert bearer not in _twins_combined(refused)
+
+    # Rung 2: no pidfile, a staged log, and a tokens file that explodes
+    # on ANY read — the tail still completes.
+    log = lifecycle.log_path(bindings_file)
+    log.write_text("post-mortem line\n", encoding="utf-8")
+    lifecycle.pid_path(bindings_file).unlink()
+    real_read_text = Path.read_text
+
+    def poisoned_read_text(self: Path, *args: object, **kwargs: object) -> str:
+        if self.name.endswith(lifecycle.TOKENS_SUFFIX):
+            raise OSError("poisoned tokens read — the twin never reads it")
+        return real_read_text(self, *args, **kwargs)  # type: ignore[arg-type,return-value]
+
+    monkeypatch.setattr(Path, "read_text", poisoned_read_text)
+    completed = CliRunner().invoke(
+        cli, ["logs", str(starter_project), "--bindings", str(bindings_file)]
+    )
+    assert completed.exit_code == 0, _twins_combined(completed)
+    payload = json.loads(completed.output)
+    assert payload["lines"] == ["post-mortem line"]
+    assert payload["post_mortem"] is True
+
+
+def test_s9_doctor_stale_stop_request_passes_naming_start(
+    bindings_file: Path,
+) -> None:
+    """S9: a stale <bindings>.stop request targeting a dead pid — the
+    sidecars row passes with the note naming `start` as the cleaner (the
+    R4 fold's fifth check); exit 0."""
+    _stage_twin_pidfile(bindings_file, "stderr")
+    dead = subprocess.Popen(
+        [sys.executable, "-c", "pass"], stdout=subprocess.DEVNULL
+    )
+    dead.wait(timeout=10)
+    lifecycle.write_stop_request(
+        bindings_file, actor_pid=4242, target_pid=dead.pid
+    )
+    result = CliRunner().invoke(cli, ["doctor", "--bindings", str(bindings_file)])
+    assert result.exit_code == 0, _twins_combined(result)
+    row = _twin_row(result, "stop_request")
+    assert row["verdict"] == "pass"
+    assert "start" in str(row["detail"]), "the note names the cleaner verb"
+
+
+@requires_posix_mode_bits
+def test_control_e_neutralized_tokens_perms_breaks_s6(
+    bindings_file: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """RED control (e): with the tokens-perms check neutralized, the S6
+    scenario no longer produces its fail row — S6 would be red."""
+    _stage_twin_pidfile(bindings_file, "stderr")
+    _stage_tokens(bindings_file)
+    lifecycle.tokens_path(bindings_file).chmod(0o644)
+    monkeypatch.setattr(lifecycle, "_tokens_perms_problem", lambda path: None)
+    result = CliRunner().invoke(cli, ["doctor", "--bindings", str(bindings_file)])
+    assert _twin_row(result, "tokens")["verdict"] != "fail"
