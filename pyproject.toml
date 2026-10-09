@@ -47,7 +47,7 @@ server = [
   # named a dependency that does not exist (the I1 accepted-risk this
   # fold fixes); the exact pin holds the tool-schema pinning internals
   # benchweave_sdk_server.mcp relies on.
-  "fastmcp==4.0.3",
+  "fastmcp==4.0.11",
   "jinja2>=3.1",
   # The renderer's tokens/themes arrive by release + pin bump (PRD 12
   # Q5): an EXACT pin — a range would re-open silent drift between the
