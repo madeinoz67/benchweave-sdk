@@ -27,14 +27,19 @@ from benchweave_sdk_server.analysis import (
     ANALYSIS_DEFINITION,
     ASSERT_DEFINITION,
     EDGE_DEFINITION,
+    POWER_DEFINITION,
+    POWER_MODES,
     RegionStats,
     decimated_extent,
     edge_analysis,
     evaluate_assertions,
     load_series_set,
+    power_analysis,
     region_stats,
     scan_series,
     series_samples,
+    trapezoid_integral,
+    unit_kind,
     windowed_points,
 )
 
@@ -953,3 +958,634 @@ def test_a_f7_assertion_bounds_refuse_bools_and_strings(tmp_path: Path) -> None:
             evaluate_assertions(
                 [{"capture_id": "fx-assert-types", "min": bad}], entries
             )
+
+
+# --- I4b.2: power modes with V/I pairing (AR-3 amended, AR-10, AR-11) ---------------
+#
+# The definition under test is ``benchweave-power/1`` (the I4b record
+# §1.4): pairing keys on unit/quantity — NEVER names (Q8's ruling; the
+# fork's name-regex role guessing is not carried) — power at a sample is
+# V×I only where BOTH sides are non-null (the fork's null→0 coercion is
+# not carried: the fork would report ≈5.983 W on the one-null fixture),
+# and every integral is gap-visible (``integrated_span_s`` +
+# ``dropped_segments`` beside Ah/Wh, never interpolated across nulls).
+# The AR-3 energy figure is the AMENDED one: the trapezoid spans
+# (N−1) intervals over the landed uniform time base, so
+# energy = 6 × (N−1) × interval / 3600 — not the naive N×interval product.
+
+
+def _power_set(
+    root: Path, capture_ids: tuple[str, ...] | list[str]
+) -> list[tuple[Any, list[tuple[float, float]]]]:
+    """The loaded (source, full points) pairs ``power_analysis`` takes —
+    full-extent points; the window is the function's own job."""
+    return [
+        (source, windowed_points(source, lo=None, hi=None, limit=1_000_000))
+        for source in load_series_set(root, list(capture_ids))
+    ]
+
+
+def test_unit_kind_classifies_the_fork_vocabulary() -> None:
+    """The fork's own ``unitKind`` vocabulary, verbatim: lowercase with
+    µ/μ folded to u; the current and voltage sets; everything else —
+    notably ``W`` — is unpairable ``other`` (AR-10)."""
+    for unit in ("A", "a", "mA", "µA", "μA", "uA", "nA"):
+        assert unit_kind(unit) == "current", unit
+    for unit in ("V", "v", "mV", "µV", "kV"):
+        assert unit_kind(unit) == "voltage", unit
+    for unit in ("W", "Ω", "s", "°C"):
+        assert unit_kind(unit) == "other", unit
+
+
+def test_power_modes_are_the_four_named_presentations() -> None:
+    assert POWER_MODES == ("battery", "dc-dc", "sleep", "load-step")
+
+
+# --- AR-3 (amended): pairing, honest nulls, the never-0-W arm ----------------------
+
+
+def test_fx_pair_const_mean_peak_and_amended_energy(tmp_path: Path) -> None:
+    """V = 2, I = 3, 100 Hz, N = 360, t = 0 … 3.59 s: mean/peak power 6 W
+    and energy = 6 × (N−1) × interval / 3600 Wh (the AMENDED figure — the
+    trapezoid spans 359 intervals, not 360)."""
+    write_capture(
+        tmp_path, "fx-pair-v", values=(2.0,) * 360, interval=0.01, unit="V"
+    )
+    write_capture(
+        tmp_path, "fx-pair-i", values=(3.0,) * 360, interval=0.01, unit="A"
+    )
+    result = power_analysis(
+        _power_set(tmp_path, ("fx-pair-v", "fx-pair-i")),
+        mode="battery",
+        lo=None,
+        hi=None,
+    )
+    assert result.unavailable is None
+    assert len(result.rails) == 1
+    rail = result.rails[0]
+    assert (rail.v_id, rail.i_id) == ("fx-pair-v", "fx-pair-i")
+    assert (rail.count, rail.null_count) == (360, 0)
+    assert rail.mean_p == 6.0 and rail.peak_p == 6.0
+    assert rail.mean_v == 2.0 and rail.min_v == 2.0
+    assert rail.mean_i == 3.0 and rail.peak_i == 3.0
+    # The amended AR-3 figure: 6 × (N−1) × interval / 3600.
+    assert rail.wh.value is not None and _ulp(
+        rail.wh.value, 6.0 * (360 - 1) * 0.01 / 3600.0
+    )
+    assert rail.wh.counted_segments == 359
+    assert rail.wh.dropped_segments == 0
+    assert _ulp(rail.wh.integrated_span_s, 359 * 0.01)
+    assert rail.ah.value is not None and _ulp(
+        rail.ah.value, 3.0 * (360 - 1) * 0.01 / 3600.0
+    )
+    assert rail.definition == POWER_DEFINITION and rail.uncertainty == "unknown"
+    assert rail.wh.definition == POWER_DEFINITION
+
+
+def test_fx_pair_const_null_excludes_and_counts(tmp_path: Path) -> None:
+    """AR-3's one-null arm + AR-10's gap arm on one fixture: the null pair
+    is excluded AND counted (count 359, null_count 1), mean power stays
+    6 W (the fork's coercion would report ≈5.983 W), and the energy
+    integral drops the two segments touching the null —
+    ``integrated_span_s`` 3.57 (357 × 0.01 s), ``dropped_segments`` 2,
+    energy 6 × 3.57 / 3600 Wh. The gap is visible in the row, never
+    interpolated across."""
+    i_values = [3.0] * 360
+    i_values[180] = math.nan
+    write_capture(
+        tmp_path, "fx-pair-v", values=(2.0,) * 360, interval=0.01, unit="V"
+    )
+    write_capture(
+        tmp_path, "fx-pair-i", values=tuple(i_values), interval=0.01, unit="A"
+    )
+    result = power_analysis(
+        _power_set(tmp_path, ("fx-pair-v", "fx-pair-i")),
+        mode="battery",
+        lo=None,
+        hi=None,
+    )
+    rail = result.rails[0]
+    assert (rail.count, rail.null_count) == (359, 1)
+    assert rail.mean_p == 6.0 and rail.peak_p == 6.0
+    assert rail.wh.dropped_segments == 2
+    assert rail.wh.counted_segments == 357
+    assert _ulp(rail.wh.integrated_span_s, 3.57)
+    assert rail.wh.value is not None and _ulp(
+        rail.wh.value, 6.0 * 357 * 0.01 / 3600.0
+    )
+    # Ah integrates the current series alone: the same null shape.
+    assert rail.ah.dropped_segments == 2
+    assert rail.ah.counted_segments == 357
+
+
+def test_pairing_ignores_names_and_keys_on_units(tmp_path: Path) -> None:
+    """AR-3's pairing-by-unit arm: names that bait a name-regex (a
+    V-class capture named like a current, and vice versa) do not move the
+    pairing — the unit classifies."""
+    write_capture(
+        tmp_path,
+        "fx-sense-current-named",
+        values=(2.0,) * 10,
+        interval=0.01,
+        unit="V",
+    )
+    write_capture(
+        tmp_path,
+        "fx-sense-voltage-named",
+        values=(3.0,) * 10,
+        interval=0.01,
+        unit="A",
+    )
+    result = power_analysis(
+        _power_set(tmp_path, ("fx-sense-current-named", "fx-sense-voltage-named")),
+        mode="battery",
+        lo=None,
+        hi=None,
+    )
+    assert len(result.rails) == 1
+    assert result.rails[0].v_id == "fx-sense-current-named"
+    assert result.rails[0].i_id == "fx-sense-voltage-named"
+
+
+def test_no_current_series_yields_no_rows_never_zero(tmp_path: Path) -> None:
+    """AR-3's never-0-W arm: two V series and no A series → power rows
+    ABSENT with the ``power_unavailable: no current series`` reason."""
+    write_capture(tmp_path, "fx-nov-i-v1", values=(2.0,) * 10, unit="V")
+    write_capture(tmp_path, "fx-nov-i-v2", values=(3.0,) * 10, unit="mV")
+    result = power_analysis(
+        _power_set(tmp_path, ("fx-nov-i-v1", "fx-nov-i-v2")),
+        mode="battery",
+        lo=None,
+        hi=None,
+    )
+    assert result.rails == ()
+    assert result.unavailable == "power_unavailable: no current series"
+    assert result.battery is None
+
+
+def test_fx_units_shows_the_classification(tmp_path: Path) -> None:
+    """AR-10's vocabulary arm over a set: µA pairs with mV; ``W`` is
+    unpairable other and forms no rail."""
+    write_capture(tmp_path, "fx-units-uax", values=(1.0,) * 10, unit="µA")
+    write_capture(tmp_path, "fx-units-mv", values=(2.0,) * 10, unit="mV")
+    write_capture(tmp_path, "fx-units-w", values=(3.0,) * 10, unit="W")
+    result = power_analysis(
+        _power_set(tmp_path, ("fx-units-uax", "fx-units-mv", "fx-units-w")),
+        mode="battery",
+        lo=None,
+        hi=None,
+    )
+    assert len(result.rails) == 1
+    assert (result.rails[0].v_id, result.rails[0].i_id) == (
+        "fx-units-mv",
+        "fx-units-uax",
+    )
+
+
+# --- AR-10: pairing honesty and gap integrals ---------------------------------------
+
+
+def test_current_only_set_yields_ah_and_the_reason(tmp_path: Path) -> None:
+    """AR-10's partial-pair arm: a current series with no voltage partner
+    still yields Ah, with wh null (value absent) and the
+    ``power_unavailable: no voltage series`` reason beside it."""
+    write_capture(
+        tmp_path, "fx-ionly-i", values=(0.5,) * 100, interval=0.01, unit="A"
+    )
+    result = power_analysis(
+        _power_set(tmp_path, ("fx-ionly-i",)),
+        mode="battery",
+        lo=None,
+        hi=None,
+    )
+    assert len(result.rails) == 1
+    rail = result.rails[0]
+    assert rail.v_id is None
+    assert rail.reason == "power_unavailable: no voltage series"
+    assert rail.ah.value is not None and _ulp(
+        rail.ah.value, 0.5 * 99 * 0.01 / 3600.0
+    )
+    assert rail.wh.value is None
+    assert rail.mean_p is None and rail.peak_p is None
+
+
+def test_default_pairing_follows_request_order(tmp_path: Path) -> None:
+    """AR-10's ordering arm: the deterministic default pairs the FIRST
+    voltage-class and FIRST current-class source in REQUEST order — ids
+    whose sort order disagrees with the request order prove the rule."""
+    write_capture(tmp_path, "fx-b-v", values=(2.0,) * 10, unit="V")
+    write_capture(tmp_path, "fx-a-v", values=(3.0,) * 10, unit="V")
+    write_capture(tmp_path, "fx-b-i", values=(0.1,) * 10, unit="A")
+    write_capture(tmp_path, "fx-a-i", values=(0.2,) * 10, unit="A")
+    result = power_analysis(
+        _power_set(tmp_path, ("fx-b-v", "fx-a-v", "fx-b-i", "fx-a-i")),
+        mode="dc-dc",
+        lo=None,
+        hi=None,
+    )
+    assert [(rail.v_id, rail.i_id) for rail in result.rails] == [
+        ("fx-b-v", "fx-b-i"),
+        ("fx-a-v", "fx-a-i"),
+    ]
+
+
+def test_leftover_currents_form_i_only_rails_in_request_order(tmp_path: Path) -> None:
+    """Two currents, one voltage: the unpaired current keeps its Ah as an
+    i-only rail (the partial-pair honesty rule), after the complete pair."""
+    write_capture(tmp_path, "fx-mix-v", values=(2.0,) * 10, unit="V")
+    write_capture(tmp_path, "fx-mix-i1", values=(0.1,) * 10, unit="A")
+    write_capture(tmp_path, "fx-mix-i2", values=(0.2,) * 10, unit="A")
+    result = power_analysis(
+        _power_set(tmp_path, ("fx-mix-v", "fx-mix-i1", "fx-mix-i2")),
+        mode="battery",
+        lo=None,
+        hi=None,
+    )
+    assert [(rail.v_id, rail.i_id) for rail in result.rails] == [
+        ("fx-mix-v", "fx-mix-i1"),
+        (None, "fx-mix-i2"),
+    ]
+    assert result.rails[1].reason == "power_unavailable: no voltage series"
+
+
+def test_explicit_rails_reassign_roles(tmp_path: Path) -> None:
+    """The operator's resolved rails replace the default pairing (the
+    fork's railSelect re-keyed on capture_id); an explicit i-only row
+    (v omitted) declares a current without its voltage."""
+    write_capture(tmp_path, "fx-x-v1", values=(2.0,) * 10, unit="V")
+    write_capture(tmp_path, "fx-x-v2", values=(3.0,) * 10, unit="V")
+    write_capture(tmp_path, "fx-x-i1", values=(0.1,) * 10, unit="A")
+    write_capture(tmp_path, "fx-x-i2", values=(0.2,) * 10, unit="A")
+    result = power_analysis(
+        _power_set(tmp_path, ("fx-x-v1", "fx-x-v2", "fx-x-i1", "fx-x-i2")),
+        mode="dc-dc",
+        rails=[{"v": "fx-x-v2", "i": "fx-x-i2"}, {"i": "fx-x-i1"}],
+        lo=None,
+        hi=None,
+    )
+    assert [(rail.v_id, rail.i_id) for rail in result.rails] == [
+        ("fx-x-v2", "fx-x-i2"),
+        (None, "fx-x-i1"),
+    ]
+
+
+def test_explicit_rails_refuse_unknown_wrongclass_and_reuse(
+    tmp_path: Path,
+) -> None:
+    write_capture(tmp_path, "fx-val-v", values=(2.0,) * 10, unit="V")
+    write_capture(tmp_path, "fx-val-i", values=(0.1,) * 10, unit="A")
+    series = _power_set(tmp_path, ("fx-val-v", "fx-val-i"))
+    for rails in (
+        [{"v": "fx-ghost", "i": "fx-val-i"}],
+        [{"v": "fx-val-i", "i": "fx-val-i"}],
+        [{"v": "fx-val-v", "i": "fx-val-v"}],
+        [{"v": "fx-val-v", "i": "fx-val-i"}, {"v": "fx-val-v", "i": "fx-val-i"}],
+    ):
+        with pytest.raises(ValueError, match="standalone_report_power_rails"):
+            power_analysis(series, mode="battery", rails=rails, lo=None, hi=None)
+
+
+def test_interval_mismatch_between_rail_sides_refuses(tmp_path: Path) -> None:
+    """A rail pairs samples on a SHARED uniform grid: differing
+    sample_interval_s between the V and the I side refuses typed (never
+    an invented time alignment)."""
+    write_capture(
+        tmp_path, "fx-rate-v", values=(2.0,) * 100, interval=0.01, unit="V"
+    )
+    write_capture(
+        tmp_path, "fx-rate-i", values=(3.0,) * 10, interval=0.1, unit="A"
+    )
+    with pytest.raises(ValueError, match="standalone_report_power_pairing"):
+        power_analysis(
+            _power_set(tmp_path, ("fx-rate-v", "fx-rate-i")),
+            mode="battery",
+            lo=None,
+            hi=None,
+        )
+
+
+def test_zero_or_nonfinite_interval_refuses_at_load(tmp_path: Path) -> None:
+    """AR-10's zero-span arm is structural (*is refused unless*): a
+    non-positive or non-finite interval refuses at LOAD, so no code path
+    downstream ever sees a degenerate time base — the fork's
+    ``t1 - t0 || 1`` substitution cannot arise."""
+    for interval in (0.0, -0.01, math.inf):
+        write_capture(
+            tmp_path,
+            f"fx-badrate-{interval}",
+            values=(1.0,) * 4,
+            interval=interval,
+        )
+        with pytest.raises(
+            ValueError, match="standalone_report_manifest_incomplete"
+        ):
+            load_series_set(tmp_path, [f"fx-badrate-{interval}"])
+
+
+def test_power_scalar_params_refuse_typed(tmp_path: Path) -> None:
+    """Mode names and the mode scalars refuse inside the family: an
+    unknown mode, a non-finite/bool threshold, and a non-positive or
+    non-finite capacity_ah (the A-F7/A-F8 posture at the pure layer —
+    the schema fronts REST/MCP, the seam call needs the same refusal)."""
+    write_capture(tmp_path, "fx-pv", values=(2.0,) * 10, unit="V")
+    write_capture(tmp_path, "fx-pi", values=(0.5,) * 10, unit="A")
+    series = _power_set(tmp_path, ("fx-pv", "fx-pi"))
+    with pytest.raises(ValueError, match="standalone_report_power_mode"):
+        power_analysis(series, mode="turbo", lo=None, hi=None)
+    for threshold in (float("nan"), float("inf"), True):
+        with pytest.raises(ValueError, match="standalone_report_power_param"):
+            power_analysis(
+                series, mode="sleep", threshold=threshold, lo=None, hi=None
+            )
+    for capacity in (0.0, -2.0, float("nan"), True):
+        with pytest.raises(ValueError, match="standalone_report_power_param"):
+            power_analysis(
+                series,
+                mode="battery",
+                capacity_ah=capacity,
+                lo=None,
+                hi=None,
+            )
+
+
+def test_window_bounds_apply_to_pairs_and_integrals(tmp_path: Path) -> None:
+    """The one window is the region for the power family too: pairs and
+    integral segments clip to the inclusive [lo, hi] over the STORED
+    float time base. Precision note: t is index × interval in binary64,
+    so the sample "at 0.70 s" stores t = 0.7000000000000001 and a window
+    ending at 0.70 EXCLUDES it (fl(71 × 0.01) = 0.71 exactly, so a
+    0.71-bound includes its k = 71 sample) — the same inclusive
+    comparison every landed family makes against the stored t."""
+    write_capture(
+        tmp_path, "fx-win-v", values=(2.0,) * 100, interval=0.01, unit="V"
+    )
+    write_capture(
+        tmp_path, "fx-win-i", values=(3.0,) * 100, interval=0.01, unit="A"
+    )
+    result = power_analysis(
+        _power_set(tmp_path, ("fx-win-v", "fx-win-i")),
+        mode="battery",
+        lo=0.5,
+        hi=0.71,
+    )
+    rail = result.rails[0]
+    assert rail.count == 22  # t = 0.50 … 0.71 inclusive on the stored grid
+    assert rail.wh.counted_segments == 21
+    assert _ulp(rail.wh.integrated_span_s, 0.21)
+    assert rail.wh.value is not None and _ulp(
+        rail.wh.value, 6.0 * 21 * 0.01 / 3600.0
+    )
+
+
+# --- AR-10: the trapezoid definition itself ------------------------------------------
+
+
+def test_trapezoid_clips_with_interpolation_at_bounds() -> None:
+    """The fork's definition verbatim: per-segment trapezoid clipped to
+    the window with LINEAR INTERPOLATION at the clipped bounds. The grid
+    (0.25 steps, ramp values) is binary-exact, so equality is exact."""
+    points = [(0.0, 0.0), (0.25, 1.0), (0.5, 2.0), (0.75, 3.0), (1.0, 4.0)]
+    clipped = trapezoid_integral(points, 0.125, 0.875)
+    assert clipped.value == 1.5
+    assert clipped.integrated_span_s == 0.75
+    assert clipped.counted_segments == 4
+    assert clipped.dropped_segments == 0
+    full = trapezoid_integral(points, None, None)
+    assert full.value == 2.0
+    assert full.counted_segments == 4
+
+
+def test_trapezoid_gap_rule_drops_and_reports() -> None:
+    """A segment whose either endpoint is null is dropped, never
+    interpolated across; an out-of-window null drops nothing."""
+    points = [
+        (0.0, 0.0),
+        (0.25, math.nan),
+        (0.5, 2.0),
+        (0.75, 3.0),
+        (1.0, 4.0),
+    ]
+    gapped = trapezoid_integral(points, None, None)
+    assert gapped.dropped_segments == 2
+    assert gapped.counted_segments == 2
+    assert gapped.integrated_span_s == 0.5
+    assert gapped.value == 1.5
+    after = trapezoid_integral(points, 0.5, 1.0)
+    assert after.dropped_segments == 0
+    assert after.counted_segments == 2
+
+
+def test_trapezoid_absent_value_is_none_never_zero() -> None:
+    """No counted segments — all-null data or a lone sample — is an
+    absent integral, never 0 (a zero integral over real zeros is a
+    value; no data is not)."""
+    all_null = [(float(index) * 0.25, math.nan) for index in range(4)]
+    result = trapezoid_integral(all_null, None, None)
+    assert result.value is None
+    assert result.dropped_segments == 3
+    lone = trapezoid_integral([(0.0, 1.0)], None, None)
+    assert lone.value is None and lone.counted_segments == 0
+    zeros = [(float(index) * 0.25, 0.0) for index in range(4)]
+    real_zero = trapezoid_integral(zeros, None, None)
+    assert real_zero.value == 0.0
+
+
+# --- AR-11: the four mode blocks ------------------------------------------------------
+
+
+def test_battery_runtime_with_denominators(tmp_path: Path) -> None:
+    """capacity_ah = 2 over mean I = 0.5 A → runtime_h = 4 with its
+    denominators carried; no capacity_ah → no runtime (never a default
+    capacity)."""
+    write_capture(
+        tmp_path, "fx-bat-v", values=(3.7,) * 100, interval=0.01, unit="V"
+    )
+    write_capture(
+        tmp_path, "fx-bat-i", values=(0.5,) * 100, interval=0.01, unit="A"
+    )
+    series = _power_set(tmp_path, ("fx-bat-v", "fx-bat-i"))
+    result = power_analysis(
+        series, mode="battery", capacity_ah=2.0, lo=None, hi=None
+    )
+    battery = result.battery
+    assert battery is not None
+    assert battery.capacity_ah == 2.0
+    assert battery.mean_i == 0.5
+    assert battery.runtime_h is not None and _ulp(battery.runtime_h, 4.0)
+    assert battery.peak_i == 0.5 and battery.mean_v == 3.7 and battery.min_v == 3.7
+    assert battery.wh is not None and _ulp(
+        battery.wh, 1.85 * 99 * 0.01 / 3600.0
+    )
+    assert battery.definition == POWER_DEFINITION
+    unresourced = power_analysis(series, mode="battery", lo=None, hi=None)
+    assert unresourced.battery is not None
+    assert unresourced.battery.capacity_ah is None
+    assert unresourced.battery.runtime_h is None
+
+
+def test_dcdc_eta_and_the_zero_pin_arm(tmp_path: Path) -> None:
+    """Two rails with known powers: η = pout/pin × 100; a rail with
+    |pin| ≤ 1e-9 yields η absent — never inf, never 0."""
+    write_capture(
+        tmp_path, "fx-dc-in-v", values=(12.0,) * 50, interval=0.01, unit="V"
+    )
+    write_capture(
+        tmp_path, "fx-dc-in-i", values=(1.0,) * 50, interval=0.01, unit="A"
+    )
+    write_capture(
+        tmp_path, "fx-dc-out-v", values=(5.0,) * 50, interval=0.01, unit="V"
+    )
+    write_capture(
+        tmp_path, "fx-dc-out-i", values=(2.0,) * 50, interval=0.01, unit="A"
+    )
+    result = power_analysis(
+        _power_set(
+            tmp_path,
+            ("fx-dc-in-v", "fx-dc-in-i", "fx-dc-out-v", "fx-dc-out-i"),
+        ),
+        mode="dc-dc",
+        lo=None,
+        hi=None,
+    )
+    dcdc = result.dcdc
+    assert dcdc is not None
+    assert dcdc.pin == 12.0 and dcdc.pout == 10.0
+    assert dcdc.eta_pct is not None and _ulp(dcdc.eta_pct, 10.0 / 12.0 * 100.0)
+    # The zero-pin arm: input power 0 W → η absent.
+    write_capture(
+        tmp_path, "fx-dc-zero-v", values=(0.0,) * 50, interval=0.01, unit="V"
+    )
+    write_capture(
+        tmp_path, "fx-dc-zero-i", values=(1.0,) * 50, interval=0.01, unit="A"
+    )
+    zero = power_analysis(
+        _power_set(
+            tmp_path,
+            ("fx-dc-zero-v", "fx-dc-zero-i", "fx-dc-out-v", "fx-dc-out-i"),
+        ),
+        mode="dc-dc",
+        lo=None,
+        hi=None,
+    )
+    assert zero.dcdc is not None
+    assert zero.dcdc.pin == 0.0
+    assert zero.dcdc.eta_pct is None
+    assert zero.dcdc.reason is not None
+
+
+def test_sleep_duty_classes_and_the_no_threshold_arm(tmp_path: Path) -> None:
+    """Known threshold, known duty: duty % and class means match closed
+    form; threshold ABSENT → ``not_evaluated: no threshold`` (the fork's
+    midpoint default not carried); an empty class reports its count and
+    an absent mean, never 0 A."""
+    write_capture(
+        tmp_path, "fx-slp-v", values=(3.7,) * 100, interval=0.01, unit="V"
+    )
+    write_capture(
+        tmp_path,
+        "fx-slp-i",
+        values=(0.001,) * 60 + (0.100,) * 40,
+        interval=0.01,
+        unit="A",
+    )
+    series = _power_set(tmp_path, ("fx-slp-v", "fx-slp-i"))
+    result = power_analysis(
+        series, mode="sleep", threshold=0.01, lo=None, hi=None
+    )
+    sleep = result.sleep
+    assert sleep is not None
+    assert sleep.verdict == "evaluated"
+    assert sleep.count == 100
+    assert sleep.above_count == 40 and sleep.below_count == 60
+    assert sleep.above_mean is not None and _ulp(sleep.above_mean, 0.1)
+    assert sleep.below_mean is not None and _ulp(sleep.below_mean, 0.001)
+    assert sleep.duty_pct == 40.0
+    # No threshold: not_evaluated, never a midpoint default.
+    bare = power_analysis(series, mode="sleep", lo=None, hi=None)
+    assert bare.sleep is not None
+    assert bare.sleep.verdict == "not_evaluated"
+    assert bare.sleep.reason == "no threshold"
+    assert bare.sleep.duty_pct is None
+    # Empty class: every sample above → below_count 0, below_mean absent.
+    write_capture(
+        tmp_path,
+        "fx-slp-all-i",
+        values=(0.100,) * 100,
+        interval=0.01,
+        unit="A",
+    )
+    all_above = power_analysis(
+        _power_set(tmp_path, ("fx-slp-v", "fx-slp-all-i")),
+        mode="sleep",
+        threshold=0.01,
+        lo=None,
+        hi=None,
+    )
+    assert all_above.sleep is not None
+    assert all_above.sleep.below_count == 0
+    assert all_above.sleep.below_mean is None
+    assert all_above.sleep.duty_pct == 100.0
+
+
+def test_loadstep_resistance_and_the_tiny_di_arm(tmp_path: Path) -> None:
+    """Known ΔV/ΔI: R = −ΔV/ΔI; |ΔI| ≤ 1e-9 → R absent. Head/tail means
+    are the 15% rule (max(1, floor(n × 0.15))) per series."""
+    write_capture(
+        tmp_path,
+        "fx-ls-v",
+        values=(5.0,) * 100 + (4.0,) * 100,
+        interval=0.01,
+        unit="V",
+    )
+    write_capture(
+        tmp_path,
+        "fx-ls-i",
+        values=(0.010,) * 100 + (0.110,) * 100,
+        interval=0.01,
+        unit="A",
+    )
+    series = _power_set(tmp_path, ("fx-ls-v", "fx-ls-i"))
+    result = power_analysis(series, mode="load-step", lo=None, hi=None)
+    step = result.load_step
+    assert step is not None
+    assert step.v_n == 200 and step.i_n == 200
+    assert step.v_head == 5.0 and step.v_tail == 4.0
+    assert step.i_head is not None and _ulp(step.i_head, 0.01)
+    assert step.i_tail is not None and _ulp(step.i_tail, 0.11)
+    assert step.dv == -1.0
+    assert step.di is not None and _ulp(step.di, 0.1)
+    assert step.r is not None and _ulp(step.r, 10.0)
+    # The tiny-ΔI arm: constant I → ΔI = 0 → R absent.
+    write_capture(
+        tmp_path,
+        "fx-ls-flat-i",
+        values=(0.050,) * 200,
+        interval=0.01,
+        unit="A",
+    )
+    flat = power_analysis(
+        _power_set(tmp_path, ("fx-ls-v", "fx-ls-flat-i")),
+        mode="load-step",
+        lo=None,
+        hi=None,
+    )
+    assert flat.load_step is not None
+    assert flat.load_step.di == 0.0
+    assert flat.load_step.dv == -1.0
+    assert flat.load_step.r is None
+
+
+def test_only_the_requested_mode_computes(tmp_path: Path) -> None:
+    """The modes are presentations, not a batch: the requested mode's
+    block is present, the other three absent."""
+    write_capture(tmp_path, "fx-one-v", values=(2.0,) * 10, unit="V")
+    write_capture(tmp_path, "fx-one-i", values=(0.5,) * 10, unit="A")
+    result = power_analysis(
+        _power_set(tmp_path, ("fx-one-v", "fx-one-i")),
+        mode="load-step",
+        lo=None,
+        hi=None,
+    )
+    assert result.load_step is not None
+    assert result.battery is None and result.dcdc is None and result.sleep is None
+    assert result.mode == "load-step"
