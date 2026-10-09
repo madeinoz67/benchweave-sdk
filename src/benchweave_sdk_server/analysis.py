@@ -719,3 +719,111 @@ def resolve_markers(
             )
         resolved[label] = {"label": label, "t": float(t), "note": note}
     return [resolved[label] for label in sorted(resolved)]
+
+
+def decimated_extent(source: SeriesSource, columns: int) -> list[tuple[float, float]]:
+    """The source's FULL extent reduced to per-column min/max pairs in
+    one chunked, digest-verified pass (I4b.1 AR-9e) — the context chart's
+    entry point, existing so a report can span captures up to the raw
+    sample ceiling without materialising them (the windowed path's
+    REPORT_PLOT_SAMPLE_CEILING cannot bound a full-extent path).
+
+    Point-for-point parity with
+    ``plots.decimate_minmax(list(series_samples(source)), columns)`` is
+    load-bearing (the tie-breaks): the FIRST minimum and the LAST
+    maximum per column, a single-point column emitting one point, the
+    pair ordered by x, and the identity at or below the budget. The x
+    extent derives from the manifest's own grid — ``[0, (sample_count -
+    1) * sample_interval_s]`` — which is exactly what the materialised
+    list's first and last times are, so the column arithmetic matches
+    bit-for-bit. decimate_minmax's degenerate x-extent branch (all
+    points at one x) cannot fire here: count > columns implies count >=
+    2, and the loader's uniform grid is strictly increasing. Memory is
+    O(columns): only the running per-column candidates are held.
+    """
+    if columns < 1:
+        raise ValueError("the decimation column budget must be positive")
+    hasher = hashlib.sha256()
+    interval = source.sample_interval_s
+    count = source.sample_count
+
+    def verify() -> None:
+        digest = hasher.hexdigest()
+        if digest != source.manifest_sha256:
+            raise AnalysisRefusal(
+                f"standalone_report_primary_mismatch: {source.capture_id} "
+                f"primary digest {digest} does not match its manifest "
+                f"{source.manifest_sha256}; the capture changed after "
+                "publication"
+            )
+
+    if count <= columns:
+        # The identity branch (at or below the budget, decimate_minmax
+        # returns the whole bounded list).
+        points: list[tuple[float, float]] = []
+        with source.primary.open("rb") as stream:
+            index = 0
+            while True:
+                chunk = stream.read(_CHUNK_SAMPLES * 8)
+                if not chunk:
+                    break
+                hasher.update(chunk)
+                for value in struct.unpack_from(f"<{len(chunk) // 8}d", chunk):
+                    points.append((index * interval, value))
+                    index += 1
+        verify()
+        return points
+    first_x = 0.0
+    last_x = (count - 1) * interval
+    width = (last_x - first_x) / columns
+    reduced: list[tuple[float, float]] = []
+    # The current column's candidates: low = FIRST minimum (strictly-less
+    # replaces), high = LAST maximum (>= replaces) — decimate_minmax's
+    # tie rules. ``last_point`` mirrors max(reversed(column)): a column
+    # whose LAST point is NaN keeps that NaN as its maximum (nothing
+    # earlier in the back-scan can compare against it).
+    current_column = 0
+    low: tuple[float, float] | None = None
+    high: tuple[float, float] | None = None
+    last_point: tuple[float, float] | None = None
+
+    def flush() -> None:
+        nonlocal low, high
+        assert low is not None and high is not None
+        if last_point is not None and math.isnan(last_point[1]):
+            high = last_point
+        if low == high:
+            reduced.append(low)
+        else:
+            reduced.extend([low, high] if low[0] <= high[0] else [high, low])
+        low = None
+        high = None
+
+    with source.primary.open("rb") as stream:
+        index = 0
+        while True:
+            chunk = stream.read(_CHUNK_SAMPLES * 8)
+            if not chunk:
+                break
+            hasher.update(chunk)
+            for value in struct.unpack_from(f"<{len(chunk) // 8}d", chunk):
+                point = (index * interval, value)
+                index += 1
+                column = min(columns - 1, int((point[0] - first_x) / width))
+                if column != current_column:
+                    flush()
+                    current_column = column
+                if low is None or value < low[1]:
+                    low = point
+                # ``high`` mirrors ``max(reversed(column))`` — the LAST
+                # maximum — under a forward scan: a finite value replaces
+                # on >=, and a NaN holding the slot is displaced by ANY
+                # later point (in the back-scan a NaN survives only as
+                # the column's final point, which the flush rule below
+                # supplies separately).
+                if high is None or math.isnan(high[1]) or value >= high[1]:
+                    high = point
+                last_point = point
+    flush()
+    verify()
+    return reduced

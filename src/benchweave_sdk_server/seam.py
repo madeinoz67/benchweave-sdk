@@ -2442,17 +2442,42 @@ class StandaloneSeam:
 
         Every refusal — window shape, unknown source, unreadable or
         incomplete manifest, unsupported format, tampered primary, plot
-        ceiling, unit count — happens BEFORE anything is written: a
-        refused export leaves no ``reports/`` directory (AR-5's no-orphans
-        rule). The handler performs no ``await`` between the stale-row
-        check and the write, so nothing interleaves with the pin.
+        ceiling, unit count, marker/assertion shape — happens BEFORE
+        anything is written: a refused export leaves no ``reports/``
+        directory (AR-5's no-orphans rule). The handler performs no
+        ``await`` between the stale-row check and the write, so nothing
+        interleaves with the pin.
+
+        I4b.1: ``markers`` resolves against each target's manifest grid
+        (present rows replace that capture's overlay for this export;
+        absent -> the overlay), ``assertions`` evaluate against the
+        request's own window statistics, and ``settle_pct`` feeds the
+        edge blocks — the sidecar records the EFFECTIVE params so
+        re-export reproduces the document (AR-4d/9f).
         """
-        from .analysis import load_series_set, scan_series, windowed_points
-        from .report import REPORT_PLOT_SAMPLE_CEILING, ReportEntry, build_report
+        from .analysis import (
+            SETTLE_PCT_DEFAULT,
+            AnalysisRefusal,
+            decimated_extent,
+            edge_analysis,
+            evaluate_assertions,
+            load_series_set,
+            read_markers,
+            resolve_markers,
+            scan_series,
+            windowed_points,
+        )
+        from .report import (
+            REPORT_PLOT_COLUMNS,
+            REPORT_PLOT_SAMPLE_CEILING,
+            ReportEntry,
+            build_report,
+        )
 
         capture_ids = [str(entry) for entry in arguments["capture_ids"]]
         lo = arguments.get("lo")
         hi = arguments.get("hi")
+        settle_pct = arguments.get("settle_pct", SETTLE_PCT_DEFAULT)
         # B-F4: non-finite bounds (JSON NaN/Infinity literals parse as
         # floats) refuse BEFORE any side effect — the pre-fold path ran the
         # pin loop and created reports/ before the sidecar serializer
@@ -2471,6 +2496,13 @@ class StandaloneSeam:
                 f"standalone_report_window_invalid: lo {lo} exceeds hi {hi}",
                 correlation,
             )
+        if not math.isfinite(float(settle_pct)):
+            raise self._fail(
+                "invalid_request",
+                f"standalone_report_window_invalid: settle_pct {settle_pct} "
+                "is not finite; the settle band must be a finite percentage",
+                correlation,
+            )
         library = self._library(correlation)
         root = library.root
         for capture_id in capture_ids:
@@ -2487,7 +2519,37 @@ class StandaloneSeam:
             )
         try:
             sources = load_series_set(root, capture_ids)
+            # Marker resolution: present request rows replace the named
+            # capture's overlay; captures without request rows keep their
+            # own (the overlay is the copy of record, SW-50).
+            request_markers: dict[str, list[dict[str, Any]]] = {}
+            for row in arguments.get("markers") or []:
+                target = str(row.get("capture_id", ""))
+                if target not in {source.capture_id for source in sources}:
+                    raise AnalysisRefusal(
+                        f"standalone_report_assert_target: marker row names "
+                        f"{target}, which is not among the request's captures"
+                    )
+                request_markers.setdefault(target, []).append(
+                    {
+                        "label": row.get("label"),
+                        "t": row.get("t"),
+                        "note": row.get("note", ""),
+                    }
+                )
+            resolved_markers: dict[str, list[dict[str, Any]]] = {}
+            for source in sources:
+                rows = request_markers.get(source.capture_id)
+                if rows is None:
+                    resolved_markers[source.capture_id] = read_markers(
+                        root / source.capture_id
+                    )
+                else:
+                    resolved_markers[source.capture_id] = resolve_markers(
+                        source.manifest, rows
+                    )
             entries: list[ReportEntry] = []
+            stats_by_capture: dict[str, Any] = {}
             for source in sources:
                 stats, _ = scan_series(source, lo=lo, hi=hi)
                 points = windowed_points(
@@ -2497,8 +2559,22 @@ class StandaloneSeam:
                     limit=REPORT_PLOT_SAMPLE_CEILING,
                 )
                 entries.append(
-                    ReportEntry(source=source, stats=stats, points=points)
+                    ReportEntry(
+                        source=source,
+                        stats=stats,
+                        points=points,
+                        edge=edge_analysis(
+                            iter(points), lo=lo, hi=hi, settle_pct=settle_pct
+                        ),
+                        context_points=decimated_extent(
+                            source, REPORT_PLOT_COLUMNS
+                        ),
+                    )
                 )
+                stats_by_capture[source.capture_id] = stats
+            assertions = evaluate_assertions(
+                list(arguments.get("assertions") or []), stats_by_capture
+            )
             styles, ui_html_version, asset_digests = self._report_assets()
             html = build_report(
                 entries,
@@ -2507,6 +2583,8 @@ class StandaloneSeam:
                 styles=styles,
                 pin_version=ui_html_version,
                 sdk_version=sdk_version(),
+                markers=resolved_markers,
+                assertions=assertions,
             )
         except ValueError as exc:
             raise self._report_refusal(exc, correlation) from exc
@@ -2521,7 +2599,15 @@ class StandaloneSeam:
             sidecar_bytes = json.dumps(
                 {
                     "report_id": report_id,
-                    "params": {"lo": lo, "hi": hi},
+                    "params": {
+                        "lo": lo,
+                        "hi": hi,
+                        "settle_pct": settle_pct,
+                        "markers": resolved_markers,
+                        "assertions": list(
+                            arguments.get("assertions") or []
+                        ),
+                    },
                     "sources": [
                         {
                             "capture_id": source.capture_id,

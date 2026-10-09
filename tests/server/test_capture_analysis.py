@@ -298,3 +298,127 @@ def test_marker_note_with_markup_survives_the_write_verbatim(
     assert result["markers"][0]["note"] == hostile
     overlay = json.loads((root / "fx-marker-note" / "analysis.json").read_text())
     assert overlay["markers"][0]["note"] == hostile
+
+
+# --- I4b.1 AR-9 (seam level): the export over markers and assertions ----------------
+
+
+def test_export_reads_the_overlay_when_the_request_carries_no_markers(
+    marker_seam: StandaloneSeam, tmp_path: Path
+) -> None:
+    root = tmp_path / "captures"
+    write_capture(root, "fx-exp-overlay", values=(1.0, 2.0, 3.0))
+    call(
+        marker_seam,
+        "capture_analysis",
+        {
+            "capture_id": "fx-exp-overlay",
+            "markers": _rows(("A", 1.0, "from the overlay")),
+        },
+    )
+    result = call(marker_seam, "report_export", {"capture_ids": ["fx-exp-overlay"]})
+    document = (root / "reports" / f"{result['report_id']}.html").read_text()
+    assert "from the overlay" in document
+    assert 'data-bw-marker="A"' in document
+
+
+def test_export_request_markers_replace_the_overlay_for_that_export(
+    marker_seam: StandaloneSeam, tmp_path: Path
+) -> None:
+    root = tmp_path / "captures"
+    write_capture(root, "fx-exp-rows", values=(1.0, 2.0, 3.0))
+    call(
+        marker_seam,
+        "capture_analysis",
+        {
+            "capture_id": "fx-exp-rows",
+            "markers": _rows(("A", 0.0, "stored"), ("B", 1.0, "stored b")),
+        },
+    )
+    result = call(
+        marker_seam,
+        "report_export",
+        {
+            "capture_ids": ["fx-exp-rows"],
+            "markers": [
+                {"capture_id": "fx-exp-rows", "label": "A", "t": 2.0,
+                 "note": "resolved"}
+            ],
+        },
+    )
+    document = (root / "reports" / f"{result['report_id']}.html").read_text()
+    assert "resolved" in document
+    assert "stored b" not in document  # request rows replace the overlay
+    sidecar = json.loads(
+        (root / "reports" / f"{result['report_id']}.json").read_text()
+    )
+    assert sidecar["params"]["markers"]["fx-exp-rows"] == [
+        {"label": "A", "t": 2.0, "note": "resolved"}
+    ]
+
+
+def test_export_with_assertions_and_settle_pct_is_reproducible(
+    marker_seam: StandaloneSeam, tmp_path: Path
+) -> None:
+    """AR-9f at the seam: identical inputs (markers + assertions +
+    settle_pct in the params) re-export to the SAME report id, write
+    nothing new, and the sidecar records the effective params — the
+    document is re-derivable from the sidecar."""
+    root = tmp_path / "captures"
+    write_capture(root, "fx-exp-full", values=(1.0, 2.0, 3.0))
+    arguments = {
+        "capture_ids": ["fx-exp-full"],
+        "settle_pct": 5.0,
+        "markers": [
+            {"capture_id": "fx-exp-full", "label": "Z", "t": 1.0, "note": "z"}
+        ],
+        "assertions": [
+            {"capture_id": "fx-exp-full", "min": 0.0, "max": 3.0},
+            {"capture_id": "fx-exp-full", "max": 1.5},
+        ],
+    }
+    first = call(marker_seam, "report_export", arguments)
+    second = call(marker_seam, "report_export", arguments)
+    assert first["report_id"] == second["report_id"]
+    assert second["created"] is False
+    sidecar = json.loads(
+        (root / "reports" / f"{first['report_id']}.json").read_text()
+    )
+    assert sidecar["params"]["settle_pct"] == 5.0
+    assert sidecar["params"]["assertions"] == arguments["assertions"]
+    assert sidecar["params"]["markers"]["fx-exp-full"][0]["label"] == "Z"
+    document = (root / "reports" / f"{first['report_id']}.html").read_text()
+    assert ">pass<" in document and ">fail<" in document
+    assert "above_max" in document
+
+
+def test_export_refuses_markers_and_assertions_outside_the_set(
+    marker_seam: StandaloneSeam, tmp_path: Path
+) -> None:
+    root = tmp_path / "captures"
+    write_capture(root, "fx-exp-set", values=(1.0,))
+    with pytest.raises(SeamError) as caught:
+        call(
+            marker_seam,
+            "report_export",
+            {
+                "capture_ids": ["fx-exp-set"],
+                "markers": [
+                    {"capture_id": "fx-exp-other", "label": "A", "t": 0.0}
+                ],
+            },
+        )
+    assert caught.value.code == "invalid_request"
+    assert "fx-exp-other" in caught.value.message
+    with pytest.raises(SeamError) as caught:
+        call(
+            marker_seam,
+            "report_export",
+            {
+                "capture_ids": ["fx-exp-set"],
+                "assertions": [{"capture_id": "fx-exp-other", "min": 0.0}],
+            },
+        )
+    assert caught.value.code == "invalid_request"
+    # A refused export leaves no reports/ behind (the no-orphans rule).
+    assert not (root / "reports").exists()

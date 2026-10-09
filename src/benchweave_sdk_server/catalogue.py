@@ -511,6 +511,46 @@ _REPORT_EXPORT_INPUT = _object(
             "description": "Inclusive window end, seconds from each "
             "capture's own start",
         },
+        # I4b.1: the resolved marker rows (present rows REPLACE the
+        # sources' overlays for this export), the assertion spec, and the
+        # settle band's percentage. The sidecar records the EFFECTIVE
+        # params so re-export reproduces the document.
+        "markers": {
+            "type": "array",
+            "items": _object(
+                {
+                    "capture_id": {"type": "string", "minLength": 1},
+                    "label": {"type": "string"},
+                    "t": {"type": "number"},
+                    "note": {"type": "string"},
+                },
+                ["capture_id", "label", "t"],
+            ),
+            "description": "Resolved marker rows; absent -> each source's "
+            "own analysis.json overlay",
+        },
+        "assertions": {
+            "type": "array",
+            "items": _object(
+                {
+                    "capture_id": {"type": "string", "minLength": 1},
+                    "min": {"type": "number"},
+                    "max": {"type": "number"},
+                },
+                ["capture_id"],
+            ),
+            "description": "Min/max assertion spec rows over the request's "
+            "own captures (at least one bound per row, enforced at "
+            "evaluation)",
+        },
+        "settle_pct": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 100,
+            "default": 2,
+            "description": "The settle band's percentage of the step around "
+            "final (a display parameter, not a commissioned envelope)",
+        },
     },
     ["capture_ids"],
 )

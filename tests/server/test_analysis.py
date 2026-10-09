@@ -28,6 +28,7 @@ from benchweave_sdk_server.analysis import (
     ASSERT_DEFINITION,
     EDGE_DEFINITION,
     RegionStats,
+    decimated_extent,
     edge_analysis,
     evaluate_assertions,
     load_series_set,
@@ -755,3 +756,102 @@ def test_assert_rows_carry_the_definition_and_denominators(
     assert row.uncertainty == "unknown"
     assert row.lo is None and row.hi is None
     assert row.count == 2 and row.null_count == 0
+
+
+# --- I4b.1 AR-9e: the streaming full-extent reducer's decimate parity ----------------
+
+
+def test_decimated_extent_equals_decimate_minmax_point_for_point(
+    tmp_path: Path,
+) -> None:
+    """AR-9e: the streaming reducer over the WHOLE series equals
+    ``decimate_minmax(list(series_samples(source)), columns)`` — the
+    tie-breaks (first min, last max, single-point column emits one point)
+    are load-bearing, on the alternating fixture and the spike fixture
+    (whose single high point must survive any reduction)."""
+    from benchweave_sdk_server.plots import decimate_minmax
+
+    for capture_id, values in (
+        ("fx-alt", tuple(float(index % 2) for index in range(10_000))),
+        ("fx-spike", tuple(10.0 if index == 5000 else 0.0 for index in range(10_000))),
+    ):
+        write_capture(tmp_path, capture_id, values=values)
+        source = load_series_set(tmp_path, [capture_id])[0]
+        for columns in (600, 7, 1):
+            streaming = decimated_extent(source, columns)
+            materialised = decimate_minmax(list(series_samples(source)), columns=columns)
+            assert streaming == materialised, (capture_id, columns)
+
+
+def test_decimated_extent_identity_below_the_budget(tmp_path: Path) -> None:
+    """At or below the column budget the reduction is the identity — the
+    whole (bounded) list, verified against the same digest check."""
+    from benchweave_sdk_server.plots import decimate_minmax
+
+    write_capture(tmp_path, "fx-tiny", values=(1.0, 9.0, 4.0))
+    source = load_series_set(tmp_path, ["fx-tiny"])[0]
+    assert decimated_extent(source, 8) == list(series_samples(source))
+    assert decimated_extent(source, 8) == decimate_minmax(
+        list(series_samples(source)), columns=8
+    )
+
+
+def test_decimated_extent_single_sample_takes_the_identity_branch(
+    tmp_path: Path,
+) -> None:
+    """count == 1 sits at or below any positive column budget, so BOTH
+    paths take the identity branch and emit the point ONCE (decimate's
+    degenerate double-emission branch needs len(points) > columns with a
+    degenerate x extent — unreachable for the loader's strictly
+    increasing uniform grid; the reducer keeps the branch only for
+    structural parity with decimate's own shape)."""
+    from benchweave_sdk_server.plots import decimate_minmax
+
+    write_capture(tmp_path, "fx-one", values=(5.5,))
+    source = load_series_set(tmp_path, ["fx-one"])[0]
+    expected = decimate_minmax(list(series_samples(source)), columns=600)
+    assert expected == [(0.0, 5.5)]
+    assert decimated_extent(source, 600) == expected
+
+
+def test_decimated_extent_parity_survives_nulls(tmp_path: Path) -> None:
+    """Nulls (NaN samples) ride both paths: the parity holds point-for-
+    point including the columns whose first or last point is NaN — the
+    reducer mirrors decimate's max-over-reversed exactly (a NaN survives
+    as a column's maximum only when it is that column's FINAL point).
+    The comparator is NaN-aware: tuple ``==`` is False for NaN elements,
+    so a plain list compare would report a divergence that is not one."""
+    from benchweave_sdk_server.plots import decimate_minmax
+
+    def same_points(
+        left: list[tuple[float, float]], right: list[tuple[float, float]]
+    ) -> bool:
+        return len(left) == len(right) and all(
+            ta == tb and (va == vb or (math.isnan(va) and math.isnan(vb)))
+            for (ta, va), (tb, vb) in zip(left, right, strict=True)
+        )
+
+    values = tuple(
+        float(index % 3) if index % 97 else math.nan for index in range(3000)
+    )
+    write_capture(tmp_path, "fx-ext-nulls", values=values)
+    source = load_series_set(tmp_path, ["fx-ext-nulls"])[0]
+    for columns in (600, 13):
+        assert same_points(
+            decimated_extent(source, columns),
+            decimate_minmax(list(series_samples(source)), columns=columns),
+        ), columns
+
+
+def test_decimated_extent_verifies_the_digest(tmp_path: Path) -> None:
+    """The streaming pass hashes as it reads: a primary mutated after
+    load refuses instead of feeding unverified bytes to the context
+    chart (the windowed_points discipline)."""
+    values = tuple(float(index % 5) for index in range(2000))
+    event = write_capture(tmp_path, "fx-ext-tamper", values=values)
+    source = load_series_set(tmp_path, ["fx-ext-tamper"])[0]
+    (event / "fx-ext-tamper.f64").write_bytes(
+        b"".join(struct.pack("<d", v) for v in values[:-1]) + struct.pack("<d", 9.0)
+    )
+    with pytest.raises(ValueError, match="standalone_report_primary_mismatch"):
+        decimated_extent(source, 600)
