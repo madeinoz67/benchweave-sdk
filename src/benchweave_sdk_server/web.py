@@ -22,6 +22,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 from uuid import uuid4
 
 from fastapi import FastAPI, Request
@@ -1182,13 +1183,18 @@ def _add_html_routes(
         rows = list(request_rows)
         if not rows:
             try:
-                rows = [
-                    {"label": str(row["label"]), "t": str(row["t"]),
-                     "note": str(row.get("note", ""))}
-                    for row in seam.markers_of(capture_id)
-                ]
+                stored = seam.markers_of(capture_id)
             except SeamError:
-                rows = []
+                stored = []
+            # The overlay read is RAW (A-F3: the discipline runs at
+            # export); the EDITOR shows what is stored so the operator
+            # can fix it — non-dict entries cannot display and skip.
+            rows = [
+                {"label": str(row.get("label", "")), "t": str(row.get("t", "")),
+                 "note": str(row.get("note", ""))}
+                for row in stored
+                if isinstance(row, dict)
+            ]
         while len(rows) < 3:
             rows.append({"label": "", "t": "", "note": ""})
         return rows[:26]
@@ -1318,6 +1324,33 @@ def _add_html_routes(
             context=shared(**context),
         )
 
+    def _marker_rows_or_400(
+        rows: list[dict[str, str]],
+    ) -> list[dict[str, Any]] | Response:
+        """One diagnostic family for the marker rows' t parse — the save
+        and export routes refuse identically (A-F5: the export used to
+        silently DROP unparseable rows while save 400ed), and every
+        interpolated operand escapes (B-reflected: the refusal pages
+        reflect the row's own text)."""
+        parsed: list[dict[str, Any]] = []
+        for row in rows:
+            try:
+                t = float(row["t"])
+            except ValueError:
+                t = None
+            if t is None:
+                return HTMLResponse(
+                    str(
+                        escape(
+                            "invalid_request: marker t must be a number "
+                            f"(got {row['t']!r} for label {row['label']!r})"
+                        )
+                    ),
+                    status_code=400,
+                )
+            parsed.append({"label": row["label"], "t": t, "note": row["note"]})
+        return parsed
+
     @app.post("/analyse/markers", response_class=HTMLResponse)
     async def analyse_markers(request: Request) -> Response:
         """Save the marker editor's rows through the ``capture_analysis``
@@ -1329,40 +1362,38 @@ def _add_html_routes(
         rows = _marker_rows_of(form)
         if len(selected) != 1:
             return HTMLResponse(
-                "invalid_request: the marker editor saves exactly one "
-                "capture's overlay — select a single capture",
+                str(
+                    escape(
+                        "invalid_request: the marker editor saves exactly one "
+                        "capture's overlay — select a single capture"
+                    )
+                ),
                 status_code=400,
             )
-        markers: list[dict[str, Any]] = []
-        for row in rows:
-            try:
-                t = float(row["t"])
-            except ValueError:
-                t = None
-            if t is None:
-                return HTMLResponse(
-                    "invalid_request: marker t must be a number "
-                    f"(got {row['t']!r} for label {row['label']!r})",
-                    status_code=400,
-                )
-            markers.append({"label": row["label"], "t": t, "note": row["note"]})
+        markers = _marker_rows_or_400(rows)
+        if isinstance(markers, Response):
+            return markers
         try:
             await _ui_call(
                 "capture_analysis", {"capture_id": selected[0], "markers": markers}
             )
         except SeamError as exc:
             return HTMLResponse(
-                f"{exc.code}: {exc.message}",
+                f"{str(escape(exc.code))}: {str(escape(exc.message))}",
                 status_code=ERROR_HTTP_STATUS[exc.code],
             )
-        target = f"/analyse?capture={selected[0]}"
+        # B-303: the redirect's params are URL-encoded — an unencoded &
+        # in lo_text must never become a query separator.
+        query = {"capture": selected[0]}
         lo_text = str(form.get("lo") or "").strip()
         hi_text = str(form.get("hi") or "").strip()
         if lo_text:
-            target += f"&lo={lo_text}"
+            query["lo"] = lo_text
         if hi_text:
-            target += f"&hi={hi_text}"
-        return RedirectResponse(url=target, status_code=303)
+            query["hi"] = hi_text
+        return RedirectResponse(
+            url=f"/analyse?{urlencode(query)}", status_code=303
+        )
 
     @app.post("/analyse/export")
     async def analyse_export(request: Request) -> Response:
@@ -1389,30 +1420,22 @@ def _add_html_routes(
         if marker_capture and marker_capture in selected:
             # The editor's unsaved rows ride the export as resolved
             # markers for the capture they belong to (present rows
-            # replace that capture's overlay for this export).
-            resolved: list[dict[str, Any]] = []
-            for row in _marker_rows_of(form):
-                try:
-                    t = float(row["t"])
-                except ValueError:
-                    t = None
-                if t is None:
-                    continue
-                resolved.append(
-                    {
-                        "capture_id": marker_capture,
-                        "label": row["label"],
-                        "t": t,
-                        "note": row["note"],
-                    }
-                )
+            # replace that capture's overlay for this export). A-F5: an
+            # unparseable row refuses with the save route's diagnostic —
+            # never a silent drop that loses the operator's edits.
+            parsed_rows = _marker_rows_or_400(_marker_rows_of(form))
+            if isinstance(parsed_rows, Response):
+                return parsed_rows
+            resolved = [
+                {"capture_id": marker_capture, **row} for row in parsed_rows
+            ]
             if resolved:
                 arguments["markers"] = resolved
         try:
             result = await _ui_call("report_export", arguments)
         except SeamError as exc:
             return HTMLResponse(
-                f"{exc.code}: {exc.message}",
+                f"{str(escape(exc.code))}: {str(escape(exc.message))}",
                 status_code=ERROR_HTTP_STATUS[exc.code],
             )
         return RedirectResponse(

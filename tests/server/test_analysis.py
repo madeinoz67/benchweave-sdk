@@ -855,3 +855,101 @@ def test_decimated_extent_verifies_the_digest(tmp_path: Path) -> None:
     )
     with pytest.raises(ValueError, match="standalone_report_primary_mismatch"):
         decimated_extent(source, 600)
+
+
+# --- the refute fold (I4b.1): A-F1 non-finite timing, A-F7 type guard, A-15 ---------
+#
+# The fold's RED controls are the tests themselves against the pre-fold
+# tree (each below reddens without its mechanism) plus the named
+# neutralizations run during the fold.
+
+
+def test_a_f1_non_finite_means_null_the_whole_timing_family(
+    tmp_path: Path,
+) -> None:
+    """A-F1: inf/overflow means give the timing family real values where
+    the contract names null (settle_time 0.0 = "settled instantly" with
+    detected=yes, and NaN FLOAT crossings). The whole timing family —
+    crossings AND settle — is null whenever baseline/final/step are
+    non-finite. Shapes: the inf head, the inf tail, and the finite
+    overflow (1e308 plateau whose head sum overflows). The mixed +/-inf
+    shape has FINITE means and belongs to the crossings arm below."""
+    shapes = {
+        "fx-nf-head": (float("inf"),) * 150 + (0.0,) * 850,
+        "fx-nf-tail": (0.0,) * 850 + (float("inf"),) * 150,
+        "fx-nf-overflow": (1e308,) * 150 + (1.0,) * 850,
+    }
+    for capture_id, values in shapes.items():
+        write_capture(tmp_path, capture_id, values=values)
+        source = load_series_set(tmp_path, [capture_id])[0]
+        edge = edge_analysis(series_samples(source), lo=None, hi=None, settle_pct=2.0)
+        assert edge.t10 is None, capture_id
+        assert edge.t90 is None, capture_id
+        assert edge.rise_time is None, capture_id
+        assert edge.settle_time is None, (
+            f"{capture_id}: non-finite means must never claim settlement "
+            f"(got {edge.settle_time})"
+        )
+        for field in (edge.rise_time, edge.settle_time, edge.t10, edge.t90):
+            assert field is None or math.isfinite(field), capture_id
+
+
+def test_a_f1_crossings_are_never_nan_floats(tmp_path: Path) -> None:
+    """A-F1's second consequence: a bracket whose interpolation divides by
+    a non-finite span (-inf -> +inf under a finite level) must yield the
+    absent crossing (None), never a NaN float where the contract names
+    null."""
+    values = (
+        (0.0,) * 300
+        + (float("-inf"), float("inf")) * 50
+        + (1.0,) * 300
+    )
+    write_capture(tmp_path, "fx-nf-bracket", values=values)
+    source = load_series_set(tmp_path, ["fx-nf-bracket"])[0]
+    edge = edge_analysis(series_samples(source), lo=None, hi=None, settle_pct=2.0)
+    for field in (edge.t10, edge.t90, edge.rise_time, edge.settle_time):
+        assert field is None or math.isfinite(field)
+
+
+def test_fx_step_nocross_pins_settle_time_null_too(tmp_path: Path) -> None:
+    """The nocross arm extended (the fold): the absent-crossing shape
+    pins settle_time as NULL as well — the pre-fold code computed a
+    non-finite-band settle that claimed settlement."""
+    values = (float("inf"),) * 150 + (0.0,) * 850
+    write_capture(tmp_path, "fx-step-nocross", values=values)
+    source = load_series_set(tmp_path, ["fx-step-nocross"])[0]
+    edge = edge_analysis(series_samples(source), lo=None, hi=None, settle_pct=2.0)
+    assert edge.detected is True
+    assert edge.t10 is None and edge.t90 is None
+    assert edge.rise_time is None
+    assert edge.settle_time is None
+    assert edge.settle_time != 0.0
+
+
+def test_settle_zero_is_reachable_at_the_default_band(tmp_path: Path) -> None:
+    """Deviation-4 arm rebuilt (the fold): settle_time == 0.0 IS reachable
+    at settle_pct=2 — an instantaneous step (the first in-scope sample is
+    already on the final plateau) has nothing outside the band. The 0
+    outcome is pinned where it actually occurs."""
+    values = (0.0,) * 500 + (1.0,) * 500
+    write_capture(tmp_path, "fx-step-instant", values=values)
+    source = load_series_set(tmp_path, ["fx-step-instant"])[0]
+    edge = edge_analysis(series_samples(source), lo=None, hi=None, settle_pct=2.0)
+    assert edge.detected is True
+    assert edge.rise_time is not None and edge.rise_time > 0
+    assert edge.settle_time == 0.0
+
+
+def test_a_f7_assertion_bounds_refuse_bools_and_strings(tmp_path: Path) -> None:
+    """A-F7: a bool bound launders to 1.0 via float(); a numeric STRING
+    passes the isfinite(float()) pre-check and then raises TypeError
+    outside the ValueError mapping. Both refuse typed inside the
+    ValueError family (unreachable through seam.call today — the schema
+    fronts them — so this arm guards the pure function directly)."""
+    write_capture(tmp_path, "fx-assert-types", values=(1.0,))
+    entries = _assert_entries(tmp_path, "fx-assert-types")
+    for bad in (True, "1.0"):
+        with pytest.raises(ValueError, match="standalone_report_assert_bound"):
+            evaluate_assertions(
+                [{"capture_id": "fx-assert-types", "min": bad}], entries
+            )

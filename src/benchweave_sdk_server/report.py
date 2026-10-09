@@ -178,14 +178,13 @@ def build_report(
     )
     # The union extent end drives the proper-subset gate: a window that
     # covers [0, t_max] (or is absent entirely) renders the context chart
-    # alone.
+    # alone. A-F2: t_max comes from the SOURCE GRID ((sample_count - 1) x
+    # sample_interval_s) — the decimated context points can end a column
+    # short of the true end (their last pair orders by x), and a window
+    # trimming only that tail gap is a proper subset.
     t_max = max(
-        (
-            entry.context_points[-1][0]
-            for entry in entries
-            if entry.context_points
-        ),
-        default=1.0,
+        (entry.source.sample_count - 1) * entry.source.sample_interval_s
+        for entry in entries
     )
     proper_subset = (lo is not None and lo > 0.0) or (
         hi is not None and hi < t_max
@@ -212,28 +211,27 @@ def build_report(
     parts.append("</section>")
     if proper_subset:
         zoom_series = _windowed_series_checked(entries)
-        zoom_x_max = max(
-            (series_["points"][-1][0] for series_ in zoom_series if series_["points"]),
-            default=1.0,
-        )
+        # B-F1: the zoom chart's x domain IS the window — [lo, hi] mapped
+        # across the plot box (a [0, hi] domain squeezed the window into
+        # the right edge and wasted the axis).
+        zoom_lo = lo if lo is not None else 0.0
+        zoom_hi = hi if hi is not None else t_max
         parts.append('<section class="bw-report-zoom">')
         parts.append(
             "<h2>Zoom "
-            f"{format_number(lo if lo is not None else 0.0)} → "
-            f"{format_number(hi if hi is not None else t_max)}</h2>"
+            f"{format_number(zoom_lo)} → "
+            f"{format_number(zoom_hi)}</h2>"
         )
         parts.append(
             _render_chart(
                 zoom_series,
                 units=units,
-                x_max=zoom_x_max if zoom_x_max > 0 else 1.0,
+                x_lo=zoom_lo,
+                x_max=zoom_hi if zoom_hi > zoom_lo else zoom_lo + 1.0,
                 shade=None,
                 markers=marker_rows,
                 chart_kind="zoom",
-                marker_span=(
-                    lo if lo is not None else 0.0,
-                    hi if hi is not None else t_max,
-                ),
+                marker_span=(zoom_lo, zoom_hi),
             )
         )
         parts.append(
@@ -398,18 +396,22 @@ def _render_chart(
     markers: Mapping[str, Sequence[dict[str, Any]]],
     chart_kind: str,
     marker_span: tuple[float, float] | None = None,
+    x_lo: float = 0.0,
 ) -> str:
     """One server-side chart: paths, per-unit axes, the optional window
     shading and marker glyphs, and the legend. Structural — labelled and
-    described, never pixel-compared (SRF-1). ``marker_span`` bounds which
-    markers a chart draws (the context chart draws its in-extent markers;
-    the zoom chart draws the in-window ones — a marker a chart cannot
-    reach never renders on it)."""
+    described, never pixel-compared (SRF-1). The x domain is
+    ``[x_lo, x_max]`` (B-F1: the zoom chart maps its WINDOW across the
+    box, never [0, hi]). ``marker_span`` bounds which markers a chart
+    draws (the context chart draws its in-extent markers; the zoom chart
+    draws the in-window ones — a marker a chart cannot reach never
+    renders on it)."""
     plot_width = _PLOT_RIGHT - _PLOT_LEFT
     plot_height = _PLOT_BOTTOM - _PLOT_TOP
+    x_span = x_max - x_lo if x_max > x_lo else 1.0
 
     def x_of(t: float) -> float:
-        return _PLOT_LEFT + (t / x_max) * plot_width
+        return _PLOT_LEFT + ((t - x_lo) / x_span) * plot_width
 
     # Per-unit y scales over the UNION of that unit's series extents (fold
     # row 1: last-writer-wins let a same-unit series with a different
@@ -525,9 +527,9 @@ def _render_chart(
                 f'class="bw-marker-label">'
                 f"{_text(marker.get('label', ''))}</text>"
             )
-    # The x axis: label + five ticks.
+    # The x axis: label + five ticks spanning the x domain.
     for step in range(6):
-        t = x_max * step / 5
+        t = x_lo + x_span * step / 5
         parts.append(
             f'<line x1="{x_of(t):.2f}" y1="{_PLOT_BOTTOM}" '
             f'x2="{x_of(t):.2f}" y2="{_PLOT_BOTTOM + 4}" stroke="#888888"/>'

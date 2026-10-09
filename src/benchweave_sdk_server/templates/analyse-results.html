@@ -20,7 +20,7 @@
   <p class="hint">Source manifest sha256 <code>{{ entry.sha256 }}</code>.</p>
 </section>
 {% endfor %}
-<form method="post" action="/analyse/export"
+<form method="post" action="/analyse/export" id="export-form"
       hx-post="/analyse/export" hx-headers='{"X-CSRF-Token": "{{ csrf_token }}"}'>
   {%- for entry in entries %}
   <input type="hidden" name="capture" value="{{ entry.capture_id }}">

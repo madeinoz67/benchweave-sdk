@@ -2496,11 +2496,19 @@ class StandaloneSeam:
                 f"standalone_report_window_invalid: lo {lo} exceeds hi {hi}",
                 correlation,
             )
-        if not math.isfinite(float(settle_pct)):
+        if (
+            isinstance(settle_pct, bool)
+            or not isinstance(settle_pct, (int, float))
+            or not math.isfinite(float(settle_pct))
+            or not 0 < float(settle_pct) <= 100
+        ):
+            # A-F8: the seam-level bound mirrors the schema's (0, 100]
+            # (the schema fronts REST/MCP, but a direct seam call must
+            # not see a negative or out-of-range band pass admission).
             raise self._fail(
                 "invalid_request",
                 f"standalone_report_window_invalid: settle_pct {settle_pct} "
-                "is not finite; the settle band must be a finite percentage",
+                "must be a finite percentage in (0, 100]",
                 correlation,
             )
         library = self._library(correlation)
@@ -2527,7 +2535,7 @@ class StandaloneSeam:
                 target = str(row.get("capture_id", ""))
                 if target not in {source.capture_id for source in sources}:
                     raise AnalysisRefusal(
-                        f"standalone_report_assert_target: marker row names "
+                        f"standalone_report_marker_invalid: marker row names "
                         f"{target}, which is not among the request's captures"
                     )
                 request_markers.setdefault(target, []).append(
@@ -2541,8 +2549,15 @@ class StandaloneSeam:
             for source in sources:
                 rows = request_markers.get(source.capture_id)
                 if rows is None:
-                    resolved_markers[source.capture_id] = read_markers(
-                        root / source.capture_id
+                    # A-F3 (the converge): the overlay READ runs the same
+                    # discipline as the request path — a hand-edited row
+                    # outside the span/label contract refuses typed at
+                    # export (and duplicates collapse as the write path
+                    # does), never rendering an off-canvas glyph whose
+                    # own replay would refuse.
+                    resolved_markers[source.capture_id] = resolve_markers(
+                        source.manifest,
+                        read_markers(root / source.capture_id),
                     )
                 else:
                     resolved_markers[source.capture_id] = resolve_markers(
@@ -2594,20 +2609,27 @@ class StandaloneSeam:
         # B-F4: the sidecar serialises INSIDE the guarded region so a
         # non-serialisable value can never escape as a raw ValueError —
         # with the finite admission above it cannot arise, but the guard
-        # holds for any future field.
+        # holds for any future field. A-F4: the params are a VERBATIM
+        # replayable report_export input — the schema's capture-scoped
+        # markers array (the resolved rows), unbounded lo/hi OMITTED
+        # (absence is unbounded; a null would fail "number"), so feeding
+        # them back reproduces the document byte-for-byte.
+        replay_params: dict[str, Any] = {"settle_pct": settle_pct}
+        if lo is not None:
+            replay_params["lo"] = lo
+        if hi is not None:
+            replay_params["hi"] = hi
+        replay_params["markers"] = [
+            {"capture_id": capture_id, **row}
+            for capture_id, rows in sorted(resolved_markers.items())
+            for row in rows
+        ]
+        replay_params["assertions"] = list(arguments.get("assertions") or [])
         try:
             sidecar_bytes = json.dumps(
                 {
                     "report_id": report_id,
-                    "params": {
-                        "lo": lo,
-                        "hi": hi,
-                        "settle_pct": settle_pct,
-                        "markers": resolved_markers,
-                        "assertions": list(
-                            arguments.get("assertions") or []
-                        ),
-                    },
+                    "params": replay_params,
                     "sources": [
                         {
                             "capture_id": source.capture_id,

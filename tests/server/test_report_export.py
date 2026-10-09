@@ -125,15 +125,14 @@ def test_ar5_export_pins_sources_and_writes_the_pair(
     assert sources["fx-set-a"] == hashlib.sha256(
         (capture_root / "fx-set-a" / "fx-set-a.f64").read_bytes()
     ).hexdigest()
-    # I4b.1: the sidecar records the EFFECTIVE params — settle_pct's
-    # default, the RESOLVED markers (the sources' overlays, empty when
-    # none stored) and the assertion spec — so re-export from the
-    # sidecar reproduces the document (AR-4d/9f).
+    # I4b.1 + the A-F4 fold: the sidecar records the EFFECTIVE params in
+    # the INPUT SCHEMA's shape so a verbatim replay reproduces the
+    # document — markers as the schema's capture-scoped array (the
+    # resolved rows), and unbounded lo/hi OMITTED (absence is unbounded;
+    # a null would fail the "number" type).
     assert sidecar["params"] == {
-        "lo": None,
-        "hi": None,
         "settle_pct": 2.0,
-        "markers": {"fx-set-a": [], "fx-set-b": []},
+        "markers": [],
         "assertions": [],
     }
     assert sidecar["assets"]["ui_html_version"]

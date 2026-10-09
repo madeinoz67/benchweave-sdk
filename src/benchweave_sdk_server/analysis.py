@@ -425,19 +425,23 @@ def _cross_time(
     """The first interpolated crossing of ``level`` in the step direction
     (linear between bracketing samples; a level the region never crosses
     yields ``None``). A bracketing segment with no span (both samples at
-    the level) crosses at the segment's first sample."""
+    the level) crosses at the segment's first sample; an interpolation
+    that lands non-finite (an inf-to-inf bracket under a finite level)
+    yields the absent crossing, never a NaN float (A-F1)."""
     for (ta, va), (tb, vb) in zip(region, region[1:], strict=False):
         if rising:
             if va <= level <= vb:
                 span = vb - va
                 if span == 0:
                     return ta
-                return ta + (level - va) * (tb - ta) / span
+                crossing = ta + (level - va) * (tb - ta) / span
+                return crossing if math.isfinite(crossing) else None
         elif va >= level >= vb:
             span = va - vb
             if span == 0:
                 return ta
-            return ta + (va - level) * (tb - ta) / span
+            crossing = ta + (va - level) * (tb - ta) / span
+            return crossing if math.isfinite(crossing) else None
     return None
 
 
@@ -519,6 +523,14 @@ def edge_analysis(
         # rather than laundering them into "no edge" (the fx-step-nocross
         # arm pins that outcome).
         return row(detected=False, baseline=baseline, final=final, step=step)
+    if not all(math.isfinite(value) for value in (baseline, final, step)):
+        # A-F1: non-finite means cannot be TIMED — the whole timing
+        # family (crossings AND settle) is null. Never a NaN-float
+        # crossing where the contract names null, and never settle_time
+        # 0.0 ("settled instantly") over poisoned data (the fx-nf-*
+        # arms). The row keeps its honest non-finite means: inf is a
+        # value (B-F8) and renders as such.
+        return row(detected=True, baseline=baseline, final=final, step=step)
     rising = step > 0
     t10 = _cross_time(region, baseline + 0.10 * step, rising)
     t90 = _cross_time(region, baseline + 0.90 * step, rising)
@@ -589,7 +601,17 @@ def evaluate_assertions(
                 "neither min nor max; at least one bound is required"
             )
         for name, bound in (("min", minimum), ("max", maximum)):
-            if bound is not None and not math.isfinite(float(bound)):
+            if bound is None:
+                continue
+            # A-F7: a bool launders to 1.0 via float(), and a numeric
+            # STRING passes float() only to raise TypeError outside the
+            # ValueError family later — both refuse typed here.
+            if isinstance(bound, bool) or not isinstance(bound, (int, float)):
+                raise AnalysisRefusal(
+                    f"standalone_report_assert_bound: {capture_id} {name} "
+                    f"{bound!r} is not a number; bounds must be finite numbers"
+                )
+            if not math.isfinite(float(bound)):
                 raise AnalysisRefusal(
                     f"standalone_report_assert_bound: {capture_id} {name} "
                     f"{bound} is not finite; bounds must be finite numbers"
@@ -623,12 +645,16 @@ def evaluate_assertions(
     return results
 
 
-def read_markers(event: Path) -> list[dict[str, Any]]:
-    """The event's stored marker rows, ``[]`` when absent or unparseable
-    (the library's honest-defaults rule: the overlay is operator
-    annotation, never a load precondition). Only well-formed rows
-    survive — anything else in the file reads as no overlay rather than
-    half an overlay."""
+def read_markers(event: Path) -> list[Any]:
+    """The event's stored marker rows as written, ``[]`` when the file is
+    absent, unparseable, or carries no markers list (the library's
+    honest-defaults rule: the overlay is operator annotation, never a
+    load precondition). This read applies NO discipline — a hand-edited
+    file's rows pass through verbatim (a mixed file yields its good rows
+    AND its bad ones), and the EXPORT path runs every row through
+    :func:`resolve_markers`'s span/label discipline so a violating row
+    refuses typed exactly like the request path (A-F3; the "reads as no
+    overlay" claim is for file-level damage only)."""
     try:
         payload = json.loads((event / "analysis.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -638,22 +664,7 @@ def read_markers(event: Path) -> list[dict[str, Any]]:
     rows = payload.get("markers")
     if not isinstance(rows, list):
         return []
-    kept: list[dict[str, Any]] = []
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        label, t = row.get("label"), row.get("t")
-        note = row.get("note", "")
-        if (
-            isinstance(label, str)
-            and MARKER_LABEL_RE.fullmatch(label) is not None
-            and isinstance(t, (int, float))
-            and not isinstance(t, bool)
-            and math.isfinite(float(t))
-            and isinstance(note, str)
-        ):
-            kept.append({"label": label, "t": float(t), "note": note})
-    return sorted(kept, key=lambda row: row["label"])
+    return list(rows)
 
 
 def resolve_markers(

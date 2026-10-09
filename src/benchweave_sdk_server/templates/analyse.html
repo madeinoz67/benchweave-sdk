@@ -33,7 +33,8 @@ fields are the no-script path.</p>
     <label for="a-hi">Window end (s)</label>
     <input id="a-hi" name="hi" value="{{ hi }}" inputmode="decimal">
     {% if marker_capture %}
-    <fieldset class="bw-markers" id="marker-fieldset">
+    <fieldset class="bw-markers" id="marker-fieldset"
+              data-bw-marker-capture="{{ marker_capture }}">
       <legend>Markers — <code>{{ marker_capture }}</code></legend>
       <p class="hint">Labels are single letters A–Z, one marker per label; t is
       seconds from the capture's own start. Click a plot to place the selected
