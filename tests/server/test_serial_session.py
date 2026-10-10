@@ -129,6 +129,7 @@ def test_connect_establishes_identity_over_the_loopback(starter_project) -> None
 def test_cli_transport_serial_serves_binding_pending(
     starter_project: Path,
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
     device_args: list[str],
 ) -> None:
     """F-385-2's CLI-level pin (issue #385; replaces BOTH retired
@@ -141,7 +142,15 @@ def test_cli_transport_serial_serves_binding_pending(
     original fold-refute-2 hazard — an empty path handed to pyserial — is
     structurally gone: the resolver is binding-backed, never a constant
     empty path). The connect-time ``binding_absent`` refusal is pinned in
-    the wiring lane."""
+    the wiring lane.
+
+    #427 fold row 2: the serial pre-serve stages deliver the
+    operator-action token under the capture-root family, which resolves
+    ``captures/`` under the WORKING DIRECTORY when nothing pins it — this
+    arm used to drop ``captures/operator-action-token.json`` into the
+    repository cwd on every run. The CWD sits under the scratch root for
+    the same reason ``_serve_output`` puts it there (test_cli.py): the
+    default root then lands in tmp and dies with it."""
     import uvicorn
 
     class _ServingStage(Exception):
@@ -151,6 +160,7 @@ def test_cli_transport_serial_serves_binding_pending(
         raise _ServingStage
 
     monkeypatch.setattr(uvicorn, "run", _sentinel)
+    monkeypatch.chdir(tmp_path)
     runner = CliRunner()
     result = runner.invoke(
         cli,
