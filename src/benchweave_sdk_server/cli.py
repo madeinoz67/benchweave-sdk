@@ -690,8 +690,27 @@ def _run_supervised(
     help="Waive the reload confirmation for adapter-code changes while a "
     "device is connected (valid only with --authoring; Q11 option 2).",
 )
-def mcp(project: Path, authoring: bool, unattended: bool) -> None:
-    """Run the MCP server over stdio (no HTTP listener, no HTTP guards)."""
+@click.option(
+    "--bindings",
+    type=click.Path(path_type=Path),
+    default=None,
+    help=(
+        "The bindings document the supervision family anchors beside "
+        "(default: BENCHWEAVE_STANDALONE_BINDINGS, then "
+        "device-bindings.json under the working directory). The stdio "
+        "session proxies to the host this family verifies, or serves "
+        "the disclosed in-process fallback when no host runs."
+    ),
+)
+def mcp(
+    project: Path, authoring: bool, unattended: bool, bindings: Path | None
+) -> None:
+    """Run the MCP server over stdio: proxy to the verified running
+    host, or serve the disclosed in-process fallback, or refuse typed.
+
+    One session owner per device: this entry holds no state and never
+    spawns. A live host it cannot authenticate to is a refusal, never a
+    fallback."""
     import asyncio
 
     if unattended and not authoring:
@@ -699,12 +718,65 @@ def mcp(project: Path, authoring: bool, unattended: bool) -> None:
             "--unattended requires --authoring (Q11: it waives an operator gate)"
         )
     try:
-        from .mcp import build_mcp
+        # The discovery machinery (shim.py stays importable without the
+        # extra) and the extra's own machinery import inside ONE guard:
+        # blocking fastmcp refuses TYPED before any discovery work (AM2).
+        from .mcp import build_mcp  # noqa: F401 — the extra's guard
+        from .shim import (
+            AUTHORING_DEGRADE_LINE,
+            FALLBACK_STDERR_LINE,
+            NoHost,
+            ProxyTarget,
+            Refuse,
+            build_fallback_server,
+            build_shim_proxy,
+            discover,
+            fork_guard,
+            host_serves_authoring,
+        )
     except ImportError as exc:
         _require_server_extra(exc)
 
+    effective_bindings = _effective_bindings_path(bindings)
+    verdict = discover(effective_bindings)
+
+    if isinstance(verdict, ProxyTarget):
+        # §2.4: no pidfile, no journal row, no tokens write, no
+        # capture-root open, no bindings write — the family's CONSUMER.
+        if authoring and not host_serves_authoring(verdict):
+            click.echo(AUTHORING_DEGRADE_LINE, err=True)
+        server = build_shim_proxy(verdict)
+        server.run()
+        return
+
+    if isinstance(verdict, Refuse):
+        click.echo(
+            f"{verdict.prefix} {verdict.detail} — {verdict.action}", err=True
+        )
+        raise SystemExit(1)
+
+    # NoHost → the §2.3 fork guard, then today's in-process body,
+    # verbatim, plus the disclosures.
+    if not isinstance(verdict, NoHost):
+        raise AssertionError(verdict)
+    try:
+        held = fork_guard()
+    except ValueError as error:
+        click.echo(f"standalone_capture_root_refused: {error}", err=True)
+        raise SystemExit(2) from error
+    if held is not None:
+        click.echo(
+            f"{held.prefix} {held.detail} — {held.action}", err=True
+        )
+        raise SystemExit(1)
+    click.echo(
+        FALLBACK_STDERR_LINE.format(
+            bindings=effective_bindings, verdict=verdict.reason
+        ),
+        err=True,
+    )
     seam, _ = _build_seam(project, unattended=unattended)
-    server = build_mcp(seam, authoring=authoring)
+    server = build_fallback_server(seam, authoring=authoring)
     try:
         server.run()
     finally:

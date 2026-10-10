@@ -449,3 +449,595 @@ class TestSH0:
             "the shim-forwarded tool bytes differ from the host's own "
             f"(canonical JSON):\nDIRECT {direct_json[:400]}\nSHIM {shim_json[:400]}"
         )
+
+
+# --- the CLI-level arms (SH1-SH9): the reshaped `mcp` command -----------------
+
+
+def _raw_stdio_exchange(
+    args: list[str],
+    *,
+    project: Path,
+    env_extra: dict[str, str] | None = None,
+    cwd: Path | None = None,
+) -> dict[str, object]:
+    """One raw stdio exchange against a real shim subprocess: initialize
+    → initialized → tools/list → stdin EOF. Captures EVERY output byte
+    (SH3's subject) plus the parsed initialize result and tool names."""
+    env = os.environ.copy()
+    if env_extra:
+        env.update(env_extra)
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "benchweave_sdk_server.cli", "mcp", str(project), *args],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, cwd=str(cwd or REPO), env=env,
+    )
+    assert proc.stdin is not None and proc.stdout is not None
+    initialize = {
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-06-18", "capabilities": {},
+            "clientInfo": {"name": "shim-arm", "version": "0"},
+        },
+    }
+    proc.stdin.write(json.dumps(initialize) + "\n")
+    proc.stdin.write(json.dumps(
+        {"jsonrpc": "2.0", "method": "notifications/initialized"}
+    ) + "\n")
+    proc.stdin.write(json.dumps(
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/list"}
+    ) + "\n")
+    proc.stdin.close()
+    stdout, stderr = proc.communicate(timeout=60)
+    init_result: dict[str, object] = {}
+    tools: list[str] = []
+    for line in stdout.splitlines():
+        try:
+            message = json.loads(line)
+        except ValueError:
+            continue
+        if message.get("id") == 1 and "result" in message:
+            init_result = dict(message["result"])
+        if message.get("id") == 2 and "result" in message:
+            tools = [
+                str(tool.get("name"))
+                for tool in message["result"].get("tools", [])
+            ]
+    return {
+        "init": init_result,
+        "tools": tools,
+        "stdout": stdout,
+        "stderr": stderr,
+        "returncode": proc.returncode,
+    }
+
+
+def _stdio_client(
+    args: list[str],
+    *,
+    project: Path,
+    env_extra: dict[str, str] | None = None,
+    cwd: Path | None = None,
+    stderr_log: Path | None = None,
+) -> object:
+    """A context-manager shim client over a REAL stdio subprocess. The
+    subprocess's stderr is captured to ``stderr_log`` (StdioTransport's
+    log_file — the SH4/SH7/SH8 disclosure lines land there)."""
+    from fastmcp import Client
+    from fastmcp.client.transports import StdioTransport
+
+    env = dict(os.environ)
+    if env_extra:
+        env.update(env_extra)
+    return Client(StdioTransport(
+        sys.executable,
+        ["-m", "benchweave_sdk_server.cli", "mcp", str(project), *args],
+        env=env, cwd=str(cwd or REPO), keep_alive=False,
+        log_file=stderr_log,
+    ))
+
+
+#: The synthetic binary fixture (tests/fixtures/binary_frames_plugin): a
+#: WRITABLE scripted parameter (sample_avg, rw) and a scripted capture
+#: exchange, so the parity arms can walk a real device conversation. The
+#: mock host's script is LINEAR and demand-ordered (the bytestream
+#: doctrine), so each arm that consumes the device script starts its OWN
+#: host — the module host stays for the arms that never speak to the
+#: device (tools/list, instructions, refusals).
+FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "binary_frames_plugin"
+DEV = {"device_id": "frames_dev"}
+
+#: The capture burst's shape (the fixture's scripted exchange): 128
+#: float64 samples = the 1024-byte burst, the bytestream suite's own args.
+CAPTURE_ARGS = {
+    "format": "waveform_f64le",
+    "count": 128,
+    "sample_interval_s": 0.001,
+    "unit": "V",
+}
+
+
+@pytest.fixture()
+def scripted_host(tmp_path: Path):
+    """A fresh started host per arm (the linear script is consumed
+    in-memory per process): mock transport over the binary fixture."""
+    bindings = tmp_path / "device-bindings.json"
+    port = _free_port()
+    started = subprocess.run(
+        [
+            sys.executable, "-m", "benchweave_sdk_server.cli", "start",
+            str(FIXTURE), "--bindings", str(bindings),
+            "--host", "127.0.0.1", "--port", str(port),
+        ],
+        cwd=str(REPO), capture_output=True, text=True, timeout=120,
+    )
+    assert started.returncode == 0, started.stdout + started.stderr
+    payload = json.loads(started.stdout)
+    tokens_file = lifecycle.tokens_path(bindings)
+    tokens = json.loads(tokens_file.read_text())
+    handle = HostHandle(
+        bindings=bindings,
+        port=port,
+        pid=int(payload["pid"]),
+        bearer=str(tokens["bearer_token"]),
+        url=str(tokens["url"]),
+        tokens_file=tokens_file,
+    )
+    with httpx.Client(
+        base_url=handle.url, timeout=5.0,
+        headers={"Authorization": f"Bearer {handle.bearer}"},
+    ) as client:
+        deadline = time.monotonic() + 30.0
+        while True:
+            try:
+                response = client.get("/")
+                if response.status_code < 500:
+                    break
+            except httpx.HTTPError:
+                pass
+            assert time.monotonic() < deadline, "started host never served"
+    yield handle
+    subprocess.run(
+        [sys.executable, "-m", "benchweave_sdk_server.cli", "stop",
+         "--bindings", str(bindings)],
+        cwd=str(REPO), capture_output=True, text=True, timeout=60,
+    )
+
+
+class TestShimSubprocessArms:
+    """SH1-SH9: real shim subprocesses over the module-scoped host and
+    staged families."""
+
+    @POSIX_HOST
+    def test_sh1_agent_to_host_to_browser(
+        self, scripted_host: HostHandle, tmp_path: Path,
+    ) -> None:
+        """One session, agent→host→browser: the agent's stage/apply and
+        capture round-trip land on the HOST's session (the script walks
+        in the fixture's demand order); the browser's data path (REST)
+        serves the SAME session (the connect the agent made persists —
+        a fallback fork would refuse not_connected); the capture's own
+        metadata carries surface "mcp" — the host recorded the MCP
+        surface for the shim-forwarded work. SH2's clauses ride this
+        arm's run."""
+        capture_dir = tmp_path / "shim-captures"  # SH2's shim-only root
+        before = scripted_host.tokens_file.read_bytes()
+        journal = lifecycle.journal_path(scripted_host.bindings)
+        rows_before = (
+            len(journal.read_text().splitlines()) if journal.exists() else 0
+        )
+
+        async def run() -> dict[str, object]:
+            async with _stdio_client(
+                ["--bindings", str(scripted_host.bindings)],
+                project=FIXTURE,
+                env_extra={"BENCHWEAVE_CAPTURE_DIR": str(capture_dir)},
+            ) as client:
+                await client.call_tool("bws_v1_device_connect", DEV)
+                await client.call_tool("bws_v1_parameter_read", {**DEV, "parameter": "sample_avg"})
+                await client.call_tool("bws_v1_parameter_stage", {
+                    **DEV, "parameter": "sample_avg", "value": 3.0,
+                })
+                applied = (await client.call_tool(
+                    "bws_v1_parameter_apply", DEV,
+                )).structured_content
+                capture = (await client.call_tool(
+                    "bws_v1_capture_start", {**DEV, **CAPTURE_ARGS},
+                )).structured_content
+                capture_id = str(capture.get("capture_id"))
+                # A count-bound capture completes on the burst itself;
+                # the stop tolerates the already-completed shape.
+                await client.call_tool(
+                    "bws_v1_capture_stop", {"capture_id": capture_id},
+                    raise_on_error=False,
+                )
+                listed = (await client.call_tool(
+                    "bws_v1_capture_list", {},
+                )).structured_content
+                events = (await client.call_tool(
+                    "bws_v1_events_get", {"after_id": 0},
+                )).structured_content
+            # The burst drains on the host: poll the list through the
+            # shim until the capture publishes (bounded retries).
+            for _ in range(10):
+                rows = listed.get("captures", [])
+                if rows and rows[-1].get("state") == "published":
+                    break
+                await asyncio.sleep(0.2)
+                async with _stdio_client(
+                    ["--bindings", str(scripted_host.bindings)],
+                    project=FIXTURE,
+                ) as client:
+                    listed = (await client.call_tool(
+                        "bws_v1_capture_list", {},
+                    )).structured_content
+            return {
+                "applied": applied,
+                "capture": capture,
+                "listed": listed,
+                "events": events,
+            }
+            return {
+                "applied": applied,
+                "capture": capture,
+                "listed": listed,
+                "events": events,
+            }
+
+        outcome = asyncio.run(run())
+        after = scripted_host.tokens_file.read_bytes()
+        # The agent's apply landed on the host's device conversation.
+        applied = outcome["applied"]
+        assert applied is not None and applied.get("applied", [{}])[0].get("value") == 3.0
+        # The browser's data path serves the SAME session: the connect
+        # the agent made persists (a fallback fork would refuse
+        # not_connected); the scripted poll answers its own row.
+        with httpx.Client(
+            base_url=scripted_host.url, timeout=5.0,
+            headers={"Authorization": f"Bearer {scripted_host.bearer}"},
+        ) as rest:
+            response = rest.post(
+                "/v1/parameter_read",
+                json={"device_id": "frames_dev", "parameter": "sample_avg"},
+            )
+            assert response.status_code == 200, response.text
+        # The surface witness: the host's capture metadata records the
+        # MCP surface for the shim-forwarded capture (the event payload
+        # carries no surface field — this is the surface-bearing
+        # mechanism the record's parity claim rides).
+        listed = outcome["listed"]
+        rows = listed.get("captures", [])
+        assert rows and rows[-1].get("surface") == "mcp", listed
+        # The event pair exists (kinds; event data carries no surface).
+        events = outcome["events"]
+        kinds = [row.get("kind") for row in events.get("events", [])]
+        assert "parameter_stage" in kinds
+        assert "parameter_apply" in kinds
+        # SH2's first three clauses ride this arm's run.
+        record = json.loads(lifecycle.pid_path(scripted_host.bindings).read_text())
+        assert record["pid"] == scripted_host.pid
+        assert before == after, "the tokens file moved under the shim"
+        rows_after = (
+            len(journal.read_text().splitlines()) if journal.exists() else 0
+        )
+        assert rows_after == rows_before, "the shim journaled"
+
+    @POSIX_HOST
+    def test_sh1b_browser_to_host_to_agent(
+        self, scripted_host: HostHandle,
+    ) -> None:
+        """The reverse direction: the browser's write (REST connect,
+        read, stage, apply — the demand order) lands on the host's
+        session; the agent's read THROUGH THE SHIM then serves the SAME
+        session (the REST connect persists — a fork would refuse)."""
+        with httpx.Client(
+            base_url=scripted_host.url, timeout=5.0,
+            headers={"Authorization": f"Bearer {scripted_host.bearer}"},
+        ) as rest:
+            for operation, arguments in (
+                ("device_connect", DEV),
+                ("parameter_read", {**DEV, "parameter": "sample_avg"}),
+                ("parameter_stage", {**DEV, "parameter": "sample_avg", "value": 3.0}),
+                ("parameter_apply", DEV),
+                ("capture_start", {**DEV, **CAPTURE_ARGS}),
+            ):
+                response = rest.post(f"/v1/{operation}", json=arguments)
+                assert response.status_code == 200, response.text
+            assert response.json()["data"]["state"] == "capturing"
+            # The capture row is consumed; the poll row is next for the
+            # shim's read. The capture publishes on its own.
+            for _ in range(10):
+                listing = rest.post("/v1/capture_list", json={})
+                assert listing.status_code == 200, listing.text
+                rows = listing.json()["data"]["captures"]
+                if rows and rows[-1].get("state") == "published":
+                    break
+                time.sleep(0.2)
+
+        async def run() -> object:
+            async with _stdio_client(
+                ["--bindings", str(scripted_host.bindings)],
+                project=FIXTURE,
+            ) as client:
+                return (await client.call_tool(
+                    "bws_v1_parameter_read",
+                    {**DEV, "parameter": "sample_avg"},
+                )).structured_content
+
+        read = asyncio.run(run())
+        assert read is not None and read.get("value") == 2.5  # the poll row
+
+    @POSIX_HOST
+    def test_sh2_no_second_writer(
+        self, scripted_host: HostHandle, tmp_path: Path,
+    ) -> None:
+        """After a shim session: pidfile names the HOST pid; tokens
+        byte-identical; no journal row; the shim-only capture dir is
+        still ABSENT — the shim wrote nothing anywhere. The shim speaks
+        host_info only (no device conversation; the script is not
+        consumed)."""
+        capture_dir = tmp_path / "shim-capture-probe"
+        before = scripted_host.tokens_file.read_bytes()
+        async def run() -> None:
+            async with _stdio_client(
+                ["--bindings", str(scripted_host.bindings)],
+                project=FIXTURE,
+                env_extra={"BENCHWEAVE_CAPTURE_DIR": str(capture_dir)},
+            ) as client:
+                await client.call_tool("bws_v1_host_info", {})
+        asyncio.run(run())
+        record = json.loads(lifecycle.pid_path(scripted_host.bindings).read_text())
+        assert record["pid"] == scripted_host.pid
+        assert scripted_host.tokens_file.read_bytes() == before
+        journal = lifecycle.journal_path(scripted_host.bindings)
+        for row in (journal.read_text().splitlines() if journal.exists() else []):
+            payload = json.loads(row)
+            assert "shim" not in str(payload.get("event", "")).lower()
+        assert not capture_dir.exists(), "the shim created its capture dir"
+
+    @POSIX_HOST
+    def test_sh3_token_hygiene_kill_on_sight(
+        self, started_host: HostHandle, starter_project: Path,
+    ) -> None:
+        """SH3: zero occurrences of the bearer value or the literal
+        'Bearer ' in the shim subprocess's FULL stdout+stderr."""
+        exchange = _raw_stdio_exchange(
+            ["--bindings", str(started_host.bindings)],
+            project=starter_project,
+        )
+        assert exchange["returncode"] == 0, exchange["stderr"]
+        everything = str(exchange["stdout"]) + str(exchange["stderr"])
+        assert started_host.bearer not in everything
+        assert "Bearer " not in everything
+
+    def test_sh4_fallback_engages(
+        self, tmp_path: Path,
+    ) -> None:
+        """Empty family → the shim serves the in-process fallback:
+        stderr carries the fallback line naming verdict absent; the
+        instructions carry the in-process marker; a stage/apply succeeds
+        on the local mock; host_info answers mode standalone."""
+        scratch = tmp_path / "empty-family"
+        scratch.mkdir()
+        stderr_path = scratch / "shim-stderr.log"
+
+        async def run() -> dict[str, object]:
+            async with _stdio_client(
+                [], project=FIXTURE, cwd=scratch,
+                stderr_log=stderr_path,
+            ) as client:
+                host_info = (await client.call_tool(
+                    "bws_v1_host_info", {})).structured_content
+                await client.call_tool("bws_v1_device_connect", DEV)
+                await client.call_tool("bws_v1_parameter_read", {**DEV, "parameter": "sample_avg"})
+                stage = await client.call_tool("bws_v1_parameter_stage", {
+                    **DEV, "parameter": "sample_avg", "value": 3.0,
+                }, raise_on_error=False)
+                apply_result = await client.call_tool(
+                    "bws_v1_parameter_apply", DEV,
+                    raise_on_error=False,
+                )
+            return {
+                "host_info": host_info,
+                "stage": stage,
+                "apply": apply_result,
+            }
+
+        outcome = asyncio.run(run())
+        assert outcome["host_info"] is not None
+        assert outcome["host_info"].get("mode") == "standalone"
+        assert not getattr(outcome["stage"], "is_error", True), (
+            "the fallback's local mock must serve the stage"
+        )
+        assert not getattr(outcome["apply"], "is_error", True), (
+            "the fallback's local mock must serve the apply"
+        )
+        text = stderr_path.read_text()
+        assert "no running host beside" in text
+        assert "verdict: absent" in text
+        assert "in-process fallback" in text
+
+    @POSIX_HOST
+    def test_sh5_fork_guard_refuses_cli_level(
+        self, starter_project: Path, tmp_path: Path,
+    ) -> None:
+        """A live foreign pid in the capture root's library.lock refuses
+        the fallback, typed, naming the pid; no server is served."""
+        from benchweave_sdk_server.shim import CAPTURE_ROOT_HELD_PREFIX
+
+        family = tmp_path / "family"
+        family.mkdir()
+        capture = tmp_path / "held-root"
+        capture.mkdir()
+        child = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(60)"],
+            stdout=subprocess.DEVNULL,
+        )
+        try:
+            (capture / "library.lock").write_text(
+                json.dumps({"pid": child.pid}), encoding="utf-8"
+            )
+            exchange = _raw_stdio_exchange(
+                ["--bindings", str(family / "device-bindings.json")],
+                project=starter_project,
+                env_extra={"BENCHWEAVE_CAPTURE_DIR": str(capture)},
+            )
+            assert exchange["returncode"] != 0
+            assert CAPTURE_ROOT_HELD_PREFIX in str(exchange["stderr"])
+            assert str(child.pid) in str(exchange["stderr"])
+            assert exchange["tools"] == []
+        finally:
+            child.terminate()
+            child.wait(timeout=10)
+
+    @POSIX_HOST
+    @requires_posix_file_perms
+    def test_sh6_ours_but_unproxyable_refuses(
+        self, started_host: HostHandle, starter_project: Path,
+    ) -> None:
+        """chmod 000 on the tokens file: refusal typed, naming the
+        stop/start action — and NOT a fallback (the live host keeps
+        serving; a follow-up REST read succeeds)."""
+        from benchweave_sdk_server.shim import HOST_UNPROXYABLE_PREFIX
+
+        lifecycle.tokens_path(started_host.bindings).chmod(0o000)
+        try:
+            exchange = _raw_stdio_exchange(
+                ["--bindings", str(started_host.bindings)],
+                project=starter_project,
+            )
+            assert exchange["returncode"] != 0
+            combined = str(exchange["stderr"]) + str(exchange["stdout"])
+            assert HOST_UNPROXYABLE_PREFIX in combined
+            assert "stop" in combined and "start" in combined
+        finally:
+            lifecycle.tokens_path(started_host.bindings).chmod(0o600)
+        # The live host never stopped serving.
+        with httpx.Client(
+            base_url=started_host.url, timeout=5.0,
+            headers={"Authorization": f"Bearer {started_host.bearer}"},
+        ) as rest:
+            response = rest.post("/v1/host_info", json={})
+            assert response.status_code == 200, response.text
+
+    @POSIX_HOST
+    def test_sh7_stale_family_falls_back_with_disclosure(
+        self, starter_project: Path, tmp_path: Path,
+    ) -> None:
+        """(a) a dead-pid pidfile and (b) a dead pidfile whose tokens
+        name a different dead pid — both fall back WITH the disclosure
+        naming the verdict; neither proxies. The live-pidfile token
+        mismatch is SH6's refusal class (pinned in TestDiscover).
+        Interpretation note: the §6 SH7 row's "(b) falls back" is
+        coherent only under a DEAD pidfile — a LIVE pidfile with a
+        tokens mismatch is the record's own KILL shape (fallback beside
+        verdict-ours), so (b) is armed as its stale-family variant."""
+        # (a) dead pidfile, no tokens.
+        family_a = tmp_path / "stale-a"
+        family_a.mkdir()
+        bindings_a = family_a / "device-bindings.json"
+        _stage_ours_pidfile(bindings_a, _dead_child())
+        stderr_a = family_a / "stderr.log"
+        async def run_a() -> object:
+            async with _stdio_client(
+                ["--bindings", str(bindings_a)],
+                project=starter_project, cwd=family_a,
+                stderr_log=stderr_a,
+            ) as client:
+                return (await client.call_tool(
+                    "bws_v1_host_info", {})).structured_content
+        assert asyncio.run(run_a()) is not None  # a server WAS served
+        text_a = stderr_a.read_text()
+        assert "verdict: dead" in text_a
+        assert "in-process fallback" in text_a
+
+        # (b) dead pidfile + tokens naming a different dead pid.
+        family_b = tmp_path / "stale-b"
+        family_b.mkdir()
+        bindings_b = family_b / "device-bindings.json"
+        dead_one = _dead_child()
+        dead_two = _dead_child()
+        _stage_ours_pidfile(bindings_b, dead_one)
+        _stage_tokens(bindings_b, pid=dead_two)
+        stderr_b = family_b / "stderr.log"
+        async def run_b() -> object:
+            async with _stdio_client(
+                ["--bindings", str(bindings_b)],
+                project=starter_project, cwd=family_b,
+                stderr_log=stderr_b,
+            ) as client:
+                return (await client.call_tool(
+                    "bws_v1_host_info", {})).structured_content
+        assert asyncio.run(run_b()) is not None
+        text_b = stderr_b.read_text()
+        assert "verdict: dead" in text_b
+
+    @POSIX_HOST
+    def test_sh8_authoring_degrade(
+        self, started_host: HostHandle, starter_project: Path,
+    ) -> None:
+        """Host started WITHOUT authoring (start has no such flag —
+        every started host is a non-authoring host): the shim with
+        --authoring serves anyway, the tool list has no authoring
+        tools, and stderr carries the mismatch disclosure."""
+        stderr_path = started_host.bindings.parent / "sh8-stderr.log"
+        async def run() -> list[str]:
+            async with _stdio_client(
+                ["--bindings", str(started_host.bindings), "--authoring"],
+                project=starter_project,
+                stderr_log=stderr_path,
+            ) as client:
+                tools = await client.list_tools()
+            return [str(tool.name) for tool in tools]
+
+        names = asyncio.run(run())
+        assert "plugin_new" not in names
+        text = stderr_path.read_text()
+        assert "does not serve authoring tools" in text
+
+    @POSIX_HOST
+    def test_sh9_proxy_mode_instructions_name_the_host(
+        self, started_host: HostHandle, starter_project: Path,
+    ) -> None:
+        """SH9 proxy half: the real shim subprocess's initialize result
+        carries instructions naming the host URL and pid, and never the
+        fallback marker."""
+        from benchweave_sdk_server.shim import FALLBACK_MARKER
+
+        exchange = _raw_stdio_exchange(
+            ["--bindings", str(started_host.bindings)],
+            project=starter_project,
+        )
+        assert exchange["returncode"] == 0, exchange["stderr"]
+        init = exchange["init"]
+        instructions = str(init.get("instructions", ""))
+        assert started_host.url in instructions
+        assert str(started_host.pid) in instructions
+        assert "share one host" in instructions
+        assert FALLBACK_MARKER not in instructions
+
+
+# --- SH9's fallback half (in-process, the test_mcp.py pattern) ----------------
+
+
+class TestSH9Fallback:
+    @POSIX_HOST
+    def test_fallback_instructions_carry_the_marker(self, starter_project: Path) -> None:
+        from benchweave_sdk_server.cli import _build_seam
+        from benchweave_sdk_server.mcp import registered_tool_names
+        from benchweave_sdk_server.shim import (
+            FALLBACK_MARKER,
+            PROXY_MARKER_TEMPLATE,
+            build_fallback_server,
+        )
+
+        seam, _ = _build_seam(starter_project)
+        server = build_fallback_server(seam, authoring=True)
+        assert FALLBACK_MARKER in server.instructions
+        assert "{url}" not in server.instructions
+        assert PROXY_MARKER_TEMPLATE.split("{url}")[0] not in server.instructions
+        # The full tool set rides the fallback construction (AM1's shape).
+        assert "bws_v1_host_info" in set(registered_tool_names(server))
+        assert "plugin_new" in set(registered_tool_names(server))
+        asyncio.run(seam.settle_capture_for_shutdown())
+        seam.close()
