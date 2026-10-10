@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 import shutil
 import warnings
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -25,33 +25,6 @@ ACTIVE = json.loads((ROOT / "standards-lock.json").read_bytes())
 ROWS = {
     (str(row["id"]), str(row["version"])): row for row in ACTIVE.get("standards", [])
 }
-
-
-@pytest.fixture(autouse=True)
-def _the_committed_tree_is_never_written(
-    monkeypatch: pytest.MonkeyPatch,
-) -> Iterator[None]:
-    """Issue #427's structural guard: no test in this module may open a
-    write window on the committed vendored tree. Those bytes are shared
-    state under ``-n auto`` — a tamper-and-restore window of tens of
-    milliseconds collides with any concurrent digest reader (the observed
-    1-in-3 xdist flakes of ``test_build_hook_accepts_the_committed_state``
-    and the nested starter-suite ``vendored_digest_mismatch``). The tamper
-    arms plant their byte on a tmp copy (``_tmp_vendored_tree`` below); a
-    write that reaches the committed tree fails the test that attempted it.
-    """
-    tree = ROOT / "src/benchweave_sdk/standards"
-    original = Path.write_bytes
-
-    def guarded(self: Path, data: bytes) -> int:
-        if tree == self or tree in self.parents:
-            raise AssertionError(
-                f"write to the committed vendored tree attempted: {self} (#427)"
-            )
-        return original(self, data)
-
-    monkeypatch.setattr(Path, "write_bytes", guarded)
-    yield
 
 
 def _carried_otdp() -> set[str]:
@@ -219,7 +192,8 @@ def _tmp_vendored_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """A throwaway copy of the vendored tree the tamper arms may corrupt.
 
     Issue #427: planting the tamper byte on the COMMITTED tree opened a
-    real write window on shared bytes (see the module guard above). The
+    real write window on shared bytes (the suite-wide guard in
+    tests/conftest.py refuses any such write). The
     copy is byte-identical at build and the lock stays the committed one
     (``_lock_source`` is untouched), so the pins the planted byte must
     violate are the real pins — the refusal proves the same thing without
