@@ -11,8 +11,9 @@ fields under stable prefixes — ``version_not_served:`` and
 from __future__ import annotations
 
 import json
+import shutil
 import warnings
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
@@ -24,6 +25,33 @@ ACTIVE = json.loads((ROOT / "standards-lock.json").read_bytes())
 ROWS = {
     (str(row["id"]), str(row["version"])): row for row in ACTIVE.get("standards", [])
 }
+
+
+@pytest.fixture(autouse=True)
+def _the_committed_tree_is_never_written(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[None]:
+    """Issue #427's structural guard: no test in this module may open a
+    write window on the committed vendored tree. Those bytes are shared
+    state under ``-n auto`` — a tamper-and-restore window of tens of
+    milliseconds collides with any concurrent digest reader (the observed
+    1-in-3 xdist flakes of ``test_build_hook_accepts_the_committed_state``
+    and the nested starter-suite ``vendored_digest_mismatch``). The tamper
+    arms plant their byte on a tmp copy (``_tmp_vendored_tree`` below); a
+    write that reaches the committed tree fails the test that attempted it.
+    """
+    tree = ROOT / "src/benchweave_sdk/standards"
+    original = Path.write_bytes
+
+    def guarded(self: Path, data: bytes) -> int:
+        if tree == self or tree in self.parents:
+            raise AssertionError(
+                f"write to the committed vendored tree attempted: {self} (#427)"
+            )
+        return original(self, data)
+
+    monkeypatch.setattr(Path, "write_bytes", guarded)
+    yield
 
 
 def _carried_otdp() -> set[str]:
@@ -187,25 +215,55 @@ def test_constants_derive_from_the_lock() -> None:
     assert schema["$defs"]["adapter"]["properties"]["api_version"]["const"] == ADAPTER_API_VERSION
 
 
-def test_served_documents_are_digest_checked_against_the_lock() -> None:
+def _tmp_vendored_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A throwaway copy of the vendored tree the tamper arms may corrupt.
+
+    Issue #427: planting the tamper byte on the COMMITTED tree opened a
+    real write window on shared bytes (see the module guard above). The
+    copy is byte-identical at build and the lock stays the committed one
+    (``_lock_source`` is untouched), so the pins the planted byte must
+    violate are the real pins — the refusal proves the same thing without
+    ever writing the committed tree. Shape follows the tmp-copy arms in
+    ``test_standards_verify``; the ``files`` substitution is this repo's
+    own installed-layout precedent (``test_verify_installed_passes_on_an_
+    installed_layout``).
+    """
+    import benchweave_sdk.served as served
+    import benchweave_sdk.validation as validation_module
+
+    package = tmp_path / "sdk" / "src" / "benchweave_sdk"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    shutil.copytree(ROOT / "src/benchweave_sdk/standards", package / "standards")
+    tree = package / "standards"
+    monkeypatch.setattr(served, "vendored_root", lambda: tree)
+    real_files = validation_module.files
+    monkeypatch.setattr(
+        validation_module,
+        "files",
+        lambda name: package if name == "benchweave_sdk" else real_files(name),
+    )
+    _clear_document_caches()
+    return tree
+
+
+def test_served_documents_are_digest_checked_against_the_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """PKG-1/VR-32: per-pin validation loads the vendored served set and
     verifies each file's digest against the SDK lock row — a tampered vendored
-    file refuses by name, never silently validates."""
+    file refuses by name, never silently validates. The tamper lands on a
+    tmp copy of the tree (#427); the digest pins it violates are the
+    committed lock's own."""
     from benchweave_sdk.served import verify_vendored_digests
 
-    verify_vendored_digests()  # clean tree passes
+    tree = _tmp_vendored_tree(tmp_path, monkeypatch)
+    verify_vendored_digests()  # the byte-identical copy passes the committed lock
 
-    victim = (
-        ROOT
-        / "src/benchweave_sdk/standards/otdp/0.2.0/otdp-device-descriptor.schema.json"
-    )
-    original = victim.read_bytes()
-    try:
-        victim.write_bytes(original + b"\n")
-        with pytest.raises(ValueError, match="vendored_digest_mismatch"):
-            verify_vendored_digests()
-    finally:
-        victim.write_bytes(original)
+    victim = tree / "otdp/0.2.0/otdp-device-descriptor.schema.json"
+    victim.write_bytes(victim.read_bytes() + b"\n")
+    with pytest.raises(ValueError, match="vendored_digest_mismatch"):
+        verify_vendored_digests()
 
 
 # --- #215 fix wave: the load path itself is digest-checked; pins never crash. ---
@@ -225,7 +283,9 @@ def _clear_document_caches() -> None:
     validation_module._corpus_known_otdp_features.cache_clear()
 
 
-def test_planted_vendored_byte_refuses_per_pin_validation() -> None:
+def test_planted_vendored_byte_refuses_per_pin_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """F1 (design §3.2; §7 risk-1's falsifier): per-pin validation loads the
     vendored served set DIGEST-CHECKED against the SDK lock row. A planted
     byte in a served schema refuses by name (``vendored_digest_mismatch:``)
@@ -234,21 +294,19 @@ def test_planted_vendored_byte_refuses_per_pin_validation() -> None:
     The planted byte is a trailing newline: invisible to the JSON parse, so
     only the digest can see it — exactly the tamper the design's risk
     falsifier names (wrong bytes refuse with a digest prefix, never warn).
+    The plant lands on a tmp copy of the tree (#427), digest-checked
+    against the committed lock's own pins.
     """
-    victim = (
-        ROOT / "src/benchweave_sdk/standards/otdp/0.2.0/otdp-device-descriptor.schema.json"
-    )
-    original = victim.read_bytes()
+    tree = _tmp_vendored_tree(tmp_path, monkeypatch)
+    victim = tree / "otdp/0.2.0/otdp-device-descriptor.schema.json"
     descriptor = _descriptor("class-dc_psu.json")
     descriptor["otdp_version"] = "0.2.0"
     try:
-        _clear_document_caches()
-        victim.write_bytes(original + b"\n")
+        victim.write_bytes(victim.read_bytes() + b"\n")
         with pytest.raises(ValueError, match="^vendored_digest_mismatch: ") as refusal:
             validate_descriptor(descriptor)
         assert "otdp/0.2.0/otdp-device-descriptor.schema.json" in str(refusal.value)
     finally:
-        victim.write_bytes(original)
         _clear_document_caches()
 
 
@@ -415,28 +473,27 @@ def test_the_verified_loader_covers_every_carried_standard() -> None:
     assert not missing, f"lock-recorded documents outside the verified loader: {missing}"
 
 
-def test_tampered_fixture_schema_refuses_on_the_fixture_path(tmp_path: Path) -> None:
+def test_tampered_fixture_schema_refuses_on_the_fixture_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Late fold 1 (#215), the executed falsifier: a parse-valid tamper of a
     plugin-ui-preview schema byte used to load clean on the fixture path
     (``fixtures`` read the vendored tree directly, outside the digest gate).
-    The load must refuse ``vendored_digest_mismatch:`` naming the file."""
+    The load must refuse ``vendored_digest_mismatch:`` naming the file. The
+    tamper lands on a tmp copy of the tree (#427)."""
     import benchweave_sdk.fixtures as fixtures_module
 
-    victim = (
-        ROOT / "src/benchweave_sdk/standards/plugin-ui-preview/0.1.1/fixture.schema.json"
-    )
-    original = victim.read_bytes()
-    tampered = original.replace(b'"required"', b'"xrequired"')
-    assert tampered != original, "the falsifier needs a byte the parse survives"
+    tree = _tmp_vendored_tree(tmp_path, monkeypatch)
+    victim = tree / "plugin-ui-preview/0.1.1/fixture.schema.json"
+    tampered = victim.read_bytes().replace(b'"required"', b'"xrequired"')
+    assert tampered != victim.read_bytes(), "the falsifier needs a byte the parse survives"
     (tmp_path / "fixtures").mkdir()
     try:
-        _clear_document_caches()
         victim.write_bytes(tampered)
         with pytest.raises(ValueError, match="^vendored_digest_mismatch: ") as refusal:
             fixtures_module.load_author_fixtures(tmp_path / "fixtures", None)
         assert "plugin-ui-preview/0.1.1/fixture.schema.json" in str(refusal.value)
     finally:
-        victim.write_bytes(original)
         _clear_document_caches()
 
 
