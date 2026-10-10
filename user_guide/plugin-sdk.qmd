@@ -458,6 +458,100 @@ Every removal is appended to `retention.log`, a JSONL file in the capture root. 
 
 The host serves the capture library at `GET /captures`. The table shows the capture id, started, format, bytes, source, project, tags, `pinned`, stop reason and the next retention effect. The next-effect column comes from the same evaluator the prune runs: `prunable now by <rule>`, `<rule> at <date>`, `eligible under <rule>` or `kept`. Filters cover project, source, tag, device and free text over id and notes; the device filter reads each capture's metadata file. Pin and unpin are form buttons, and a pinned capture refuses deletion until you unpin it. Delete is a two-step confirmation page that names the capture id, its size and its project. The confirmed delete dispatches through the operations seam and writes its own `retention.log` row with trigger `delete-ui`.
 
+### Analyse captures (standalone host)
+
+The standalone host serves the Analyse page at `GET /analyse`. The page works on the published waveform captures under the host's capture root. You select captures, set a time window, and read the statistics that the host computes under definition `benchweave-analysis/1`. Every statistics block states its denominators: the sample count, the null count and the window.
+
+The Captures list offers one check box per capture, and it lists only captures with state `published` and format `waveform_f64le`. No other capture can enter an analysis.
+
+Select one or more check boxes, then select `Analyse`. The page shows one plot and one statistics table per capture. The statistics recompute each time you submit the form. The table rows are `count`, `null_count`, `min`, `mean`, `max`, `rms` and `peak-to-peak`. A line under each table names the capture's manifest sha256.
+
+Set the window with the two fields `Window start (s)` and `Window end (s)`. Both times are seconds from the capture's own start. The window is inclusive. An empty field leaves that end unbounded.
+
+Both values must be finite numbers, and the start must not exceed the end. A window that breaks these rules refuses with the `standalone_report_window_invalid:` prefix. The page shows the refusal in a `Refused` notice.
+
+Drag is the other way to set the window. Press the mouse on a plot and drag across a region. The drag zooms the plot to the region, fills both window fields, and submits the form. The window is then the dragged region. Both fields receive values rounded to 6 decimal places. The window fields alone are the complete path without script.
+
+A sample counts as null exactly when it is NaN. The host counts null samples and excludes them, and it never reads a null as zero. When the window holds no non-null sample, every statistic shows the absence mark `—`.
+
+The marker editor works on one capture at a time. Select exactly one capture to see it. Each marker row has three fields: a label, a time and a note.
+
+A label is one uppercase letter `A` to `Z`. One marker exists per label, and a save with a repeated label replaces the earlier row. The note is free text. The editor pads empty rows to three, and it shows at most 26 rows.
+
+The time is seconds from the capture's own start. It must lie inside the capture's displayable span, from `0` to `(sample_count - 1) × sample_interval_s`. A marker outside that span refuses with the `standalone_report_marker_invalid:` prefix.
+
+Click a plot to write a time into a marker row. The click fills the row you last touched, or the first row with an empty time. A drag never places a marker. The drag brush owns drags. The marker time fields alone are the complete path without script.
+
+Select `Save markers` to store the rows. The save rewrites the capture's `analysis.json` overlay, format `standalone-analysis/1`. The save replaces the whole overlay with the editor's rows, stored sorted by label. Empty rows store no marker. Your unsaved rows also ride the export. When you export, the editor's current rows become the report's markers for that capture.
+
+Power modes pair the set's voltage captures and current captures into rails. The pairing uses the units only, never the capture names. A capture with unit `A`, `mA`, `uA` or `nA` is a current side. A capture with unit `V`, `mV`, `uV` or `kV` is a voltage side. Letter case does not matter, and `µ` reads as `u`.
+
+Without explicit rails, the first voltage side and the first current side of your selection form rail 1. The next pair forms rail 2, and so on. A current side without a voltage partner keeps its own rail, with rows for the current side only. A voltage side without a current partner forms nothing.
+
+A rail pairs whole captures only. Both sides must declare the same sample interval and the same sample count. A mismatch refuses with the `standalone_report_power_pairing:` prefix.
+
+The `Power mode` field names one presentation over the rails:
+
+| Mode | Works on | More input |
+|--------|----------|------------|
+| `battery` | rail 1 | `Battery capacity (Ah)`, for the runtime row |
+| `dc-dc` | rails 1 and 2 | none |
+| `sleep` | rail 1 current | `Sleep threshold`, in the rail's current unit |
+| `load-step` | rail 1 | none |
+
+The `battery` runtime row appears only when you give a capacity. The runtime is the capacity divided by the mean current. A zero or non-finite mean current omits the row, and no default capacity exists. The `sleep` block reads `not_evaluated` with reason `no threshold` when you give no threshold. An empty class reports its count and shows the absence mark for its mean.
+
+The `dc-dc` efficiency row stays absent when the host cannot compute it, and a reason names why. The same holds for the `load-step` resistance row.
+
+Every power label derives from the rail's actual units. The power label is `W` only when both sides use the base units `V` and `A`. A scaled rail prints its unit product instead, for example `V·mA`. The charge label is `Ah` only for unit `A`, and the energy label is `Wh` only for a `W` rail. The host never rescales a value to match a label.
+
+The power section can state an unavailability instead of rows. `power_unavailable: no current series` means the selection holds no current side. The section then shows no power rows, never a `0 W` row. A rail with no voltage side states `power_unavailable: no voltage series` where the paired rows would be. Its charge row stays, because the charge integrates the current capture alone.
+
+### Export and read the analysis report (standalone host)
+
+Select `Export report` to render one self-contained HTML document. The host writes the pair `reports/<report id>.html` and `reports/<report id>.json` under the capture root. The report id is `rep-` plus the first 16 hex digits of the document's SHA-256. The id names the document's own bytes. Identical inputs re-export to the same report. The second export writes nothing new, and the API result answers `created: false` for it.
+
+The document holds these sections:
+
+- a banner line `STANDALONE — no gateway`, plus `SIMULATED (a source capture records mock transport)` when a source records mock transport;
+- the definitions line, which names the definition ids and states `Processed values are host-computed (uncertainty: unknown)`;
+- the context chart, with every capture's full extent, the window shaded, and the in-extent markers drawn;
+- the zoom chart, with the window at full detail, only when the window is a proper part of the extent;
+- one window statistics block and one edge timing block per capture;
+- the power section, when a power mode was selected;
+- the assertions table, when the export carried assertion rows from the REST or MCP surface;
+- the markers table, with every stored row and an in-window yes or no;
+- one sources block per capture, with the unit, the sample count, the interval, the byte length, the start time, the full manifest sha256, the device, the firmware, the plugin, the descriptor sha256, the operator, the project and the notes;
+- the footer, with the SDK version, the renderer pin and the re-derivable statement.
+
+Each edge timing block uses definition `benchweave-edge/1`. The baseline is the mean of the first 15 % of the window's non-null samples. The final value is the mean of the last 15 %. Each side counts at least 1 sample. A window with fewer than 3 samples, or a flat step, reads `detected: no`.
+
+The `rise_time` row is the span from the 10 % crossing to the 90 % crossing. The `settle_time` row measures from the 10 % crossing. It shows the absence mark when the window's last sample is still outside the settle band. The settle band is 2.0 % of the step, and the web export always uses this value.
+
+An assertion row uses definition `benchweave-assert/1`. It names a capture and a lower bound, an upper bound, or both. The verdict is `pass`, `fail` or `not_evaluated`. An empty window is `not_evaluated`, never `pass`. A `fail` row names its reasons, `below_min` and `above_max`.
+
+Every charge and energy row carries two coverage rows. One states the integrated span in seconds. The other states how many segments were dropped. A dropped segment is a segment where one sample of the pair is null.
+
+The integral never steps across a gap. When no segment was counted, the value is the absence mark. No data integrated is an absence, not zero energy.
+
+The report uses these marks where a value does not exist:
+
+| Mark | Meaning |
+|------|---------|
+| `—` | The window held no data for this value. No value was computed. |
+| `n/a (non-finite)` | Data was present, but the statistic has no finite value. |
+| `not_evaluated` | An assertion found no samples in its window, or a sleep block had no threshold. It never means `pass`. |
+
+Before any number renders, the export reads each primary file again and recomputes its SHA-256. A capture that changed after publication refuses with the `standalone_report_primary_mismatch:` prefix. A refused export writes nothing, and it never creates the `reports` directory.
+
+The document holds no clock value, so the same inputs give the same bytes. The JSON file beside the document records the export time, the parameters and the digests. The parameters are a replayable export input. Feed them back to reproduce the document with the same bytes.
+
+Two limits protect the report's shape. The report draws at most two distinct units. A larger set refuses with the `standalone_report_units_unsupported:` prefix. Split the export in that case.
+
+A window that holds more than 2000000 samples for a plot refuses with the `standalone_report_window_too_large:` prefix. Narrow the window in that case. One export names at most 16 captures.
+
+The export pins every source capture. A pinned capture never expires under retention, and it refuses deletion until you unpin it. Without a pin, mcp captures expire after 30 days. The ui and rest sources stay until you delete them. The capture retention section above explains the schedule. After the export, the browser lands on the report at `GET /reports/<report id>`.
+
 ## 4. Review compatibility and deployment
 
 Use the [AI device integration reviewer](https://github.com/madeinoz67/benchweave/blob/main/docs/ai-device-reviewer.md) (main repository) with the exact revision and test evidence. Its SDK maintenance checklist covers public interfaces, contracts, generated projects, mocks, gateway compatibility and release artefacts.
