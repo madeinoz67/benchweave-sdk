@@ -43,19 +43,21 @@ PROXY_MARKER_TEMPLATE = (
 )
 
 FALLBACK_MARKER = (
-    "in-process fallback host: no other surface can attach; no browser "
-    "session shares this process; captures taken in this session are "
-    "ephemeral — discarded at exit."
+    "in-process fallback host: no other surface can attach. No browser "
+    "session shares this process. Captures in this session are ephemeral "
+    "and are discarded when the session ends normally."
 )
 
 #: The fallback's startup disclosure (stderr, never stdout — stdout is
 #: the protocol channel). Names the verdict, per SH4, and the fold-R5
-#: ephemeral-capture isolation.
+#: ephemeral-capture isolation. Fold W3: the discard happens when the
+#: session ends NORMALLY — a killed process orphans the temp root for
+#: the platform's TMPDIR cleaners, and the text says that.
 FALLBACK_STDERR_LINE = (
     "benchweave-sdk-server: no running host beside {bindings} "
-    "(verdict: {verdict}); serving the in-process fallback — no browser "
-    "can attach to this session, and captures in this session are "
-    "ephemeral (discarded at exit)"
+    "(verdict: {verdict}). Serving the in-process fallback. No browser "
+    "can attach to this session. Captures in this session are ephemeral "
+    "and are discarded when the session ends normally."
 )
 
 #: The §2.6 authoring degrade (proxy mode): a degraded session beats no
@@ -115,8 +117,9 @@ class Refuse:
 
 
 def _plausible_pid(value: object) -> bool:
-    """The OS-mintable range (fold R4): a pid outside it is never probed
-    with an os.kill — the conservative refusal covers it instead."""
+    """A plausibility GUARD, not an OS-impossibility claim (fold W4): the
+    range bounds the pids an os.kill probe will be handed to the POSIX
+    range; a pid outside it is refused conservatively, never probed."""
     return (
         isinstance(value, int)
         and not isinstance(value, bool)
@@ -158,8 +161,10 @@ def discover(bindings: Path) -> ProxyTarget | NoHost | Refuse:
     The fold wave's hardenings: a pidfile that EXISTS but cannot be
     read or parsed is the collapse refusal (never a fallback — R1);
     tokens WITHOUT a pidfile is the mid-boot window refusal (S7's
-    ordering means a host may be coming up — R2); a pid outside the
-    OS-mintable range refuses before any os.kill probe (R4).
+    ordering means a host may be coming up — R2, with W1's sidecar
+    cleanup making the state genuinely transient); a pid outside the
+    plausibility range refuses before any os.kill probe (R4/W4 — the
+    bound is a guard, not an OS claim).
     """
     record = lifecycle.read_pidfile(bindings)
     if record is None:
@@ -194,9 +199,11 @@ def discover(bindings: Path) -> ProxyTarget | NoHost | Refuse:
     pid = record.get("pid")
     if not _plausible_pid(pid):
         # Fold R4: never hand an implausible pid to an os.kill probe.
+        # Fold W4: the bound is a plausibility guard, not an OS claim.
         return _supervision_refuse(
-            f"the pidfile's pid {pid!r} is outside the range an OS "
-            f"mints; the family beside {bindings} cannot be verified",
+            f"the pidfile's pid {pid!r} is outside the plausibility "
+            f"range of 1 to {2**31 - 1}. The family beside {bindings} "
+            "cannot be verified",
             bindings,
         )
     assert isinstance(pid, int)  # _plausible_pid passed; narrows for mypy
@@ -266,14 +273,19 @@ def _read_tokens(bindings: Path, pid: int) -> ProxyTarget | None:
 def fork_guard(root: Path | None = None) -> Refuse | None:
     """The §2.3 capture-root fork guard: read, never write.
 
-    Resolves the capture root the fallback would use (the same
-    resolution the seam applies, without opening anything) and reads
-    its ``library.lock`` through :func:`library.read_lock`. A live or
-    unprovable holder refuses typed — the two host classes the shim
-    cannot proxy to (a foreground serve; a started host under another
-    user) are exactly the classes that DO hold the root once they
-    capture. A ValueError from the capture-root resolution propagates:
-    the caller maps it to the surface's own typed refusal.
+    Resolves the ambient capture root (the same resolution the host
+    applies, without opening anything) and reads its ``library.lock``
+    through :func:`library.read_lock`. A live or unprovable holder
+    refuses typed. Fold W2 makes the REASON truthful: the fallback
+    writes nothing to the ambient root (its capture family serves over
+    an isolated ephemeral root), so the refusal is not about writes —
+    a live library owner is a host serving a session over this root,
+    and the shim serves no second session beside it (the one-session
+    property). The two host classes the shim cannot proxy to (a
+    foreground serve; a started host under another user) are exactly
+    the classes that hold the root once they capture. A ValueError
+    from the capture-root resolution propagates: the caller maps it to
+    the surface's own typed refusal.
     """
     from benchweave_sdk.capture import capture_root
 
@@ -287,8 +299,8 @@ def fork_guard(root: Path | None = None) -> Refuse | None:
             prefix=CAPTURE_ROOT_HELD_PREFIX,
             detail=(
                 f"the capture root {resolved} is held by a live library "
-                f"({holder}); falling back would be the two-writers "
-                "hazard the lock already refuses"
+                f"({holder}). A host owns this root and the shim serves "
+                "no second session beside it"
             ),
             action=(
                 "run a supervised host with benchweave-sdk-server start, "

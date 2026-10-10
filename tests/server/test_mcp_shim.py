@@ -313,9 +313,10 @@ class TestMarkers:
         from benchweave_sdk_server.shim import FALLBACK_MARKER
 
         assert FALLBACK_MARKER == (
-            "in-process fallback host: no other surface can attach; no "
-            "browser session shares this process; captures taken in this "
-            "session are ephemeral — discarded at exit."
+            "in-process fallback host: no other surface can attach. No "
+            "browser session shares this process. Captures in this "
+            "session are ephemeral and are discarded when the session "
+            "ends normally."
         )
 
     def test_proxy_instructions_name_url_and_pid(self) -> None:
@@ -466,10 +467,15 @@ def _raw_stdio_exchange(
     project: Path,
     env_extra: dict[str, str] | None = None,
     cwd: Path | None = None,
+    wait_initialize: bool = False,
 ) -> dict[str, object]:
     """One raw stdio exchange against a real shim subprocess: initialize
     → initialized → tools/list → stdin EOF. Captures EVERY output byte
-    (SH3's subject) plus the parsed initialize result and tool names."""
+    (SH3's subject) plus the parsed initialize result and tool names.
+    ``wait_initialize`` reads the initialize response before sending
+    tools/list — the fallback's boot builds a whole seam, so a client
+    that closes stdin instantly can end the session before the server
+    answered (the W1 arm needs the patient form)."""
     env = os.environ.copy()
     if env_extra:
         env.update(env_extra)
@@ -486,15 +492,27 @@ def _raw_stdio_exchange(
             "clientInfo": {"name": "shim-arm", "version": "0"},
         },
     }
+    patient_lines: list[str] = []
     proc.stdin.write(json.dumps(initialize) + "\n")
+    proc.stdin.flush()
+    if wait_initialize:
+        # The patient form: block on the initialize response line (the
+        # subprocess timeout bounds a wedged server), then continue.
+        patient_lines.append(proc.stdout.readline())
     proc.stdin.write(json.dumps(
         {"jsonrpc": "2.0", "method": "notifications/initialized"}
     ) + "\n")
     proc.stdin.write(json.dumps(
         {"jsonrpc": "2.0", "id": 2, "method": "tools/list"}
     ) + "\n")
+    proc.stdin.flush()
+    if wait_initialize:
+        # And on the tools/list response, so EOF cannot outrun the
+        # server's dispatch.
+        patient_lines.append(proc.stdout.readline())
     proc.stdin.close()
-    stdout, stderr = proc.communicate(timeout=60)
+    rest, stderr = proc.communicate(timeout=60)
+    stdout = "".join(patient_lines) + rest
     init_result: dict[str, object] = {}
     tools: list[str] = []
     for line in stdout.splitlines():
@@ -1430,3 +1448,179 @@ class TestR11TimeoutDisclosure:
         )
         assert exchange["returncode"] == 0, exchange["stderr"]
         assert "proxying with no call timeout" in str(exchange["stderr"])
+
+
+# --- fold wave 2 (2026-10-10): W1-W7 ------------------------------------------
+
+
+class TestW1StopClearsTokens:
+    @POSIX_HOST
+    def test_start_stop_then_mcp_falls_back(self, tmp_path: Path) -> None:
+        """The wedge, executed end-to-end (the lane's sequence): start rc0
+        → stop rc0 → mcp. RED: stop left the tokens file behind, so the
+        tokens-without-pidfile state was STEADY and R2 refused forever.
+        After: stop's clean path clears the tokens sidecar (mirroring the
+        stale-sidecars pattern) and start's pre-spawn gate clears a stale
+        one; with no host running the mcp command falls back cleanly.
+        The genuine mid-boot refusal is unchanged — a host ACTIVELY
+        booting still has both files in flight and still refuses."""
+        run_cwd = tmp_path / "run"
+        run_cwd.mkdir()
+        scratch = tmp_path / "shim-cwd"
+        scratch.mkdir()
+        bindings = tmp_path / "device-bindings.json"
+        started = subprocess.run(
+            [
+                sys.executable, "-m", "benchweave_sdk_server.cli", "start",
+                str(FIXTURE), "--bindings", str(bindings),
+                "--host", "127.0.0.1", "--port", str(_free_port()),
+            ],
+            cwd=str(run_cwd), capture_output=True, text=True, timeout=120,
+        )
+        assert started.returncode == 0, started.stdout + started.stderr
+        stopped = subprocess.run(
+            [
+                sys.executable, "-m", "benchweave_sdk_server.cli", "stop",
+                "--bindings", str(bindings),
+            ],
+            cwd=str(run_cwd), capture_output=True, text=True, timeout=60,
+        )
+        assert stopped.returncode == 0, stopped.stdout + stopped.stderr
+        deadline = time.monotonic() + 10.0
+        while lifecycle.pid_path(bindings).exists() and time.monotonic() < deadline:
+            time.sleep(0.2)
+        assert not lifecycle.pid_path(bindings).exists()
+        exchange = _raw_stdio_exchange(
+            ["--bindings", str(bindings)],
+            project=FIXTURE, cwd=scratch, wait_initialize=True,
+        )
+        assert exchange["returncode"] == 0, exchange["stderr"]
+        assert exchange["tools"], "the fallback served the tool set"
+        assert not lifecycle.tokens_path(bindings).exists(), (
+            "stop's clean path must clear the tokens sidecar — a stale "
+            "tokens file beside no pidfile is the wedge, not a host"
+        )
+
+
+class TestW2TruthfulGuardReason:
+    def test_live_holder_refusal_names_the_ownership_reason(self, tmp_path: Path) -> None:
+        """The refusal stands (one session per root), but the REASON must
+        be truthful post-R5: the fallback writes nothing to the ambient
+        root, so 'falling back would be the two-writers hazard' is false.
+        The true reason: a host owns the root; the shim serves no second
+        session beside it. RED: the old sentence claimed the hazard."""
+        from benchweave_sdk_server.shim import fork_guard
+
+        (tmp_path / "library.lock").write_text(
+            json.dumps({"pid": os.getpid()}), encoding="utf-8"
+        )
+        guard = fork_guard(root=tmp_path)
+        assert guard is not None
+        assert "two-writers" not in guard.detail
+        assert "owns this root" in guard.detail
+
+    def test_unprovable_holder_refusal_is_also_truthful(self, tmp_path: Path) -> None:
+        from benchweave_sdk_server.shim import fork_guard
+
+        (tmp_path / "library.lock").write_text("garbage", encoding="utf-8")
+        guard = fork_guard(root=tmp_path)
+        assert guard is not None
+        assert "two-writers" not in guard.detail
+
+
+class TestW3TruthfulEphemerality:
+    def test_the_marker_says_when_the_session_ends_normally(self) -> None:
+        """'Discarded at exit' was false under SIGKILL (the temp root is
+        orphaned in TMPDIR; TMPDIR cleaners own that). The literal says
+        when the discard actually happens. RED against the old literal."""
+        from benchweave_sdk_server.shim import FALLBACK_MARKER
+
+        assert "discarded when the session ends normally" in FALLBACK_MARKER
+        assert "discarded at exit" not in FALLBACK_MARKER
+
+    @POSIX_HOST
+    def test_the_stderr_line_says_when_the_session_ends_normally(
+        self, tmp_path: Path,
+    ) -> None:
+        scratch = tmp_path / "family"
+        scratch.mkdir()
+        stderr_path = scratch / "stderr.log"
+
+        async def run() -> None:
+            async with _stdio_client(
+                [], project=FIXTURE, cwd=scratch, stderr_log=stderr_path,
+            ) as client:
+                await client.call_tool("bws_v1_host_info", {})
+
+        asyncio.run(run())
+        text = stderr_path.read_text()
+        assert "discarded when the session ends normally" in text
+        assert "discarded at exit" not in text
+
+
+class TestW4TruthfulBound:
+    def test_implausible_pid_refusal_names_a_guard_not_an_impossibility(
+        self, tmp_path: Path,
+    ) -> None:
+        """The 2**31-1 bound is a plausibility guard (it bounds the probed
+        pids to the POSIX range); on win32 a DWORD pid can exceed it, so
+        'a number the OS could never have assigned' was false there.
+        RED: the old detail claimed the impossibility."""
+        from benchweave_sdk_server.shim import Refuse, discover
+
+        bindings = tmp_path / "device-bindings.json"
+        lifecycle.pid_path(bindings).write_text(
+            json.dumps({"pid": 10**30}), encoding="utf-8"
+        )
+        verdict = discover(bindings)
+        assert isinstance(verdict, Refuse)
+        assert "plausibility" in verdict.detail
+        assert "could never" not in verdict.detail
+        assert "outside the range an OS" not in verdict.detail
+
+
+class TestW7FallbackCaptureLifecycle:
+    def test_capture_start_publishes_through_the_fallback(self, tmp_path: Path) -> None:
+        """The pin gap: capture start→publish through the FALLBACK (the
+        R5 arm only lists; SH1's capture runs host-mode). The lane probed
+        the shape: 1024 bytes, a sha256, stop_reason completed. The
+        responses carry no temp-root paths (the ephemeral root stays the
+        shim's business)."""
+        scratch = tmp_path / "family"
+        scratch.mkdir()
+
+        async def run() -> tuple[dict, dict]:
+            async with _stdio_client(
+                [], project=FIXTURE, cwd=scratch,
+            ) as client:
+                await client.call_tool("bws_v1_device_connect", DEV)
+                await client.call_tool("bws_v1_parameter_read", {**DEV, "parameter": "sample_avg"})
+                await client.call_tool("bws_v1_parameter_stage", {
+                    **DEV, "parameter": "sample_avg", "value": 3.0,
+                }, raise_on_error=False)
+                await client.call_tool("bws_v1_parameter_apply", DEV, raise_on_error=False)
+                capture = (await client.call_tool(
+                    "bws_v1_capture_start", {**DEV, **CAPTURE_ARGS},
+                )).structured_content
+                capture_id = str(capture.get("capture_id"))
+                got: dict[str, object] = {}
+                for _ in range(25):
+                    result = await client.call_tool(
+                        "bws_v1_capture_get", {"capture_id": capture_id},
+                        raise_on_error=False,
+                    )
+                    if not result.is_error:
+                        got = result.structured_content  # type: ignore[assignment]
+                        break
+                    await asyncio.sleep(0.2)
+                return dict(capture), got
+
+        capture, got = asyncio.run(run())
+        assert got, "the capture never published through the fallback"
+        manifest = got.get("manifest", {})
+        assert manifest.get("byte_length") == 1024
+        assert manifest.get("sha256")
+        metadata = got.get("metadata", {})
+        assert metadata.get("stop_reason") == "completed"
+        everything = json.dumps([capture, got])
+        assert "bws-shim-fallback" not in everything

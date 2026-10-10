@@ -506,3 +506,18 @@ proxy start on stderr (literal-pinned) and in the guide.
 **A9 — the R10 census arm's escalation rule stands:** if a fastmcp bump mints
 sessions (the census arm reds), that is an ESCALATION to the owner — the release
 semantics must be re-proven, not a fix invented in-lane.
+
+**A10 — fold-wave-2 wording corrections (2026-10-10, appended).** A2's "byte-
+identical before/after" overstates its arm: `TestR5FallbackIsolation` proves the
+narrower never-created case (a fresh ambient dir stays absent across a full
+fallback session WITH capture-family calls); the byte-identity of a POPULATED
+ambient root is not armed. The claim the record should carry is the one the arm
+proves: the fallback never creates anything in the ambient root. Also wave 2's
+truthfulness rows in one place: W1 gives `stop`'s clean/dead paths and `start`'s
+pre-spawn gate the tokens-sidecar clear (a lifecycle-surface hygiene fix the
+shim's consumer exposed — the wedge the R2 refusal would otherwise be permanent;
+disclosed in the commit), W2 corrects the fork guard's reason (ownership, not a
+write hazard — the fallback writes nothing to the ambient root), W3/W4 correct the
+ephemerality and plausibility wordings (the discard happens when the session ends
+NORMALLY; the pid bound is a guard, not an OS impossibility — a win32 DWORD pid
+can exceed it).

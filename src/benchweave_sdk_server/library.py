@@ -162,10 +162,12 @@ def read_lock(root: Path) -> LockRead | None:
     except ValueError:
         return LockRead(pid=None, live=True)
     pid = payload.get("pid") if isinstance(payload, dict) else None
-    # Fold R4: a pid outside the OS-mintable range (a bool, a float, or
-    # a number the OS could never have assigned) is never handed to an
-    # os.kill probe — the unprovable lock is treated as live, the same
-    # conservative direction an unparseable payload takes.
+    # Fold R4, reworded by W4: a pid outside the plausibility range (a
+    # bool, a float, or a value past 2**31-1) is never handed to an
+    # os.kill probe — the bound guards the POSIX probe range; a win32
+    # DWORD pid can exceed it after wrap, and such a holder reads
+    # conservative-live. The unprovable lock is treated as live, the
+    # same conservative direction an unparseable payload takes.
     if not isinstance(pid, int) or isinstance(pid, bool) or not (
         0 < pid <= 2**31 - 1
     ):

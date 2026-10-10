@@ -168,7 +168,8 @@ with permanent planted-violation arms R-5c). The generated plugin runtime has **
   journal row, no tokens file, no bindings byte, and no AMBIENT capture-root byte; and
   a live host it cannot authenticate to is a refusal, never a fallback. Anchors:
   `benchweave_sdk_server/shim.py::discover` + the `mcp` command body
-  (`benchweave_sdk_server/cli.py`); pinned by the SH2/SH5/SH6 arms in
+  (`benchweave_sdk_server/cli.py`); pinned by the SH2/SH5/SH6 arms AND
+  `TestR5FallbackIsolation` (the isolation clause's only pin) in
   `tests/server/test_mcp_shim.py`. *Two hosts on one bench is the reference fork's
   shape — the entry point that cannot hold state cannot become the second one.*
 - **[TWO-1]** **Two-repo discipline**: an SDK change lands as a commit in this repository
