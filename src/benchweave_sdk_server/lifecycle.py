@@ -1105,7 +1105,10 @@ def _tail_lines(path: Path, lines: int) -> list[str]:
             offset = max(0, size - window)
             handle.seek(offset)
             text = handle.read().decode("utf-8", errors="replace")
-            rows = text.split("\n")
+            # CRLF-honest: a Windows-written log carries \r\n; strip the
+            # one trailing \r per row so callers compare content, not
+            # line endings.
+            rows = [row.removesuffix("\r") for row in text.split("\n")]
             if offset > 0 and rows:
                 rows = rows[1:]  # the leading partial line at a mid-file seek
             if rows and rows[-1] == "":
