@@ -867,6 +867,67 @@ def status(bindings: Path | None) -> None:
     click.echo(json.dumps(payload, indent=2, sort_keys=True))
 
 
+@cli.command()
+@click.option(
+    "--bindings",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="The bindings document the supervision family anchors beside.",
+)
+def doctor(bindings: Path | None) -> None:
+    """Five typed triage checks over the supervision family (read-only).
+
+    pid identity, log-destination resolvability, tokens-file 0600 (the
+    family's one credential-carrying member — the bearer value never
+    reaches output), journal parseability, and the stale stop request.
+    Exit 0 iff no fail and no unknown row."""
+    from . import lifecycle
+    from .binding import bindings_path
+
+    payload = lifecycle.doctor(bindings_path(bindings))
+    click.echo(json.dumps(payload, indent=2, sort_keys=True))
+    if not payload["ok"]:
+        raise SystemExit(1)
+
+
+@cli.command("logs")
+@click.argument(
+    "project",
+    type=click.Path(path_type=Path, exists=True),
+)
+@click.option(
+    "--bindings",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="The bindings document the supervision family anchors beside.",
+)
+@click.option(
+    "--lines",
+    type=int,
+    default=50,
+    show_default=True,
+    help="Lines to tail (a positive integer; the windowed read bounds the IO).",
+)
+def logs(project: Path, bindings: Path | None, lines: int) -> None:
+    """Tail the host's named log destination.
+
+    Resolution: the pidfile's log_destination (a path — the tokens file
+    is refused as a destination even when named — or a typed stderr
+    refusal), else the <bindings>.log sibling post-mortem. The project
+    argument is the surface's consistency shape with start/restart; the
+    tail itself reads the supervision family beside the bindings
+    document."""
+    from . import lifecycle
+    from .binding import bindings_path
+
+    try:
+        payload = lifecycle.logs(bindings_path(bindings), lines)
+    except lifecycle.LifecycleError as exc:
+        click.echo(str(exc), err=True)
+        raise SystemExit(1) from exc
+    click.echo(json.dumps(payload, indent=2, sort_keys=True))
+
+
 @cli.command("service")
 @click.argument("action", type=click.Choice(["install"]), required=True)
 def service(action: str) -> None:
