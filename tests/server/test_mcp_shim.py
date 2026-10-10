@@ -60,7 +60,15 @@ def _alive(pid: int) -> bool:
 
 
 def _dead_child() -> int:
-    """A provably dead pid (an exited-later child), the arm-safe way."""
+    """A provably dead pid (an exited-later child), the arm-safe way.
+
+    The Popen object MUST die before the caller probes the pid: on
+    Windows the object holds the child's process handle, and the
+    terminated child's process OBJECT persists — OpenProcess succeeds
+    on it for as long as any handle exists, and the lock reader's
+    probe (exit-code-blind) reads that as live. Dropping the object
+    here closes the handle; the pid is then provably gone.
+    """
     child = subprocess.Popen([sys.executable, "-c", "pass"],
                              stdout=subprocess.DEVNULL)
     child.wait(timeout=10)
@@ -126,15 +134,20 @@ class TestReadLock:
         assert read.live is True
 
     def test_provably_dead_pid_is_not_live(self, tmp_path: Path) -> None:
-        dead = subprocess.Popen(
-            [sys.executable, "-c", "pass"], stdout=subprocess.DEVNULL
-        )
-        dead.wait(timeout=10)
+        # The dead-pid fixture MUST release the child: on Windows a
+        # terminated child's process OBJECT persists while any handle
+        # stays open, and OpenProcess succeeds on the persistent object
+        # — read live, because library's own probe is exit-code-blind
+        # (lifecycle's _probe_windows checks GetExitCodeProcess; the
+        # lock's does not). _dead_child() drops the Popen at return, so
+        # the handle closes and the pid is provably gone. The CI wave's
+        # row-1 root cause.
+        dead = _dead_child()
         lock = tmp_path / "library.lock"
-        lock.write_text(json.dumps({"pid": dead.pid}), encoding="utf-8")
+        lock.write_text(json.dumps({"pid": dead}), encoding="utf-8")
         read = library.read_lock(tmp_path)
         assert read is not None
-        assert read.pid == dead.pid
+        assert read.pid == dead
         assert read.live is False
 
     def test_absent_lock_is_none(self, tmp_path: Path) -> None:
@@ -1106,6 +1119,29 @@ class TestDiscoverFold:
     def test_r1_unreadable_pidfile_refuses(
         self, tmp_path: Path
     ) -> None:
+        """The cross-platform unreadability injection: a DIRECTORY at the
+        pidfile path — IsADirectoryError (an OSError) at the same read
+        site read_pidfile uses, on every platform. No EISDIR-collision
+        precedent exists in the lifecycle family (checked: no typed
+        directory-as-pidfile behavior to collide with)."""
+        from benchweave_sdk_server.shim import SUPERVISION_UNKNOWN_PREFIX, Refuse, discover
+
+        bindings = tmp_path / "device-bindings.json"
+        lifecycle.pid_path(bindings).mkdir()
+        verdict = discover(bindings)
+        assert isinstance(verdict, Refuse)
+        assert verdict.prefix == SUPERVISION_UNKNOWN_PREFIX
+
+    @requires_posix_file_perms
+    def test_r1_unreadable_pidfile_by_permissions_refuses(
+        self, tmp_path: Path
+    ) -> None:
+        """The genuine permission member, POSIX-only (chmod 000 blocks
+        owner reads there; on Windows mode bits set the read-only
+        attribute, which blocks writes, not owner reads — the CI wave's
+        row-2 root cause). The refusal CLASS stays pinned cross-
+        platform by the directory arm above and the unparseable arm
+        below."""
         from benchweave_sdk_server.shim import SUPERVISION_UNKNOWN_PREFIX, Refuse, discover
 
         bindings = tmp_path / "device-bindings.json"
