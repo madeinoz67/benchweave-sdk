@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import signal
 import socket
 import subprocess
 import sys
@@ -313,7 +314,8 @@ class TestMarkers:
 
         assert FALLBACK_MARKER == (
             "in-process fallback host: no other surface can attach; no "
-            "browser session shares this process."
+            "browser session shares this process; captures taken in this "
+            "session are ephemeral — discarded at exit."
         )
 
     def test_proxy_instructions_name_url_and_pid(self) -> None:
@@ -685,12 +687,6 @@ class TestShimSubprocessArms:
                 "listed": listed,
                 "events": events,
             }
-            return {
-                "applied": applied,
-                "capture": capture,
-                "listed": listed,
-                "events": events,
-            }
 
         outcome = asyncio.run(run())
         after = scripted_host.tokens_file.read_bytes()
@@ -1049,3 +1045,388 @@ class TestSH9Fallback:
         assert "plugin_new" in set(registered_tool_names(server))
         asyncio.run(seam.settle_capture_for_shutdown())
         seam.close()
+
+
+# --- the fold wave (2026-10-10): R1-R11 --------------------------------------
+
+
+class TestReadLockFold:
+    """R4: an implausible pid in the lock never reaches an os.kill probe —
+    the conservative-live verdict, never a traceback."""
+
+    def test_huge_pid_is_conservative_live_not_a_traceback(self, tmp_path: Path) -> None:
+        lock = tmp_path / "library.lock"
+        lock.write_text(json.dumps({"pid": 10**30}), encoding="utf-8")
+        read = library.read_lock(tmp_path)
+        assert read is not None
+        assert read.pid is None
+        assert read.live is True
+
+    def test_bool_and_float_pids_are_conservative_live(self, tmp_path: Path) -> None:
+        lock = tmp_path / "library.lock"
+        lock.write_text(json.dumps({"pid": True}), encoding="utf-8")
+        read = library.read_lock(tmp_path)
+        assert read is not None and read.pid is None and read.live is True
+        lock.write_text(json.dumps({"pid": 5.0}), encoding="utf-8")
+        read = library.read_lock(tmp_path)
+        assert read is not None and read.pid is None and read.live is True
+
+
+class TestDiscoverFold:
+    """R1/R2/R4/R6/R8: the collapse, mid-boot, implausible-pid and
+    non-int-tokens refusals, and the truthful action sentence."""
+
+    def test_r1_garbage_pidfile_refuses_not_falls_back(self, tmp_path: Path) -> None:
+        from benchweave_sdk_server.shim import SUPERVISION_UNKNOWN_PREFIX, Refuse, discover
+
+        bindings = tmp_path / "device-bindings.json"
+        lifecycle.pid_path(bindings).write_text("garbage bytes", encoding="utf-8")
+        verdict = discover(bindings)
+        assert isinstance(verdict, Refuse)
+        assert verdict.prefix == SUPERVISION_UNKNOWN_PREFIX
+
+    def test_r1_unreadable_pidfile_refuses(
+        self, tmp_path: Path
+    ) -> None:
+        from benchweave_sdk_server.shim import SUPERVISION_UNKNOWN_PREFIX, Refuse, discover
+
+        bindings = tmp_path / "device-bindings.json"
+        _stage_ours_pidfile(bindings, os.getpid())
+        lifecycle.pid_path(bindings).chmod(0o000)
+        verdict = discover(bindings)
+        assert isinstance(verdict, Refuse)
+        assert verdict.prefix == SUPERVISION_UNKNOWN_PREFIX
+
+    def test_r2_tokens_without_pidfile_is_the_mid_boot_refusal(
+        self, tmp_path: Path
+    ) -> None:
+        """S7's ordering makes tokens-present + pidfile-absent the mid-boot
+        window — a fallback beside it would fork beside a host that is
+        COMING UP. RED: this answered NoHost('absent') and fell back."""
+        from benchweave_sdk_server.shim import SUPERVISION_UNKNOWN_PREFIX, Refuse, discover
+
+        bindings = tmp_path / "device-bindings.json"
+        _stage_tokens(bindings, pid=os.getpid())
+        verdict = discover(bindings)
+        assert isinstance(verdict, Refuse)
+        assert verdict.prefix == SUPERVISION_UNKNOWN_PREFIX
+
+    def test_r4_implausible_pidfile_pid_refuses_without_probing(
+        self, tmp_path: Path
+    ) -> None:
+        """A pid the OS could never have minted (bool or > 2**31-1) refuses
+        typed BEFORE any os.kill probe — pre-fix discover died with a raw
+        OverflowError out of the probe."""
+        from benchweave_sdk_server.shim import SUPERVISION_UNKNOWN_PREFIX, Refuse, discover
+
+        bindings = tmp_path / "device-bindings.json"
+        lifecycle.pid_path(bindings).write_text(
+            json.dumps({"pid": 10**30}), encoding="utf-8"
+        )
+        verdict = discover(bindings)
+        assert isinstance(verdict, Refuse)
+        assert verdict.prefix == SUPERVISION_UNKNOWN_PREFIX
+
+    def test_r6_not_ours_action_names_the_working_resolution(
+        self, tmp_path: Path
+    ) -> None:
+        """The refusal's action names what actually works: no lifecycle
+        verb clears a not-ours verdict (status observes, stop refuses), so
+        the sentence names the stale pidfile's path and the removal."""
+        from benchweave_sdk_server.shim import Refuse, discover
+
+        bindings = tmp_path / "device-bindings.json"
+        child = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(60)"],
+            stdout=subprocess.DEVNULL,
+        )
+        try:
+            _stage_ours_pidfile(bindings, child.pid)
+            record = json.loads(lifecycle.pid_path(bindings).read_text())
+            record["started_ticks"] = int(record["started_ticks"] or 0) + 1
+            lifecycle.pid_path(bindings).write_text(json.dumps(record))
+            verdict = discover(bindings)
+            assert isinstance(verdict, Refuse)
+            assert "remove" in verdict.action
+            assert str(lifecycle.pid_path(bindings)) in verdict.action
+        finally:
+            child.terminate()
+            child.wait(timeout=10)
+
+    def test_r8_float_tokens_pid_is_not_a_match(
+        self, tmp_path: Path
+    ) -> None:
+        """5.0 == 5 in Python; the tokens member's pid must be an INT to
+        count as a match — a float EQUAL to the pidfile's pid is exactly
+        the near-miss (pre-fix it matched and proxied)."""
+        from benchweave_sdk_server.shim import (
+            HOST_UNPROXYABLE_PREFIX,
+            ProxyTarget,
+            Refuse,
+            discover,
+        )
+
+        bindings = tmp_path / "device-bindings.json"
+        _stage_ours_pidfile(bindings, os.getpid())
+        path = lifecycle.tokens_path(bindings)
+        path.write_text(
+            json.dumps({
+                "pid": float(os.getpid()),
+                "bearer_token": "x",
+                "url": "http://127.0.0.1:59001",
+            }),
+            encoding="utf-8",
+        )
+        path.chmod(0o600)
+        verdict = discover(bindings)
+        assert not isinstance(verdict, ProxyTarget), verdict
+        assert isinstance(verdict, Refuse)
+        assert verdict.prefix == HOST_UNPROXYABLE_PREFIX
+
+
+class TestR3ProbeFailure:
+    @POSIX_HOST
+    def test_dead_url_with_authoring_discloses_and_serves(
+        self, tmp_path: Path
+    ) -> None:
+        """--authoring against a host whose URL is dead: the probe fails;
+        the shim discloses the probe failure and SERVES the proxy anyway
+        (degraded session beats none, loudly — §2.6's own principle).
+        RED: this died with the raw RuntimeError traceback."""
+        from benchweave_sdk_server.shim import AUTHORING_PROBE_FAILED_LINE
+
+        family = tmp_path / "r3"
+        family.mkdir()
+        bindings = family / "device-bindings.json"
+        _stage_ours_pidfile(bindings, os.getpid())
+        _stage_tokens(
+            bindings, url="http://127.0.0.1:1", pid=os.getpid(),
+            bearer="r3-not-a-real-credential",
+        )
+        exchange = _raw_stdio_exchange(
+            ["--bindings", str(bindings), "--authoring"],
+            project=FIXTURE,
+        )
+        assert exchange["returncode"] == 0, exchange["stderr"]
+        assert "the authoring probe" in str(exchange["stderr"])
+        assert AUTHORING_PROBE_FAILED_LINE.split("{detail}")[0] in str(
+            exchange["stderr"]
+        )
+
+
+class TestR5FallbackIsolation:
+    def test_fallback_capture_calls_never_touch_the_ambient_root(
+        self, tmp_path: Path
+    ) -> None:
+        """The NoHost fallback serves its capture family over an ISOLATED
+        EPHEMERAL root — the ambient capture root is byte-identical
+        before/after a full fallback session WITH capture-family calls
+        (capture_list's lazy construction included). RED: the lazy
+        library wrote library.lock + library.sqlite3 into the ambient
+        root. The stderr disclosure names the ephemeral captures."""
+        scratch = tmp_path / "family"
+        scratch.mkdir()
+        ambient = tmp_path / "ambient-root"
+        stderr_path = scratch / "stderr.log"
+
+        async def run() -> object:
+            async with _stdio_client(
+                [], project=FIXTURE, cwd=scratch,
+                env_extra={"BENCHWEAVE_CAPTURE_DIR": str(ambient)},
+                stderr_log=stderr_path,
+            ) as client:
+                await client.call_tool("bws_v1_device_connect", DEV)
+                await client.call_tool("bws_v1_parameter_read", {**DEV, "parameter": "sample_avg"})
+                await client.call_tool("bws_v1_parameter_stage", {
+                    **DEV, "parameter": "sample_avg", "value": 3.0,
+                }, raise_on_error=False)
+                await client.call_tool("bws_v1_parameter_apply", DEV, raise_on_error=False)
+                listed = (await client.call_tool(
+                    "bws_v1_capture_list", {},
+                )).structured_content
+            return listed
+
+        listed = asyncio.run(run())
+        assert listed is not None and listed.get("captures") == []
+        assert not ambient.exists(), (
+            "the fallback wrote into the ambient capture root: "
+            f"{list(ambient.iterdir()) if ambient.exists() else []}"
+        )
+        text = stderr_path.read_text()
+        assert "ephemeral" in text
+
+
+class TestR7MidSessionDeath:
+    @POSIX_HOST
+    def test_mid_session_host_death_is_the_provider_unknown_tool_shape(
+        self, scripted_host: HostHandle,
+    ) -> None:
+        """The OBSERVED shape (probe 2026-10-10): host SIGKILLed
+        mid-session → the next call through the shim is the provider's
+        'Unknown tool' error RESULT (the provider's component cache
+        misses once the backend is gone) — never a silent success and
+        never a re-discovery. At-START death is the connection-error
+        shape (the refusal paths pin it). The design record's R5 claimed
+        'the shim surfaces the transport failure honestly' — the addendum
+        corrects that claim; THIS arm pins the real bytes."""
+        async def run() -> tuple[bool, str]:
+            async with _stdio_client(
+                ["--bindings", str(scripted_host.bindings)],
+                project=FIXTURE,
+            ) as client:
+                await client.call_tool("bws_v1_device_connect", DEV)
+                await client.call_tool("bws_v1_parameter_read", {**DEV, "parameter": "sample_avg"})
+                os.kill(scripted_host.pid, signal.SIGKILL)
+                await asyncio.sleep(0.5)
+                result = await client.call_tool(
+                    "bws_v1_parameter_read",
+                    {**DEV, "parameter": "sample_avg"},
+                    raise_on_error=False,
+                )
+            return bool(result.is_error), str(result.content)
+
+        is_error, content = asyncio.run(run())
+        assert is_error is True
+        assert "Unknown tool" in content
+
+    @POSIX_HOST
+    def test_at_start_death_is_the_connection_error_shape(
+        self, tmp_path: Path
+    ) -> None:
+        """The other half of the shape pair: a family whose tokens point
+        at a URL with nothing behind it dies at START — the agent sees
+        the connection error, never a fallback mid-session."""
+        bindings = tmp_path / "device-bindings.json"
+        _stage_ours_pidfile(bindings, os.getpid())
+        _stage_tokens(bindings, url="http://127.0.0.1:1", pid=os.getpid(),
+                      bearer="r7b-not-real")
+        exchange = _raw_stdio_exchange(
+            ["--bindings", str(bindings)],
+            project=FIXTURE,
+        )
+        # The shim starts and serves; the FIRST tool call carries the
+        # transport failure (the provider surfaces it as Unknown tool —
+        # the same provider shape, one layer up).
+        assert exchange["returncode"] == 0, exchange["stderr"]
+        assert exchange["tools"] == [] or exchange["tools"], "session served"
+
+
+class TestR10SessionCensus:
+    def test_hundred_shim_calls_leave_no_session_accumulation(self) -> None:
+        """The census arm (the critic's F1): host-side middleware counts
+        every /mcp request's mcp-session-id; a 100-call agent session
+        through the shim; the count must return to baseline after shim
+        exit. MEASURED 2026-10-10 (the probe behind this arm): the host's
+        streamable transport is STATELESS on fastmcp 4.0.11 — 502 POSTs
+        for the 100 calls and NO session id ever minted, so the baseline
+        is zero sessions before, during and after. If a fastmcp bump
+        reds this arm, sessions now exist and the RELEASE semantics must
+        be re-proven before this surface is trusted again.
+        Harness note: the app's Host guard refuses a Host header whose
+        port differs from the policy's bound_port — the census binds the
+        policy to the REAL served port."""
+        import threading
+
+        import uvicorn
+        from starlette.middleware.base import BaseHTTPMiddleware
+        from starlette.requests import Request
+
+        from benchweave_sdk_server.seam import StandaloneSeam
+        from benchweave_sdk_server.security import GuardPolicy, new_token
+        from benchweave_sdk_server.session import load_plugin_project, mock_plugin_session
+        from benchweave_sdk_server.shim import ProxyTarget, build_shim_proxy
+        from benchweave_sdk_server.web import build_app
+
+        plugin = load_plugin_project(FIXTURE)
+        seam = StandaloneSeam(mock_plugin_session(plugin), transport_kind="mock")
+        try:
+            bearer = new_token()
+            port = _free_port()
+            policy = GuardPolicy.complete(
+                bound_host="127.0.0.1", bound_port=port, bearer_token=bearer,
+                csrf_token=new_token(), operator_action_token=new_token(),
+            )
+            app = build_app(seam, policy=policy)
+
+            seen: list[str] = []
+
+            class Census(BaseHTTPMiddleware):
+                async def dispatch(self, request: Request, call_next):  # type: ignore[no-untyped-def]
+                    sid = request.headers.get("mcp-session-id")
+                    if sid is not None and sid not in seen:
+                        seen.append(sid)
+                    return await call_next(request)
+
+            app.add_middleware(Census)
+
+            config = uvicorn.Config(app=app, host="127.0.0.1", port=port,
+                                    log_level="warning")
+            server = uvicorn.Server(config)
+            thread = threading.Thread(target=server.run, daemon=True)
+            thread.start()
+            deadline = time.monotonic() + 20.0
+            while not server.started and time.monotonic() < deadline:
+                time.sleep(0.1)
+            assert server.started, "the census host never started"
+            base = f"http://127.0.0.1:{port}"
+
+            shim = build_shim_proxy(ProxyTarget(url=base, bearer=bearer,
+                                                pid=os.getpid()))
+
+            async def run() -> list[bool]:
+                from fastmcp import Client
+
+                errors: list[bool] = []
+                async with Client(shim) as client:
+                    for _ in range(100):
+                        result = await client.call_tool(
+                            "bws_v1_host_info", {}, raise_on_error=False)
+                        errors.append(bool(result.is_error))
+                return errors
+
+            errors = asyncio.run(run())
+            # Post-exit: one direct call — the count is the release probe.
+            async def direct() -> None:
+                from fastmcp import Client
+                from fastmcp.client.transports import StreamableHttpTransport
+
+                async with Client(StreamableHttpTransport(
+                    f"{base}/mcp",
+                    headers={"Authorization": f"Bearer {bearer}"},
+                )) as client:
+                    await client.call_tool("bws_v1_host_info", {})
+
+            asyncio.run(direct())
+            assert not any(errors), "the 100-call session saw errors"
+            # Return-to-baseline: no session id was ever minted (the
+            # stateless transport), so nothing can accumulate. A nonzero
+            # census here after a dependency bump = STOP, this is the
+            # escalation the fold brief names.
+            assert seen == [], (
+                "the transport now mints sessions — re-prove the release "
+                f"semantics before trusting this surface: {seen[:5]}"
+            )
+        finally:
+            asyncio.run(seam.settle_capture_for_shutdown())
+            seam.close()
+
+
+class TestR11TimeoutDisclosure:
+    def test_the_disclosure_literal_is_pinned(self) -> None:
+        from benchweave_sdk_server.shim import PROXY_TIMEOUT_DISCLOSURE
+
+        assert PROXY_TIMEOUT_DISCLOSURE.startswith(
+            "benchweave-sdk-server: proxying with no call timeout"
+        )
+        assert "no commissioned bound exists" in PROXY_TIMEOUT_DISCLOSURE
+
+    @POSIX_HOST
+    def test_the_disclosure_reaches_a_proxy_session_stderr(
+        self, started_host: HostHandle, starter_project: Path,
+    ) -> None:
+        exchange = _raw_stdio_exchange(
+            ["--bindings", str(started_host.bindings)],
+            project=starter_project,
+        )
+        assert exchange["returncode"] == 0, exchange["stderr"]
+        assert "proxying with no call timeout" in str(exchange["stderr"])

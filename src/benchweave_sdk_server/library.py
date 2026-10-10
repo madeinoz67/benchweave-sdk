@@ -162,7 +162,13 @@ def read_lock(root: Path) -> LockRead | None:
     except ValueError:
         return LockRead(pid=None, live=True)
     pid = payload.get("pid") if isinstance(payload, dict) else None
-    if not isinstance(pid, int):
+    # Fold R4: a pid outside the OS-mintable range (a bool, a float, or
+    # a number the OS could never have assigned) is never handed to an
+    # os.kill probe — the unprovable lock is treated as live, the same
+    # conservative direction an unparseable payload takes.
+    if not isinstance(pid, int) or isinstance(pid, bool) or not (
+        0 < pid <= 2**31 - 1
+    ):
         return LockRead(pid=None, live=True)
     return LockRead(pid=pid, live=not _pid_is_dead(pid))
 

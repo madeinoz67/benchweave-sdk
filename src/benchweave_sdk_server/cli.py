@@ -710,7 +710,9 @@ def mcp(
 
     One session owner per device: this entry holds no state and never
     spawns. A live host it cannot authenticate to is a refusal, never a
-    fallback."""
+    fallback. The fallback serves its capture family over an isolated
+    ephemeral root (fold R5) — the ambient capture root is untouched in
+    every outcome."""
     import asyncio
 
     if unattended and not authoring:
@@ -724,7 +726,9 @@ def mcp(
         from .mcp import build_mcp  # noqa: F401 — the extra's guard
         from .shim import (
             AUTHORING_DEGRADE_LINE,
+            AUTHORING_PROBE_FAILED_LINE,
             FALLBACK_STDERR_LINE,
+            PROXY_TIMEOUT_DISCLOSURE,
             NoHost,
             ProxyTarget,
             Refuse,
@@ -743,8 +747,20 @@ def mcp(
     if isinstance(verdict, ProxyTarget):
         # §2.4: no pidfile, no journal row, no tokens write, no
         # capture-root open, no bindings write — the family's CONSUMER.
-        if authoring and not host_serves_authoring(verdict):
-            click.echo(AUTHORING_DEGRADE_LINE, err=True)
+        # Fold R11: the timeout posture is DISCLOSED, not silently
+        # assumed. Fold R3: the authoring probe is best-effort — a probe
+        # that cannot run discloses and serves (degraded session beats
+        # none, loudly — §2.6's own principle applied to the probe).
+        click.echo(PROXY_TIMEOUT_DISCLOSURE, err=True)
+        if authoring:
+            try:
+                if not host_serves_authoring(verdict):
+                    click.echo(AUTHORING_DEGRADE_LINE, err=True)
+            except Exception as error:  # noqa: BLE001 — best-effort probe
+                click.echo(
+                    AUTHORING_PROBE_FAILED_LINE.format(detail=error),
+                    err=True,
+                )
         server = build_shim_proxy(verdict)
         server.run()
         return
@@ -755,8 +771,11 @@ def mcp(
         )
         raise SystemExit(1)
 
-    # NoHost → the §2.3 fork guard, then today's in-process body,
-    # verbatim, plus the disclosures.
+    # NoHost → the §2.3 fork guard, then the in-process body plus the
+    # disclosures. Fold R5: the fallback's capture family serves over an
+    # ISOLATED EPHEMERAL root — the ambient capture root is untouched in
+    # ALL cases (the seam's lazy library construction included), and the
+    # temp dir is removed on exit.
     if not isinstance(verdict, NoHost):
         raise AssertionError(verdict)
     try:
@@ -775,22 +794,27 @@ def mcp(
         ),
         err=True,
     )
-    seam, _ = _build_seam(project, unattended=unattended)
-    server = build_fallback_server(seam, authoring=authoring)
-    try:
-        server.run()
-    finally:
-        # NFR-O1's close-down runs on EVERY exit from run() — the clean
-        # return AND the interrupt paths (SIGINT raises KeyboardInterrupt
-        # out of run(), which click surfaces as Abort; without this
-        # finally the settle and the root lock's release never execute
-        # and the guide's "through an interrupt ... settled honestly"
-        # claim is false). The settle needs its own FRESH loop here:
-        # server.run() owned — and closed — its event loop, so a watcher
-        # that died with it is aborted directly, nothing half-published.
-        # The interrupt itself propagates after this block.
-        asyncio.run(seam.settle_capture_for_shutdown())
-        seam.close()
+    import tempfile
+
+    with tempfile.TemporaryDirectory(prefix="bws-shim-fallback-") as ephemeral:
+        seam, _ = _build_seam(
+            project, unattended=unattended, capture_root=Path(ephemeral)
+        )
+        server = build_fallback_server(seam, authoring=authoring)
+        try:
+            server.run()
+        finally:
+            # NFR-O1's close-down runs on EVERY exit from run() — the clean
+            # return AND the interrupt paths (SIGINT raises KeyboardInterrupt
+            # out of run(), which click surfaces as Abort; without this
+            # finally the settle and the root lock's release never execute
+            # and the guide's "through an interrupt ... settled honestly"
+            # claim is false). The settle needs its own FRESH loop here:
+            # server.run() owned — and closed — its event loop, so a watcher
+            # that died with it is aborted directly, nothing half-published.
+            # The interrupt itself propagates after this block.
+            asyncio.run(seam.settle_capture_for_shutdown())
+            seam.close()
 
 
 # --- the lifecycle twins (issue #422 inc3 — one standard, per-surface

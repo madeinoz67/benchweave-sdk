@@ -561,9 +561,9 @@ benchweave-sdk-server mcp /path/to/plugin-project
 
 The command does one of three things:
 
-1. **Proxy.** A started host owns the supervision family beside the bindings document (`--bindings <path>`, or `BENCHWEAVE_STANDALONE_BINDINGS`, then `device-bindings.json` under the working directory — the same resolution `start` applies). The stdio session then proxies to that host. The browser page and the agent share one host and one device session.
-2. **Fallback.** No host runs: no pidfile exists, or the pidfile names a dead process. The command serves the plugin in-process and prints one line on stderr that says so. No browser can attach to that session, and the transport is the scripted mock.
-3. **Refuse.** A host runs but the command cannot verify it or cannot use its credential file, or another process holds the capture root's library lock. The command exits non-zero and names the fix (`benchweave-sdk-server status`, or `stop` then `start`). It never serves a second host beside a live one.
+1. **Proxy.** A started host owns the supervision family beside the bindings document (`--bindings <path>`, or `BENCHWEAVE_STANDALONE_BINDINGS`, then `device-bindings.json` under the working directory — the same resolution `start` applies). The stdio session then proxies to that host. The browser page and the agent share one host and one device session. The proxy imposes no call timeout: a hung host holds the session, and the command says so once on stderr at start.
+2. **Fallback.** No host runs: no pidfile exists, or the pidfile names a dead process. The command serves the plugin in-process and prints one line on stderr that says so. No browser can attach to that session, the transport is the scripted mock, and captures in that session are ephemeral — they go to a private temporary capture root that is discarded at exit, so the ambient capture root is never touched by a fallback.
+3. **Refuse.** A host runs but the command cannot verify it or cannot use its credential file, or another process holds the capture root's library lock. The command exits non-zero and names the fix: `status` shows the family's verdict; for a family the command cannot verify, no lifecycle verb clears it, and the refusal names the stale pidfile's path and its removal. It never serves a second host beside a live one.
 
 A `.mcp.json` entry:
 
@@ -578,7 +578,7 @@ A `.mcp.json` entry:
 }
 ```
 
-The stdio session holds no state of its own. It writes no pidfile, no journal row, no tokens file and no capture-root file. In proxy mode the served tools are exactly the host's tools. The session answers `initialize` with instructions that name the mode: the proxy sentence carries the host URL and pid; the fallback sentence says no other surface can attach. Point the entry at the same bindings document as `start`, so the supervision family has one anchor.
+The stdio session holds no state of its own. It writes no pidfile, no journal row, no tokens file and no capture-root file of its own. In proxy mode the served tools are exactly the host's tools. The session answers `initialize` with instructions that name the mode: the proxy sentence carries the host URL and pid; the fallback sentence says no other surface can attach and that the session's captures are ephemeral. Point the entry at the same bindings document as `start`, so the supervision family has one anchor.
 
 ## 4. Review compatibility and deployment
 

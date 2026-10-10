@@ -44,15 +44,18 @@ PROXY_MARKER_TEMPLATE = (
 
 FALLBACK_MARKER = (
     "in-process fallback host: no other surface can attach; no browser "
-    "session shares this process."
+    "session shares this process; captures taken in this session are "
+    "ephemeral — discarded at exit."
 )
 
 #: The fallback's startup disclosure (stderr, never stdout — stdout is
-#: the protocol channel). Names the verdict, per SH4.
+#: the protocol channel). Names the verdict, per SH4, and the fold-R5
+#: ephemeral-capture isolation.
 FALLBACK_STDERR_LINE = (
     "benchweave-sdk-server: no running host beside {bindings} "
     "(verdict: {verdict}); serving the in-process fallback — no browser "
-    "can attach to this session"
+    "can attach to this session, and captures in this session are "
+    "ephemeral (discarded at exit)"
 )
 
 #: The §2.6 authoring degrade (proxy mode): a degraded session beats no
@@ -60,6 +63,24 @@ FALLBACK_STDERR_LINE = (
 AUTHORING_DEGRADE_LINE = (
     "benchweave-sdk-server: authoring requested; the running host does "
     "not serve authoring tools — restart it with --authoring"
+)
+
+#: Fold R3: the §2.6 principle applied to the probe itself — a probe
+#: that cannot run discloses and serves (never a raw traceback out of
+#: an agent session).
+AUTHORING_PROBE_FAILED_LINE = (
+    "benchweave-sdk-server: the authoring probe against the running "
+    "host failed ({detail}); serving the proxy — the host's own tool "
+    "list decides authoring presence"
+)
+
+#: Fold R11: the disclosed timeout posture. Declared, not invented: no
+#: commissioned bound exists on this surface, so the shim waits as long
+#: as the in-process host would — and says so, loudly, once.
+PROXY_TIMEOUT_DISCLOSURE = (
+    "benchweave-sdk-server: proxying with no call timeout — a hung host "
+    "holds this session (the in-process host has the same posture; no "
+    "commissioned bound exists)"
 )
 
 #: The three shim refusal prefixes — the STD-4 amendment's additions.
@@ -93,6 +114,35 @@ class Refuse:
     action: str
 
 
+def _plausible_pid(value: object) -> bool:
+    """The OS-mintable range (fold R4): a pid outside it is never probed
+    with an os.kill — the conservative refusal covers it instead."""
+    return (
+        isinstance(value, int)
+        and not isinstance(value, bool)
+        and 0 < value <= 2**31 - 1
+    )
+
+
+def _supervision_refuse(detail: str, bindings: Path) -> Refuse:
+    """The unknown-class refusal with the TRUTHFUL action sentence
+    (fold R6, probe-proven): no lifecycle verb clears this verdict —
+    ``status`` observes it and ``stop`` refuses on it — so the sentence
+    names the stale pidfile's path and the removal that actually
+    resolves it. The no-verb-clears-it lifecycle gap is a disclosed
+    deferral (the addendum's R12 rows)."""
+    return Refuse(
+        prefix=SUPERVISION_UNKNOWN_PREFIX,
+        detail=detail,
+        action=(
+            "no lifecycle verb clears this verdict (status observes it; "
+            "stop refuses on it) — remove the stale pidfile at "
+            f"{lifecycle.pid_path(bindings)} by hand once you are sure "
+            "the pid is not a live host"
+        ),
+    )
+
+
 def discover(bindings: Path) -> ProxyTarget | NoHost | Refuse:
     """The §2.2 lattice over the supervision family, pure-read.
 
@@ -104,24 +154,64 @@ def discover(bindings: Path) -> ProxyTarget | NoHost | Refuse:
     owner and a fallback beside it is the fork's shape. The S7
     tokens-before-pidfile ordering makes tokens-absent-while-ours a
     real anomaly worth refusing on, not a race to retry.
+
+    The fold wave's hardenings: a pidfile that EXISTS but cannot be
+    read or parsed is the collapse refusal (never a fallback — R1);
+    tokens WITHOUT a pidfile is the mid-boot window refusal (S7's
+    ordering means a host may be coming up — R2); a pid outside the
+    OS-mintable range refuses before any os.kill probe (R4).
     """
+    record = lifecycle.read_pidfile(bindings)
+    if record is None:
+        if lifecycle.pid_path(bindings).exists():
+            # Fold R1: present but unreadable (cross-user 0600) or
+            # unparseable — verify_identity would read this as "absent"
+            # and FALL BACK beside a family it cannot see. Refuse.
+            return _supervision_refuse(
+                "the pidfile exists beside "
+                f"{bindings} but could not be read or parsed by this "
+                "user; the family's owner cannot be verified",
+                bindings,
+            )
+        if lifecycle.tokens_path(bindings).is_file():
+            # Fold R2: the mid-boot window — the tokens file lands
+            # BEFORE the pidfile (S7), so this family may have a host
+            # coming up; falling back beside it is the fork's shape.
+            return Refuse(
+                prefix=SUPERVISION_UNKNOWN_PREFIX,
+                detail=(
+                    "the tokens file exists without a pidfile beside "
+                    f"{bindings} — the mid-boot window (the tokens file "
+                    "lands before the pidfile), so a host may be coming "
+                    "up; the shim neither proxies nor forks beside it"
+                ),
+                action=(
+                    "retry shortly; once sure no host is coming, remove "
+                    f"the stale tokens file at {lifecycle.tokens_path(bindings)}"
+                ),
+            )
+        return NoHost(reason="absent")
+    pid = record.get("pid")
+    if not _plausible_pid(pid):
+        # Fold R4: never hand an implausible pid to an os.kill probe.
+        return _supervision_refuse(
+            f"the pidfile's pid {pid!r} is outside the range an OS "
+            f"mints; the family beside {bindings} cannot be verified",
+            bindings,
+        )
+    assert isinstance(pid, int)  # _plausible_pid passed; narrows for mypy
     verdict = lifecycle.verify_identity(bindings)
     if verdict in ("absent", "dead"):
         return NoHost(reason=verdict)
     if verdict in ("unknown", "not-ours"):
-        return Refuse(
-            prefix=SUPERVISION_UNKNOWN_PREFIX,
-            detail=(
-                "the pidfile's process could not be verified "
-                f"(verdict {verdict!r} beside {bindings}); the shim "
-                "neither proxies nor forks beside a process it cannot "
-                "verify"
-            ),
-            action="run benchweave-sdk-server status to resolve the family",
+        return _supervision_refuse(
+            "the pidfile's process could not be verified "
+            f"(verdict {verdict!r} beside {bindings}); the shim "
+            "neither proxies nor forks beside a process it cannot "
+            "verify",
+            bindings,
         )
-    record = lifecycle.read_pidfile(bindings)
-    pid = int((record or {}).get("pid", 0))
-    target = _read_tokens(bindings, pid)
+    target = _read_tokens(bindings, int(pid))
     if target is None:
         return Refuse(
             prefix=HOST_UNPROXYABLE_PREFIX,
@@ -165,6 +255,8 @@ def _read_tokens(bindings: Path, pid: int) -> ProxyTarget | None:
         and bearer
         and isinstance(url, str)
         and url
+        and isinstance(tokens_pid, int)
+        and not isinstance(tokens_pid, bool)
         and tokens_pid == pid
     ):
         return None
@@ -248,7 +340,13 @@ def build_shim_proxy(target: ProxyTarget) -> FastMCP:
 
 def host_serves_authoring(target: ProxyTarget) -> bool:
     """One tools/list round-trip over the target: does the running host
-    serve the authoring tools (the §2.6 degrade probe)?"""
+    serve the authoring tools (the §2.6 degrade probe)?
+
+    Fold R3: the probe is best-effort — a host whose URL is dead (or a
+    transport that fails for any reason) raises out of the client; the
+    CALLER (the mcp command) catches and discloses, treating the probe
+    as not-authoring. The §2.6 principle applies to the probe itself:
+    a degraded session beats none, loudly."""
     from fastmcp import Client
     from fastmcp.client.transports import StreamableHttpTransport
 

@@ -433,3 +433,76 @@ its OWN scan over the real diff — that number gates.
    `host_info`** (§2.5). Ruled because the host's bytes are the parity subject — the
    host cannot know a shim fronts it, and any host-side marker would break the
    identical-bytes property the ruling's "one session" implies.
+
+---
+
+## Addendum — the fold wave, 2026-10-10 (frozen-bytes rule: appended, nothing above edited)
+
+Appended at fold time (two adversary lanes + the mechanism-critic, 12 ruled rows).
+This block is the record's correction layer; the §-references below point at the
+original text ABOVE, which stays as written.
+
+**A1 — §2.4's session model, corrected by measurement.** The record implied a
+persistent proxied session. Measured (the census arm behind fold R10): the host's
+streamable transport on fastmcp 4.0.11 is STATELESS — a 100-call agent session
+through the shim produced 502 POSTs and NO mcp-session-id was ever minted, so there
+are no host-side sessions to accumulate or release. The census arm
+(`TestR10SessionCensus`) pins the stateless baseline and reds on any dependency bump
+that mints sessions — at which point the release semantics must be re-proven before
+this surface is trusted.
+
+**A2 — §2.7's bounding sentence was FALSE as written; R5 restores it.** The record
+claimed the fallback "opens no capture root at all". False pre-fold: the fallback
+seam resolved the AMBIENT capture root lazily — a capture-family tool call
+(`capture_list` alone) wrote `library.lock` + `library.sqlite3` into the ambient
+root (lane B's repro, RED-captured). The fold's R5 gives the NoHost fallback an
+ISOLATED EPHEMERAL capture root (temp dir, removed at exit); the ambient root is
+byte-identical before/after a full fallback session with capture calls. The
+fallback stderr line and the `initialize` marker disclose the ephemeral captures.
+
+**A3 — the SH7(b) row was wrong; the build's resolution was right.** §6 SH7(b)
+said "tokens.pid ≠ pidfile.pid falls back" — under a LIVE pidfile that is the
+record's own KILL shape (a fallback beside verdict-ours). The build armed (b) as
+the coherent stale-family variant (DEAD pidfile + mismatched tokens → fallback);
+a live-pidfile token mismatch is the `standalone_host_unproxyable:` refusal
+(pinned in the discovery arms). The row, not the mechanism, was the defect.
+
+**A4 — the record's R5 claim, corrected by R7's observed shape.** The record said
+a host dying between discovery and first call surfaces "the transport failure
+honestly (the agent sees a connection error)". Half true: at-START death is the
+connection-error shape; MID-SESSION death (host SIGKILLed after calls succeeded)
+surfaces as the provider's "Unknown tool" error RESULT — the shim never re-
+discovers and never silently succeeds (the no-silent-fallback property holds), but
+the bytes are the provider's tool-cache-miss shape, not a transport error. Pinned
+verbatim by the R7 arm; the agent-visible consequence is disclosed here.
+
+**A5 — the darwin ticks horizon, inherited and disclosed.** `verify_identity`'s
+`ours` verdict rides `process_start_ticks`, whose darwin reader (lifecycle.py,
+#422 inc3) accepts start times within the LAST 30 DAYS; a host started longer ago
+reads `None` → verdict `unknown` → the shim refuses (`standalone_supervision_
+unknown:`). The constant belongs to #422's surface and moves there. Verdict-
+instability sub-case disclosed: a shim-adjacent verdict can flip
+`ours → unknown` purely by that horizon on a long-lived darwin host.
+
+**A6 — truthful refusal text (fold R6, probe-proven).** `status` does NOT resolve
+a not-ours/unknown verdict (it observes it) and `stop` refuses on unknown — the
+original action sentence was false. The refusal now names what works: removing
+the stale pidfile at its path. Two lifecycle-surface gaps become deferral rows
+(below).
+
+**A7 — the timeout posture, declared (fold R11).** The shim imposes NO call
+timeout and waits as long as the in-process host would; no commissioned bound
+exists on this surface, so nothing was invented. The posture is disclosed once at
+proxy start on stderr (literal-pinned) and in the guide.
+
+**A8 — deferral rows (each with its landing place):**
+
+| # | Deferral | Lands where |
+|---|---|---|
+| D8 | Upstream `start` beside an unparseable pidfile: `verify_identity` reads the collapse as `absent` and start proceeds — the shim refuses (R1) but the lifecycle verb has no fork guard of its own | The lifecycle surface (#422's tree), not the shim |
+| D9 | No lifecycle verb clears a not-ours/unknown family (status observes, stop refuses) — the operator's resolution is a hand-removed pidfile | A lifecycle verb or doctor check on #422's surface |
+| D10 | A stuck mid-boot family (tokens present, pidfile absent, no host coming) has no verb to clear it either; the shim's refusal names the hand-removal | Same lifecycle surface as D9 |
+
+**A9 — the R10 census arm's escalation rule stands:** if a fastmcp bump mints
+sessions (the census arm reds), that is an ESCALATION to the owner — the release
+semantics must be re-proven, not a fix invented in-lane.
