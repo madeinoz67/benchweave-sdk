@@ -551,6 +551,34 @@ Two limits protect the report's shape. The report draws at most two distinct uni
 A window that holds more than 2000000 samples for a plot refuses with the `standalone_report_window_too_large:` prefix. Narrow the window in that case. One export names at most 16 captures.
 
 The export pins every source capture. A pinned capture never expires under retention, and it refuses deletion until you unpin it. Without a pin, mcp captures expire after 30 days. The ui and rest sources stay until you delete them. The capture retention section above explains the schedule. After the export, the browser lands on the report at `GET /reports/<report id>`.
+### The MCP stdio session (the shim)
+
+Agents speak MCP over stdio to the standalone host:
+
+```sh
+benchweave-sdk-server mcp /path/to/plugin-project
+```
+
+The command does one of three things:
+
+1. **Proxy.** A started host owns the supervision family beside the bindings document, which comes from `--bindings <path>`, or `BENCHWEAVE_STANDALONE_BINDINGS`, then `device-bindings.json` under the working directory. The `start` command applies the same resolution. The stdio session then proxies to that host. The browser page and the agent share one host and one device session. The proxy sets no call timeout. A hung host holds the session, and the command says so once on stderr at startup.
+2. **Fallback.** No host runs, because no pidfile exists or the pidfile names a dead process. The command serves the plugin in-process and prints one line on stderr that says so. No browser can attach to that session. The transport is the scripted mock. Captures in that session are ephemeral and go to a private temporary capture root that the command discards when the session ends normally. A fallback never touches the ambient capture root.
+3. **Refuse.** A host runs, but the command cannot verify it or use its credential file, or another process holds the library lock of the capture root. The command exits non-zero and names the fix. The `status` command shows the family's verdict. When the command cannot verify a family, no lifecycle verb clears it. The refusal names the path of the stale file that remains: the pidfile, or the tokens file when no pidfile exists. Remove that file to resolve the state. The command never serves a second host beside a live one.
+
+A `.mcp.json` entry:
+
+```json
+{
+  "mcpServers": {
+    "benchweave-sdk-server": {
+      "command": "benchweave-sdk-server",
+      "args": ["mcp", "/path/to/plugin-project"]
+    }
+  }
+}
+```
+
+The stdio session holds no state of its own: it writes no pidfile, no journal row, no tokens file and no capture-root file. In proxy mode the served tools are exactly the host's tools. The session answers `initialize` with instructions that name the mode. The proxy sentence carries the host URL and the pid. The fallback sentence says that no other surface can attach and that the session's captures are ephemeral. Point the entry at the same bindings document as `start`, so the supervision family has one anchor.
 
 ## 4. Review compatibility and deployment
 

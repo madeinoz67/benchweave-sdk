@@ -457,6 +457,13 @@ def stop(bindings: Path) -> dict[str, Any]:
         remove_pidfile(bindings)
         with contextlib.suppress(OSError):
             stop_path(bindings).unlink()
+        with contextlib.suppress(OSError):
+            # Fold W1 (issue #440's consumer exposed it): the tokens file
+            # is a per-launch sidecar like the rest of the family — a
+            # stale one beside no pidfile read as a PERMANENT mid-boot
+            # state to the stdio shim's lattice, refusing it forever.
+            # Clear it with the other stale sidecars.
+            tokens_path(bindings).unlink()
         _journal("stale_sidecars_cleared")
         return {"stopped": False, "status": "not running (cleared stale sidecars)"}
     if verdict != "ours":
@@ -517,6 +524,13 @@ def stop(bindings: Path) -> dict[str, Any]:
     deadline = time.monotonic() + WEDGE_WAIT_S
     while time.monotonic() < deadline:
         if _exited(pid) or not pid_path(bindings).exists():
+            with contextlib.suppress(OSError):
+                # Fold W1: the clean stop clears the per-launch tokens
+                # sidecar with the pidfile — the family must not keep a
+                # credential for a host that no longer runs (the stdio
+                # shim's lattice reads tokens-without-pidfile as the
+                # mid-boot window and would refuse it forever).
+                tokens_path(bindings).unlink()
             _journal("stopped", mode="plain", verdict=verdict_status)
             return {
                 "stopped": True,
@@ -597,6 +611,13 @@ def start(
             "stale_stop_request_cleared",
             target_pid=stale.get("target_pid"),
         )
+    with contextlib.suppress(OSError):
+        # Fold W1: a tokens file from a previous launch is stale the
+        # moment this boot begins (deliver_tokens mints fresh ones just
+        # before the pidfile); clearing it here keeps the tokens-without-
+        # pidfile state honest for the stdio shim's lattice during the
+        # boot window this start is about to open.
+        tokens_path(bindings).unlink()
     log = log_path(bindings)
     journal_append(bindings, "start_requested", host=host, port=port, log=str(log))
     log.parent.mkdir(parents=True, exist_ok=True)

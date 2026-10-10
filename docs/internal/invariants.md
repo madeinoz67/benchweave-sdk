@@ -48,7 +48,12 @@ the invariants below anchor there.
   the WS2 scaffold lane
   (`scaffold.py`, `scaffold_update.py`, the copier render/update path); ordinary
   descriptor schema-shape failures keep the existing
-  descriptor-validation error surface. Known wound, disclosed: the provider
+  descriptor-validation error surface. The standalone host's stdio shim
+  (issue #440) adds three, each naming its resolving action in the
+  message: `standalone_supervision_unknown:`,
+  `standalone_host_unproxyable:`,
+  `standalone_capture_root_held:` (`benchweave_sdk_server/shim.py`).
+  Known wound, disclosed: the provider
   pin's read inherits the SDK-wide bounded-file cap
   (`presentation.INPUT_BYTE_LIMIT`), so a corpus-valid contract above the cap
   refuses with `provider_contract_invalid:` — the cap is an SDK resource
@@ -156,6 +161,17 @@ with permanent planted-violation arms R-5c). The generated plugin runtime has **
   (the view's same caption discipline); pinned by the AR-4(c) arms in
   `tests/server/test_report.py`. *Without it, a report number means whatever the reader
   assumes — the evidence-exactness crux of a reporting slice.*
+- **[SRF-5]** (row id per the SRF-4 convention: the maintainer assigns the final ID at
+  landing) **The stdio MCP entry holds no state and never spawns** (issue #440): it
+  proxies to the verified running host, or serves the disclosed in-process fallback
+  over an isolated ephemeral capture root, or refuses typed — it writes no pidfile, no
+  journal row, no tokens file, no bindings byte, and no AMBIENT capture-root byte; and
+  a live host it cannot authenticate to is a refusal, never a fallback. Anchors:
+  `benchweave_sdk_server/shim.py::discover` + the `mcp` command body
+  (`benchweave_sdk_server/cli.py`); pinned by the SH2/SH5/SH6 arms AND
+  `TestR5FallbackIsolation` (the isolation clause's only pin) in
+  `tests/server/test_mcp_shim.py`. *Two hosts on one bench is the reference fork's
+  shape — the entry point that cannot hold state cannot become the second one.*
 - **[TWO-1]** **Two-repo discipline**: an SDK change lands as a commit in this repository
   (pushed), then a pointer commit in the main repository; the main repository's
   `make sync-sdk-standards` refuses to run against a submodule HEAD that differs from the

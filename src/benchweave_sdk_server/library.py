@@ -24,6 +24,7 @@ import os
 import shutil
 import sqlite3
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -124,6 +125,54 @@ def _pid_is_dead(pid: int) -> bool:
     except OSError:
         return False
     return False
+
+
+@dataclass(frozen=True)
+class LockRead:
+    """One ``library.lock`` read: parse + probe, never a steal.
+
+    ``pid`` is the parsed holder (``None`` when absent or not an int);
+    ``live`` is the conservative verdict the lock writer itself applies:
+    a provably dead pid is not live, and an UNPROVABLE payload (missing,
+    unreadable, unparseable, non-integer pid) is treated as live — the
+    same direction ``_acquire_lock`` refuses on.
+    """
+
+    pid: int | None
+    live: bool
+
+
+def read_lock(root: Path) -> LockRead | None:
+    """The capture root's lock state, read WITHOUT acquiring.
+
+    The fork guard's reader (issue #440): ``None`` when the root carries
+    no lock file; otherwise the parsed pid plus its probed liveness. It
+    never creates, writes, or steals the lock — a read that would steal
+    or clear it is the lock writer's business, not this helper's.
+    """
+    lock = root / _LOCK_NAME
+    try:
+        raw = lock.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return LockRead(pid=None, live=True)
+    try:
+        payload = json.loads(raw)
+    except ValueError:
+        return LockRead(pid=None, live=True)
+    pid = payload.get("pid") if isinstance(payload, dict) else None
+    # Fold R4, reworded by W4: a pid outside the plausibility range (a
+    # bool, a float, or a value past 2**31-1) is never handed to an
+    # os.kill probe — the bound guards the POSIX probe range; a win32
+    # DWORD pid can exceed it after wrap, and such a holder reads
+    # conservative-live. The unprovable lock is treated as live, the
+    # same conservative direction an unparseable payload takes.
+    if not isinstance(pid, int) or isinstance(pid, bool) or not (
+        0 < pid <= 2**31 - 1
+    ):
+        return LockRead(pid=None, live=True)
+    return LockRead(pid=pid, live=not _pid_is_dead(pid))
 
 
 def _read_metadata(event: Path) -> dict[str, Any]:

@@ -453,9 +453,9 @@ def test_s2_open_events_stream_does_not_wedge_the_stop(
 
 def test_await_listening_bridges_the_refused_window() -> None:
     """The S2 flake's window, made deterministic (#427 fold row 1): a
-    listener that delays its bind by one second reproduces with certainty
-    what load stretches past the connect under ``-n auto`` — the naive
-    single connect is REFUSED inside the window (the 2-of-10 xdist
+    listener that delays its bind by a bounded window reproduces with
+    certainty what load stretches past the connect under ``-n auto`` — the
+    naive single connect is REFUSED inside the window (the 2-of-10 xdist
     ``Connection refused`` shape), and ``_await_listening`` returns only
     once the port accepts. The window is the pidfile→bind gap: the
     supervised child's readiness handle precedes uvicorn's listen, so any
@@ -465,7 +465,15 @@ def test_await_listening_bridges_the_refused_window() -> None:
     port = _free_port()
 
     def delayed_listener() -> None:
-        time.sleep(1.0)  # the pidfile→bind gap, made deterministic
+        # The pidfile→bind gap, made deterministic. Window widened from
+        # 1.0s to 3.0s (issue #440 CI wave, disclosed): the refused-
+        # window assert is wall-clock — the connect must land while the
+        # listener sleeps — and the shim branch's ~20 subprocess arms
+        # sharing this xdist lane starved a windows runner past the old
+        # 1-second margin ("DID NOT RAISE": the connect landed after the
+        # bind). The arm's teeth are unchanged: a connect inside the
+        # window is still refused, and the bridge still crosses.
+        time.sleep(3.0)
         with socket.socket() as server:
             server.bind(("127.0.0.1", port))
             server.listen(8)
