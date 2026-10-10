@@ -27,7 +27,14 @@ from benchweave_sdk_server.errors import SeamError
 from benchweave_sdk_server.seam import StandaloneSeam
 
 
-def write_capture(root: Path, capture_id: str, *, values: tuple[float, ...]) -> Path:
+def write_capture(
+    root: Path,
+    capture_id: str,
+    *,
+    values: tuple[float, ...],
+    unit: str = "V",
+    interval: float = 0.001,
+) -> Path:
     payload = b"".join(struct.pack("<d", value) for value in values)
     event = root / capture_id
     event.mkdir(parents=True)
@@ -41,8 +48,8 @@ def write_capture(root: Path, capture_id: str, *, values: tuple[float, ...]) -> 
         "sha256": digest,
         "started_at": f"2026-10-07T11:00:00+00:00-{capture_id}",
         "sample_count": len(values),
-        "sample_interval_s": 0.001,
-        "unit": "V",
+        "sample_interval_s": interval,
+        "unit": unit,
         "x-standalone-state": "finalised",
         "x-standalone-manifest-version": 1,
     }
@@ -441,3 +448,156 @@ def test_non_finite_window_refuses_over_rest(
             body = response.json()
             assert body["error"]["code"] == "invalid_request"
             assert "standalone_report_window_invalid" in body["error"]["message"]
+
+
+# --- I4b.2: the power params through report_export (the record §1.6) ----------------
+
+
+def _write_pair(root: Path, *, n: int = 360, interval: float = 0.01) -> None:
+    write_capture(
+        root, "fx-px-v", values=(2.0,) * n, unit="V", interval=interval
+    )
+    write_capture(
+        root, "fx-px-i", values=(3.0,) * n, unit="A", interval=interval
+    )
+
+
+def test_power_export_renders_and_sidecar_replays(
+    seam: StandaloneSeam, capture_root: Path
+) -> None:
+    """The power params ride report_export (schema'd), the resolved rails
+    land in the sidecar's replay params (AR-10: the report names what it
+    used), and re-export FROM the sidecar params reproduces the same
+    content-addressed id (AR-4d extended to power)."""
+    _write_pair(capture_root)
+    result = call(
+        seam,
+        "report_export",
+        {
+            "capture_ids": ["fx-px-v", "fx-px-i"],
+            "power": {"mode": "battery", "capacity_ah": 12.0},
+        },
+    )
+    html = (capture_root / "reports" / f"{result['report_id']}.html").read_text(
+        encoding="utf-8"
+    )
+    assert "benchweave-power/1" in html
+    assert "runtime (h)" in html and ">4<" in html
+    sidecar = json.loads(
+        (capture_root / "reports" / f"{result['report_id']}.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert sidecar["params"]["power"] == {
+        "mode": "battery",
+        "rails": [{"v": "fx-px-v", "i": "fx-px-i"}],
+        "capacity_ah": 12.0,
+    }
+    replay = call(
+        seam, "report_export", {"capture_ids": ["fx-px-v", "fx-px-i"], **sidecar["params"]}
+    )
+    assert replay["report_id"] == result["report_id"]
+    assert replay["created"] is False
+
+
+def test_power_export_without_current_series_renders_reason(
+    seam: StandaloneSeam, capture_root: Path
+) -> None:
+    """AR-3's arm through the export: no current series is a RENDERED
+    honest reason, not a refusal — never 0 W."""
+    write_capture(capture_root, "fx-nc-a", values=(1.0,) * 10, unit="V")
+    write_capture(capture_root, "fx-nc-b", values=(2.0,) * 10, unit="mV")
+    result = call(
+        seam,
+        "report_export",
+        {"capture_ids": ["fx-nc-a", "fx-nc-b"], "power": {"mode": "battery"}},
+    )
+    html = (capture_root / "reports" / f"{result['report_id']}.html").read_text(
+        encoding="utf-8"
+    )
+    assert "power_unavailable: no current series" in html
+    assert "mean power (W)" not in html
+
+
+def test_power_export_refusals(seam: StandaloneSeam, capture_root: Path) -> None:
+    """The pairing/power refusal family on the wire: unknown mode and
+    out-of-set rails (invalid_request), a non-finite threshold that the
+    schema's number type admits (the pure layer's B-F4 mirror), and a
+    non-positive capacity (the schema is shape-only — the seam's typed
+    standalone_report_power_param is the gate on every surface)."""
+    _write_pair(capture_root, n=10)
+    ids = ["fx-px-v", "fx-px-i"]
+    with pytest.raises(SeamError) as caught:
+        call(seam, "report_export", {"capture_ids": ids, "power": {"mode": "turbo"}})
+    assert caught.value.code == "invalid_request"
+    assert "standalone_report_power_mode" in caught.value.message
+    with pytest.raises(SeamError) as caught:
+        call(
+            seam,
+            "report_export",
+            {"capture_ids": ids, "power": {"mode": "battery",
+                                           "rails": [{"v": "fx-ghost", "i": "fx-px-i"}]}},
+        )
+    assert "standalone_report_power_rails" in caught.value.message
+    with pytest.raises(SeamError) as caught:
+        call(
+            seam,
+            "report_export",
+            {"capture_ids": ids,
+             "power": {"mode": "sleep", "threshold": float("nan")}},
+        )
+    assert "standalone_report_power_param" in caught.value.message
+    with pytest.raises(SeamError) as caught:
+        call(
+            seam,
+            "report_export",
+            {"capture_ids": ids, "power": {"mode": "battery", "capacity_ah": 0}},
+        )
+    assert caught.value.code == "invalid_request"
+    assert "standalone_report_power_param" in caught.value.message
+    # A refused export leaves no reports directory (the no-orphans rule).
+    assert report_files(capture_root) == []
+
+
+def test_power_export_schema_rejects_unknown_power_keys(
+    seam: StandaloneSeam, capture_root: Path
+) -> None:
+    _write_pair(capture_root, n=10)
+    with pytest.raises(SeamError) as caught:
+        call(
+            seam,
+            "report_export",
+            {"capture_ids": ["fx-px-v", "fx-px-i"],
+             "power": {"mode": "battery", "volts": 1}},
+        )
+    assert caught.value.code == "invalid_request"
+
+
+# --- the I4b.2 fold wave (row A-F2+B-F3's wire arm) ----------------------------------
+
+
+def test_power_length_mismatch_refuses_on_the_wire(
+    seam: StandaloneSeam, capture_root: Path
+) -> None:
+    """A rail whose sides share the interval but not the sample count
+    refuses typed on the export surface (the zip truncation used to pair
+    the overlap silently)."""
+    write_capture(
+        capture_root, "fx-wl-v", values=(2.0,) * 360, unit="V", interval=0.01
+    )
+    write_capture(
+        capture_root, "fx-wl-i", values=(3.0,) * 100, unit="A", interval=0.01
+    )
+    with pytest.raises(SeamError) as caught:
+        call(
+            seam,
+            "report_export",
+            {
+                "capture_ids": ["fx-wl-v", "fx-wl-i"],
+                "power": {"mode": "battery"},
+            },
+        )
+    assert caught.value.code == "invalid_request"
+    assert "standalone_report_power_pairing" in caught.value.message
+    assert "sample_count" in caught.value.message
+    assert report_files(capture_root) == []

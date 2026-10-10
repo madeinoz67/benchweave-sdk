@@ -20,6 +20,39 @@
   <p class="hint">Source manifest sha256 <code>{{ entry.sha256 }}</code>.</p>
 </section>
 {% endfor %}
+{%- if power %}
+<section class="panel bw-power">
+  <h2>Power — {{ power.mode }}</h2>
+  {%- if power.unavailable %}
+  <p class="notice notice-refused" role="status">{{ power.unavailable }}</p>
+  {%- else %}
+  {%- for rail in power.rails %}
+  <table class="bw-stats">
+    <caption>{{ rail.v if rail.v else '—' }} ({{ rail.v_unit if rail.v_unit else '—' }})
+      × {{ rail.i }} ({{ rail.i_unit }}) — host-computed ·
+      definition benchweave-power/1 · count {{ rail.count }} ·
+      null_count {{ rail.null_count }} · window {{ power.window }}</caption>
+    <tbody>
+      {%- for name, value in rail.rows %}
+      <tr><th>{{ name }}</th><td>{{ value }}</td></tr>
+      {%- endfor %}
+    </tbody>
+  </table>
+  {%- endfor %}
+  {%- if power.mode_rows %}
+  <table class="bw-stats">
+    <caption>{{ power.mode_title }} — host-computed ·
+      definition benchweave-power/1 · window {{ power.window }}</caption>
+    <tbody>
+      {%- for name, value in power.mode_rows %}
+      <tr><th>{{ name }}</th><td>{{ value }}</td></tr>
+      {%- endfor %}
+    </tbody>
+  </table>
+  {%- endif %}
+  {%- endif %}
+</section>
+{%- endif %}
 <form method="post" action="/analyse/export" id="export-form"
       hx-post="/analyse/export" hx-headers='{"X-CSRF-Token": "{{ csrf_token }}"}'>
   {%- for entry in entries %}
@@ -27,6 +60,9 @@
   {%- endfor %}
   <input type="hidden" name="lo" value="{{ lo }}">
   <input type="hidden" name="hi" value="{{ hi }}">
+  <input type="hidden" name="power_mode" value="{{ power_mode }}">
+  <input type="hidden" name="capacity_ah" value="{{ power_capacity }}">
+  <input type="hidden" name="threshold" value="{{ power_threshold }}">
   {%- if marker_capture %}
   {#- The editor's unsaved rows ride the export as resolved markers for
       the capture they belong to (form state carried through the swap). -#}

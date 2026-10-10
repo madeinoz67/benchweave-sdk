@@ -243,6 +243,199 @@ def _figure_entry(entry: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _power_fields_of(source: Any) -> dict[str, str]:
+    """The analyse form's power fields as raw strings (blank -> empty;
+    the routes parse/validate through :func:`_power_params`)."""
+    return {
+        "mode": str(source.get("power_mode") or "").strip(),
+        "capacity_ah": str(source.get("capacity_ah") or "").strip(),
+        "threshold": str(source.get("threshold") or "").strip(),
+    }
+
+
+def _power_params(fields: dict[str, str]) -> dict[str, Any] | dict[str, Any]:
+    """The parsed power params for analysis_view/report_export, or the
+    analyse-error row on an unparseable number (one diagnostic family for
+    the stats and export routes; non-finite PARSES fine and the pure
+    layer refuses it - the seam is the finite gate, the B-F4 posture)."""
+    if not fields["mode"]:
+        present = [
+            f"{name}={fields[name]!r}"
+            for name in ("capacity_ah", "threshold")
+            if fields[name]
+        ]
+        if present:
+            # B-F5: REST's schema refuses a power object without its
+            # required mode — the view refuses the same shape typed, it
+            # never drops the operator's parameters silently.
+            return {
+                "code": "invalid_request",
+                "message": (
+                    "standalone_report_power_mode: a power mode is required "
+                    f"when power parameters are given ({', '.join(present)})"
+                ),
+            }
+        return {}
+    params: dict[str, Any] = {"mode": fields["mode"]}
+    for name in ("capacity_ah", "threshold"):
+        text = fields[name]
+        if not text:
+            continue
+        try:
+            params[name] = float(text)
+        except ValueError:
+            return {
+                "code": "invalid_request",
+                "message": (
+                    f"standalone_report_power_param: power {name} must be "
+                    f"a number (got {text!r})"
+                ),
+            }
+    return params
+
+
+def _power_entry(power: Any) -> dict[str, Any]:
+    """One PowerAnalysis shaped for the analyse templates: the rail rows
+    and the mode block pre-formatted (templates stay dumb, the
+    _figure_entry discipline); the caption text carries the SRF-4
+    denominators the report renders."""
+    from .analysis import product_unit
+    from .report import format_number
+
+    def rail_rows(rail: Any) -> list[tuple[str, str]]:
+        # B-F2: the unit labels derive from the rail's ACTUAL units
+        # (the report's logic through the same product_unit helper).
+        power_label = product_unit(rail.v_unit, rail.i_unit)
+        charge_label = "Ah" if rail.i_unit == "A" else f"{rail.i_unit}·h"
+        energy_label = (
+            "Wh" if power_label == "W" else f"{rail.v_unit}·{rail.i_unit}·h"
+        )
+        rows = [
+            (f"mean power ({power_label})", format_number(rail.mean_p)),
+            (f"peak power ({power_label})", format_number(rail.peak_p)),
+            (f"mean V ({rail.v_unit})", format_number(rail.mean_v)),
+            (f"min V ({rail.v_unit})", format_number(rail.min_v)),
+            (f"mean I ({rail.i_unit})", format_number(rail.mean_i)),
+            (f"peak I ({rail.i_unit})", format_number(rail.peak_i)),
+            (f"charge ({charge_label})", format_number(rail.ah.value)),
+            (
+                f"{charge_label} integrated span (s)",
+                format_number(rail.ah.integrated_span_s),
+            ),
+            (f"{charge_label} dropped segments", f"{rail.ah.dropped_segments}"),
+            (f"energy ({energy_label})", format_number(rail.wh.value)),
+            (
+                f"{energy_label} integrated span (s)",
+                format_number(rail.wh.integrated_span_s),
+            ),
+            (f"{energy_label} dropped segments", f"{rail.wh.dropped_segments}"),
+        ]
+        if rail.reason is not None:
+            rows.append(("reason", rail.reason))
+        return rows
+
+    block = power.battery or power.dcdc or power.sleep or power.load_step
+    mode_rows: list[tuple[str, str]] = []
+    mode_title = power.mode
+    if power.battery is not None:
+        b = power.battery
+        power_label = product_unit(b.v_unit, b.i_unit)
+        charge_label = "Ah" if b.i_unit == "A" else f"{b.i_unit}·h"
+        energy_label = (
+            "Wh" if power_label == "W" else f"{b.v_unit}·{b.i_unit}·h"
+        )
+        runtime_label = (
+            "h" if b.i_unit == "A" else f"capacity Ah / mean {b.i_unit}"
+        )
+        mode_rows = [
+            (f"charge ({charge_label})", format_number(b.ah)),
+            (f"energy ({energy_label})", format_number(b.wh)),
+            (f"mean I ({b.i_unit})", format_number(b.mean_i)),
+            (f"peak I ({b.i_unit})", format_number(b.peak_i)),
+            (f"mean V ({b.v_unit})", format_number(b.mean_v)),
+            (f"min V ({b.v_unit})", format_number(b.min_v)),
+            (f"mean power ({power_label})", format_number(b.mean_p)),
+            (f"peak power ({power_label})", format_number(b.peak_p)),
+        ]
+        if b.capacity_ah is not None:
+            mode_rows.append((f"runtime ({runtime_label})", format_number(b.runtime_h)))
+        if b.reason is not None:
+            mode_rows.append(("reason", b.reason))
+    elif power.dcdc is not None:
+        d = power.dcdc
+        mode_rows = [
+            (f"input power ({d.in_unit or '—'})", format_number(d.pin)),
+            (f"output power ({d.out_unit or '—'})", format_number(d.pout)),
+            ("η (%)", format_number(d.eta_pct)),
+        ]
+        if d.reason is not None:
+            mode_rows.append(("reason", d.reason))
+    elif power.sleep is not None:
+        sl = power.sleep
+        verdict = (
+            sl.verdict
+            if sl.reason is None
+            else f"{sl.verdict}: {sl.reason}"
+        )
+        mode_rows = [
+            (f"threshold ({sl.i_unit})", format_number(sl.threshold)),
+            ("verdict", verdict),
+            (
+                "classified samples",
+                "—" if sl.count is None else f"{sl.count}",
+            ),
+            ("duty (%)", format_number(sl.duty_pct)),
+            (
+                "above count",
+                "—" if sl.above_count is None else f"{sl.above_count}",
+            ),
+            ("above mean", format_number(sl.above_mean)),
+            (
+                "below count",
+                "—" if sl.below_count is None else f"{sl.below_count}",
+            ),
+            ("below mean", format_number(sl.below_mean)),
+        ]
+    elif power.load_step is not None:
+        ls = power.load_step
+        r_label = "Ω" if (ls.v_unit == "V" and ls.i_unit == "A") else (
+            f"{ls.v_unit}/{ls.i_unit}"
+        )
+        mode_rows = [
+            (f"V head mean ({ls.v_unit})", format_number(ls.v_head)),
+            (f"V tail mean ({ls.v_unit})", format_number(ls.v_tail)),
+            (f"I head mean ({ls.i_unit})", format_number(ls.i_head)),
+            (f"I tail mean ({ls.i_unit})", format_number(ls.i_tail)),
+            (f"ΔV ({ls.v_unit})", format_number(ls.dv)),
+            (f"ΔI ({ls.i_unit})", format_number(ls.di)),
+            (f"R ({r_label})", format_number(ls.r)),
+        ]
+        mode_title = (
+            f"load-step · V n {ls.v_n} · I n {ls.i_n} · window "
+            f"[{format_number(ls.lo)}, {format_number(ls.hi)}]"
+        )
+    return {
+        "mode": power.mode,
+        "mode_title": mode_title,
+        "unavailable": power.unavailable,
+        "window": f"[{format_number(power.lo)}, {format_number(power.hi)}]",
+        "rails": [
+            {
+                "v": rail.v_id,
+                "v_unit": rail.v_unit,
+                "i": rail.i_id,
+                "i_unit": rail.i_unit,
+                "count": rail.count,
+                "null_count": rail.null_count,
+                "rows": rail_rows(rail),
+            }
+            for rail in power.rails
+        ],
+        "mode_rows": mode_rows,
+        "has_block": block is not None,
+    }
+
+
 def _add_html_routes(
     app: FastAPI,
     seam: StandaloneSeam,
@@ -1245,6 +1438,7 @@ def _add_html_routes(
         lo_text: str,
         hi_text: str,
         marker_rows: list[dict[str, str]] | None = None,
+        power_fields: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """The analyse page's shared render context: the picker rows over
         the landed capture_list (published waveform captures only — the
@@ -1263,16 +1457,25 @@ def _add_html_routes(
             selected[0] if len(selected) == 1 and selected[0] in picker_ids else None
         )
         entries: list[dict[str, Any]] = []
+        power: dict[str, Any] | None = None
         error: dict[str, Any] | None = None
+        power_form = power_fields or _power_fields_of({})
         if selected:
             window = _parse_window(lo_text, hi_text)
+            params = _power_params(power_form)
             if isinstance(window, dict):
                 error = window
+            elif isinstance(params, dict) and "code" in params:
+                error = params
             else:
                 lo, hi = window
                 try:
-                    computed = seam.analysis_view(selected, lo, hi)
+                    computed, power_result = seam.analysis_view(
+                        selected, lo, hi, power=params if params else None
+                    )
                     entries = [_figure_entry(entry) for entry in computed]
+                    if power_result is not None:
+                        power = _power_entry(power_result)
                 except SeamError as exc:
                     error = {"code": exc.code, "message": exc.message}
         return {
@@ -1282,6 +1485,10 @@ def _add_html_routes(
             "analyse_error": error,
             "lo": lo_text,
             "hi": hi_text,
+            "power": power,
+            "power_mode": power_form["mode"],
+            "power_capacity": power_form["capacity_ah"],
+            "power_threshold": power_form["threshold"],
             "marker_capture": marker_capture,
             "marker_rows": _marker_editor_rows(marker_capture, marker_rows or []),
         }
@@ -1299,6 +1506,7 @@ def _add_html_routes(
             str(request.query_params.get("lo") or "").strip(),
             str(request.query_params.get("hi") or "").strip(),
             _marker_rows_of(request.query_params),
+            _power_fields_of(request.query_params),
         )
         return _TEMPLATES.TemplateResponse(
             request=request,
@@ -1317,6 +1525,7 @@ def _add_html_routes(
             str(form.get("lo") or "").strip(),
             str(form.get("hi") or "").strip(),
             _marker_rows_of(form),
+            _power_fields_of(form),
         )
         return _TEMPLATES.TemplateResponse(
             request=request,
@@ -1416,6 +1625,14 @@ def _add_html_routes(
             arguments["lo"] = lo
         if hi is not None:
             arguments["hi"] = hi
+        power_params = _power_params(_power_fields_of(form))
+        if isinstance(power_params, dict) and "code" in power_params:
+            return HTMLResponse(
+                f"{power_params['code']}: {power_params['message']}",
+                status_code=ERROR_HTTP_STATUS[str(power_params["code"])],
+            )
+        if power_params:
+            arguments["power"] = power_params
         marker_capture = str(form.get("marker_capture") or "")
         if marker_capture and marker_capture in selected:
             # The editor's unsaved rows ride the export as resolved

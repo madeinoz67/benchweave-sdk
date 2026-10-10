@@ -98,6 +98,30 @@
     });
   }
 
+  /* B-F1 (the I4b.2 fold): the same independence rule for the power
+   * fields — the visible mode/capacity/threshold inputs live in
+   * #analyse-form while the export form carries server-rendered
+   * snapshots, so a stats POST followed by an edit and a DIRECT export
+   * used to launder the stale params into the pinned content-addressed
+   * document. The hiddens are rebuilt from the live controls at every
+   * edit and again at submit (the marker discipline). */
+  function syncExportPower() {
+    var form = document.getElementById("analyse-form");
+    var exportForm = document.getElementById("export-form");
+    if (!form || !exportForm) return;
+    var stale = exportForm.querySelectorAll(
+      "input[name='power_mode']," +
+        "input[name='capacity_ah'],input[name='threshold']"
+    );
+    Array.prototype.forEach.call(stale, function (node) {
+      if (node.parentNode) node.parentNode.removeChild(node);
+    });
+    ["power_mode", "capacity_ah", "threshold"].forEach(function (name) {
+      var control = form.elements[name];
+      appendHidden(exportForm, name, control ? control.value : "");
+    });
+  }
+
   /* B-F3: the visible editor and the export form must never be
    * independent copies — the export's hidden marker fields are rebuilt
    * from the live rows at every placement/edit and again at submit, so
@@ -193,6 +217,7 @@
       function (event) {
         if (event.target && event.target.id === "export-form") {
           syncExportMarkers();
+          syncExportPower();
         }
       },
       true
@@ -201,8 +226,18 @@
       "input",
       function (event) {
         var target = event.target;
-        if (target && target.closest && target.closest("#marker-fieldset")) {
+        if (!target || !target.closest) return;
+        if (target.closest("#marker-fieldset")) {
           syncExportMarkers();
+        }
+        /* The power controls are analyse-form members (not inside the
+         * marker fieldset): match them by name. */
+        if (
+          target.name === "power_mode" ||
+          target.name === "capacity_ah" ||
+          target.name === "threshold"
+        ) {
+          syncExportPower();
         }
       },
       true

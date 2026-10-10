@@ -32,6 +32,22 @@ fields are the no-script path.</p>
     <input id="a-lo" name="lo" value="{{ lo }}" inputmode="decimal">
     <label for="a-hi">Window end (s)</label>
     <input id="a-hi" name="hi" value="{{ hi }}" inputmode="decimal">
+    <label for="a-power-mode">Power mode</label>
+    <select id="a-power-mode" name="power_mode">
+      <option value="">— none —</option>
+      {%- for mode in ("battery", "dc-dc", "sleep", "load-step") %}
+      <option value="{{ mode }}" {% if power_mode == mode %}selected{% endif %}>{{ mode }}</option>
+      {%- endfor %}
+    </select>
+    <label for="a-capacity">Battery capacity (Ah)</label>
+    <input id="a-capacity" name="capacity_ah" value="{{ power_capacity }}" inputmode="decimal">
+    <label for="a-threshold">Sleep threshold</label>
+    <input id="a-threshold" name="threshold" value="{{ power_threshold }}" inputmode="decimal">
+    <p class="hint">Power modes pair the set's voltage-class and current-class
+    captures by unit (definition <code>benchweave-power/1</code>); the resolved
+    rails are recorded in the exported report's sidecar. Battery mode uses the
+    capacity for runtime; sleep mode needs a threshold in the rail's own
+    current unit (absent → not_evaluated).</p>
     {% if marker_capture %}
     <fieldset class="bw-markers" id="marker-fieldset"
               data-bw-marker-capture="{{ marker_capture }}">

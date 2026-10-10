@@ -2401,6 +2401,11 @@ class StandaloneSeam:
         "standalone_report_marker_invalid": "invalid_request",
         "standalone_report_assert_target": "invalid_request",
         "standalone_report_assert_bound": "invalid_request",
+        "standalone_report_power_mode": "invalid_request",
+        "standalone_report_power_rails": "invalid_request",
+        "standalone_report_power_param": "invalid_request",
+        "standalone_report_power_pairing": "invalid_request",
+        "standalone_report_capture_duplicated": "invalid_request",
     }
 
     def _report_refusal(self, exc: ValueError, correlation: str) -> SeamError:
@@ -2462,6 +2467,7 @@ class StandaloneSeam:
             edge_analysis,
             evaluate_assertions,
             load_series_set,
+            power_analysis,
             read_markers,
             resolve_markers,
             scan_series,
@@ -2590,6 +2596,21 @@ class StandaloneSeam:
             assertions = evaluate_assertions(
                 list(arguments.get("assertions") or []), stats_by_capture
             )
+            # I4b.2: the power family over the same verified windowed
+            # points the entries already hold (one computation, both
+            # surfaces - the fork's duplicated-maths defect not carried).
+            power_params = arguments.get("power")
+            power_result = None
+            if power_params is not None:
+                power_result = power_analysis(
+                    [(entry.source, entry.points) for entry in entries],
+                    mode=str(power_params.get("mode", "")),
+                    rails=power_params.get("rails") or None,
+                    lo=lo,
+                    hi=hi,
+                    threshold=power_params.get("threshold"),
+                    capacity_ah=power_params.get("capacity_ah"),
+                )
             styles, ui_html_version, asset_digests = self._report_assets()
             html = build_report(
                 entries,
@@ -2600,6 +2621,7 @@ class StandaloneSeam:
                 sdk_version=sdk_version(),
                 markers=resolved_markers,
                 assertions=assertions,
+                power=power_result,
             )
         except ValueError as exc:
             raise self._report_refusal(exc, correlation) from exc
@@ -2625,6 +2647,16 @@ class StandaloneSeam:
             for row in rows
         ]
         replay_params["assertions"] = list(arguments.get("assertions") or [])
+        if power_result is not None:
+            power_replay: dict[str, Any] = {
+                "mode": power_result.mode,
+                "rails": power_result.resolved_rail_rows(),
+            }
+            if power_result.capacity_ah is not None:
+                power_replay["capacity_ah"] = power_result.capacity_ah
+            if power_result.threshold is not None:
+                power_replay["threshold"] = power_result.threshold
+            replay_params["power"] = power_replay
         try:
             sidecar_bytes = json.dumps(
                 {
@@ -2694,7 +2726,9 @@ class StandaloneSeam:
         lo: float | None,
         hi: float | None,
         correlation: str = "",
-    ) -> list[dict[str, Any]]:
+        *,
+        power: dict[str, Any] | None = None,
+    ) -> tuple[list[dict[str, Any]], Any]:
         """Load and scan one capture set for the web Analyse view.
 
         Fork F-B's boundary: analysis reads are deliberately NOT catalogue
@@ -2711,7 +2745,13 @@ class StandaloneSeam:
         index row) before anything loads, so a traversal-shaped id or an
         unindexed directory refuses identically on both surfaces.
         """
-        from .analysis import load_series_set, scan_series, windowed_points
+        from .analysis import (
+            AnalysisRefusal,
+            load_series_set,
+            power_analysis,
+            scan_series,
+            windowed_points,
+        )
         from .report import REPORT_PLOT_SAMPLE_CEILING
 
         for name, value in (("lo", lo), ("hi", hi)):
@@ -2726,7 +2766,22 @@ class StandaloneSeam:
         for capture_id in capture_ids:
             self._stale_row_refusal(library, capture_id, correlation)
         try:
+            # A-F4 (the fold): a duplicated id used to fall through the
+            # default pairing as a duplicate i-only rail (the reuse
+            # guard covers explicit rails only); the export surface's
+            # schema uniqueItems refuses the same shape — the view
+            # refuses it typed, never silently.
+            seen: set[str] = set()
+            for capture_id in capture_ids:
+                if capture_id in seen:
+                    raise AnalysisRefusal(
+                        f"standalone_report_capture_duplicated: {capture_id} "
+                        "appears more than once in the request; the export "
+                        "schema's uniqueItems refuses the same shape"
+                    )
+                seen.add(capture_id)
             entries: list[dict[str, Any]] = []
+            sources_points: list[tuple[Any, list[tuple[float, float]]]] = []
             for source in load_series_set(library.root, capture_ids):
                 stats, _ = scan_series(source, lo=lo, hi=hi)
                 points = windowed_points(
@@ -2735,6 +2790,7 @@ class StandaloneSeam:
                     hi=hi,
                     limit=REPORT_PLOT_SAMPLE_CEILING,
                 )
+                sources_points.append((source, points))
                 entries.append(
                     {
                         "capture_id": source.capture_id,
@@ -2744,9 +2800,24 @@ class StandaloneSeam:
                         "sha256": source.manifest_sha256,
                     }
                 )
+            # I4b.2: the view's power block computes from the SAME
+            # windowed points over the same single load - the power
+            # family is a cross-series composition of what the view
+            # already holds.
+            power_result = None
+            if power is not None:
+                power_result = power_analysis(
+                    sources_points,
+                    mode=str(power.get("mode", "")),
+                    rails=power.get("rails") or None,
+                    lo=lo,
+                    hi=hi,
+                    threshold=power.get("threshold"),
+                    capacity_ah=power.get("capacity_ah"),
+                )
         except ValueError as exc:
             raise self._report_refusal(exc, correlation) from exc
-        return entries
+        return entries, power_result
 
     def report_file(self, report_id: str) -> Path | None:
         """The persisted report document for a well-formed report id,
