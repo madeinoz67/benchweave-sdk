@@ -271,6 +271,30 @@ def _alive(pid: int) -> bool:
         return False
 
 
+def _await_listening(
+    port: int, host: str = "127.0.0.1", timeout: float = 30.0
+) -> None:
+    """Bridge the pidfile→listen gap before a client connects (#427 fold
+    row 1). The supervised child's readiness handle is its PIDFILE — S7
+    delivers it before ``_run_supervised`` reaches uvicorn's bind — so
+    ``start`` returns while the socket may not accept yet. A client that
+    fires its connect on pidfile-readiness alone races the listener: under
+    ``-n auto`` load the gap stretches past the connect and the arm dies
+    ``Connection refused`` (2 of 10 full xdist runs in the #427 battery).
+    Retry the TCP connect until the port accepts — the listener is the
+    seam this waits for, not an HTTP response (that stronger wait is the
+    S1 arm's own loop)."""
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            with socket.create_connection((host, port), timeout=1.0):
+                return
+        except OSError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.1)
+
+
 def _journal_rows(bindings_file: Path) -> list[dict[str, object]]:
     path = lifecycle.journal_path(bindings_file)
     if not path.exists():
@@ -393,6 +417,10 @@ def test_s2_open_events_stream_does_not_wedge_the_stop(
         lifecycle.tokens_path(bindings_file).read_text()
     )
     bearer = str(tokens["bearer_token"])
+    # The pidfile says the child LIVES; only the listener says it serves.
+    # Wait for the bind before the stream connect (#427 fold row 1: the
+    # naive connect raced the listener 2 of 10 full xdist runs).
+    _await_listening(port)
     try:
         with (
             httpx.Client(
@@ -421,6 +449,42 @@ def test_s2_open_events_stream_does_not_wedge_the_stop(
     finally:
         if _alive(pid):
             os.kill(pid, signal.SIGKILL)
+
+
+def test_await_listening_bridges_the_refused_window() -> None:
+    """The S2 flake's window, made deterministic (#427 fold row 1): a
+    listener that delays its bind by one second reproduces with certainty
+    what load stretches past the connect under ``-n auto`` — the naive
+    single connect is REFUSED inside the window (the 2-of-10 xdist
+    ``Connection refused`` shape), and ``_await_listening`` returns only
+    once the port accepts. The window is the pidfile→bind gap: the
+    supervised child's readiness handle precedes uvicorn's listen, so any
+    client firing on pidfile-readiness alone needs this bridge."""
+    import threading
+
+    port = _free_port()
+
+    def delayed_listener() -> None:
+        time.sleep(1.0)  # the pidfile→bind gap, made deterministic
+        with socket.socket() as server:
+            server.bind(("127.0.0.1", port))
+            server.listen(8)
+            server.settimeout(0.5)
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline:
+                try:
+                    conn, _ = server.accept()
+                except TimeoutError:
+                    continue
+                conn.close()
+
+    threading.Thread(target=delayed_listener, daemon=True).start()
+    # Inside the window the naive connect is refused — the deterministic
+    # shape of the xdist flake this arm pins.
+    with pytest.raises(OSError):
+        socket.create_connection(("127.0.0.1", port), timeout=1.0).close()
+    # The bridge crosses exactly this window.
+    _await_listening(port, timeout=10.0)
 
 
 def test_s3_ticks_null_identity_is_pid_unknown_not_stale(
