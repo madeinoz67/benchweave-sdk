@@ -216,7 +216,7 @@ Install the optional server extra to serve one plugin project without a gateway:
 pip install 'benchweave-sdk[server]'
 ```
 
-The extra installs FastAPI, FastMCP, Jinja2, Uvicorn, the published `benchweave-ui-html` package and pyserial. The page design tokens come from that package. The package is held at an exact version. A design change reaches this host through a new package release and a pin update in this repository. The extra adds the command `benchweave-sdk-server`. One process serves a server-rendered HTMX UI, a JSON REST API and an MCP endpoint over one operations seam. `benchweave-sdk-server mcp <project>` runs the same MCP server over stdio, with no HTTP listener.
+The extra installs FastAPI, FastMCP, Jinja2, Uvicorn, the published `benchweave-ui-html` package and pyserial. The page design tokens come from that package. The package is held at an exact version. A design change reaches this host through a new package release and a pin update in this repository. The extra adds the command `benchweave-sdk-server`. One process serves a server-rendered HTMX UI, a JSON REST API and an MCP endpoint over one operations seam. `benchweave-sdk-server mcp <project>` opens an MCP stdio session with no HTTP listener. It proxies to a started host when one runs beside the bindings document, so the page and the agent share one session. With no host running, it serves the plugin in-process and says so on stderr. Beside a live host it cannot join, it refuses and names the fix.
 
 ```sh
 benchweave-sdk-server serve /path/to/plugin-project --transport mock --port 8477 --no-open

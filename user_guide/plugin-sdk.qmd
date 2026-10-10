@@ -551,6 +551,34 @@ Two limits protect the report's shape. The report draws at most two distinct uni
 A window that holds more than 2000000 samples for a plot refuses with the `standalone_report_window_too_large:` prefix. Narrow the window in that case. One export names at most 16 captures.
 
 The export pins every source capture. A pinned capture never expires under retention, and it refuses deletion until you unpin it. Without a pin, mcp captures expire after 30 days. The ui and rest sources stay until you delete them. The capture retention section above explains the schedule. After the export, the browser lands on the report at `GET /reports/<report id>`.
+### The MCP stdio session (the shim)
+
+Agents speak MCP over stdio to the standalone host:
+
+```sh
+benchweave-sdk-server mcp /path/to/plugin-project
+```
+
+The command does one of three things:
+
+1. **Proxy.** A started host owns the supervision family beside the bindings document (`--bindings <path>`, or `BENCHWEAVE_STANDALONE_BINDINGS`, then `device-bindings.json` under the working directory — the same resolution `start` applies). The stdio session then proxies to that host. The browser page and the agent share one host and one device session.
+2. **Fallback.** No host runs: no pidfile exists, or the pidfile names a dead process. The command serves the plugin in-process and prints one line on stderr that says so. No browser can attach to that session, and the transport is the scripted mock.
+3. **Refuse.** A host runs but the command cannot verify it or cannot use its credential file, or another process holds the capture root's library lock. The command exits non-zero and names the fix (`benchweave-sdk-server status`, or `stop` then `start`). It never serves a second host beside a live one.
+
+A `.mcp.json` entry:
+
+```json
+{
+  "mcpServers": {
+    "benchweave-sdk-server": {
+      "command": "benchweave-sdk-server",
+      "args": ["mcp", "/path/to/plugin-project"]
+    }
+  }
+}
+```
+
+The stdio session holds no state of its own. It writes no pidfile, no journal row, no tokens file and no capture-root file. In proxy mode the served tools are exactly the host's tools. The session answers `initialize` with instructions that name the mode: the proxy sentence carries the host URL and pid; the fallback sentence says no other surface can attach. Point the entry at the same bindings document as `start`, so the supervision family has one anchor.
 
 ## 4. Review compatibility and deployment
 
