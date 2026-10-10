@@ -348,8 +348,12 @@ class HostHandle:
 @pytest.fixture(scope="module")
 def started_host(starter_project: Path, tmp_path_factory: pytest.TempPathFactory):
     """One started host for the module (the S1 harness shape): mock
-    transport, free port, the supervision family under a scratch root."""
+    transport, free port, the supervision family under a scratch root.
+    The spawn's cwd is a scratch dir too — a host's default capture
+    root resolves under its cwd, and the repo checkout is not a bench."""
     root = tmp_path_factory.mktemp("family")
+    run_cwd = root / "cwd"
+    run_cwd.mkdir()
     bindings = root / "device-bindings.json"
     port = _free_port()
     started = subprocess.run(
@@ -358,7 +362,7 @@ def started_host(starter_project: Path, tmp_path_factory: pytest.TempPathFactory
             str(starter_project), "--bindings", str(bindings),
             "--host", "127.0.0.1", "--port", str(port),
         ],
-        cwd=str(REPO), capture_output=True, text=True, timeout=120,
+        cwd=str(run_cwd), capture_output=True, text=True, timeout=120,
     )
     assert started.returncode == 0, started.stdout + started.stderr
     payload = json.loads(started.stdout)
@@ -560,7 +564,11 @@ CAPTURE_ARGS = {
 @pytest.fixture()
 def scripted_host(tmp_path: Path):
     """A fresh started host per arm (the linear script is consumed
-    in-memory per process): mock transport over the binary fixture."""
+    in-memory per process): mock transport over the binary fixture. The
+    spawn's cwd is a scratch dir — a host's default capture root
+    resolves under its cwd, and the repo checkout is not a bench."""
+    run_cwd = tmp_path / "cwd"
+    run_cwd.mkdir()
     bindings = tmp_path / "device-bindings.json"
     port = _free_port()
     started = subprocess.run(
@@ -569,7 +577,7 @@ def scripted_host(tmp_path: Path):
             str(FIXTURE), "--bindings", str(bindings),
             "--host", "127.0.0.1", "--port", str(port),
         ],
-        cwd=str(REPO), capture_output=True, text=True, timeout=120,
+        cwd=str(run_cwd), capture_output=True, text=True, timeout=120,
     )
     assert started.returncode == 0, started.stdout + started.stderr
     payload = json.loads(started.stdout)

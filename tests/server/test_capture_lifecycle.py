@@ -1256,6 +1256,10 @@ def _mcp_interrupt_scenario(tmp_path: Path, *, interrupt: bool):
     project_root = tmp_path / "proj"  # _host already scaffolded this one
 
     class FakeServer:
+        # The fallback builder (issue #440) appends the mode marker to the
+        # served instructions — the double carries the attribute.
+        instructions = ""
+
         def run(self) -> None:
             async def arm() -> str:
                 await _connected(host)
