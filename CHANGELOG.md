@@ -2,7 +2,98 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.10.0] - 2026-10-12
 
+### Bug Fixes
+
+- Collapse the duplicated header the v0.9.0 regen carried
+- Fold wave 1 — non-finite guards, loader order, sweep isolation, interleaved log (issue #285 I3c)
+- Fold wave 2 — stdio interrupt close-down, keep-on-unreadable, claim-honesty rides (issue #285 I3c)
+- #422 inc1 fold wave — twin parse hardening (R1-R4, R9-R11)
+- Fold wave 1 — refute lane A's eight rows (issue #286 I4a)
+- Fold wave 2 — lane B's rows (issue #286 I4a)
+- Refute fold — rows 1, 2, 3a-disclosure (issue #285)
+- #422 inc3 refute fold — era-bound stop requests, the SSE wedge, the twin protocol rows (S1-S7)
+- Windows-mypy platform sites — getattr last-error read, sys.platform-narrowed WNOHANG (CI-corroborated)
+- Repair the windows-typing commit's indentation (gate-caught, follow-up)
+- Windows-honest start path — real detachment, typed token refusals, bounded ACL consults (#422 inc3 fix wave 2)
+- The refute fold — 5 MEDIUMs + LOW/NIT rows folded RED-first (issue #286 I4b.1)
+- The refute fold — 4 MEDIUMs (one convergence) + 5 L/N rows, RED-first (issue #286 I4b.2)
+- Wave 2 — the hostile-id escaping arm goes Windows-portable (issue #286 I4b.2)
+- #422 inc4 fold the critic/gw1/l2 wave into the doctor+logs twins
+- CRLF-honest tail rows (windows rollup catch — S7/S8 tails carried \r)
+- The fold wave — 12 ruled rows, one batch (per-row RED in-message)
+- Fold wave 2 — the wedge and the truthful-text rows (W1-W7)
+
+### Documentation
+
+- I3c retention, storage guard, shutdown — design record (issue #285)
+- Serve --env-file paragraph (#422)
+- Issue #286 I4 analysis-and-reporting design record (commit 1)
+- The I4a processed-value labelling row (SRF-4, ID provisional)
+- The Q13 ruled-defaults design record (issue #285)
+- #422 inc3 — the SDK lifecycle verbs paragraph (start/stop/restart/status, the tokens file, the wedge ladder, no --protective)
+- The issue #286 I4b analysis-extensions design record (commit 1, I3/I4a precedent)
+- SRF-4's anchor set extends to the edge/assert blocks; the AR-5 sidecar pin carries the effective params (issue #286 I4b.1)
+- Six supervision verbs, tokens-file guard mechanism, doctor disambiguation
+- Add Analyse view and analysis report sections to the user guide (#286)
+- Issue #440 Q5 stdio shim design record
+- The mcp stdio entry documented as the shim-with-fallback shape
+- The STE register pass over the shim's user-facing text
+
+### Features
+
+- Rules engine, recorder, sweep and the prune CLI (issue #285 I3c)
+- Capture_delete records its removal — the ruling-9 recorder reuse (issue #285 I3c)
+- The SW-58 reserve guard — start refusal and mid-run reserve stop (issue #285 I3c)
+- NFR-O1 close-down, in-host retention schedule, quota events, stdio settle (issue #285 I3c)
+- The captures library page with next-effect projection (issue #285 I3c, SW-49)
+- #422 inc1 serve --env-file (the gateway twin's one standard)
+- The analysis dataset loader and window statistics (issue #286 I4a, AR-1)
+- The self-contained HTML report renderer (issue #286 I4a, AR-4/AR-6)
+- Report_export — catalogue row 22, the seam handler, MCP parity, the sweep's reserved reports/ dir (issue #286 I4a, AR-5)
+- The Analyse view, the report download, and the report CSP (issue #286 I4a, §1.4)
+- The ruled Q13 defaults as a packaged document (issue #285)
+- Serve and prune arm the ruled defaults (issue #285)
+- #422 inc3 — the SDK lifecycle twins (start/stop/restart/status, wedge ladder, token file)
+- AR-2 edge timing + AR-7 min/max assertions (issue #286 I4b.1)
+- AR-8 the A-Z markers overlay, row 23 capture_analysis, click-to-place (issue #286 I4b.1)
+- AR-9 the report context/zoom pair, marker glyphs, edge/assert blocks, the streaming reducer (issue #286 I4b.1)
+- AR-3(amended)/AR-10/AR-11 the power family — pairing, gap integrals, four modes (issue #286)
+- The report's power section — SRF-4 captions, coverage rows, honest absence (issue #286)
+- Power params through report_export + the Analyse view (issue #286)
+- #422 inc4 the doctor + logs twins
+- Library.read_lock — the lock's state, read without acquiring
+- The stdio MCP shim module — discovery, fork guard, proxy, markers
+- The mcp command reshaped — proxy, disclosed fallback, typed refusals
+
+### Miscellaneous
+
+- Bump fastmcp from 4.0.3 to 4.0.11
+- Regenerate uv.lock for fastmcp 4.0.11 (dependabot lock-companion)
+- V0.10.0 — the bump, the matrix walk, the guide stamp fix
+- Register v0.10.0 (phase 2 — the tag commit applies the staged patch)
+
+### Testing
+
+- Bump the twin census pin to 39 (retention.py)
+- Bump the closed-set and twin-census pins for row 22 and the two new modules (issue #286 I4a)
+- Wave 3 — the double-quote escaping arm goes Windows-portable (issue #286 I4a, PR #133)
+- Scope the windows start leg to #432 (empty-log no-readiness, three rollups) — clear logic stays unit-pinned cross-platform
+- Tamper arms hit a tmp copy, never the committed vendored tree
+- Bridge the pidfile-to-listen gap in the S2 events arm
+- Pin the serial binding-pending arm's cwd to tmp
+- Suite-wide tree guard across four write vectors
+- Ratchet the twin census to 45; carry the fallback interface in the settle double
+- The CI wave — three windows-lane failures, each root-caused
+- The windows settle allowance moves 1.5 -> 4.0, attributed
+
+
+### Contributors
+
+- Stephen Eaton (67 commits)
+- Dependabot[bot] (1 commit)
+- Madeinoz67 (1 commit)
 ## [0.9.0] - 2026-10-07
 
 ### Bug Fixes
@@ -97,8 +188,6 @@ All notable changes to this project will be documented in this file.
 ### Contributors
 
 - Stephen Eaton (67 commits)
-
-
 ## [0.8.0] - 2026-10-05
 
 ### Bug Fixes
