@@ -452,6 +452,40 @@ def test_ar1_the_lanes_figure_renders_outside_the_readings_poll_region(
     )
 
 
+def test_ar1_the_capture_page_is_waveform_first(
+    lanes_clients: list[TestClient], tmp_path: Path
+) -> None:
+    """Fold F8 (owner directive, live preview review — issue comment
+    6127477670): a digital analyzer UI is waveform-first, so the capture
+    page LEADS with the lane traces — the lanes figure precedes the
+    readings region in the served DOM. Reading tiles stay the secondary
+    surface (below; the console's stacking as the reference shape).
+    Scope guard: a page WITHOUT lanes plots keeps its tile-first shape —
+    the reorder is gated on the lanes region's presence."""
+    body = lanes_clients[0].get("/pages/capture").text
+    assert body.index('<figure class="bw-lanes"') < body.index(
+        'id="page-readings"'
+    ), "the capture page leads with the lane traces"
+
+    # Scope guard, end to end: the scaffolded starter (time_series only,
+    # no lanes plots) keeps the readings region before any figure.
+    from benchweave_sdk.presentation import create_ui_resources
+
+    scaffold = tmp_path / "starter"
+    create_project(scaffold, "example_plugin")
+    create_ui_resources(scaffold, "example_plugin")
+    from benchweave_sdk_server.cli import _build_seam
+    from benchweave_sdk_server.web import build_app
+
+    seam, selection = _build_seam(scaffold)
+    app = build_app(seam, policy=_policy(), scenario=selection)
+    with TestClient(app, base_url="http://127.0.0.1:8477") as client:
+        tile_page = client.get("/pages/readings").text
+    assert tile_page.index('id="page-readings"') < tile_page.index("<figure"), (
+        "a page without lanes plots keeps the tile-first shape"
+    )
+
+
 # --- AR-2: theme/asset parity ----------------------------------------------------
 
 
