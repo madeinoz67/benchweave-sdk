@@ -13,8 +13,8 @@
     },
     {
       "path": "bw-plot.js",
-      "size": 5219,
-      "sha256": "6e7a8839f3148df903e11b38d6c1105925b5e1e4aa315e6e41ea73de3b7fdc30"
+      "size": 2848,
+      "sha256": "a88e9189c7c1453e1a729bded83925d6e7c3e2e233c0735bc0248e06a83570ff"
     },
     {
       "path": "htmx.min.js",
@@ -23,8 +23,8 @@
     },
     {
       "path": "standalone.css",
-      "size": 5124,
-      "sha256": "b1c05ab8d9600f8e24487509d37113b7800fae9a8b2bbca5eb25d98d2a36de60"
+      "size": 9230,
+      "sha256": "af0d21d6dd7b57125835a519acc49979f1c09071c8b8e3c7afeab0f3e1ac9ba0"
     },
     {
       "path": "uplot-LICENCE",

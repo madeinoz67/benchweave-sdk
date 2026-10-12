@@ -424,6 +424,16 @@ class HostPresentation:
         assert self._inputs is not None, "no presentation documents"
         return self._inputs.binding_catalogue
 
+    @property
+    def resource_root(self) -> Path:
+        """The validated presentation's resource root — where a declared
+        manifest asset (the ``preview.css`` override, issue #449 slice 1)
+        resolves. Paths ride the load-time validation (the bounded reader
+        refuses symlinked components), so serve-time reads are rooted
+        here."""
+        assert self._inputs is not None, "no presentation documents"
+        return self._inputs.resource_root
+
     def page(self, page_id: str) -> PageView | None:
         for view in self.pages:
             if view.id == page_id:

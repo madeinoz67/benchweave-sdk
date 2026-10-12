@@ -19,7 +19,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from pathlib import Path, PurePosixPath
+from typing import Any
 
 #: The vendored asset root inside this package, verified on every call.
 INVENTORY_API_VERSION = 1
@@ -28,7 +30,28 @@ INVENTORY_API_VERSION = 1
 #: (never from this package's tree — Q5's release-plus-pin mechanism).
 #: ``globals.css`` joins at I2a (D-B3, SW-22): the partials' component
 #: classes are meaningless without the package's own global rules.
-RENDERER_ASSETS = frozenset({"tokens.css", "themes.css", "globals.css"})
+#: ``bw-host.js`` joins with issue #449 slice 1: the package's host script
+#: drives the root ``data-theme`` from ``prefers-color-scheme`` (dark
+#: parity with the gateway console, whose shell loads the same bytes) and
+#: its CSRF-stamping listener is inert here — the host renders no
+#: ``bw-csrf-token`` meta (its forms carry explicit ``hx-headers``).
+RENDERER_ASSETS = frozenset({"tokens.css", "themes.css", "globals.css", "bw-host.js"})
+
+#: The manifest-declared local override (issue #449 slice 1, design
+#: §3.1.4): a plugin declaring an ``assets[]`` row whose ``path`` is
+#: exactly this name gets those bytes served as an override stylesheet,
+#: AFTER the package's token stylesheets, on the preview host's pages.
+#: Digest-verified at serve time against the manifest's own pin; oversize
+#: bytes refuse; ``preview.css`` is preview-host-only — the gateway never
+#: reads a plugin's asset tree.
+PREVIEW_OVERRIDE_ASSET = "preview.css"
+
+#: The override stylesheet's size cap (design §3.1.4).
+PREVIEW_OVERRIDE_MAX_BYTES = 64 * 1024
+
+#: The machine-matchable refusal prefix for a declared override that
+#: refuses to serve (digest mismatch, oversize, unreadable).
+PREVIEW_OVERRIDE_REFUSED = "standalone_preview_override_refused:"
 
 
 def renderer_assets_root() -> Path:
@@ -53,6 +76,51 @@ def verify_renderer_assets() -> None:
         raise ValueError(
             f"standalone_ui_asset_renderer: {'; '.join(refusals)}"
         )
+
+
+class PreviewOverrideRefused(ValueError):
+    """A DECLARED ``preview.css`` override that refuses to serve.
+
+    The page path catches this and renders the default tokens; the asset
+    route translates it into the prefixed refusal response."""
+
+
+def preview_override_bytes(manifest: Mapping[str, Any], resource_root: Path) -> bytes | None:
+    """The plugin's declared override stylesheet, digest-verified, or None.
+
+    Returns ``None`` when the manifest declares no ``preview.css`` row (the
+    default-tokens default). A declared row is served only when the bytes
+    on disk still match the manifest's own ``sha256`` pin and fit the size
+    cap — the manifest's digest discipline, re-verified at serve time (the
+    one-time load check cannot see a post-load tamper). Refusals raise
+    :class:`PreviewOverrideRefused` carrying the machine-matchable prefix.
+
+    Not caught: a manifest row whose declared ``sha256`` is not a digest
+    shape — that row cannot pass the load-time schema, so it never reaches
+    this comparison.
+    """
+    for asset in manifest.get("assets", []):
+        if not isinstance(asset, Mapping) or asset.get("path") != PREVIEW_OVERRIDE_ASSET:
+            continue
+        try:
+            raw = (resource_root / PREVIEW_OVERRIDE_ASSET).read_bytes()
+        except OSError as exc:
+            raise PreviewOverrideRefused(
+                f"{PREVIEW_OVERRIDE_REFUSED} preview.css is unreadable"
+            ) from exc
+        if len(raw) > PREVIEW_OVERRIDE_MAX_BYTES:
+            raise PreviewOverrideRefused(
+                f"{PREVIEW_OVERRIDE_REFUSED} preview.css exceeds the "
+                f"{PREVIEW_OVERRIDE_MAX_BYTES // 1024} KiB cap"
+            )
+        declared = str(asset.get("sha256", ""))
+        if hashlib.sha256(raw).hexdigest() != declared:
+            raise PreviewOverrideRefused(
+                f"{PREVIEW_OVERRIDE_REFUSED} preview.css bytes differ from "
+                "the manifest pin"
+            )
+        return raw
+    return None
 
 
 def ui_assets_root() -> Path:

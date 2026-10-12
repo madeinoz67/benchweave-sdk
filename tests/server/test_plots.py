@@ -198,17 +198,11 @@ def test_the_json_block_is_csp_safe_and_keys_to_the_figure(app_client) -> None:
     assert payload["x_unit"] == "s"
 
 
-def test_digital_lanes_render_the_skeleton_with_the_no_data_disclosure() -> None:
-    """A declared digital-lanes plot renders its skeleton figure and the
-    no-data disclosure — live lane data is I3's (D-I2b), and the page says
-    so rather than drawing an empty capture.
-
-    Pinned at the composition seam: a VALIDATED digital-lanes declaration
-    requires a dataset target with string/vector lane variables (the
-    presentation validator refuses an observation-targeted lanes plot),
-    and the scaffold's generator never emits one — the first validated
-    lanes manifest rides I3's capture work, where dataset targets exist.
-    The render arm itself is what this pin holds."""
+def test_digital_lanes_render_the_package_s_declaration_only_figure() -> None:
+    """A declared digital-lanes plot renders the package's declaration-only
+    figure (issue #449 slice 1): lane rows with labels, no segments, and
+    the package's own "Acquired 0 samples · plotted 0" line — the honest
+    declaration render, not a hand-built skeleton."""
     from benchweave_sdk.preview_models import PlotAxis, PlotChannel, PlotView
     from benchweave_sdk_server.plots import compose_page_plot
 
@@ -223,8 +217,10 @@ def test_digital_lanes_render_the_skeleton_with_the_no_data_disclosure() -> None
         decoder_lanes=(),
     )
     render = compose_page_plot(view, ObservationRing())
-    assert "data-bw-lanes" in render.html
-    assert "No lane data" in render.html
+    assert 'class="bw-lanes"' in render.html
+    assert "bw-lanes__label" in render.html
+    assert "Acquired 0 samples · plotted 0" in render.html
+    assert "No lane data" not in render.html
 
 
 # --- the vendored uPlot + the hydrator (host-side, per #310) --------------------
@@ -309,13 +305,14 @@ def test_an_explicit_hide_hint_still_hides(starter_project) -> None:
     assert "data-hidden" in render.html
 
 
-# --- the lanes skeleton escapes the manifest title (fold 2) ---------------------
+# --- the lanes figure escapes the manifest title (fold 2) ---------------------
 
 
-def test_the_lanes_skeleton_escapes_the_manifest_title() -> None:
-    """A hostile page title must not land as a real attribute on the
-    hand-built skeleton (#363's lesson class: manifest data never bypasses
-    the escaped renderer)."""
+def test_the_lanes_figure_escapes_the_manifest_title() -> None:
+    """A hostile page title must not land as a real attribute on the lanes
+    figure (#363's lesson class: manifest data never bypasses the escaped
+    renderer — the package's Jinja2 environment autoescapes, and the pin
+    holds through the package render)."""
     from benchweave_sdk.preview_models import PlotAxis, PlotChannel, PlotView
 
     view = PlotView(
@@ -396,10 +393,11 @@ def test_a_single_channel_description_claims_only_that_channel(starter_project) 
     assert "no host data path" not in render.html
 
 
-def test_the_lanes_skeleton_names_its_declared_lane_count() -> None:
-    """Row R-g's lanes arm: the skeleton's no-data line names how many
-    lane channels are declared (an honest count of structure, not of
-    data)."""
+def test_the_lanes_figure_names_its_declared_lane_labels() -> None:
+    """Row R-g's lanes arm, carried onto the package render: the figure
+    names every declared lane channel by its label — an honest count of
+    structure (one ``bw-lanes__label`` per declared channel), not of
+    data."""
     from benchweave_sdk.preview_models import PlotAxis, PlotChannel, PlotView
 
     view = PlotView(
@@ -416,4 +414,6 @@ def test_the_lanes_skeleton_names_its_declared_lane_count() -> None:
         decoder_lanes=(),
     )
     render = compose_page_plot(view, ObservationRing())
-    assert "2 declared lane channel(s)" in render.html
+    assert render.html.count('class="bw-lanes__label"') == 2
+    assert ">sda</span>" in render.html
+    assert ">scl</span>" in render.html

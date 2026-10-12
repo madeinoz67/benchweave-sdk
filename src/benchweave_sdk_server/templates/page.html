@@ -14,6 +14,14 @@
        hx-swap="innerHTML">
     {% include "page-readings.html" %}
   </div>
+  {# The declared captures (digital lanes) render OUTSIDE the poll region:
+     a poll must not wipe viewport state — the page's own controls rule,
+     extended. Slice 3's zoom/scroll swaps land on this stable wrapper. #}
+  {% if lanes %}
+  <section class="bw-lanes-region" id="page-lanes-{{ page.id }}" aria-label="Declared captures">
+    {{ lanes }}
+  </section>
+  {% endif %}
   {% if controls %}
   {# Staged changes are HOST state: the inputs render outside the poll
      region (a poll must not wipe an operator's in-flight input), and a

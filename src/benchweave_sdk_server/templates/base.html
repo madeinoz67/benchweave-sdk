@@ -10,9 +10,15 @@
   <link rel="stylesheet" href="/assets/globals.css">
   <link rel="stylesheet" href="/assets/standalone.css">
   <link rel="stylesheet" href="/assets/uplot.css">
+  {# The plugin's manifest-declared override (issue #449 slice 1): served
+     only when the bytes verify against the manifest pin at render time
+     (tampered bytes render the default tokens). Last, so the override
+     wins the cascade. #}
+  {% if preview_override %}<link rel="stylesheet" href="/assets/preview.css">{% endif %}
   <script src="/assets/htmx.min.js" defer></script>
   <script src="/assets/uplot.min.js" defer></script>
   <script src="/assets/bw-plot.js" defer></script>
+  <script src="/assets/bw-host.js" defer></script>
   <script src="/assets/bw-events.js" defer></script>
   {# Page-scoped scripts (I4a): a page opts in; the shell stays the same. #}
   {% block scripts %}{% endblock %}
