@@ -179,3 +179,189 @@ code { font-family: var(--bw-font-data); font-size: 0.9em; }
 .authoring-panel dd {
   margin: 0;
 }
+
+/* The digital-lanes figure (issue #449 slice 1): the package's semantic
+   lane rows, realized per §E.4 — state kinds discriminable by geometry
+   alone (high = upper half band, low = lower half band, x = diagonal
+   hatch, z = center midline; the glitch mark = full-height vertical
+   stripes), colours token-referenced only, no glow on normal readings.
+
+   Specificity floor (fold F5): every selector here stays at or below
+   (0,2,0) — no ids, at most two class/attribute tokens. The plugin
+   override loads last but ranks BELOW these rules; and the a11y floor
+   is unreachable by design: globals.css's reduced-motion block carries
+   !important on universal selectors, which no override may beat. */
+.bw-lanes-region {
+  margin-block: var(--bw-space-4);
+}
+
+.bw-lanes {
+  margin: 0;
+}
+
+.bw-lanes__canvas {
+  display: block;
+  border: 1px solid var(--bw-border);
+  border-radius: var(--bw-radius-control);
+  padding: var(--bw-space-3);
+  background: var(--bw-surface);
+  overflow-x: auto;
+}
+
+.bw-lanes__lane {
+  display: grid;
+  grid-template-columns: 9rem 1fr;
+  gap: var(--bw-space-3);
+  align-items: center;
+  padding-block: var(--bw-space-1);
+}
+
+.bw-lanes__label {
+  font-family: var(--bw-font-data);
+  font-size: 0.8125rem;
+  color: var(--bw-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bw-lanes__channel,
+.bw-lanes__group {
+  display: flex;
+  height: 1.5rem;
+  min-width: 100%;
+  width: max-content;
+}
+
+.bw-lanes__segment {
+  display: inline-block;
+  height: 100%;
+  flex: none;
+}
+
+/* §E.4.2 geometry per state kind — monochrome-discriminable, colour never
+   the only channel: */
+.bw-lanes__segment[data-bw-state-kind="high"] {
+  background: var(--bw-text);
+  height: 50%;
+  align-self: flex-start;
+}
+
+.bw-lanes__segment[data-bw-state-kind="low"] {
+  background: var(--bw-text);
+  height: 50%;
+  align-self: flex-end;
+}
+
+.bw-lanes__segment[data-bw-state-kind="hatch"] {
+  background: repeating-linear-gradient(
+    45deg,
+    var(--bw-text) 0 2px,
+    transparent 2px 5px
+  );
+}
+
+.bw-lanes__segment[data-bw-state-kind="midline"] {
+  background: var(--bw-text-muted);
+  height: 2px;
+  align-self: center;
+}
+
+/* A single-transition column's two halves keep the pre/post edge visible
+   as a step inside one column slot. */
+.bw-lanes__segment[data-bw-half="first"] {
+  width: 50%;
+}
+
+.bw-lanes__segment[data-bw-half="second"] {
+  width: 50%;
+  margin-inline-start: auto;
+}
+
+/* The glitch mark: a multi-transition column renders full-height vertical
+   stripes — orientation and coverage distinguish it from the x-hatch. */
+.bw-lanes__segment[data-bw-glitch] {
+  background: repeating-linear-gradient(
+    90deg,
+    var(--bw-text) 0 2px,
+    transparent 2px 4px
+  );
+  height: 100%;
+}
+
+.bw-lanes__bus-cell {
+  display: inline-block;
+  height: 100%;
+  min-width: 3rem;
+  padding-inline: var(--bw-space-2);
+  border: 1px solid var(--bw-border);
+  border-radius: var(--bw-radius-control);
+  background: var(--bw-surface-recessed);
+  font-family: var(--bw-font-data);
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  color: var(--bw-text);
+}
+
+.bw-lanes__bus-cell::before {
+  content: attr(data-bw-bus-value);
+}
+
+.bw-lanes__bus-cell[data-bw-state="x"] {
+  background: repeating-linear-gradient(
+    45deg,
+    var(--bw-surface-recessed) 0 3px,
+    var(--bw-border) 3px 5px
+  );
+}
+
+.bw-lanes__decoder {
+  display: flex;
+  height: 1.5rem;
+  position: relative;
+  min-width: 100%;
+  width: max-content;
+}
+
+.bw-lanes__span {
+  display: inline-block;
+  height: 1rem;
+  align-self: center;
+  border: 1px solid var(--bw-border);
+  border-radius: var(--bw-radius-control);
+  background: var(--bw-surface-recessed);
+  padding-inline: var(--bw-space-2);
+}
+
+.bw-lanes__payload {
+  font-family: var(--bw-font-data);
+  font-size: 0.75rem;
+  color: var(--bw-text);
+}
+
+.bw-lanes__waiting {
+  font-family: var(--bw-font-data);
+  font-size: 0.75rem;
+  color: var(--bw-text-muted);
+  align-self: center;
+}
+
+.bw-lanes__trigger,
+.bw-lanes__cursor {
+  position: absolute;
+  top: -0.25rem;
+  bottom: -0.25rem;
+  font-family: var(--bw-font-data);
+  font-size: 0.6875rem;
+  color: var(--bw-text-muted);
+  border-inline-start: 2px solid var(--bw-accent);
+  padding-inline-start: 0.25rem;
+  pointer-events: none;
+}
+
+.bw-lanes__axis {
+  margin: var(--bw-space-2) 0 0;
+  font-family: var(--bw-font-data);
+  font-size: 0.8125rem;
+  color: var(--bw-text-muted);
+}

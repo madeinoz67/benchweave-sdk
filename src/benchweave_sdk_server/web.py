@@ -40,7 +40,10 @@ from markupsafe import Markup, escape
 from . import catalogue
 from . import presentation as presentation_module
 from .assets import (
+    PREVIEW_OVERRIDE_ASSET,
     RENDERER_ASSETS,
+    PreviewOverrideRefused,
+    preview_override_bytes,
     renderer_assets_root,
     ui_assets_root,
     verify_renderer_assets,
@@ -136,7 +139,7 @@ def build_app(
     _add_rest_routes(app, seam)
     _add_html_routes(app, seam, policy, scenario=scenario)
     _add_events_route(app, seam, streams_closing=streams_closing)
-    _add_asset_routes(app)
+    _add_asset_routes(app, seam)
     # REST routes are included BEFORE the "/" mount: a mount at "/" swallows
     # every route included after it, so /v1 must land first (app.py:1040-1048).
     app.mount("/", mcp_app)
@@ -484,6 +487,7 @@ def _add_html_routes(
         return seam.presentation
 
     def shared(**extra: Any) -> dict[str, Any]:
+        override_link, override_refused = _preview_override_state()
         context: dict[str, Any] = {
             "mode_banner": mode_banner,
             "absent": catalogue.ABSENT_GUARANTEES,
@@ -491,9 +495,27 @@ def _add_html_routes(
             "csrf_token": policy.csrf_token,
             "reload_state": seam.reload_state,
             "pending_reload": seam.pending_reload,
+            "preview_override": override_link,
+            "preview_override_refused": override_refused,
         }
         context.update(extra)
         return context
+
+    def _preview_override_state() -> tuple[bool, bool]:
+        """Whether pages carry the plugin's declared ``preview.css``
+        override: only when the bytes verify against the manifest pin at
+        render time (issue #449 slice 1, design §3.1.4). A tampered or
+        a REFUSED override is VISIBLE as such (fold F3: an author iterating
+        on a tampered override gets the page marker, never a silent no-op —
+        the prefixed detail rides the asset route's response). The page
+        renders the default tokens either way."""
+        if not pres().available:
+            return False, False
+        try:
+            raw = preview_override_bytes(pres().manifest, pres().resource_root)
+        except PreviewOverrideRefused:
+            return False, True
+        return raw is not None, False
 
     async def _ui_call(
         operation: str, arguments: dict[str, Any] | None = None
@@ -784,17 +806,26 @@ def _add_html_routes(
             "panel_refusal": panel_refusal,
         }
 
-    def _page_plots(page_id: str) -> str:
-        """The page's declared plots, composed through the package's plot
-        machinery over the session's observation ring (§3.3)."""
-        from .plots import plot_host_html
+    def _page_plots(page_id: str) -> tuple[Markup, Markup]:
+        """The page's plots, split at the poll boundary (issue #449 slice 1,
+        design §3.1.5): scalar plots are poll-shaped (their data is the
+        observation ring) and swap with the readings region; the lanes
+        figures are declaration-only and own their wrapper OUTSIDE the poll
+        region — a poll must not wipe viewport state (the page's own
+        controls rule, extended). Slice 3's zoom/scroll swaps land on the
+        stable lanes wrapper without re-deriving page structure."""
+        from .plots import plot_host_html, plot_lanes_html
 
-        parts = [
-            plot_host_html(view, seam.observation_ring)
-            for view in pres().plot_views
-            if view.page_id == page_id
-        ]
-        return Markup("".join(parts))
+        scalar: list[str] = []
+        lanes: list[str] = []
+        for view in pres().plot_views:
+            if view.page_id != page_id:
+                continue
+            if view.kind == "digital_lanes":
+                lanes.append(plot_lanes_html(view))
+            else:
+                scalar.append(plot_host_html(view, seam.observation_ring))
+        return Markup("".join(scalar)), Markup("".join(lanes))
 
     @app.get("/pages/{page_id}", response_class=HTMLResponse)
     async def page_route(request: Request, page_id: str) -> Response:
@@ -837,26 +868,30 @@ def _add_html_routes(
                         or binding.parameter_id is None
                     ]
                     show_prompt = has_observations
+                    scalar_plots, lanes_plots = _page_plots(page.id)
                     return _TEMPLATES.TemplateResponse(
                         request=request,
                         name="page.html",
                         context=shared(
                             **_page_context(page, severity, tiles, refusal, no_data),
                             show_prompt=show_prompt,
-                            plots=_page_plots(page.id),
+                            plots=scalar_plots,
+                            lanes=lanes_plots,
                             controls=_page_controls(page, reads),
                             action_error=None,
                         ),
                     )
             else:
                 no_data = [binding for binding in page.bindings if binding.kind != "observation"]
+        scalar_plots, lanes_plots = _page_plots(page.id)
         return _TEMPLATES.TemplateResponse(
             request=request,
             name="page.html",
             context=shared(
                 **_page_context(page, severity, tiles, refusal, no_data),
                 show_prompt=False,
-                plots=_page_plots(page.id),
+                plots=scalar_plots,
+                lanes=lanes_plots,
                 controls=_page_controls(page, reads),
                 action_error=None,
             ),
@@ -898,13 +933,14 @@ def _add_html_routes(
                 )
         elif page.panel_id is None:
             no_data = [binding for binding in page.bindings if binding.kind != "observation"]
+        scalar_plots, _lanes = _page_plots(page.id)
         return _TEMPLATES.TemplateResponse(
             request=request,
             name="page-readings.html",
             context=shared(
                 **_page_context(page, severity, tiles, refusal, no_data),
                 show_prompt=show_prompt,
-                plots=_page_plots(page.id),
+                plots=scalar_plots,
             ),
         )
 
@@ -1744,7 +1780,7 @@ def _add_events_route(
         )
 
 
-def _add_asset_routes(app: FastAPI) -> None:
+def _add_asset_routes(app: FastAPI, seam: StandaloneSeam) -> None:
     """Serve only inventory-verified vendored assets (NFR-P3/P5 posture)."""
 
     @app.get("/assets/{asset_path:path}")
@@ -1767,6 +1803,30 @@ def _add_asset_routes(app: FastAPI) -> None:
             or ":" in candidate
         ):
             return Response(status_code=404)
+        # The plugin's DECLARED preview.css override (issue #449 slice 1):
+        # digest-verified against the manifest pin at serve time; any
+        # mismatch refuses with the machine-matchable prefix, and the page
+        # (which verified the same bytes before linking) renders the
+        # default tokens. Undeclared falls through to the roots below —
+        # preview.css is not part of the host's verified tree, so the
+        # existing 404 branch answers. This route is the override's ONLY
+        # serve point, and the gateway's /ui transport never reads a
+        # plugin's asset tree: the override is preview-host-only.
+        if candidate == PREVIEW_OVERRIDE_ASSET:
+            presentation = seam.presentation
+            if presentation.available:
+                try:
+                    raw = preview_override_bytes(
+                        presentation.manifest, presentation.resource_root
+                    )
+                except PreviewOverrideRefused as exc:
+                    return PlainTextResponse(str(exc), status_code=403)
+                if raw is not None:
+                    return Response(
+                        content=raw,
+                        media_type="text/css; charset=utf-8",
+                        headers={"Cache-Control": "no-cache"},
+                    )
         # The renderer's assets serve from the installed ui-html package
         # (verified at construction); everything else serves from this
         # host's own verified vendored tree.

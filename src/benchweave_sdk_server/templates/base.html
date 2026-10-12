@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en"{% if preview_override_refused %} data-bw-override-refused{% endif %}>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -10,9 +10,18 @@
   <link rel="stylesheet" href="/assets/globals.css">
   <link rel="stylesheet" href="/assets/standalone.css">
   <link rel="stylesheet" href="/assets/uplot.css">
+  {# The plugin's manifest-declared override (issue #449 slice 1): served
+     only when the bytes verify against the manifest pin at render time
+     (tampered bytes render the default tokens; a refused override is
+     VISIBLE as such — the html element carries data-bw-override-refused).
+     Last in cascade ORDER; the host grants the override order, not rank
+     (fold F5: the lanes state-kind rules keep their (0,2,0) specificity
+     floor). #}
+  {% if preview_override %}<link rel="stylesheet" href="/assets/preview.css">{% endif %}
   <script src="/assets/htmx.min.js" defer></script>
   <script src="/assets/uplot.min.js" defer></script>
   <script src="/assets/bw-plot.js" defer></script>
+  <script src="/assets/bw-host.js" defer></script>
   <script src="/assets/bw-events.js" defer></script>
   {# Page-scoped scripts (I4a): a page opts in; the shell stays the same. #}
   {% block scripts %}{% endblock %}

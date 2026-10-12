@@ -11,8 +11,9 @@ input) MUST produce an axe violation — a clean run against the doctored
 page means the measurement is broken, not the page set (the G1d
 planted-violation precedent). The plot hydration is asserted
 post-hydrate (risk 4's falsifier: payload pins alone cannot carry a draw
-claim), and the Canvas-2D lane hydrator draws synthetic columns — live
-lane data is I3's (D-I2b).
+claim), and the lanes hydrator's REMOVAL is pinned in the browser
+(issue #449 slice 1: the lanes figure is the package's semantic HTML —
+no canvas hydrator ships).
 """
 
 from __future__ import annotations
@@ -306,27 +307,25 @@ def test_the_plot_hydrates_and_the_canvas_draws(page: Page, server_url: str) -> 
     assert mounted["series"] == 2  # the x axis series + one channel
 
 
-def test_the_lane_hydrator_draws_synthetic_columns(page: Page, server_url: str) -> None:
-    """The Canvas-2D lane hydrator ships and is exercised on synthetic
-    columns (D-I2b: live lane data is I3's)."""
+def test_the_lanes_hydrator_is_removed_from_the_host_script(
+    page: Page, server_url: str
+) -> None:
+    """Inverted removal pin (issue #449 slice 1): the Canvas-2D lanes
+    hydrator no longer ships — the lanes figure is the package's semantic
+    HTML, nothing draws into a canvas. Reds on pre-change code, where
+    ``window.bwHydrateLanes`` was defined and drew synthetic columns; the
+    scalar uPlot hydrator stays pinned by the hydration test above."""
     page.goto(server_url + "/")
-    drawn = page.evaluate(
-        """() => {
-            const canvas = document.createElement('canvas');
-            canvas.style.width = '600px';
-            document.body.appendChild(canvas);
-            window.bwHydrateLanes(canvas, [
-                { state: '1', transitions: 0, glitch: false },
-                { state: '0', transitions: 1, glitch: false,
-                  edge: { from: '0', to: '1' } },
-                { state: '1', transitions: 2, glitch: true },
-            ]);
-            const marked = canvas.getAttribute('data-bw-lanes-drawn');
-            canvas.remove();
-            return marked;
-        }"""
+    state = page.evaluate(
+        """() => ({
+            lanesHydrator: typeof window.bwHydrateLanes,
+            plotHydrator: typeof window.bwHydratePlots,
+        })"""
     )
-    assert drawn == "3", "the hydrator drew the three synthetic columns"
+    assert state["lanesHydrator"] == "undefined", (
+        "the synthetic-lanes hydrator is removed with the skeleton"
+    )
+    assert state["plotHydrator"] == "function", "the scalar uPlot hydrator still ships"
 
 
 def test_a_reload_advisory_lands_on_the_open_page(

@@ -149,6 +149,32 @@ Operational notes: `preview-ui` is an interactive tool. It serves until you inte
 Under the explicitly acknowledged `--allow-network` mode, request bodies have no handler timeout. Only untrusted peers are affected. Do not expose the preview to untrusted peers.
 :::
 
+### The plugin stylesheet override (preview.css)
+
+A plugin can declare a local stylesheet override for its preview pages. The manifest declares an `assets[]` row whose `path` is exactly `preview.css`. The row also declares the file's `sha256`.
+
+**The manifest row.** Add an `assets[]` row to the manifest. Give `path` the value `preview.css`. The value must be exactly `preview.css`. Give `sha256` the digest of the file bytes. Put the file in the plugin's resource directory.
+
+```json
+{
+  "assets": [
+    { "path": "preview.css", "sha256": "5f2a9c8e1b7d4f6a0c3e9d2b8a7f1e4c6d5b3a9f0e8c7d6b5a4f3e2d1c0b9a87" }
+  ]
+}
+```
+
+**The serve-time checks.** At serve time the host checks the file bytes against the row's `sha256`. The file can be 64 KiB at most. The host serves it as `text/css`. The override loads last on your plugin's preview pages. The gateway never serves a plugin stylesheet override.
+
+**The refusal.** If the bytes do not match the pin, the host refuses the override. The page renders with the default tokens and carries the marker attribute `data-bw-override-refused` on the html element. A direct fetch of the file returns 403 with the prefix `standalone_preview_override_refused:`. A fetch when the manifest declares no override returns 404. The host also refuses an unreadable file or a file above the cap.
+
+**The cascade.** The override wins at equal CSS specificity, because it loads last. The host rules for the lanes figure sit at specificity (0,2,0). An example selector is `.bw-lanes__segment[data-bw-state-kind="high"]`. To change such a rule, an override must copy the exact selector. The reduced-motion rules are an accessibility floor. They carry `!important`, and an override cannot reach them.
+
+**The theme.** The preview uses the system color scheme, and it renders light and dark. The behavior is the same as the gateway console.
+
+**The capture page.** A page that carries a `digital_lanes` plot leads with the lane traces. The reading tiles sit below as the secondary surface. A page without a lanes plot keeps the tile-first layout.
+
+**The lanes figure today.** The figure shows the declared structure only. The acquisition line shows `Acquired 0 samples · plotted 0`. A channel hint `visible: false` hides that lane in the preview. A later release will add capture data to the preview fixtures.
+
 ## Mock transports (offline rehearsal)
 
 The standalone host serves a plugin on a scripted mock transport when you run `serve --transport mock` or `preview-ui`. For `serve`, the `mock` transport is the default. The script comes from the evidence file of the plugin, `src/<package>/vectors.json`. The file declares which of the two transaction dialects the adapter uses. The host serves the mock that matches the dialect.

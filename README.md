@@ -280,6 +280,20 @@ The options are the same as the listener and scenario options of `serve`: `--hos
 
 A default installation does not include the extra. The `benchweave-sdk-server` command still exists in a default installation. The `serve` and `mcp` commands then stop before they do any work. They print `benchweave_sdk_server_extras_missing: install 'benchweave-sdk[server]' for the serve, mcp and preview-ui commands` and exit with code 2.
 
+A plugin can declare a local stylesheet override for its preview pages. The manifest declares an `assets[]` row with `path` exactly `preview.css`. The row also declares the file's `sha256`. The file sits in the plugin's resource directory.
+
+At serve time the host checks the file bytes against the declared `sha256`. The file can be 64 KiB at most. The host serves it as `text/css`. The override loads last, and only on that plugin's preview pages. The gateway never serves a plugin stylesheet override.
+
+If the bytes do not match the pin, the host refuses the file. The page then renders with the default tokens and carries the marker attribute `data-bw-override-refused`. A direct fetch of the file returns 403 with the `standalone_preview_override_refused:` prefix. A fetch when the manifest declares no override returns 404.
+
+The override wins at equal CSS specificity, because it loads last. The host rules for the lanes figure sit at specificity (0,2,0). An example selector is `.bw-lanes__segment[data-bw-state-kind="high"]`. To change such a rule, an override must copy the exact selector. The reduced-motion rules are an accessibility floor. They carry `!important`, and an override cannot reach them.
+
+The preview uses the system color scheme, and it renders light and dark. The behavior is the same as the gateway console.
+
+A page that carries a `digital_lanes` plot leads with the lane traces. The reading tiles sit below as the secondary surface. A page without a lanes plot keeps the tile-first layout.
+
+The lanes figure shows the declared structure only. The acquisition line shows `Acquired 0 samples · plotted 0`. A channel hint `visible: false` hides that lane in the preview. A later release will add capture data to the preview fixtures.
+
 ## Public surfaces
 
 - `interfaces`: structural async `Adapter`, `HostServices`, `OperationContext` and optional `CaptureServices` definitions. You do not need an SDK superclass.

@@ -8,6 +8,20 @@
   {# The live state (severity badge, tiles, refused notices, plots) lives
      INSIDE the poll region: a polling browser swaps only this region, so
      anything outside it freezes at the first render (fold R-a). #}
+  {# Waveform first (fold F8, owner directive — issue comment 6127477670):
+     a digital analyzer leads with its lane traces, so the declared
+     captures render BEFORE the readings region on pages that carry them.
+     Pages WITHOUT lanes plots keep the tile-first shape below. #}
+  {% if lanes %}
+  <section class="bw-lanes-region" id="page-lanes-{{ page.id }}" aria-label="Declared captures">
+    {{ lanes }}
+  </section>
+  {% endif %}
+  {# The live state (severity badge, tiles, refused notices, scalar plots)
+     lives INSIDE the poll region: a polling browser swaps only this
+     region. The lanes figure above sits OUTSIDE it — a poll must not
+     wipe viewport state (the page's own controls rule, extended);
+     slice 3's zoom/scroll swaps land on that stable wrapper. #}
   <div id="page-readings"
        hx-get="/pages/{{ page.id }}/readings"
        hx-trigger="every 2s"
