@@ -18,9 +18,15 @@ acquires no capture data (that is the preview fixtures train's work), so the
 declaration is declaration-only: ``acquired=0``, no states, no events — the
 package's own "Acquired 0 samples · plotted 0" line is the one shown.
 
-No plugin-supplied plot options enter anywhere: the wrapper is closed
-(the manifest's channel hints are the only plugin input, and they flow
-through the package's own hint resolution).
+No plugin-supplied plot options enter anywhere: the wrapper is closed.
+The manifest's channel hints are the only plugin input, and each branch
+resolves exactly what it renders: the scalar branch flows hints through
+the package's own hint resolution (colour role, visibility per channel);
+the lanes branch honors exactly one key — an explicit ``visible: false``
+maps to ``LaneSpec.hidden`` and the package renders the hidden lane
+(issue #449 fold F1). Every other hint key has no lanes rendering, and
+``lane_group.default_collapsed`` and decoder ``settings`` stay unwired —
+the refute slate's row-call, recorded here, not an oversight.
 """
 
 from __future__ import annotations
@@ -233,17 +239,31 @@ def compose_page_plot(view: PlotView, ring: ObservationRing) -> PlotRender:
 def build_lanes_declaration(view: PlotView) -> LanesDeclaration:
     """The projected view → the package's declaration (issue #449 slice 1).
 
-    Lane specs in declared order: channel lanes from ``view.channels``,
-    group lanes from ``view.lane_groups`` (members and radix), decoder
-    lanes from ``view.decoder_lanes`` (first declared source channel).
-    Preview acquires no capture data, so the declaration is declaration-
-    only: ``acquired=0``, no states, no events. The lane index is the
-    declared position (the package's lane identity — never renumbered).
+    Lane specs in declared order: channel lanes from ``view.channels`` —
+    an explicit ``visible: false`` channel hint hides its lane (the
+    package renders ``data-hidden``; an omitted hint is not a hide
+    request) — group lanes from ``view.lane_groups`` (members and radix),
+    decoder lanes from ``view.decoder_lanes`` (first declared source
+    channel). Preview acquires no capture data, so the declaration is
+    declaration-only: ``acquired=0``, no states, no events. The lane
+    index is the declared position (the package's lane identity — never
+    renumbered).
     """
     lanes: list[LaneSpec] = []
     index = 0
     for channel in view.channels:
-        lanes.append(LaneSpec(index=index, kind="channel", label=channel.label))
+        # The hint's visibility rides the spec (fold F1): an explicit
+        # ``visible: false`` hides the lane — the package renders
+        # ``data-hidden`` plus its hidden marker — and an OMITTED hint is
+        # not a hide request (the scalar branch's own default, fold 1).
+        lanes.append(
+            LaneSpec(
+                index=index,
+                kind="channel",
+                label=channel.label,
+                hidden=channel.visible is False,
+            )
+        )
         index += 1
     for group in view.lane_groups:
         members = tuple(str(member) for member in group["member_ids"])

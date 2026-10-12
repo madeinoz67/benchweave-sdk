@@ -487,6 +487,7 @@ def _add_html_routes(
         return seam.presentation
 
     def shared(**extra: Any) -> dict[str, Any]:
+        override_link, override_refused = _preview_override_state()
         context: dict[str, Any] = {
             "mode_banner": mode_banner,
             "absent": catalogue.ABSENT_GUARANTEES,
@@ -494,24 +495,27 @@ def _add_html_routes(
             "csrf_token": policy.csrf_token,
             "reload_state": seam.reload_state,
             "pending_reload": seam.pending_reload,
-            "preview_override": _preview_override_link(),
+            "preview_override": override_link,
+            "preview_override_refused": override_refused,
         }
         context.update(extra)
         return context
 
-    def _preview_override_link() -> bool:
+    def _preview_override_state() -> tuple[bool, bool]:
         """Whether pages carry the plugin's declared ``preview.css``
         override: only when the bytes verify against the manifest pin at
         render time (issue #449 slice 1, design §3.1.4). A tampered or
-        oversize override renders the DEFAULT tokens — the refusal is the
-        asset route's, never a broken page."""
+        a REFUSED override is VISIBLE as such (fold F3: an author iterating
+        on a tampered override gets the page marker, never a silent no-op —
+        the prefixed detail rides the asset route's response). The page
+        renders the default tokens either way."""
         if not pres().available:
-            return False
+            return False, False
         try:
             raw = preview_override_bytes(pres().manifest, pres().resource_root)
         except PreviewOverrideRefused:
-            return False
-        return raw is not None
+            return False, True
+        return raw is not None, False
 
     async def _ui_call(
         operation: str, arguments: dict[str, Any] | None = None

@@ -184,7 +184,13 @@ code { font-family: var(--bw-font-data); font-size: 0.9em; }
    lane rows, realized per §E.4 — state kinds discriminable by geometry
    alone (high = upper half band, low = lower half band, x = diagonal
    hatch, z = center midline; the glitch mark = full-height vertical
-   stripes), colours token-referenced only, no glow on normal readings. */
+   stripes), colours token-referenced only, no glow on normal readings.
+
+   Specificity floor (fold F5): every selector here stays at or below
+   (0,2,0) — no ids, at most two class/attribute tokens. The plugin
+   override loads last but ranks BELOW these rules; and the a11y floor
+   is unreachable by design: globals.css's reduced-motion block carries
+   !important on universal selectors, which no override may beat. */
 .bw-lanes-region {
   margin-block: var(--bw-space-4);
 }
@@ -307,10 +313,6 @@ code { font-family: var(--bw-font-data); font-size: 0.9em; }
     var(--bw-surface-recessed) 0 3px,
     var(--bw-border) 3px 5px
   );
-}
-
-.bw-lanes__bus-cell[data-bw-state="x"]::before {
-  content: "?";
 }
 
 .bw-lanes__decoder {

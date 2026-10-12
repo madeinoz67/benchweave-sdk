@@ -133,6 +133,7 @@ def build_lanes_project(destination: Path, *, preview_css: bytes | None = None) 
                 lane_variable("d0"),
                 lane_variable("d1"),
                 lane_variable("d2"),
+                lane_variable("d3"),
             ],
         },
         {
@@ -175,14 +176,21 @@ def build_lanes_project(destination: Path, *, preview_css: bytes | None = None) 
                     "kind": "digital_lanes",
                     "binding_id": "logic-capture",
                     "x": "time",
-                    "y": ["d0", "d1", "d2"],
+                    "y": ["d0", "d1", "d2", "d3"],
+                    # F1's shape: a schema-valid lanes visibility hint —
+                    # d2 declares ``visible: false`` (the lanes-legal hint
+                    # form; colour_role is forbidden for this kind).
+                    "channel_hints": [{"variable_id": "d2", "visible": False}],
                     "lane_groups": [
                         {
                             "id": "bus_ab",
                             "label": "Bus AB",
                             "member_ids": ["d0", "d1"],
                             "radix": "hex",
-                        }
+                        },
+                        # F2's distinct shape: no label (label falls back
+                        # to the group id) and no radix (schema default).
+                        {"id": "bus_ef", "member_ids": ["d2", "d3"]},
                     ],
                     "decoder_lanes": [
                         {
@@ -274,17 +282,31 @@ def lanes_clients(lanes_project: Path) -> list[TestClient]:
 
 
 def _declaration_from(view: Any):
-    """The design §3.1.2 projection, stated independently of the host:
-    channel lanes from ``view.channels``, group lanes from
-    ``view.lane_groups`` (members and radix), decoder lanes from
-    ``view.decoder_lanes`` (first declared source channel) — acquired 0,
-    no states, no events."""
+    """The design §3.1.2 projection as a DRIFT PIN + package-determinism
+    check (fold F2): this is a same-commit transcription of the host's
+    ``build_lanes_declaration`` — the byte-parity metric cannot distinguish
+    a shared misreading of the design from host drift, and it is not
+    claimed to. What it proves: the host renders THROUGH the package (the
+    AR-3 control shows any host-authored markup breaks it) and the package
+    render is deterministic for the projected view. Distinct declared
+    shapes ride the fixture (F2b): the F1 visibility-hint channel, a
+    labelled hex group and a label-fallback/radix-default group, and a
+    decoder lane."""
     from benchweave_ui_html.lanes import LanesDeclaration, LaneSpec
 
     lanes = []
     index = 0
     for channel in view.channels:
-        lanes.append(LaneSpec(index=index, kind="channel", label=channel.label))
+        lanes.append(
+            LaneSpec(
+                index=index,
+                kind="channel",
+                label=channel.label,
+                # F1: the projected hint's visibility maps to the spec's
+                # hidden flag — an OMITTED or true hint stays visible.
+                hidden=channel.visible is False,
+            )
+        )
         index += 1
     for group in view.lane_groups:
         members = tuple(str(member) for member in group["member_ids"])
@@ -326,8 +348,8 @@ def _declaration_from(view: Any):
 
 
 def _package_render(view: Any) -> str:
-    """The package's own figure for the independently built declaration —
-    the same two package calls the host must route through."""
+    """The package's figure for the transcribed declaration — the same two
+    package calls the host must route through."""
     from benchweave_ui_html.lanes import compose_lanes
     from benchweave_ui_html.partials import render_lanes
 
@@ -370,14 +392,41 @@ def test_ar1_the_served_lanes_figure_is_byte_equal_to_the_package_render(
         assert literal in figures[0], literal
 
 
+def test_ar1_a_declared_visibility_hint_hides_its_lane(
+    lanes_clients: list[TestClient],
+) -> None:
+    """Fold F1: a schema-valid lanes visibility hint
+    (``channel_hints: [{variable_id: "d2", visible: false}]``) has its
+    rendered effect — the projected ``PlotChannel.visible`` maps to
+    ``LaneSpec.hidden`` and the package renders ``data-hidden`` plus its
+    hidden marker on that lane. The scalar branch honors the same field;
+    the lanes branch may not silently ignore it. Note the hint constrains
+    the CHANNEL lane only: the bus group claiming d2 still renders."""
+    figure = _figure(lanes_clients[0].get("/pages/capture").text)
+    d2_lane = re.search(
+        r'<div class="bw-lanes__lane"[^>]*data-bw-lane="2"[^>]*>', figure
+    )
+    assert d2_lane is not None, "the d2 channel lane renders"
+    assert "data-hidden" in d2_lane.group(0), (
+        "the declared visibility hint hides the d2 lane"
+    )
+    assert "hidden by presentation preference" in figure, (
+        "the package's hidden marker renders beside the label"
+    )
+
+
 def test_ar1_no_host_lanes_disclosure_string_remains() -> None:
-    """The skeleton's disclosure text is gone from the host package — the
-    package's own acquisition line is the one shown (the AR-3 control
-    reverts ``plots.py`` and this grep must fail with it)."""
+    """The skeleton's disclosure text is gone from the host package — in
+    ANY file type (fold F7: the old arm narrowed to ``*.py``, blind to a
+    disclosure that survives in a template, asset or doc). The package's
+    own acquisition line is the one shown (the AR-3 control restores the
+    skeleton and this grep must fail with it)."""
     offenders = [
         path
-        for path in sorted(HOST_PACKAGE.rglob("*.py"))
-        if "captures begin at I3" in path.read_text(encoding="utf-8")
+        for path in sorted(HOST_PACKAGE.rglob("*"))
+        if path.is_file()
+        and "captures begin at I3"
+        in path.read_bytes().decode("utf-8", errors="ignore")
     ]
     assert offenders == []
 
@@ -486,6 +535,32 @@ def test_ar4_a_tampered_override_refuses_and_the_page_renders_default_tokens(
         css_path.write_bytes(PREVIEW_CSS)
 
 
+def test_ar4_refused_override_is_distinct_from_undeclared_at_the_page(
+    override_project: Path,
+    override_client: TestClient,
+    lanes_clients: list[TestClient],
+) -> None:
+    """Fold F3: an author iterating on a tampered override gets a VISIBLE
+    signal — the page carries the ``data-bw-override-refused`` marker —
+    while an undeclared-override page renders no marker. Refused ≠
+    undeclared at the page surface; the direct-fetch trichotomy
+    (200 verified / 403 refused / 404 undeclared) stays pinned by the
+    neighbouring tests."""
+    css_path = override_project / "src" / "example_plugin" / "ui" / "preview.css"
+    css_path.write_bytes(b"/* tampered */\n")
+    try:
+        refused = override_client.get("/pages/capture").text
+    finally:
+        css_path.write_bytes(PREVIEW_CSS)
+    undeclared = lanes_clients[0].get("/pages/capture").text
+    assert "data-bw-override-refused" in refused, (
+        "a refused override must be visible at the page surface"
+    )
+    assert "data-bw-override-refused" not in undeclared, (
+        "an undeclared override renders no refusal marker"
+    )
+
+
 def test_ar4_an_undeclared_override_refuses(
     lanes_clients: list[TestClient],
 ) -> None:
@@ -500,14 +575,46 @@ def test_ar4_an_undeclared_override_refuses(
     assert served.status_code == 404
 
 
-def test_ar4_the_override_loads_last_so_the_override_wins(
-    override_client: TestClient,
-) -> None:
+def test_ar4_the_override_loads_last(override_client: TestClient) -> None:
+    """Fold F5 (cascade honesty): this pin is ORDER only. Link order does
+    NOT make the override win: standalone.css's lanes state-kind rules sit
+    at the (0,2,0) specificity floor — above a plugin's class-level
+    overrides — and globals.css's reduced-motion block carries
+    ``!important`` on universal selectors, an accessibility floor that is
+    unreachable by the override BY DESIGN. The host grants the override
+    order, not rank."""
     page = override_client.get("/pages/capture").text
     stylesheet_order = [
         match for match in re.findall(r'href="/assets/[a-z.-]+\.css"', page)
     ]
     assert stylesheet_order[-1] == 'href="/assets/preview.css"', stylesheet_order
+
+
+@pytest.mark.parametrize(
+    ("size", "expected_status"),
+    [
+        pytest.param(64 * 1024, 200, id="at-the-cap-serves"),
+        pytest.param(64 * 1024 + 1, 403, id="one-byte-over-refuses"),
+    ],
+)
+def test_ar4_the_override_size_cap_boundary_is_exact(
+    tmp_path: Path, size: int, expected_status: int
+) -> None:
+    """Fold F4: the cap boundary is EXACT — 65536 bytes serve
+    byte-identical; 65537 refuse with the cap message. The cap is a
+    serve-time bound (the load-time reader caps at 16 MiB per asset; this
+    surface refuses above 64 KiB)."""
+    css = (b"/* cap probe */\n" + b"x" * size)[:size]
+    project = tmp_path / f"cap_plugin_{size}"
+    build_lanes_project(project, preview_css=css)
+    client = _app_client(project)
+    served = client.get("/assets/preview.css")
+    assert served.status_code == expected_status, served.text[:120]
+    if expected_status == 200:
+        assert served.content == css, "at-cap bytes serve byte-identical"
+    else:
+        assert served.text.startswith("standalone_preview_override_refused:")
+        assert "exceeds the 64 KiB cap" in served.text
 
 
 # --- §3.1.6: the host's lanes component CSS (§E.4 constraints) --------------------
@@ -529,6 +636,34 @@ def test_the_lanes_css_realizes_state_kinds_in_geometry_with_token_colours() -> 
     assert "data-bw-glitch" in values, "the glitch mark has its own geometry"
     assert not re.search(r"#[0-9a-fA-F]{3,8}\b", values), "no colour literals"
     assert "box-shadow" not in values, "no glow on normal readings"
+
+
+def test_the_lanes_css_stays_at_the_specificity_floor() -> None:
+    """Fold F5: every lanes rule stays at or below the (0,2,0)
+    specificity floor — zero id selectors, at most two class/attribute
+    tokens per selector (type tokens cannot outrank a lower-b tuple, so
+    (0,1,1) is inside the floor). The host grants the plugin override
+    order, not rank: the state-kind geometry keeps its floor regardless
+    of where the override link sits."""
+    css = (UI_ASSETS / "standalone.css").read_text(encoding="utf-8")
+    block = css[css.index("/* The digital-lanes figure") :]
+    block = re.sub(r"/\*.*?\*/", "", block, flags=re.DOTALL)
+    for rule in block.split("}"):
+        selector = rule.split("{")[0].strip()
+        if not selector:
+            continue
+        for single in selector.split(","):
+            single = single.strip()
+            if not single:
+                continue
+            specificity = (
+                single.count("#"),
+                len(re.findall(r"\.", single)) + len(re.findall(r"\[", single)),
+                len(re.findall(r"::", single)),
+            )
+            assert specificity <= (0, 2, 0), (
+                f"{single!r} exceeds the (0,2,0) lanes specificity floor"
+            )
 
 
 # --- the AR-3 RED control is a REPORT-level proof (cp-backup revert of
