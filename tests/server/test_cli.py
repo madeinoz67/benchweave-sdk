@@ -71,16 +71,27 @@ def test_corrupt_descriptor_refuses_with_the_sdk_diagnostics(
 
 
 def test_mcp_command_builds_without_an_http_listener(starter_project: Path) -> None:
-    """The stdio entry constructs the full server; it never binds a port
-    (NFR-S4 posture — asserted by building everything short of run())."""
+    """The stdio entry's FALLBACK construction (issue #440: the reshaped
+    command's no-host path) yields the full tool set; it never binds a
+    port (NFR-S4 posture — asserted by building everything short of
+    run()). The fallback marker rides the instructions (the disclosed
+    no-browser session)."""
     from benchweave_sdk_server.cli import _build_seam
-    from benchweave_sdk_server.mcp import build_mcp, registered_tool_names
+    from benchweave_sdk_server.mcp import registered_tool_names
+    from benchweave_sdk_server.shim import FALLBACK_MARKER, build_fallback_server
 
     seam, _ = _build_seam(starter_project)
-    server = build_mcp(seam, authoring=True)
-    names = set(registered_tool_names(server))
-    assert "bws_v1_host_info" in names
-    assert "plugin_new" in names
+    server = build_fallback_server(seam, authoring=True)
+    try:
+        names = set(registered_tool_names(server))
+        assert "bws_v1_host_info" in names
+        assert "plugin_new" in names
+        assert FALLBACK_MARKER in server.instructions
+    finally:
+        import asyncio
+
+        asyncio.run(seam.settle_capture_for_shutdown())
+        seam.close()
 
 
 # --- slice A: the console entry degrades gracefully without the extra ------
@@ -143,6 +154,11 @@ def test_serve_without_the_server_extra_refuses_gracefully(
 def test_mcp_without_the_server_extra_refuses_gracefully(
     starter_project: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """AM2 (issue #440): the no-extra refusal covers the discovery
+    import path too — the reshaped command imports the discovery
+    machinery (shim.py stays extra-free) and the extra's own machinery
+    inside ONE guard: blocking fastmcp refuses TYPED before any
+    discovery work runs, exit 2, never a traceback out of discovery."""
     _simulate_default_install(monkeypatch, "fastmcp")
     result = CliRunner().invoke(cli, ["mcp", str(starter_project)])
     assert result.exit_code == 2
