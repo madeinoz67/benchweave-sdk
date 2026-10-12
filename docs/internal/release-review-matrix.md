@@ -188,3 +188,20 @@ the checklist is a matrix in `docs/internal`, and a skill walks it.
 | 7 | Contributor window `v0.8.0..HEAD` | 71 commits in the window — human authors other than the operator/bots: none; the walk acknowledges new human contributors and records an empty window as a result |
 | 8 | Gateway uv.lock SDK pin | recorded note — moves at the gateway's next lock run / pointer advance |
 | 9 | Served-set bump class | n-a — no served-set motion in the window: standards-lock.json is identical to v0.8.0's apart from compatibility.sdk (the certified-version field) |
+
+## Result record — v0.10.0 (2026-10-12)
+
+| # | Surface | Result |
+|---|---------|--------|
+| 1 | README stamp | updated → SDK 0.10.0 by release-cut (occurrence-validated) |
+| 1b | User-guide "current SDK" sentence | updated BY THE WALK — the guide still stamped 0.7.1 (three releases stale, this row's own documented lag pattern); corrected to 0.10.0 in the release commit |
+| 2 | Website hero status | confirmed — SDK 0.10.0 by release-cut (occurrence-validated); OTDP 0.2.2 / adapter API 1.1 confirmed against the lock's active otdp row |
+| 3 | Docs selector | PHASE-2 — patch staged at `.release/phase2-v0.10.0.patch` (1018 B, verified present); the tag commit applies it (registration precedes the tag) |
+| 4 | Compatibility tagline | confirmed — SDK 0.10.0 against the main-repository floor `>=0.1.0`; the lock anchor moved `compatibility.sdk` → 0.10.0 (the lock-anchor ritual, the #189 pairing shape) |
+| 5 | Standards badges | confirmed correct-as-is — all six match the lock's ACTIVE rows (otdp 0.2.2, registry 0.1.2, execution 0.2.0, interface 0.1.0, plugin-ui 0.3.0, plugin-ui-preview 0.2.0); zero committed lock motion in the window |
+| 6 | great-docs.yml versions | PHASE-2 — the tag commit applies the staged patch (the ordering constraint) |
+| 7 | Contributor window `v0.9.0..HEAD` | empty — the 80-commit window resolves to the owner (madeinoz67 / Stephen Eaton, one human) and dependabot[bot]; no new human contributors; recorded result |
+| 8 | Gateway uv.lock SDK pin | recorded note — moves at the gateway's next lock run / pointer advance |
+| 9 | Served-set bump class | n-a — `git diff v0.9.0..HEAD -- standards-lock.json` is empty (zero committed lock motion); only the staged `compatibility.sdk` anchor moves with this release |
+
+Test surfaces: T1/T2 confirmed by the byte-parity suite at the staged tree (34/0/0, junitxml); T3's docstring already names `make release-cut` as the procedure (no motion); T4 inert by design.
