@@ -406,7 +406,9 @@ def _preset_firmwares(seam: Any, explicit: str | None) -> list[str]:
     explicit argument first, then the CONNECTED device's established
     firmware, then every firmware the descriptor itself declares (the
     plugin's own declaration is the authority offline — A02's posture).
-    The vendored validator needs one concrete firmware; None is not one."""
+    The list carries concrete firmware strings only; the commissioned
+    None posture is decided by ``_validated_preset`` when this list is
+    empty."""
     if explicit:
         return [explicit]
     identity = getattr(seam.session, "identity", None) or {}
@@ -440,10 +442,37 @@ def _validated_preset(
     findings: list[dict[str, str]] = []
     candidates = _preset_firmwares(seam, firmware)
     if not candidates:
-        raise AuthoringError(
-            "no firmware to judge the preset against: the descriptor "
-            "declares none and no device is established"
+        descriptor = seam.session.plugin.descriptor
+        policy = (
+            descriptor.get("identity", {}).get("firmware_policy")
+            if isinstance(descriptor, dict)
+            else None
         )
+        if policy != "commissioned":
+            raise AuthoringError(
+                "no firmware to judge the preset against: the descriptor "
+                "declares none and no device is established"
+            )
+        # Commissioned policy with no descriptor-declared list: the bench's
+        # commissioned record is the firmware authority, so the offline
+        # check judges structure only — firmware=None is the honest posture
+        # and the apply-time established-firmware gate governs.
+        report = validate_preset(
+            raw,
+            descriptor_raw=descriptor_raw,
+            settings_schema_raw=settings_raw,
+            firmware=None,
+        )
+        if getattr(report, "valid", False):
+            return True, []
+        return False, [
+            {
+                "code": str(getattr(finding, "code", "")),
+                "path": str(getattr(finding, "path", "")),
+                "message": str(getattr(finding, "message", "")),
+            }
+            for finding in getattr(report, "findings", [])
+        ]
     for candidate in candidates:
         report = validate_preset(
             raw,
