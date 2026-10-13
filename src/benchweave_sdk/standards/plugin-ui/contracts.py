@@ -446,12 +446,29 @@ def _target_findings(
             or any(p not in descriptor.get("profiles", []) for p in target["profile_ids"])
         ):
             findings.append(mismatch)
-        profile_map = {
-            profile["id"]: profile
-            for document in documents.values()
-            for profile in document.get("profiles", [])
-            if isinstance(profile, dict) and "id" in profile
-        }
+        profile_rows: dict[str, list[dict[str, Any]]] = {}
+        for document in documents.values():
+            for profile in document.get("profiles", []):
+                if isinstance(profile, dict) and "id" in profile:
+                    profile_rows.setdefault(profile["id"], []).append(profile)
+        # Last-wins map, byte-identical to the 0.3.0 comprehension it
+        # replaces; identical duplicates dedup benignly.
+        profile_map = {profile_id: rows[-1] for profile_id, rows in profile_rows.items()}
+        # A pinned (plugin-authored) document may re-declare a corpus
+        # profile id: identical rows stay benign dedup, divergent rows make
+        # the binding result order-dependent. Refuse on the targets that
+        # bind the shadowed id (#446 slice 2).
+        for profile_id in target["profile_ids"]:
+            rows = profile_rows.get(profile_id, [])
+            if len(rows) > 1 and any(row != rows[0] for row in rows[1:]):
+                findings.append(
+                    Finding(
+                        "profile_shadow",
+                        path,
+                        f'Profile id "{profile_id}" is declared with '
+                        "divergent rows by multiple documents",
+                    )
+                )
         if not target["profile_ids"] or any(
             profile not in profile_map
             or action
@@ -620,6 +637,64 @@ def _plot_findings(
                 )
             hinted.add(variable_id)
     return findings
+
+
+def merge_pinned_documents(
+    schema_documents: Mapping[str, dict[str, Any]],
+    pinned_documents: Mapping[str, dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Union digest-pinned plugin contract documents into the served set.
+
+    The composition-side seam for plugin-authored profile documents (#446
+    slice 2): the SDK's ``pinned_contract_documents`` and the gateway read
+    side merge their digest-verified pinned documents through this guard, so
+    a pinned document can neither shadow a served schema ``$id`` nor alias a
+    sibling pinned ``$id`` (the poisoning vector design §3.2 closes).
+
+    The guard scans exactly the ids the composition's alias registry
+    resolves — a document's own ``$id`` and its per-action
+    ``input_schema``/``output_schema`` ``$id``s. Deeper-nested ``$id``s are
+    outside this scope by construction: the alias loop does not alias them,
+    so they cannot shadow through this mechanism.
+
+    Refusal: ``DocumentError`` carrying code ``pinned_id_shadow`` — the
+    design's ``pinned_id_shadow:`` refusal prefix, enforced at one shared
+    point for both composition surfaces (design record fold-in addendum
+    §14.3).
+    """
+
+    def embedded_ids(document: dict[str, Any]) -> set[str]:
+        ids: set[str] = set()
+        if "$id" in document:
+            ids.add(document["$id"])
+        actions = document.get("actions")
+        if isinstance(actions, dict):
+            for action in actions.values():
+                if not isinstance(action, dict):
+                    continue
+                for key in ("input_schema", "output_schema"):
+                    schema = action.get(key, {})
+                    if isinstance(schema, dict) and "$id" in schema:
+                        ids.add(schema["$id"])
+        return ids
+
+    corpus_ids: set[str] = set()
+    for document in schema_documents.values():
+        corpus_ids |= embedded_ids(document)
+    merged = dict(schema_documents)
+    claimed: set[str] = set()
+    for key, document in pinned_documents.items():
+        ids = embedded_ids(document)
+        collision = ids & (corpus_ids | claimed)
+        if collision:
+            raise DocumentError(
+                f'Pinned contract document "{key}" embeds $id '
+                f'"{sorted(collision)[0]}" that shadows a served schema $id',
+                "pinned_id_shadow",
+            )
+        claimed |= ids
+        merged[f"pinned:{key}"] = document
+    return merged
 
 
 def validate_presentation(
