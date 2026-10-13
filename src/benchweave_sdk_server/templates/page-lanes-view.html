@@ -1,0 +1,19 @@
+<div class="bw-lanes-viewport" data-bw-lanes-view="{{ view_id }}">
+  <div class="bw-lanes-host" data-bw-lanes-host>
+    {{ figure }}
+  </div>
+  {% if controls %}
+  {# The viewport toolbar: server-computed, server-clamped GET URLs — no
+     client-side window state (a poll could not wipe it, but it could drift
+     stale). A viewport swap replaces the whole block, and the new block
+     carries the new window's own controls. #}
+  <div class="bw-lanes-controls" role="toolbar" aria-label="Capture viewport — {{ view_label }}">
+    {% for control in controls %}
+    <button type="button" class="bw-lanes-control"
+            hx-get="{{ control.url }}"
+            hx-target="closest .bw-lanes-viewport"
+            hx-swap="outerHTML">{{ control.label }}</button>
+    {%- endfor %}
+  </div>
+  {% endif %}
+</div>

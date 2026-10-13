@@ -34,10 +34,17 @@ from __future__ import annotations
 import json
 import math
 from collections import deque
-from dataclasses import dataclass, field
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from typing import Any
 
-from benchweave_ui_html.lanes import LanesDeclaration, LaneSpec, compose_lanes
+from benchweave_ui_html.decimate import LaneState
+from benchweave_ui_html.lanes import (
+    Cursor,
+    LanesDeclaration,
+    LaneSpec,
+    compose_lanes,
+)
 from benchweave_ui_html.plot import ChannelHint, TraceSpec, compose_plot
 
 from benchweave_sdk.preview_models import PlotView
@@ -302,25 +309,217 @@ def build_lanes_declaration(view: PlotView) -> LanesDeclaration:
     )
 
 
+def lanes_source(view: PlotView) -> tuple[LanesDeclaration, dict[str, tuple[LaneState, ...]]]:
+    """The page's lanes capture source (issue #449 slice 3's seam).
+
+    Returns the composer's two inputs — the declaration and the bus-group
+    member states. Preview acquires no capture data yet (that is slice 2's
+    fixtures train), so the production body is the declaration-only
+    projection with EMPTY member sequences. Both the page render and the
+    viewport partial consume whatever this returns: slice 2 replaces this
+    BODY, not the seam.
+
+    The bus-cell walk needs every declared member present in
+    ``member_states`` (the package raises on a missing member even when the
+    sequence is empty), so each member binds an EMPTY sequence: no samples,
+    no cells — the package's empty path.
+    """
+    declaration = build_lanes_declaration(view)
+    member_states: dict[str, tuple[LaneState, ...]] = {
+        str(member): ()
+        for group in view.lane_groups
+        for member in group["member_ids"]
+    }
+    return declaration, member_states
+
+
 def plot_lanes_html(view: PlotView) -> str:
     """The package's lanes figure for one declared digital-lanes view.
 
     Composition runs through :func:`benchweave_ui_html.lanes.compose_lanes`
     and the package's ``render_lanes`` partial — the host authors no lane
-    markup. The declaration-only render's bus-cell walk needs every
-    declared member present in ``member_states`` (the package raises on a
-    missing member even when the sequence is empty), so each member binds
-    an EMPTY sequence: no samples, no cells — the package's empty path.
+    markup.
     """
     from benchweave_ui_html.partials import render_lanes
 
-    declaration = build_lanes_declaration(view)
-    member_states = {
-        str(member): ()
-        for group in view.lane_groups
-        for member in group["member_ids"]
-    }
+    declaration, member_states = lanes_source(view)
     return render_lanes(compose_lanes(declaration, member_states))
+
+
+def window_lanes_capture(
+    declaration: LanesDeclaration,
+    member_states: Mapping[str, Sequence[LaneState]],
+    first: int,
+    last: int,
+) -> tuple[LanesDeclaration, dict[str, tuple[LaneState, ...]]]:
+    """The windowed recomposition of one lanes capture (issue #449 slice 3,
+    design §3.3): zoom and scroll are VIEWPORT state over composed columns.
+
+    ``first``/``last`` are ABSOLUTE SAMPLE INDICES into the capture — the
+    composer's native grid (``reduce_lane`` partitions sample indices;
+    ``LaneSegment.first/last`` are sample indices) and the only unit
+    addressable both with and without a declared rate (the composer's
+    seconds form, ``round(t * (rate or 0.0))``, degenerates without one).
+    The half-open window ``[first, last)`` clamps into ``[0, acquired)``; a
+    window that clamps empty raises ``ValueError`` — an empty figure would
+    launder an empty window as a rendered capture.
+
+    Recomposition slices the channel states and the bus members to the
+    window, resets ``acquired`` to the window's count and the column budget
+    to ``min(columns, window)`` — the acquisition line therefore reports the
+    WINDOWED counts — and discloses the absolute span on the axis label
+    (``· samples first–last-1``), because every drawn position is now
+    window-relative and an undisclosed offset would launder it.
+
+    The capture's annotations rebase, never duplicate: in-window trigger and
+    cursor markers shift to ``sample - first`` (the composer's own
+    seconds→samples round-trip absorbs the float slop), out-of-window
+    markers drop rather than render off the shown range, and decoder events
+    shift by the window offset in seconds (never quantized to samples). A
+    declaration without a rate has no honest seconds↔samples mapping, so
+    its trigger/cursors drop instead of pinning to the window start; its
+    decoder events were never renderable (the composer awaits a rate) and
+    pass through untouched.
+    """
+    first = max(0, first)
+    last = min(declaration.acquired, last)
+    if first >= last:
+        raise ValueError(
+            f"empty window [{first}, {last}) over {declaration.acquired} acquired samples"
+        )
+    rate = declaration.sample_rate_hz
+    window_samples = last - first
+    lanes: list[LaneSpec] = []
+    for spec in declaration.lanes:
+        if spec.kind == "channel":
+            lanes.append(replace(spec, states=tuple(spec.states[first:last])))
+        elif spec.kind == "decoder" and rate:
+            offset_s = first / rate
+            window_s = window_samples / rate
+            lanes.append(
+                replace(
+                    spec,
+                    events=tuple(
+                        replace(
+                            event,
+                            # round(..., 9): the shift is float subtraction,
+                            # and 0.7 - 0.5 must not render as
+                            # 0.19999999999999996 — nine decimals carry
+                            # nanosecond exactness at any realistic rate
+                            # while dropping the binary-noise tail.
+                            start_s=round(event.start_s - offset_s, 9),
+                            end_s=round(event.end_s - offset_s, 9),
+                        )
+                        for event in spec.events
+                        if event.end_s > offset_s
+                        and event.start_s - offset_s < window_s
+                    ),
+                )
+            )
+        else:
+            lanes.append(spec)  # bus groups: states ride member_states
+    states = {
+        str(name): tuple(sequence[first:last])
+        for name, sequence in member_states.items()
+    }
+
+    trigger_s = declaration.trigger_s
+    cursors = declaration.cursors
+    if rate:
+        rate_hz = rate  # non-optional binding for the helpers below
+
+        def _in_window(position_s: float) -> int | None:
+            sample = round(position_s * rate_hz)
+            return sample if first <= sample < last else None
+
+        def _rebased(sample: int) -> float:
+            # Same noise-tail cleanup as the decoder shift above; the
+            # composer's own seconds→samples round-trip then recovers the
+            # exact sample.
+            return round((sample - first) / rate_hz, 9)
+
+        if trigger_s is not None:
+            sample = _in_window(trigger_s)
+            trigger_s = None if sample is None else _rebased(sample)
+        kept: list[Cursor] = []
+        for cursor in cursors:
+            sample = _in_window(cursor.position_s)
+            if sample is not None:
+                kept.append(replace(cursor, position_s=_rebased(sample)))
+        cursors = tuple(kept)
+    else:
+        trigger_s = None
+        cursors = ()
+
+    return (
+        replace(
+            declaration,
+            lanes=tuple(lanes),
+            acquired=window_samples,
+            columns=min(declaration.columns, window_samples),
+            axis_label=(
+                f"{declaration.axis_label} · samples {first}–{last - 1}"
+            ),
+            trigger_s=trigger_s,
+            cursors=cursors,
+        ),
+        states,
+    )
+
+
+def lanes_viewport_controls(
+    page_id: str, view_id: str, first: int, last: int, acquired: int
+) -> list[dict[str, str]]:
+    """The viewport toolbar for one window (issue #449 slice 3): server-
+    computed GET URLs the block's buttons swap through. Every URL's window
+    is clamped HERE, server-side — the client carries no window state (a
+    poll could not wipe it, but it could also drift stale); the swapped
+    block re-renders with the new window's own controls.
+
+    ``◀``/``▶`` shift by half the window, size-preserving, clamped into the
+    capture; ``Zoom ×½`` halves the window around its centre; ``Full``
+    resets (no parameters). A control is omitted when its action is a
+    no-op, and the whole toolbar is empty over a capture nothing can
+    navigate (``acquired == 0``).
+    """
+    if acquired <= 0:
+        return []
+    size = last - first
+    step = max(1, size // 2)
+    base = f"/pages/{page_id}/lanes/{view_id}"
+
+    def _shifted(delta: int) -> tuple[int, int]:
+        new_first = first + delta
+        new_last = last + delta
+        if new_first < 0:
+            new_last -= new_first
+            new_first = 0
+        if new_last > acquired:
+            new_first -= new_last - acquired
+            new_last = acquired
+        return new_first, new_last
+
+    controls: list[dict[str, str]] = []
+    if first > 0:
+        shift_first, shift_last = _shifted(-step)
+        controls.append(
+            {"label": "◀", "url": f"{base}?from={shift_first}&to={shift_last}"}
+        )
+    controls.append({"label": "Full", "url": base})
+    half = size // 4
+    if size >= 4 and last - half - (first + half) >= 2:
+        controls.append(
+            {
+                "label": "Zoom ×½",
+                "url": f"{base}?from={first + half}&to={last - half}",
+            }
+        )
+    if last < acquired:
+        shift_first, shift_last = _shifted(step)
+        controls.append(
+            {"label": "▶", "url": f"{base}?from={shift_first}&to={shift_last}"}
+        )
+    return controls
 
 
 def plot_host_html(view: PlotView, ring: ObservationRing) -> str:
