@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.11.1] - 2026-10-13
+
+### Features
+
+- The twin gains merge_pinned_documents + profile_shadow (#446 slice 2)
+
+### Miscellaneous
+
+- Stage the v0.11.1 cut
+- Apply the v0.11.1 phase-2 registration
+
+### Testing
+
+- RED — twin profile-shadow arms (#446 slice 2)
+
+
+### Contributors
+
+- Stephen Eaton (4 commits)
 ## [0.11.0] - 2026-10-13
 
 ### Bug Fixes
