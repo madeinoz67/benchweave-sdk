@@ -1,9 +1,9 @@
 {
-  "contract_version": "0.3.0",
+  "contract_version": "0.3.1",
   "descriptor_sha256": "9c4f80da496ba392d91483e49db4fcc3b878319640fe30773b7689162d8b8458",
   "resource_root": "ui",
   "manifest": {
     "path": "manifest.json",
-    "sha256": "d2ed5ade4cebc119204fb234b211086351e2a841dd601af35e52b4c0199f3bad"
+    "sha256": "6a4d1efa3e1fe0538ec96e448a0c932172161178eeddfb45c1eb66e33d47029e"
   }
 }

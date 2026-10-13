@@ -354,3 +354,105 @@ def test_overdeep_descriptor_in_resolve_preset_action_is_typed() -> None:
     deep = b'{"a": ' + b"[" * 1000 + b"]" * 1000 + b"}"
     with pytest.raises(ValueError, match="descriptor_document_limit_exceeded:"):
         presentation.resolve_preset_action(b"{}", descriptor_raw=deep)
+
+
+# --- issue #444: the commissioned policy's firmware authority -------------------
+
+_SETPOINT = (
+    Path(__file__).resolve().parent / "fixtures" / "setpoint_plugin" / "src" / "setpoint_demo"
+)
+_INCOMPATIBLE = (
+    "incompatible_firmware",
+    "preset.supported_firmware",
+    "A known firmware compatible with the descriptor and preset is required",
+)
+
+
+def _report(descriptor_identity: dict, firmware: str | None):
+    """Validate the fixture preset against a rebound descriptor identity."""
+    descriptor = json.loads((_SETPOINT / "descriptor.json").read_bytes())
+    descriptor["identity"] = descriptor_identity
+    report = presentation.validate_preset(
+        (_SETPOINT / "config/presets/steady.json").read_bytes(),
+        descriptor_raw=json.dumps(descriptor).encode(),
+        settings_schema_raw=(_SETPOINT / "config/settings.schema.json").read_bytes(),
+        firmware=firmware,
+    )
+    return report
+
+
+def test_commissioned_policy_admits_missing_firmware() -> None:
+    """The corpus's commissioned pattern (policy commissioned, no
+    descriptor-side firmware list): a missing firmware value is the honest
+    offline posture — the bench's commissioned record is the authority and
+    the apply-time established-firmware gate governs."""
+    report = _report(
+        {
+            "strategy": "adapter",
+            "manufacturer": "BenchWeave Labs",
+            "model": "setpoint-demo",
+            "firmware_policy": "commissioned",
+        },
+        None,
+    )
+    assert report.valid, report.findings
+
+
+def test_commissioned_policy_admits_preset_listed_firmware() -> None:
+    report = _report(
+        {
+            "strategy": "adapter",
+            "manufacturer": "BenchWeave Labs",
+            "model": "setpoint-demo",
+            "firmware_policy": "commissioned",
+        },
+        "1.0.0",
+    )
+    assert report.valid, report.findings
+
+
+def test_commissioned_preset_list_mismatch_refuses() -> None:
+    """Negative control C3: the preset's own declared applicability list
+    keeps full force regardless of policy."""
+    report = _report(
+        {
+            "strategy": "adapter",
+            "manufacturer": "BenchWeave Labs",
+            "model": "setpoint-demo",
+            "firmware_policy": "commissioned",
+        },
+        "2.0.0",
+    )
+    assert [(f.code, f.path, f.message) for f in report.findings] == [_INCOMPATIBLE]
+
+
+def test_commissioned_declared_list_still_enforced_for_missing() -> None:
+    """Rule 3: a descriptor-DECLARED firmware list is enforced regardless of
+    policy — None is not a member."""
+    report = _report(
+        {
+            "strategy": "adapter",
+            "manufacturer": "BenchWeave Labs",
+            "model": "setpoint-demo",
+            "firmware_policy": "commissioned",
+            "supported_firmware": ["1.0.0"],
+        },
+        None,
+    )
+    assert [(f.code, f.path, f.message) for f in report.findings] == [_INCOMPATIBLE]
+
+
+def test_listed_policy_missing_firmware_refuses() -> None:
+    """Negative control C4: unknown firmware still fails under listed
+    policy."""
+    report = _report(
+        {
+            "strategy": "adapter",
+            "manufacturer": "BenchWeave Labs",
+            "model": "setpoint-demo",
+            "firmware_policy": "listed",
+            "supported_firmware": ["1.0.0"],
+        },
+        None,
+    )
+    assert [(f.code, f.path, f.message) for f in report.findings] == [_INCOMPATIBLE]

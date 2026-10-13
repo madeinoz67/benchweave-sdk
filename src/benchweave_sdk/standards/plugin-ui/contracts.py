@@ -17,7 +17,7 @@ from referencing.jsonschema import DRAFT202012
 
 MAX_DOCUMENT_BYTES = 262144
 MAX_DEPTH = 32
-SCHEMA_ROOT = "https://benchweave.dev/contracts/plugin-ui/0.3.0/"
+SCHEMA_ROOT = "https://benchweave.dev/contracts/plugin-ui/0.3.1/"
 
 
 class DocumentError(ValueError):
@@ -244,7 +244,7 @@ def validate_preset(
         except DocumentError as exc:
             return ValidationReport((Finding(exc.code, path, str(exc)),))
     preset, descriptor, settings_schema = decoded
-    if preset.get("contract_version") != "0.3.0":
+    if preset.get("contract_version") != "0.3.1":
         return ValidationReport(
             (
                 Finding(
@@ -276,13 +276,27 @@ def validate_preset(
     identity = descriptor.get("identity", {})
     if not isinstance(identity, dict):
         identity = {}
+    descriptor_firmware = identity.get("supported_firmware")
     if (
-        firmware is None
-        or firmware not in preset["supported_firmware"]
-        or (
-            identity.get("firmware_policy") != "any"
-            and firmware not in identity.get("supported_firmware", [])
-        )
+        # Rule 1: the preset's own applicability list always applies — a
+        # supplied firmware must be a member (the plugin author's claim
+        # keeps its full force, including at apply time).
+        (firmware is not None and firmware not in preset["supported_firmware"])
+        # Rule 2: a missing firmware value is admissible only under the
+        # commissioned policy — the honest "cannot be decided from the
+        # descriptor" posture for offline checks, with the apply-time
+        # established-firmware gate governing. Under listed policy an
+        # unknown firmware still fails. (The predecessor's "any" arm was
+        # unreachable: firmware_policy is ["listed", "commissioned"] in
+        # every OTDP schema version in this tree, and the gate only sees
+        # OTDP-validated descriptors.)
+        or (firmware is None and identity.get("firmware_policy") != "commissioned")
+        # Rule 3: a descriptor-DECLARED firmware list is enforced regardless
+        # of policy (None is not a member): under listed the schema requires
+        # the list, and a commissioned descriptor that declares one keeps
+        # its descriptor-side membership check — nothing a declarer relies
+        # on silently disappears.
+        or (isinstance(descriptor_firmware, list) and firmware not in descriptor_firmware)
     ):
         findings.append(
             Finding(
@@ -355,7 +369,7 @@ def _checked_document(
     raw: bytes, name: str, documents: Mapping[str, dict[str, Any]]
 ) -> dict[str, Any]:
     document = parse_document(raw)
-    if document.get("contract_version") != "0.3.0":
+    if document.get("contract_version") != "0.3.1":
         raise _Rejected((Finding("unsupported_version", name, "Unsupported contract version"),))
     schema = documents.get(SCHEMA_ROOT + name + ".schema.json")
     if schema is None:
