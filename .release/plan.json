@@ -1,0 +1,43 @@
+{
+  "base_sha": "8a34c54b2ed1fe3610ce84b79b0e6547aed19c4e",
+  "prev_tag": "v0.11.0",
+  "surfaces": [
+    {
+      "kind": "substitution",
+      "path": "pyproject.toml"
+    },
+    {
+      "kind": "substitution",
+      "path": "uv.lock"
+    },
+    {
+      "kind": "substitution",
+      "path": "README.md"
+    },
+    {
+      "kind": "substitution",
+      "path": "website/index.html"
+    },
+    {
+      "kind": "substitution",
+      "path": "standards-lock.json"
+    },
+    {
+      "kind": "regen",
+      "path": "tests/fixtures/scaffold_expected"
+    },
+    {
+      "kind": "derived",
+      "path": "docs/internal/release-review-matrix.md"
+    },
+    {
+      "kind": "phase2",
+      "path": "great-docs.yml"
+    },
+    {
+      "kind": "phase2",
+      "path": "website/index.html"
+    }
+  ],
+  "version": "0.11.1"
+}
