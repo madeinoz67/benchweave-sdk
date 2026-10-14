@@ -65,6 +65,32 @@ def schemas() -> dict[str, Any]:
     return result
 
 
+def _pinned_schemas(descriptor: dict[str, Any]) -> dict[str, Any]:
+    """The served document map for the validator's profile-row scan: the OTDP
+    catalogs — the profile/action row carriers — follow the descriptor's own
+    pin, while $id-addressed documents stay served-wide (urn:otdp:measurement:
+    0.2.0 resolves only from 0.2.0's measurement schema; the $id was retired
+    from the 0.2.1+ schemas). Without the catalog scope, two served versions
+    whose profile rows legitimately evolved read as a profile_shadow refusal
+    in the vendored twin's flat scan over every document's rows."""
+    scoped = dict(schemas())
+    pin = descriptor.get("otdp_version")
+    if not isinstance(pin, str) or not pin:
+        pin = active_version("otdp")
+    prefix = f"otdp/{pin}/"
+    stale = [
+        key
+        for key in scoped
+        if isinstance(key, str)
+        and key.startswith("otdp/")
+        and key.endswith("device-profile-catalog.json")
+        and not key.startswith(prefix)
+    ]
+    for key in stale:
+        del scoped[key]
+    return scoped
+
+
 def _open_no_follow(part: str, flags: int, directory: int) -> int:
     """Open one strict component, naming symlink refusals over raw errno prose.
 
@@ -264,7 +290,7 @@ def validate_preset(
         raw,
         descriptor_raw=descriptor_raw,
         settings_schema_raw=settings_schema_raw,
-        schema_documents=schemas(),
+        schema_documents=_pinned_schemas(descriptor),
         firmware=firmware,
         action_id=action_id,
     )
@@ -342,7 +368,7 @@ def validate_presentation(
         descriptor_raw=descriptor_raw,
         resources=resources,
         binding_catalogue=binding_catalogue,
-        schema_documents=schemas(),
+        schema_documents=_pinned_schemas(descriptor),
         supported_features=supported_features,
         supported_panels=supported_panels,
         firmware=firmware,

@@ -1,0 +1,168 @@
+{
+  "id": "spi",
+  "version": "1.0.0",
+  "name": "SPI",
+  "longname": "Serial Peripheral Interface",
+  "desc": "Full-duplex, synchronous, serial bus.",
+  "tags": [
+    "Embedded/industrial"
+  ],
+  "channels": [
+    {
+      "id": "clk",
+      "name": "CLK",
+      "desc": "Clock"
+    }
+  ],
+  "optional_channels": [
+    {
+      "id": "miso",
+      "name": "MISO",
+      "desc": "Master in, slave out"
+    },
+    {
+      "id": "mosi",
+      "name": "MOSI",
+      "desc": "Master out, slave in"
+    },
+    {
+      "id": "cs",
+      "name": "CS#",
+      "desc": "Chip-select"
+    }
+  ],
+  "options": [
+    {
+      "id": "cs_polarity",
+      "desc": "CS# polarity",
+      "default": "active-low",
+      "values": [
+        "active-low",
+        "active-high"
+      ]
+    },
+    {
+      "id": "cpol",
+      "desc": "Clock polarity",
+      "default": 0,
+      "values": [
+        0,
+        1
+      ]
+    },
+    {
+      "id": "cpha",
+      "desc": "Clock phase",
+      "default": 0,
+      "values": [
+        0,
+        1
+      ]
+    },
+    {
+      "id": "bitorder",
+      "desc": "Bit order",
+      "default": "msb-first",
+      "values": [
+        "msb-first",
+        "lsb-first"
+      ]
+    },
+    {
+      "id": "wordsize",
+      "desc": "Word size",
+      "default": 8
+    }
+  ],
+  "annotations": [
+    {
+      "id": "miso-data",
+      "label": "MISO data"
+    },
+    {
+      "id": "mosi-data",
+      "label": "MOSI data"
+    },
+    {
+      "id": "miso-bit",
+      "label": "MISO bit"
+    },
+    {
+      "id": "mosi-bit",
+      "label": "MOSI bit"
+    },
+    {
+      "id": "warning",
+      "label": "Warning"
+    },
+    {
+      "id": "miso-transfer",
+      "label": "MISO transfer"
+    },
+    {
+      "id": "mosi-transfer",
+      "label": "MOSI transfer"
+    }
+  ],
+  "annotation_rows": [
+    {
+      "id": "miso-bits",
+      "label": "MISO bits",
+      "annotation_ids": [
+        "miso-bit"
+      ]
+    },
+    {
+      "id": "miso-data-vals",
+      "label": "MISO data",
+      "annotation_ids": [
+        "miso-data"
+      ]
+    },
+    {
+      "id": "miso-transfers",
+      "label": "MISO transfers",
+      "annotation_ids": [
+        "miso-transfer"
+      ]
+    },
+    {
+      "id": "mosi-bits",
+      "label": "MOSI bits",
+      "annotation_ids": [
+        "mosi-bit"
+      ]
+    },
+    {
+      "id": "mosi-data-vals",
+      "label": "MOSI data",
+      "annotation_ids": [
+        "mosi-data"
+      ]
+    },
+    {
+      "id": "mosi-transfers",
+      "label": "MOSI transfers",
+      "annotation_ids": [
+        "mosi-transfer"
+      ]
+    },
+    {
+      "id": "other",
+      "label": "Other",
+      "annotation_ids": [
+        "warning"
+      ]
+    }
+  ],
+  "binary": [
+    {
+      "id": "miso",
+      "label": "MISO"
+    },
+    {
+      "id": "mosi",
+      "label": "MOSI"
+    }
+  ]
+}

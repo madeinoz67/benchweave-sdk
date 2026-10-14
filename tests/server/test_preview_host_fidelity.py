@@ -225,6 +225,51 @@ def build_lanes_project(destination: Path, *, preview_css: bytes | None = None) 
     return destination
 
 
+# --- the pin-scoped corpus scope -------------------------------------------------
+
+
+def _re_pin_descriptor(project: Path, version: str) -> None:
+    """Re-pin the lanes project's descriptor to ``version`` and re-stamp the
+    digest chain (catalogue, manifest, envelope) so the host admits it."""
+    package = project / "src" / "example_plugin"
+    descriptor_path = package / "descriptor.json"
+    descriptor = json.loads(descriptor_path.read_text())
+    descriptor["otdp_version"] = version
+    raw = (json.dumps(descriptor, indent=2) + "\n").encode()
+    descriptor_path.write_bytes(raw)
+    digest = hashlib.sha256(raw).hexdigest()
+    catalogue_path = package / "binding-catalogue.json"
+    catalogue = json.loads(catalogue_path.read_text())
+    catalogue["descriptor_sha256"] = digest
+    catalogue_path.write_bytes((json.dumps(catalogue, indent=2) + "\n").encode())
+    manifest_path = package / "ui" / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["descriptor_sha256"] = digest
+    manifest_raw = (json.dumps(manifest, indent=2) + "\n").encode()
+    manifest_path.write_bytes(manifest_raw)
+    envelope_path = package / "presentation.json"
+    envelope = json.loads(envelope_path.read_text())
+    envelope["descriptor_sha256"] = digest
+    envelope["manifest"]["sha256"] = hashlib.sha256(manifest_raw).hexdigest()
+    envelope_path.write_text(json.dumps(envelope, indent=2) + "\n")
+
+
+def test_profile_rows_follow_the_descriptor_pin_down_as_well_as_up(
+    tmp_path: Path,
+) -> None:
+    """The corpus catalog scope follows the descriptor's OWN pin: a lanes
+    project pinned DOWN to 0.2.2 validates against 0.2.2's profile rows even
+    though 0.2.3 is active and served (the pin selects the catalog, not the
+    active row). Without the pin scope, two served versions whose profile
+    rows legitimately evolved read as a profile_shadow refusal — 0.2.3's
+    added decode_annotated optional action diverges the
+    otdp.logic_analyser/1.0.0 row across the served set."""
+    project = build_lanes_project(tmp_path / "pinned-down")
+    _re_pin_descriptor(project, "0.2.2")
+    plugin = load_plugin_project(project)
+    assert plugin is not None
+
+
 # --- host/app clients ------------------------------------------------------------
 
 

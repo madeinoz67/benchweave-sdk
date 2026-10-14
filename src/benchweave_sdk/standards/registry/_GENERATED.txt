@@ -16,3 +16,9 @@ registry/0.1.2/examples/release-status.json — Generated from registry@0.1.2 �
 registry/0.1.2/package-lock.schema.json — Generated from registry@0.1.2 — do not edit
 registry/0.1.2/release-manifest.schema.json — Generated from registry@0.1.2 — do not edit
 registry/0.1.2/release-status.schema.json — Generated from registry@0.1.2 — do not edit
+registry/0.1.3/examples/package-lock.json — Generated from registry@0.1.3 — do not edit
+registry/0.1.3/examples/release-manifest.json — Generated from registry@0.1.3 — do not edit
+registry/0.1.3/examples/release-status.json — Generated from registry@0.1.3 — do not edit
+registry/0.1.3/package-lock.schema.json — Generated from registry@0.1.3 — do not edit
+registry/0.1.3/release-manifest.schema.json — Generated from registry@0.1.3 — do not edit
+registry/0.1.3/release-status.schema.json — Generated from registry@0.1.3 — do not edit

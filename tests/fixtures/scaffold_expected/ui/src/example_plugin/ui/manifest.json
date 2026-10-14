@@ -1,7 +1,7 @@
 {
   "contract_version": "0.3.1",
   "plugin_id": "dev.example.example-plugin",
-  "descriptor_sha256": "9c4f80da496ba392d91483e49db4fcc3b878319640fe30773b7689162d8b8458",
+  "descriptor_sha256": "47ff6853aca32ee36540c1b4710a135d22fd11b46826c3bec217914530463f0d",
   "bindings": [
     {
       "id": "voltage",
