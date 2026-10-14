@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.12.0] - 2026-10-14
+
+### Bug Fixes
+
+- The release stamps' OTDP token moves to 0.2.3
+- Complete the .bin removal — vendored copy, lock row, and the watch arm
+
+### Features
+
+- Sync otdp 0.2.3 + registry 0.1.3 (#458)
+
+### Miscellaneous
+
+- Stamp and register v0.12.0
+
+### Testing
+
+- RED — the 0.2.3/0.1.3 sync arms (#458)
+
+
+### Contributors
+
+- Stephen Eaton (5 commits)
 ## [0.11.1] - 2026-10-13
 
 ### Features
