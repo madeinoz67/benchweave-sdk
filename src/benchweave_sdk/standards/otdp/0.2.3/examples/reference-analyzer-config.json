@@ -3,7 +3,7 @@
  "descriptor_version": "1.0.0",
  "id": "dev.local.reference-analyzer-config",
  "display_name": "Illustrative reference-analyzer-config",
- "description": "Reference example only; not a qualified commercial instrument or bench safety profile. Demonstrates the adapter configuration surface (S21).",
+ "description": "Reference example only; not a qualified commercial instrument or bench safety profile. Demonstrates profiles, contracts and the adapter integration surface. (The adapter configuration surface (S21) is demonstrated by the admission test suites.)",
  "identity": {
   "strategy": "adapter",
   "manufacturer": "OTDP Reference",
@@ -22,16 +22,7 @@
    "dependencies": [],
    "permissions": [
     "scoped_transport"
-   ],
-   "configuration": {
-    "files": [
-     {
-      "id": "bench_image",
-      "path": "reference-analyzer-image.bin",
-      "sha256": "fde40201c98646fbffe4e007ebb361b44f870c16fdfdf065ba2da4973ef3657d"
-     }
-    ]
-   }
+   ]
   }
  },
  "transport": {

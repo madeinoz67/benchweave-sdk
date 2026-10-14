@@ -1,0 +1,29 @@
+--- a/great-docs.yml
++++ b/great-docs.yml
+@@ -550,9 +550,13 @@
+ # introspecting the package at that git tag; an entry without git_ref renders
+ # the current working tree. `prerelease: true` marks the dev bucket.
+ versions:
++  - tag: v0.12.0
++    label: v0.12.0
++    latest: true
++    git_ref: v0.12.0
+   - tag: v0.11.1
+     label: v0.11.1
+-    latest: true
++    latest: false
+     git_ref: v0.11.1
+   - tag: v0.11.0
+     label: v0.11.0
+--- a/website/index.html
++++ b/website/index.html
+@@ -339,7 +339,8 @@
+       <div class="title-row">
+         <h1>Documentation</h1>
+         <select class="version-select" onchange="gotoVersion(this)" aria-label="Documentation version">
+-          <option value="docs/">v0.11.1 (latest)</option>
++          <option value="docs/">v0.12.0 (latest)</option>
++          <option value="docs/v/v0.11.1/">v0.11.1</option>
+           <option value="docs/v/v0.11.0/">v0.11.0</option>
+           <option value="docs/v/v0.10.0/">v0.10.0</option>
+           <option value="docs/v/v0.9.0/">v0.9.0</option>
