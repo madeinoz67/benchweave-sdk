@@ -156,35 +156,31 @@ def test_train_sync_prior_active_rows_flip_to_retained() -> None:
         _train_vendored_digests(row)
 
 
-def test_train_sync_reference_analyzer_image_bin_ships() -> None:
-    """The disclosed watch item: reference-analyzer-config.json pins its bench
-    image by sha256; a vendor walk that drops the .bin dangles that pin. The
-    arm resolves config → file → digest end-to-end, then checks the lock row
-    carries the same digest."""
+def test_train_sync_reference_analyzer_config_carries_no_binary_pin() -> None:
+    """The .bin watch item resolved by removal (issue #447 fold): the
+    analyzer example no longer pins a bench image — the configuration
+    block moved to the admission test suites, and no binary asset ships
+    in the vendored 0.2.3 tree or its lock rows."""
     example_dir = REPO / "src/benchweave_sdk/standards/otdp/0.2.3/examples"
     assert example_dir.is_dir(), "otdp/0.2.3 absent from the vendored tree"
     config = json.loads((example_dir / "reference-analyzer-config.json").read_bytes())
-    named = config["integration"]["adapter"]["configuration"]["files"]
-    images = [entry for entry in named if entry.get("id") == "bench_image"]
-    assert images, "the analyzer example no longer names a bench image"
-    pinned = images[0]
-    image = example_dir / str(pinned["path"])
-    assert image.is_file(), f"the vendor walk dropped {pinned['path']}"
-    assert hashlib.sha256(image.read_bytes()).hexdigest() == pinned["sha256"], (
-        "the shipped .bin no longer matches the example's pinned digest"
+    adapter = config["integration"]["adapter"]
+    assert "configuration" not in adapter, (
+        "the analyzer example re-gained a configuration block: the .bin "
+        "watch item's resolution assumed its removal"
+    )
+    assert not list(example_dir.glob("*.bin")), (
+        "a binary asset ships in the vendored 0.2.3 examples"
     )
     row = _train_row(_train_lock(), "otdp", "0.2.3")
     assert row is not None
     files = row.get("files")
     assert isinstance(files, list)
-    lock_rows = {
-        str(entry.get("path")): entry.get("sha256")
+    assert not [
+        entry
         for entry in files
-        if isinstance(entry, dict)
-    }
-    assert (
-        lock_rows.get(f"otdp/0.2.3/examples/{pinned['path']}") == pinned["sha256"]
-    ), "the .bin lacks a lock row carrying the pinned digest"
+        if isinstance(entry, dict) and ".bin" in str(entry.get("path", ""))
+    ], "the lock still rows a binary asset in the vendored 0.2.3 tree"
 
 
 def test_train_sync_carries_the_sdk_0_12_0_bump() -> None:

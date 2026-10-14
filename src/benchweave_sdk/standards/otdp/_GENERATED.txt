@@ -103,7 +103,6 @@ otdp/0.2.3/examples/decoder-uart.json — Generated from otdp@0.2.3 — do not e
 otdp/0.2.3/examples/derivation-vectors.json — Generated from otdp@0.2.3 — do not edit
 otdp/0.2.3/examples/measurement-vectors.json — Generated from otdp@0.2.3 — do not edit
 otdp/0.2.3/examples/reference-analyzer-config.json — Generated from otdp@0.2.3 — do not edit
-otdp/0.2.3/examples/reference-analyzer-image.bin — Generated from otdp@0.2.3 — do not edit
 otdp/0.2.3/examples/reference-can.json — Generated from otdp@0.2.3 — do not edit
 otdp/0.2.3/examples/reference-capture.json — Generated from otdp@0.2.3 — do not edit
 otdp/0.2.3/examples/reference-controller.json — Generated from otdp@0.2.3 — do not edit
