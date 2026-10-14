@@ -369,6 +369,7 @@ class TestFoldHardening:
             "interface",
             "otdp",
             "plugin-ui",
+            "plugin-ui-class-reference",
             "plugin-ui-preview",
             "registry",
         ]
