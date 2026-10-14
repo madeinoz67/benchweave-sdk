@@ -572,6 +572,7 @@ class TestUnreadableRootRefuses:
                 "interface",
                 "plugin-ui",
                 "plugin-ui-preview",
+                "plugin-ui-class-reference",
             )
         ]
         (tmp_path / "standards-lock.json").write_text(

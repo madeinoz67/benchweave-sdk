@@ -99,7 +99,10 @@ from pathlib import Path
 from typing import Any
 
 # >>> BEGIN SHARED COUNTER REGION (digest-pinned against the twin; issue #269 #4) >>>
-STANDARD_IDS = ("otdp", "registry", "execution", "interface", "plugin-ui", "plugin-ui-preview")
+STANDARD_IDS = (
+    "otdp", "registry", "execution", "interface",
+    "plugin-ui", "plugin-ui-preview", "plugin-ui-class-reference",
+)
 PATTERN_A = re.compile(r"\b(?:" + "|".join(STANDARD_IDS) + r")/\d+\.\d+\.\d+")
 PATTERN_BARE = re.compile(r"^\d+\.\d+\.\d+$")
 
