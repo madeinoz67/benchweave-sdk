@@ -1,6 +1,6 @@
 {
-  "base_sha": "8a34c54b2ed1fe3610ce84b79b0e6547aed19c4e",
-  "prev_tag": "v0.11.0",
+  "base_sha": "068982782d86dc1448f668455399a98f4f01e01e",
+  "prev_tag": "v0.11.1",
   "surfaces": [
     {
       "kind": "substitution",
@@ -39,5 +39,5 @@
       "path": "website/index.html"
     }
   ],
-  "version": "0.11.1"
+  "version": "0.12.0"
 }
