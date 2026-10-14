@@ -37,6 +37,7 @@ from collections import deque
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any
+from urllib.parse import quote
 
 from benchweave_ui_html.decimate import LaneState
 from benchweave_ui_html.lanes import (
@@ -54,6 +55,16 @@ from benchweave_sdk.preview_models import PlotView
 #: the gateway). Deliberately not a commissioned envelope (A02 posture:
 #: this bounds memory, not safety).
 RING_CAP = 4096
+
+
+class NonPositiveSampleRate(ValueError):
+    """The declaration's sample rate cannot survive composition (<= 0;
+    fold F7 — the composer divides by it, so it never forwards)."""
+
+
+class CaptureInvariantRefused(ValueError):
+    """The declaration breaches a windower invariant (fold F8: a states-
+    length unequal to ``acquired`` would silently re-grid the draw)."""
 
 #: The decimation column budget: the host decimates to a bounded column
 #: count before the payload leaves the server (#310's ruling — host-side
@@ -366,8 +377,11 @@ def window_lanes_capture(
 
     Recomposition slices the channel states and the bus members to the
     window, resets ``acquired`` to the window's count and the column budget
-    to ``min(columns, window)`` — the acquisition line therefore reports the
-    WINDOWED counts — and discloses the absolute span on the axis label
+    to ``min(columns, window)`` — the acquisition line's TEXT therefore
+    reports the windowed counts (the ``data-bw-plotted`` attribute carries
+    the package's requested budget, ``declaration.columns``, not the drawn
+    count; the attribute's own behavior is an upstream ui-html carrier) —
+    and discloses the absolute span on the axis label
     (``· samples first–last-1``), because every drawn position is now
     window-relative and an undisclosed offset would launder it.
 
@@ -387,6 +401,18 @@ def window_lanes_capture(
         raise ValueError(
             f"empty window [{first}, {last}) over {declaration.acquired} acquired samples"
         )
+    for spec in declaration.lanes:
+        if spec.kind == "channel" and len(spec.states) != declaration.acquired:
+            raise CaptureInvariantRefused(
+                f"lane {spec.index} declares {len(spec.states)} states for "
+                f"{declaration.acquired} acquired samples"
+            )
+    for member, sequence in member_states.items():
+        if len(sequence) != declaration.acquired:
+            raise CaptureInvariantRefused(
+                f"member {member} declares {len(sequence)} states for "
+                f"{declaration.acquired} acquired samples"
+            )
     rate = declaration.sample_rate_hz
     window_samples = last - first
     lanes: list[LaneSpec] = []
@@ -396,26 +422,23 @@ def window_lanes_capture(
         elif spec.kind == "decoder" and rate:
             offset_s = first / rate
             window_s = window_samples / rate
-            lanes.append(
-                replace(
-                    spec,
-                    events=tuple(
-                        replace(
-                            event,
-                            # round(..., 9): the shift is float subtraction,
-                            # and 0.7 - 0.5 must not render as
-                            # 0.19999999999999996 — nine decimals carry
-                            # nanosecond exactness at any realistic rate
-                            # while dropping the binary-noise tail.
-                            start_s=round(event.start_s - offset_s, 9),
-                            end_s=round(event.end_s - offset_s, 9),
-                        )
-                        for event in spec.events
-                        if event.end_s > offset_s
-                        and event.start_s - offset_s < window_s
-                    ),
-                )
-            )
+            kept_events = []
+            for event in spec.events:
+                start = event.start_s - offset_s
+                end = event.end_s - offset_s
+                # The gate judges the SHIFTED values with the composer's own
+                # overlap semantics (fold F4): a zero-width point renders its
+                # min-mark when the point lies IN the window; a non-zero-width
+                # event survives unless fully outside. No seconds-domain
+                # rounding (fold F5) — the shift is float subtraction and the
+                # composer's clip consumes the shifted extent directly.
+                if start == end:
+                    if not 0.0 <= start < window_s:
+                        continue
+                elif end <= 0.0 or start >= window_s:
+                    continue
+                kept_events.append(replace(event, start_s=start, end_s=end))
+            lanes.append(replace(spec, events=tuple(kept_events)))
         else:
             lanes.append(spec)  # bus groups: states ride member_states
     states = {
@@ -433,10 +456,12 @@ def window_lanes_capture(
             return sample if first <= sample < last else None
 
         def _rebased(sample: int) -> float:
-            # Same noise-tail cleanup as the decoder shift above; the
-            # composer's own seconds→samples round-trip then recovers the
-            # exact sample.
-            return round((sample - first) / rate_hz, 9)
+            # Sample-domain rebase (fold F5): the seconds value exists only
+            # for the composer's own seconds→samples round-trip, which
+            # recovers the exact integer — no seconds-domain rounding
+            # (round(..., 9) quantized sub-nanosecond positions to zero at
+            # high rates, F5's RED table).
+            return (sample - first) / rate_hz
 
         if trigger_s is not None:
             sample = _in_window(trigger_s)
@@ -478,15 +503,18 @@ def lanes_viewport_controls(
 
     ``◀``/``▶`` shift by half the window, size-preserving, clamped into the
     capture; ``Zoom ×½`` halves the window around its centre; ``Full``
-    resets (no parameters). A control is omitted when its action is a
-    no-op, and the whole toolbar is empty over a capture nothing can
-    navigate (``acquired == 0``).
+    resets (no parameters). The ◀/Zoom/▶ controls are omitted when their
+    action is a no-op; ``Full`` always renders (an explicit reset is
+    meaningful even on the full view), and the whole toolbar is empty over
+    a capture nothing can navigate (``acquired == 0``).
     """
     if acquired <= 0:
         return []
     size = last - first
     step = max(1, size // 2)
-    base = f"/pages/{page_id}/lanes/{view_id}"
+    # Schema-legal ids may contain "/" (fold F10): percent-encode them into
+    # the toolbar URLs (safe='') — the single-segment route decodes back.
+    base = f"/pages/{page_id}/lanes/{quote(str(view_id), safe='')}"
 
     def _shifted(delta: int) -> tuple[int, int]:
         new_first = first + delta

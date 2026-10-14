@@ -963,13 +963,34 @@ def _add_html_routes(
 
         declaration, member_states = _plots_module.lanes_source(view)
         acquired = declaration.acquired
+        # F7: a non-positive rate reaches the composer's own division and
+        # surfaces as a 500 — refuse it typed and loud, before any compose.
+        if declaration.sample_rate_hz is not None and declaration.sample_rate_hz <= 0:
+            raise _plots_module.NonPositiveSampleRate(
+                f"declaration carries a non-positive sample rate "
+                f"({declaration.sample_rate_hz}); the composer cannot survive it"
+            )
+        # F6: without a rate the composer launders every seconds position to
+        # sample 0 — omit the markers entirely so both views agree.
+        if declaration.sample_rate_hz is None and (
+            declaration.trigger_s is not None or declaration.cursors
+        ):
+            from dataclasses import replace as _dc_replace
+
+            declaration = _dc_replace(declaration, trigger_s=None, cursors=())
         if window is None:
             first, last = 0, acquired
+            window_clamped = False
             figure = render_lanes(compose_lanes(declaration, member_states))
         else:
-            first, last = window
+            # F3: the SERVED window (after the clamp inside
+            # window_lanes_capture) rides the block as structured data, and a
+            # rewrite announces itself.
+            served = (max(0, window[0]), min(acquired, window[1]))
+            first, last = served
+            window_clamped = served != (window[0], window[1])
             windowed_declaration, windowed_states = _plots_module.window_lanes_capture(
-                declaration, member_states, first, last
+                declaration, member_states, window[0], window[1]
             )
             figure = render_lanes(
                 compose_lanes(windowed_declaration, windowed_states)
@@ -982,10 +1003,12 @@ def _add_html_routes(
             view_label=view.title,
             figure=Markup(figure),
             controls=controls,
+            window_first=first,
+            window_last=last,
+            window_clamped=window_clamped,
         )
 
-    @app.get("/pages/{page_id}/lanes/{view_id}", response_class=HTMLResponse)
-    async def lanes_partial(request: Request, page_id: str, view_id: str) -> Response:
+    async def _lanes_partial_impl(request: Request, page_id: str, view_id: str) -> Response:
         """The viewport partial (issue #449 slice 3, design §3.3): zoom and
         scroll are VIEWPORT state over composed columns — the SAME
         declaration recomposed against the windowed column budget and
@@ -1031,11 +1054,36 @@ def _add_html_routes(
                     f"viewport_window_refused: empty window [{window[0]}, {window[1]})",
                     status_code=400,
                 )
+        from .plots import CaptureInvariantRefused, NonPositiveSampleRate
+
         try:
             block = _lanes_viewport_block(page.id, view, window)
+        except NonPositiveSampleRate as exc:
+            return HTMLResponse(f"viewport_rate_refused: {exc}", status_code=400)
+        except CaptureInvariantRefused as exc:
+            return HTMLResponse(f"viewport_invariant_refused: {exc}", status_code=400)
         except ValueError as exc:
             return HTMLResponse(f"viewport_window_refused: {exc}", status_code=400)
         return HTMLResponse(block)
+
+    app.add_api_route(
+        "/pages/{page_id}/lanes/{view_id}",
+        _lanes_partial_impl,
+        methods=["GET"],
+        response_class=HTMLResponse,
+        name="lanes_partial",
+    )
+    # F10: the ASGI server decodes %2F before routing, so a slash-bearing
+    # id can never reach the single-segment route as its decoded form —
+    # the :path converter catches that case without losing the
+    # single-segment ids (which match the first-registered route).
+    app.add_api_route(
+        "/pages/{page_id}/lanes/{view_id:path}",
+        _lanes_partial_impl,
+        methods=["GET"],
+        response_class=HTMLResponse,
+        name="lanes_partial_path",
+    )
 
     def _redirect() -> RedirectResponse:
         """The device page redirect. The target derives from the SEAM's
@@ -1105,13 +1153,15 @@ def _add_html_routes(
             if refusal is not None:
                 severities.append(refusal_severity(refusal["code"], refusal.get("adapter")))
             severity = compose_severity(severities)
+        scalar_plots, lanes_plots = _page_plots(page.id)
         return _TEMPLATES.TemplateResponse(
             request=request,
             name="page.html",
             context=shared(
                 **_page_context(page, severity, tiles, refusal, no_data),
                 show_prompt=False,
-                plots=_page_plots(page.id),
+                plots=scalar_plots,
+                lanes=lanes_plots,
                 controls=_page_controls(page, reads),
                 action_error=action_error,
                 action_label=action_label,

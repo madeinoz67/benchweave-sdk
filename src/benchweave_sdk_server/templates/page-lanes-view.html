@@ -1,5 +1,5 @@
 <div class="bw-lanes-viewport" data-bw-lanes-view="{{ view_id }}">
-  <div class="bw-lanes-host" data-bw-lanes-host>
+  <div class="bw-lanes-host" data-bw-lanes-host{% if window_last > window_first %} data-bw-window="{{ window_first }},{{ window_last - 1 }}"{% if window_clamped %} data-bw-window-clamped{% endif %}{% endif %}>
     {{ figure }}
   </div>
   {% if controls %}

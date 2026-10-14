@@ -273,7 +273,7 @@ class TestWindowSemantics:
         assert len(lane_zero) == 200, "one column per sample at the budget"
         assert lane_zero[0] == ("0", "0", "1", "0")
         assert lane_zero[100] == ("0", "100", "101", "1"), (
-            "the absolute edge at 300 lands at window-relative 300"
+            "the absolute edge at 300 lands at window-relative 100"
         )
         assert {seg[3] for seg in lane_zero} == {"0", "1"}, (
             "the [200, 400) slice straddles d0's edge: both states render"
@@ -443,7 +443,10 @@ class TestRecomposition:
             f"{LANES_VIEW_URL}?from=500&to=1000"
         ).text
         spans = SPAN_ATTRS.findall(windowed)
-        assert spans == [("0.05", "0.2")], (
+        # Fold F5: the shift is raw float subtraction — no seconds-domain
+        # rounding, so the rendered extent carries the binary tail (the
+        # composer's clip still bounds it; the position is exact in float).
+        assert spans == [("0.050000000000000044", "0.19999999999999996")], (
             f"the in-window event shifts by the window offset; got {spans}"
         )
 

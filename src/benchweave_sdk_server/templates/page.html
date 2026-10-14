@@ -55,3 +55,6 @@
   {% endif %}
 </section>
 {% endblock %}
+{% block scripts %}
+{% if lanes %}<script src="/assets/bw-lanes.js" defer></script>{% endif %}
+{% endblock %}
