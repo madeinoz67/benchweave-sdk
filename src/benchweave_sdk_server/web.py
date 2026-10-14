@@ -37,6 +37,8 @@ from fastapi.responses import (
 from fastapi.templating import Jinja2Templates
 from markupsafe import Markup, escape
 
+from benchweave_sdk.preview_models import PlotView
+
 from . import catalogue
 from . import presentation as presentation_module
 from .assets import (
@@ -806,26 +808,28 @@ def _add_html_routes(
             "panel_refusal": panel_refusal,
         }
 
-    def _page_plots(page_id: str) -> tuple[Markup, Markup]:
+    def _page_plots(page_id: str) -> tuple[Markup, list[Markup]]:
         """The page's plots, split at the poll boundary (issue #449 slice 1,
         design §3.1.5): scalar plots are poll-shaped (their data is the
         observation ring) and swap with the readings region; the lanes
         figures are declaration-only and own their wrapper OUTSIDE the poll
         region — a poll must not wipe viewport state (the page's own
         controls rule, extended). Slice 3's zoom/scroll swaps land on the
-        stable lanes wrapper without re-deriving page structure."""
-        from .plots import plot_host_html, plot_lanes_html
+        stable lanes wrapper without re-deriving page structure. The lanes
+        side returns one VIEWPORT BLOCK per view (figure + toolbar) — the
+        block the partial endpoint re-renders on a viewport swap."""
+        from .plots import plot_host_html
 
         scalar: list[str] = []
-        lanes: list[str] = []
+        lanes: list[Markup] = []
         for view in pres().plot_views:
             if view.page_id != page_id:
                 continue
             if view.kind == "digital_lanes":
-                lanes.append(plot_lanes_html(view))
+                lanes.append(Markup(_lanes_viewport_block(page_id, view)))
             else:
                 scalar.append(plot_host_html(view, seam.observation_ring))
-        return Markup("".join(scalar)), Markup("".join(lanes))
+        return Markup("".join(scalar)), lanes
 
     @app.get("/pages/{page_id}", response_class=HTMLResponse)
     async def page_route(request: Request, page_id: str) -> Response:
@@ -944,6 +948,143 @@ def _add_html_routes(
             ),
         )
 
+    def _lanes_viewport_block(
+        page_id: str, view: PlotView, window: tuple[int, int] | None = None
+    ) -> str:
+        """One lanes view's viewport block (issue #449 slice 3): the figure
+        in its stable host plus the server-driven toolbar. The page render
+        and the partial endpoint produce the SAME block — a viewport swap
+        replaces the block, and the new block carries the new window's own
+        controls (no client-side window state for a poll to wipe)."""
+        from benchweave_ui_html.lanes import compose_lanes
+        from benchweave_ui_html.partials import render_lanes
+
+        from benchweave_sdk_server import plots as _plots_module
+
+        declaration, member_states = _plots_module.lanes_source(view)
+        acquired = declaration.acquired
+        # F7: a non-positive rate reaches the composer's own division and
+        # surfaces as a 500 — refuse it typed and loud, before any compose.
+        if declaration.sample_rate_hz is not None and declaration.sample_rate_hz <= 0:
+            raise _plots_module.NonPositiveSampleRate(
+                f"declaration carries a non-positive sample rate "
+                f"({declaration.sample_rate_hz}); the composer cannot survive it"
+            )
+        # F6: without a rate the composer launders every seconds position to
+        # sample 0 — omit the markers entirely so both views agree.
+        if declaration.sample_rate_hz is None and (
+            declaration.trigger_s is not None or declaration.cursors
+        ):
+            from dataclasses import replace as _dc_replace
+
+            declaration = _dc_replace(declaration, trigger_s=None, cursors=())
+        if window is None:
+            first, last = 0, acquired
+            window_clamped = False
+            figure = render_lanes(compose_lanes(declaration, member_states))
+        else:
+            # F3: the SERVED window (after the clamp inside
+            # window_lanes_capture) rides the block as structured data, and a
+            # rewrite announces itself.
+            served = (max(0, window[0]), min(acquired, window[1]))
+            first, last = served
+            window_clamped = served != (window[0], window[1])
+            windowed_declaration, windowed_states = _plots_module.window_lanes_capture(
+                declaration, member_states, window[0], window[1]
+            )
+            figure = render_lanes(
+                compose_lanes(windowed_declaration, windowed_states)
+            )
+        controls = _plots_module.lanes_viewport_controls(
+            page_id, view.binding_id, first, last, acquired
+        )
+        return _TEMPLATES.env.get_template("page-lanes-view.html").render(
+            view_id=view.binding_id,
+            view_label=view.title,
+            figure=Markup(figure),
+            controls=controls,
+            window_first=first,
+            window_last=last,
+            window_clamped=window_clamped,
+        )
+
+    async def _lanes_partial_impl(request: Request, page_id: str, view_id: str) -> Response:
+        """The viewport partial (issue #449 slice 3, design §3.3): zoom and
+        scroll are VIEWPORT state over composed columns — the SAME
+        declaration recomposed against the windowed column budget and
+        swapped onto the stable lanes wrapper (the readings partial's own
+        mechanism, aimed at the lanes region). ``from``/``to`` are absolute
+        SAMPLE INDICES clamped into ``[0, acquired)`` (sample index is the
+        composer's native grid and rate-independent — the only unit
+        addressable without a rate); a window that clamps empty refuses, as
+        does any request that cannot parse as two sample indices."""
+        page = pres().page(page_id)
+        if page is None:
+            return HTMLResponse("not found", status_code=404)
+        view = next(
+            (
+                candidate
+                for candidate in pres().plot_views
+                if candidate.page_id == page_id
+                and candidate.binding_id == view_id
+                and candidate.kind == "digital_lanes"
+            ),
+            None,
+        )
+        if view is None:
+            return HTMLResponse("not found", status_code=404)
+        raw_from = request.query_params.get("from")
+        raw_to = request.query_params.get("to")
+        window: tuple[int, int] | None = None
+        if raw_from is not None or raw_to is not None:
+            if raw_from is None or raw_to is None:
+                return HTMLResponse(
+                    "viewport_window_refused: from and to go together",
+                    status_code=400,
+                )
+            try:
+                window = (int(raw_from), int(raw_to))
+            except ValueError:
+                return HTMLResponse(
+                    "viewport_window_refused: from and to are sample indices",
+                    status_code=400,
+                )
+            if window[0] >= window[1]:
+                return HTMLResponse(
+                    f"viewport_window_refused: empty window [{window[0]}, {window[1]})",
+                    status_code=400,
+                )
+        from .plots import CaptureInvariantRefused, NonPositiveSampleRate
+
+        try:
+            block = _lanes_viewport_block(page.id, view, window)
+        except NonPositiveSampleRate as exc:
+            return HTMLResponse(f"viewport_rate_refused: {exc}", status_code=400)
+        except CaptureInvariantRefused as exc:
+            return HTMLResponse(f"viewport_invariant_refused: {exc}", status_code=400)
+        except ValueError as exc:
+            return HTMLResponse(f"viewport_window_refused: {exc}", status_code=400)
+        return HTMLResponse(block)
+
+    app.add_api_route(
+        "/pages/{page_id}/lanes/{view_id}",
+        _lanes_partial_impl,
+        methods=["GET"],
+        response_class=HTMLResponse,
+        name="lanes_partial",
+    )
+    # F10: the ASGI server decodes %2F before routing, so a slash-bearing
+    # id can never reach the single-segment route as its decoded form —
+    # the :path converter catches that case without losing the
+    # single-segment ids (which match the first-registered route).
+    app.add_api_route(
+        "/pages/{page_id}/lanes/{view_id:path}",
+        _lanes_partial_impl,
+        methods=["GET"],
+        response_class=HTMLResponse,
+        name="lanes_partial_path",
+    )
+
     def _redirect() -> RedirectResponse:
         """The device page redirect. The target derives from the SEAM's
         own device id — the validated server-side object — never the
@@ -1012,13 +1153,15 @@ def _add_html_routes(
             if refusal is not None:
                 severities.append(refusal_severity(refusal["code"], refusal.get("adapter")))
             severity = compose_severity(severities)
+        scalar_plots, lanes_plots = _page_plots(page.id)
         return _TEMPLATES.TemplateResponse(
             request=request,
             name="page.html",
             context=shared(
                 **_page_context(page, severity, tiles, refusal, no_data),
                 show_prompt=False,
-                plots=_page_plots(page.id),
+                plots=scalar_plots,
+                lanes=lanes_plots,
                 controls=_page_controls(page, reads),
                 action_error=action_error,
                 action_label=action_label,

@@ -14,7 +14,7 @@
      Pages WITHOUT lanes plots keep the tile-first shape below. #}
   {% if lanes %}
   <section class="bw-lanes-region" id="page-lanes-{{ page.id }}" aria-label="Declared captures">
-    {{ lanes }}
+    {%- for block in lanes %}{{ block }}{% endfor -%}
   </section>
   {% endif %}
   {# The live state (severity badge, tiles, refused notices, scalar plots)
@@ -54,4 +54,7 @@
   </section>
   {% endif %}
 </section>
+{% endblock %}
+{% block scripts %}
+{% if lanes %}<script src="/assets/bw-lanes.js" defer></script>{% endif %}
 {% endblock %}

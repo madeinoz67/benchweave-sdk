@@ -173,7 +173,17 @@ A plugin can declare a local stylesheet override for its preview pages. The mani
 
 **The capture page.** A page that carries a `digital_lanes` plot leads with the lane traces. The reading tiles sit below as the secondary surface. A page without a lanes plot keeps the tile-first layout.
 
-**The lanes figure today.** The figure shows the declared structure only. The acquisition line shows `Acquired 0 samples · plotted 0`. A channel hint `visible: false` hides that lane in the preview. A later release will add capture data to the preview fixtures.
+**The lanes figure today.** The figure shows the declared structure only. The acquisition line shows `Acquired 0 samples · plotted 0`. A channel hint `visible: false` hides that lane in the preview. The preview fixtures carry no capture data yet, so the viewport toolbar does not appear today. A later release will add capture data to the preview fixtures, and the toolbar will then appear. The paragraphs below describe these controls.
+
+**The viewport toolbar.** A lanes figure over a capture with samples carries a viewport toolbar below it. The toolbar holds the controls `◀`, `Full`, `Zoom ×½` and `▶`. The server computes the window for each control. The `◀` and `▶` controls move the shown window back or forward by half its size. The `Zoom ×½` control shows the middle half of the shown window. The `Full` control shows the whole capture again.
+
+**The rendered controls.** The `◀`, `▶` and `Zoom ×½` controls do not render when their action has no effect. The `Full` control always renders. A capture without samples renders no toolbar at all.
+
+**The window swap.** Each toolbar control asks the server for a window of the capture. The request carries two parameters, `from` and `to`. Both parameters are absolute sample indices, and sample 0 is the first sample of the capture. The server renders the same lanes against the requested window. The browser then replaces the whole viewport block, figure and toolbar, with the served block. The page refreshes its readings on its own, and a refresh never touches the lanes region.
+
+**The served window.** The server clamps a requested window into the capture. A request before sample 0 clamps to sample 0, and a request beyond the last sample clamps to the last sample. The served block carries the served window in `data-bw-window`, which names the first and the last shown sample. The axis label names the served sample span, for example `samples 500–999`. The acquisition line reports the counts of the shown window. The block also carries the marker `data-bw-window-clamped` when the served window differs from the request.
+
+**The viewport refusal.** The server refuses a window request that it cannot serve. The refusal returns status 400, and its body starts with `viewport_window_refused:`. An empty window or an inverted window refuses. This can happen when the capture changed after the server built the toolbar. The browser then shows a notice in the viewport region. The notice tells the operator to push `Full`, and the `Full` control always serves.
 
 ## Mock transports (offline rehearsal)
 

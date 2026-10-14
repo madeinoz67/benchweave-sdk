@@ -12,6 +12,11 @@
       "sha256": "851f3b2882e6431f01c05bbac53d895969d6fe89ed2f73ea15922db6e6fe3623"
     },
     {
+      "path": "bw-lanes.js",
+      "size": 1157,
+      "sha256": "98f12009787d56173436ff20adb63ed8b3d563ddc86e8cfe3738436773e7c733"
+    },
+    {
       "path": "bw-plot.js",
       "size": 2848,
       "sha256": "a88e9189c7c1453e1a729bded83925d6e7c3e2e233c0735bc0248e06a83570ff"

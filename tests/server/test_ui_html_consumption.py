@@ -47,6 +47,7 @@ def test_the_host_no_longer_carries_copies_of_the_renderer_assets() -> None:
         "uplot-SOURCES.md",
         "bw-plot.js",
         "bw-events.js",
+        "bw-lanes.js",
         "analyse.js",
     }
 

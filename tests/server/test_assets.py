@@ -33,6 +33,7 @@ def test_the_inventory_lists_only_host_owned_files() -> None:
         "uplot-LICENCE",
         "uplot-SOURCES.md",
         "bw-plot.js",
+        "bw-lanes.js",
         "analyse.js",
     }
 
