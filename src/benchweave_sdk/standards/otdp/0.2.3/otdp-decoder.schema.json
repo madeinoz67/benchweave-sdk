@@ -1,0 +1,218 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:otdp:decoder:0.2.3",
+  "title": "OTDP 0.2.3 protocol-decoder declaration \u2014 STG architecture contract",
+  "description": "Structure only. A decoder declaration names the annotation classes and rows a generic renderer draws from, plus the channels and options the decode action validates against. It grants no authority and gates no physical access: the consuming action is side_effect none over a completed retained acquisition (protocol-decoders.md). Declaration admission is digest pinning, this schema and the PD1-PD6 semantic checks \u2014 deliberately lighter than transport-provider commissioning, a recorded asymmetry.",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "longname": {
+      "type": "string",
+      "minLength": 1
+    },
+    "desc": {
+      "type": "string",
+      "minLength": 1
+    },
+    "tags": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "channels": {
+      "$ref": "#/$defs/channelList"
+    },
+    "optional_channels": {
+      "$ref": "#/$defs/channelList"
+    },
+    "options": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "desc": {
+            "type": "string",
+            "minLength": 1
+          },
+          "default": {},
+          "values": {
+            "type": "array",
+            "minItems": 1
+          }
+        },
+        "required": [
+          "id",
+          "default"
+        ],
+        "additionalProperties": false,
+        "anyOf": [
+          {
+            "properties": {
+              "default": {
+                "type": "string"
+              },
+              "values": {
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "default": {
+                "type": "number"
+              },
+              "values": {
+                "items": {
+                  "type": "number"
+                }
+              }
+            }
+          },
+          {
+            "properties": {
+              "default": {
+                "type": "boolean"
+              },
+              "values": {
+                "items": {
+                  "type": "boolean"
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    "annotations": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]*$"
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "id",
+          "label"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "annotation_rows": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]*$"
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1
+          },
+          "annotation_ids": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_-]*$"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "annotation_ids"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "binary": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_-]*$"
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "id",
+          "label"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "id",
+    "version",
+    "name",
+    "channels",
+    "options",
+    "annotations",
+    "annotation_rows"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "channelList": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9_]*$"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "desc": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    }
+  }
+}
