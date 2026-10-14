@@ -38,13 +38,14 @@ def _descriptor(name: str) -> dict[str, object]:
 
 
 def test_the_vendored_tree_carries_the_carried_otdp_set() -> None:
-    """otdp rows: 0.2.0, 0.2.1 (yank-marked), 0.2.2 (active) — the served set
-    (¬yanked) is derived from the markers plus the mirrored policy block."""
-    assert _carried_otdp() >= {"0.2.0", "0.2.1", "0.2.2"}
+    """otdp rows: 0.2.0, 0.2.1 (yank-marked), 0.2.2 (retained), 0.2.3 (active) —
+    the served set (¬yanked) is derived from the markers plus the mirrored
+    policy block."""
+    assert _carried_otdp() >= {"0.2.0", "0.2.1", "0.2.2", "0.2.3"}
     row_021 = ROWS[("otdp", "0.2.1")]
     assert row_021.get("yanked") is True
-    assert ROWS[("otdp", "0.2.2")].get("active") is True
-    assert ROWS[("otdp", "0.2.0")].get("active") is False
+    assert ROWS[("otdp", "0.2.3")].get("active") is True
+    assert ROWS[("otdp", "0.2.2")].get("active") is False
 
 
 def test_explicit_path_validation_resolves_served_versions() -> None:
@@ -120,7 +121,7 @@ def test_a2_provider_bearing_descriptor_per_pin(tmp_path: Path) -> None:
     # version strings; this proves serving-by-pin, not serving-by-active).
     pinned_021 = dict(provider_descriptor)
     pinned_021["otdp_version"] = "0.2.1"
-    with pytest.warns(Warning, match="0.2.2") as yank:
+    with pytest.warns(Warning, match="0.2.3") as yank:
         validate_descriptor(pinned_021)
     assert any("0.2.1" in str(w.message) for w in yank), "the warning names the pin"
     with warnings.catch_warnings():
@@ -138,7 +139,7 @@ def test_a3_retired_pin_refuses_with_vr37_fields() -> None:
         validate_descriptor(descriptor)
     message = str(refusal.value)
     assert message.startswith("retired_identifier:") or "retired_identifier:" in message
-    for field in ("otdp", "0.3.0", ">=0.2.0,<0.3.0", "0.2.2"):
+    for field in ("otdp", "0.3.0", ">=0.2.0,<0.3.0", "0.2.3"):
         assert field in message, field
     assert "version_unknown:" not in message
 
@@ -152,7 +153,7 @@ def test_unserved_retained_pin_refuses_version_not_served() -> None:
         validate_descriptor(descriptor)
     message = str(refusal.value)
     assert "version_not_served:" in message
-    for field in ("otdp", "0.1.2", ">=0.2.0,<0.3.0", "0.2.2"):
+    for field in ("otdp", "0.1.2", ">=0.2.0,<0.3.0", "0.2.3"):
         assert field in message, field
     assert "retired_identifier:" not in message
 
@@ -171,7 +172,7 @@ def test_yanked_pin_validates_with_a_warning_naming_the_move_to() -> None:
     descriptor["otdp_version"] = "0.2.1"
     with pytest.warns(Warning, match="0.2.1") as recorded:
         validate_descriptor(descriptor)
-    assert any("0.2.2" in str(w.message) for w in recorded), "the move-to is named"
+    assert any("0.2.3" in str(w.message) for w in recorded), "the move-to is named"
 
 
 def test_constants_derive_from_the_lock() -> None:
@@ -298,11 +299,11 @@ def test_malformed_pins_classify_to_a_typed_refusal(pin: str) -> None:
     assert classification.standard == "otdp"
     assert classification.pin == pin
     assert classification.supported_range == ">=0.2.0,<0.3.0"
-    assert classification.move_to == "0.2.2"
+    assert classification.move_to == "0.2.3"
     assert "not a parseable" in classification.detail
     message = str(refusal_for(classification))
     assert message.startswith("version_not_served:")
-    for field in ("otdp", pin, ">=0.2.0,<0.3.0", "0.2.2"):
+    for field in ("otdp", pin, ">=0.2.0,<0.3.0", "0.2.3"):
         assert field in message, field
 
 
@@ -394,7 +395,7 @@ def test_yank_warning_fires_on_the_envelope_paths() -> None:
     request = {"operation_id": "op-1", "verb": "identify", "arguments": {}}
     with pytest.warns(Warning, match="0.2.1") as recorded:
         validate_request(request, otdp_version="0.2.1")
-    assert any("0.2.2" in str(w.message) for w in recorded), "the move-to is named"
+    assert any("0.2.3" in str(w.message) for w in recorded), "the move-to is named"
 
 
 def test_yank_warning_fires_on_the_explicit_key_path() -> None:
@@ -495,15 +496,15 @@ def test_lock_rows_cache_follows_an_edited_lock_file(
     dropped = next(
         row
         for row in lock["standards"]
-        if row["id"] == "otdp" and row["version"] == "0.2.2"
+        if row["id"] == "otdp" and row["version"] == "0.2.3"
     )
     lock["standards"].remove(dropped)  # the re-sync's shape: a row leaves the lock
     temp.write_bytes(
         (json.dumps(lock, sort_keys=True, separators=(",", ":")) + "\n").encode()
     )
     after = served.lock_rows()
-    assert ("otdp", "0.2.2", True, False) in before
-    assert ("otdp", "0.2.2", True, False) not in after, (
+    assert ("otdp", "0.2.3", True, False) in before
+    assert ("otdp", "0.2.3", True, False) not in after, (
         "the cache must re-key on the lock file's (mtime_ns, size)"
     )
 
@@ -602,7 +603,7 @@ def test_two_segment_pin_is_unparsable_and_never_labeled() -> None:
     assert served._tuple_or_none("0.3") is None
     classification = served.classify_pin("0.3", "otdp")
     assert classification.state == "unserved"
-    assert classification.move_to == "0.2.2"
+    assert classification.move_to == "0.2.3"
     assert classification.downgrade is False, "twin agreement on the 2-segment pin"
     message = str(served.refusal_for(classification))
     assert DOWNGRADE_LABEL not in message
@@ -647,7 +648,7 @@ def test_move_to_twin_contract(
     # version; not a downgrade, not guidance.
     _served_from(tmp_path, monkeypatch, lambda lock: None)
     below = served.classify_pin("0.1.2", "otdp")
-    assert (below.move_to, below.downgrade) == ("0.2.2", False)
+    assert (below.move_to, below.downgrade) == ("0.2.3", False)
 
     # State 2 — yanked pin above all served: the move-to is the newest
     # healthy served version AND is marked a downgrade.
@@ -660,7 +661,7 @@ def test_move_to_twin_contract(
     _served_from(tmp_path, monkeypatch, above)
     yanked_above = served.classify_pin("0.2.9", "otdp")
     assert yanked_above.state == "yanked"
-    assert (yanked_above.move_to, yanked_above.downgrade) == ("0.2.0", True)
+    assert (yanked_above.move_to, yanked_above.downgrade) == ("0.2.3", True)
 
     # State 3 — served empty: the derivation names the declared range's
     # lower bound as GUIDANCE, never a servable target; no downgrade is
@@ -687,17 +688,17 @@ def test_move_to_twin_contract(
     # source, and this state reads the committed one.
     _served_from(tmp_path, monkeypatch, lambda lock: None)
     mid = served.classify_pin("0.2.1", "otdp")
-    assert (mid.move_to, mid.downgrade) == ("0.2.2", False)
+    assert (mid.move_to, mid.downgrade) == ("0.2.3", False)
 
     # The unserved-pin refusal above the served set carries the label too —
     # recommending the newest healthy served version while implying an
     # upgrade path is the dishonesty the lane caught, whichever state the
     # pin came from.
     high = served.classify_pin("9.9.9", "otdp")
-    assert (high.move_to, high.downgrade) == ("0.2.2", True)
+    assert (high.move_to, high.downgrade) == ("0.2.3", True)
     high_message = str(served.refusal_for(high))
     assert (
-        "move-to 0.2.2 — the highest served version, the recommended "
+        "move-to 0.2.3 — the highest served version, the recommended "
         "re-target (a downgrade — no served version is newer)" in high_message
     )
 
@@ -723,7 +724,7 @@ def test_yanked_pin_above_served_set_warns_of_downgrade(
     assert message == (
         "otdp 0.2.9 is yanked from serving and auto-selection; the pin stays "
         "conforming and validates against 0.2.9's own bytes — the move-to is "
-        "0.2.0 (the highest served version, the recommended re-target"
+        "0.2.3 (the highest served version, the recommended re-target"
         " (a downgrade — no served version is newer); migration guidance pending "
         "(per-version migration notes land from adoption, issue #203 slice 5); "
         "the dependency_policy mirror in this lock names the yank or retirement "
@@ -744,7 +745,7 @@ def test_yanked_pin_mid_set_warning_stays_byte_identical(
     assert str(recorded[0].message) == (
         "otdp 0.2.1 is yanked from serving and auto-selection; the pin stays "
         "conforming and validates against 0.2.1's own bytes — the move-to is "
-        "0.2.2 (the highest served version, the recommended re-target; "
+        "0.2.3 (the highest served version, the recommended re-target; "
         "migration guidance pending (per-version migration notes land from "
         "adoption, issue #203 slice 5); the dependency_policy mirror in this "
         "lock names the yank or retirement record)"
