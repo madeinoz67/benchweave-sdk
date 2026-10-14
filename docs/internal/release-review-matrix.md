@@ -205,3 +205,18 @@ the checklist is a matrix in `docs/internal`, and a skill walks it.
 | 9 | Served-set bump class | n-a — `git diff v0.9.0..HEAD -- standards-lock.json` is empty (zero committed lock motion); only the staged `compatibility.sdk` anchor moves with this release |
 
 Test surfaces: T1/T2 confirmed by the byte-parity suite at the staged tree (34/0/0, junitxml); T3's docstring already names `make release-cut` as the procedure (no motion); T4 inert by design.
+
+## Result record — v0.11.1 (2026-10-13)
+
+| # | Surface | Result |
+|---|---------|--------|
+| 1 | README stamp | updated → SDK 0.11.1 by release-cut (occurrence-validated) |
+| 1b | User-guide "current SDK" sentence | walk confirms — n-a or updated; the wheel filename is a glob since #102 |
+| 2 | Website hero status | updated — SDK 0.11.1 by release-cut (occurrence-validated); OTDP / adapter-API stamps the walk confirms against the lock's active rows |
+| 3 | Docs selector | PHASE-2 — patch staged at `.release/phase2-v0.11.1.patch`; the tag commit applies it (registration precedes the tag) |
+| 4 | Compatibility tagline | updated — SDK 0.11.1 against the main-repository floor by release-cut (occurrence-validated) |
+| 5 | Standards badges | walk confirms — enumerate all six against the lock's ACTIVE rows |
+| 6 | great-docs.yml versions | PHASE-2 — the tag commit applies the staged patch (the ordering constraint) |
+| 7 | Contributor window `v0.11.0..HEAD` | 5 commits in the window — human authors other than the operator/bots: none; the walk acknowledges new human contributors and records an empty window as a result |
+| 8 | Gateway uv.lock SDK pin | recorded note — moves at the gateway's next lock run / pointer advance |
+| 9 | Served-set bump class | SERVED-SET MOTION in the window — the class is asserted by the sync machinery (sdk_bump_class_invalid:); the walk records it; release-cut refuses to guess a class (D7) |

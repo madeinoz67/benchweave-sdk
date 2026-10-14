@@ -2,6 +2,53 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.11.1] - 2026-10-13
+
+### Features
+
+- The twin gains merge_pinned_documents + profile_shadow (#446 slice 2)
+
+### Miscellaneous
+
+- Stage the v0.11.1 cut
+- Apply the v0.11.1 phase-2 registration
+
+### Testing
+
+- RED — twin profile-shadow arms (#446 slice 2)
+
+
+### Contributors
+
+- Stephen Eaton (4 commits)
+## [0.11.0] - 2026-10-13
+
+### Bug Fixes
+
+- Fold the four-lane refute slate — hint visibility, override honesty, claim accuracy (issue #449)
+
+### Documentation
+
+- Document the local override, theme parity, and waveform-first page
+
+### Features
+
+- Preview host fidelity — lanes through ui-html, theme script, digest-pinned override (issue #449 slice 1)
+- Waveform-first capture page — lanes lead, tiles secondary (issue #449 fold F8)
+- Commissioned-preset firmware gate — vendored plugin-ui 0.3.1, authoring arm, SDK 0.11.0
+
+### Miscellaneous
+
+- Stamp and register v0.11.0
+
+### Testing
+
+- Pin the lanes hydrator's removal; retire the synthetic-column pin (issue #449 slice 1 follow-up)
+
+
+### Contributors
+
+- Stephen Eaton (7 commits)
 ## [0.10.0] - 2026-10-12
 
 ### Bug Fixes

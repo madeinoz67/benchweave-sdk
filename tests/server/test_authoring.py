@@ -230,6 +230,77 @@ def test_preset_put_rejects_an_invalid_document(tmp_path) -> None:
     assert _project_files(project) == before
 
 
+def _commissioned_seam(tmp_path: Path) -> tuple[StandaloneSeam, Path]:
+    """A setpoint project whose descriptor carries the corpus's commissioned
+    pattern: policy commissioned, no descriptor-side firmware list (the
+    dependent digests re-derive through the authoring patch tool, never a
+    hand edit)."""
+    seam, project = _setpoint_seam(tmp_path)
+    authoring._contract_patch(
+        seam,
+        "descriptor",
+        [
+            {"op": "replace", "path": "/identity/firmware_policy", "value": "commissioned"},
+            {"op": "remove", "path": "/identity/supported_firmware"},
+        ],
+    )
+    return seam, project
+
+
+def test_preset_put_commissioned_project_validates_without_a_firmware_source(
+    tmp_path,
+) -> None:
+    """Issue #444: a commissioned project (no descriptor-side firmware list,
+    no connected device, no explicit argument) validates a whole-document
+    preset put under the gate's honest None posture instead of refusing
+    with 'no firmware to judge the preset against'."""
+    seam, project = _commissioned_seam(tmp_path)
+    original = authoring._preset_get(seam, "steady")
+    edited = {**original["document"], "title": "Commissioned quiet"}
+    result = authoring._preset_put(seam, "steady", edited)
+    assert result["written"] == "config/presets/steady.json"
+    package = project / "src" / "setpoint_demo"
+    assert result["sha256"] == _digest(package / "config" / "presets" / "steady.json")
+
+
+def test_listed_with_no_candidates_still_raises_the_firmware_error(tmp_path) -> None:
+    """The control: the empty-candidates refusal keeps its listed-policy
+    force. The OTDP schema requires a non-empty ``supported_firmware`` under
+    listed policy, so this state is only constructible outside the authoring
+    tools — the pin calls the validator directly with a hand-shaped package
+    and asserts the raise, never the commissioned None arm."""
+    from types import SimpleNamespace
+
+    package = tmp_path / "demo"
+    (package / "config" / "presets").mkdir(parents=True)
+    shutil.copy(
+        FIXTURE / "src" / "setpoint_demo" / "config" / "settings.schema.json",
+        package / "config" / "settings.schema.json",
+    )
+    shutil.copy(
+        FIXTURE / "src" / "setpoint_demo" / "config" / "presets" / "steady.json",
+        package / "config" / "presets" / "steady.json",
+    )
+    descriptor = json.loads(
+        (FIXTURE / "src" / "setpoint_demo" / "descriptor.json").read_bytes()
+    )
+    descriptor["identity"]["supported_firmware"] = []
+    (package / "descriptor.json").write_text(json.dumps(descriptor))
+    seam = SimpleNamespace(
+        session=SimpleNamespace(
+            identity=None,
+            plugin=SimpleNamespace(package_dir=package, descriptor=descriptor),
+        )
+    )
+    with pytest.raises(authoring.AuthoringError, match="no firmware to judge"):
+        authoring._validated_preset(
+            seam,
+            (package / "config" / "presets" / "steady.json").read_bytes(),
+            preset_id="steady",
+            firmware=None,
+        )
+
+
 def test_preset_put_rejects_traversal_ids(tmp_path) -> None:
     seam, project = _setpoint_seam(tmp_path)
     for bad in ("../escape", "nested/name", "", ".", ".."):
