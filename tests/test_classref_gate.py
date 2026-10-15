@@ -223,3 +223,85 @@ def test_h2_malformed_layout_block_refuses(tmp_path: Path) -> None:
     )
     with pytest.raises(ValueError, match="^classref_layout_invalid:"):
         verify_ui(project, reference=REFERENCE)
+
+
+def test_m8_attribute_rows_are_asserted() -> None:
+    """M8/F2: the census-vs-expect lane asserts the attribute census —
+    lane-kind counts laundered in the render must fail."""
+    from benchweave_sdk.classref_gate import _assert_expect
+
+    expectation = {
+        "components": {
+            "digital-lanes": {
+                "count": 1,
+                "per_page": "capture",
+                "attribute": {
+                    "data-bw-lane-kind=channel": 2,
+                    "data-bw-lane-kind=group": 1,
+                },
+            }
+        }
+    }
+    censused = {
+        "capture": {
+            "lanes_figures": 1, "buttons": [], "numerics": 0, "panels": 1,
+            "mode_banners": 1, "lane_kinds": {"channel": 2, "group": 3},
+            "confirms": 0, "data_tables": 0,
+        }
+    }
+    findings = _assert_expect(expectation, censused)
+    assert findings, "a laundered group count must fail"
+    assert "classref_gate_excess" in findings[0].code
+
+
+def test_m10_per_page_naming_a_non_rendered_page_refuses() -> None:
+    """M10/F7: an expectation row whose per_page names a page the render
+    did not serve refuses — no silent pooling over an absent page."""
+    from benchweave_sdk.classref_gate import _assert_expect
+
+    expectation = {
+        "components": {"button": {"count": 1, "per_page": "ghost-page"}}
+    }
+    censused = {"capture": {"buttons": ["arm"], "panels": 1, "mode_banners": 1,
+                             "lanes_figures": 0, "numerics": 0, "lane_kinds": {},
+                             "confirms": 0, "data_tables": 0}}
+    with pytest.raises(ValueError, match="^classref_gate_page:"):
+        _assert_expect(expectation, censused)
+
+
+def test_m10_unknown_component_refuses() -> None:
+    """M10/F7: an expectation component the census cannot key on the
+    contract-pinned §E.1 surfaces refuses — the record's underpowered
+    branch is a refusal, not silence."""
+    from benchweave_sdk.classref_gate import _assert_expect
+
+    expectation = {"components": {"sparkline": {"count": 1}}}
+    censused = {"capture": {"buttons": [], "panels": 1, "mode_banners": 1,
+                             "lanes_figures": 0, "numerics": 0, "lane_kinds": {},
+                             "confirms": 0, "data_tables": 0}}
+    with pytest.raises(ValueError, match="^classref_gate_unknown_component:"):
+        _assert_expect(expectation, censused)
+
+
+def test_m9_known_binding_overlay_applies_content(tmp_path: Path) -> None:
+    """M9: an overlay row for a DERIVED binding id applies its content;
+    a NEW binding id is refused with the unknown-binding message."""
+    from benchweave_sdk.classref import compose_manifest
+    from helpers_classref import build_classref_project
+
+    _project, derived = build_classref_project(tmp_path / "m9")
+    composed = compose_manifest(
+        derived.manifest,
+        {"bindings": [
+            {"id": "arm", "kind": "procedure", "target_id": "arm",
+             "preset_ids": []},
+        ]},
+    )
+    arm = next(row for row in composed["bindings"] if row["id"] == "arm")
+    assert arm["kind"] == "procedure"  # composed content, not ignored
+    with pytest.raises(ValueError, match="^classref_binding_unknown:"):
+        compose_manifest(
+            derived.manifest,
+            {"bindings": [{"id": "brand-new", "kind": "procedure",
+                           "target_id": "brand-new"}]},
+        )
