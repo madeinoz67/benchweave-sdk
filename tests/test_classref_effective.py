@@ -253,3 +253,42 @@ def test_m6_exclusive_bounds_carry_on_control_rows() -> None:
     assert row["exclusiveMinimum"] == 5
     assert "minimum" not in row
     assert row["maximum"] == 60000
+
+
+def test_m7_required_actions_checked_across_all_profiles() -> None:
+    """M7: the §3.8 merge path checks every claimed profile's required
+    actions, not references[0]'s row — the dmm-first sort must not skip
+    the logic_analyser abort check."""
+    reference2 = json.loads(json.dumps(REFERENCE))
+    reference2["profile_id"] = "otdp.dmm/1.0.0"
+    reference2["slots"] = {}
+    reference2["pages"] = [
+        {"id": "dmm-readings", "title": "DMM", "kind": "readings",
+         "binding_slots": []},
+    ]
+    descriptor = json.loads((FIXTURES / "descriptor-f1.json").read_bytes())
+    descriptor["profiles"].append("otdp.dmm/1.0.0")
+    del descriptor["actions"]["otdp.logic_analyser.abort/1.0.0"]
+    with pytest.raises(ValueError, match="^classref_required_action_absent:"):
+        derive_ui(
+            json.dumps(descriptor).encode(), [reference2, REFERENCE],
+            descriptor_path=FIXTURES / "descriptor-f1.json",
+        )
+
+
+def test_m4_envelope_pin_uses_the_file_bytes(tmp_path: Path) -> None:
+    """M4: the envelope's descriptor_sha256 pins the FILE bytes (the legacy
+    path's discipline) — a non-canonical descriptor (extra whitespace)
+    still yields a pin check-ui accepts, never a hash of re-serialised
+    virtual bytes."""
+    import hashlib
+
+    descriptor = json.loads((FIXTURES / "descriptor-f1.json").read_bytes())
+    non_canonical = json.dumps(descriptor, indent=4) + "\n"  # different formatting
+    derived = derive_ui(
+        non_canonical.encode(), REFERENCE,
+        descriptor_path=FIXTURES / "descriptor-f1.json",
+    )
+    assert derived.envelope["descriptor_sha256"] == hashlib.sha256(
+        non_canonical.encode()
+    ).hexdigest()
