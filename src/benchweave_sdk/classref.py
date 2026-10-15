@@ -234,18 +234,48 @@ def _intersect_property(
             "is outside the closed intersection vocabulary",
         )
     effective = dict(catalogue_schema)
-    for keyword in ("minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"):
-        if keyword in constraint:
-            declared_type = (
-                catalogue_schema.get("type") if isinstance(catalogue_schema, dict) else None
+    declared_type = (
+        catalogue_schema.get("type") if isinstance(catalogue_schema, dict) else None
+    )
+    # Bounds INTERSECT (H1, refute lane 1): a looser constraint can never
+    # widen the catalogue's admittance — the tighter end of each side wins,
+    # the exclusivity flags carry, and an empty result refuses.
+    def _bound(source: dict[str, Any], exclusive_key: str, plain_key: str) -> tuple[Any, bool] | None:
+        if exclusive_key in source:
+            return source[exclusive_key], True
+        if plain_key in source:
+            return source[plain_key], False
+        return None
+
+    low_catalogue = _bound(effective, "exclusiveMinimum", "minimum")
+    high_catalogue = _bound(effective, "exclusiveMaximum", "maximum")
+    low_constraint = _bound(constraint, "exclusiveMinimum", "minimum")
+    high_constraint = _bound(constraint, "exclusiveMaximum", "maximum")
+    if low_constraint is not None or high_constraint is not None:
+        if declared_type not in _NUMERIC_TYPES:
+            raise _refuse(
+                "classref_effective_schema_conflict",
+                f"action {action_urn} field {property_name}: numeric bound "
+                f"applied to catalogue type {declared_type!r}",
             )
-            if declared_type not in _NUMERIC_TYPES:
-                raise _refuse(
-                    "classref_effective_schema_conflict",
-                    f"action {action_urn} field {property_name}: numeric bound "
-                    f"applied to catalogue type {declared_type!r}",
-                )
-            effective[keyword] = constraint[keyword]
+    low: tuple[Any, bool] | None
+    if low_catalogue is None or low_constraint is None:
+        low = low_catalogue if low_constraint is None else low_constraint
+    else:
+        low = max(low_catalogue, low_constraint)
+    high: tuple[Any, bool] | None
+    if high_catalogue is None or high_constraint is None:
+        high = high_catalogue if high_constraint is None else high_constraint
+    else:
+        high = min(high_catalogue, high_constraint)
+    for keyword in ("minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"):
+        effective.pop(keyword, None)
+    if low is not None:
+        value, exclusive = low
+        effective["exclusiveMinimum" if exclusive else "minimum"] = value
+    if high is not None:
+        value, exclusive = high
+        effective["exclusiveMaximum" if exclusive else "maximum"] = value
     if "multipleOf" in constraint:
         effective["multipleOf"] = constraint["multipleOf"]
     if "enum" in constraint:
@@ -265,7 +295,34 @@ def _intersect_property(
         effective.pop("exclusiveMinimum", None)
         effective.pop("exclusiveMaximum", None)
     if "const" in constraint:
-        effective = {**effective, "const": constraint["const"]}
+        # A const NARROWS to one value; outside the catalogue's own
+        # admittance it is a conflict (H1: never a replace that pops the
+        # enum or the bounds).
+        value = constraint["const"]
+        catalogue_enum = catalogue_schema.get("enum")
+        if catalogue_enum is not None and value not in catalogue_enum:
+            raise _refuse(
+                "classref_effective_schema_conflict",
+                f"action {action_urn} field {property_name}: const {value!r} "
+                f"outside the catalogue enum {list(catalogue_enum)!r}",
+            )
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            for bound, edge in ((low_catalogue, "minimum"), (high_catalogue, "maximum")):
+                if bound is None:
+                    continue
+                bound_value, exclusive = bound
+                outside = (
+                    value < bound_value or (exclusive and value == bound_value)
+                    if edge == "minimum"
+                    else value > bound_value or (exclusive and value == bound_value)
+                )
+                if outside:
+                    raise _refuse(
+                        "classref_effective_schema_conflict",
+                        f"action {action_urn} field {property_name}: const "
+                        f"{value!r} outside the catalogue {edge} {bound_value!r}",
+                    )
+        effective = {**effective, "const": value}
         effective.pop("enum", None)
         for keyword in ("minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"):
             effective.pop(keyword, None)
