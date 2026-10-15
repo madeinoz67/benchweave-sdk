@@ -305,3 +305,49 @@ def test_m9_known_binding_overlay_applies_content(tmp_path: Path) -> None:
             {"bindings": [{"id": "brand-new", "kind": "procedure",
                            "target_id": "brand-new"}]},
         )
+
+
+def test_l11_l3_coverage_needs_its_named_controls(tmp_path: Path) -> None:
+    """L11/F9: L3 is covered by its plan-named controls (the effective
+    settings surface on the configuration page), not by any button. The
+    auto-deviant arm: with the ledger declaring the preset birth, the row
+    REPORTS; the failable arm for the whole coverage emission is the
+    baseline (undeclared rows fail classref_gate_uncovered)."""
+    from helpers_classref import build_classref_project
+
+    project, derived = build_classref_project(tmp_path / "l11")
+    report = verify_ui(project, reference=REFERENCE)
+    assert report.clean
+    assert "otdp.logic_analyser.configure/1.0.0" in report.reported_deviations
+    # The configuration page renders the L3 surface (data table + numerics).
+    from benchweave_sdk.classref_gate_render import render_pages
+    from benchweave_sdk.classref_gate import census, _page_ids
+
+    html = render_pages(project, ["configuration"])["configuration"]
+    seen = census(html)
+    assert seen["data_tables"] == 1
+    assert seen["numerics"] >= 1
+
+
+def test_m5_coverage_emission_is_load_bearing(tmp_path: Path) -> None:
+    """M5's mutation-survival arm: an undeclared unreachable action fails
+    the gate with classref_gate_uncovered — deleting the uncovered
+    emission cannot survive this test."""
+    import json as _json
+
+    from helpers_classref import build_classref_project
+
+    project, derived = build_classref_project(tmp_path / "m5")
+    package = next((project / "src").iterdir())
+    declaration = _json.loads(
+        (package / "ui" / "class-reference.json").read_bytes()
+    )
+    # Drop every deviation: the declared-coverage arm must now FAIL.
+    declaration["deviations"] = []
+    (package / "ui" / "class-reference.json").write_bytes(
+        (json.dumps(declaration, indent=2) + "\n").encode()
+    )
+    report = verify_ui(project, reference=REFERENCE)
+    codes = [finding.code for finding in report.findings]
+    assert not report.clean
+    assert "classref_gate_uncovered" in codes or "classref_gate_undeclared" in codes, codes

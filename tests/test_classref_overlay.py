@@ -49,7 +49,7 @@ def test_overlay_cannot_delete_or_touch_immutable_fields() -> None:
         compose_manifest(derived.manifest, {"plugin_id": "evil.plugin"})
     with pytest.raises(ValueError, match="^overlay_delete_refused:"):
         compose_manifest(derived.manifest, {"pages": []})
-    with pytest.raises(ValueError, match="^overlay_delete_refused:"):
+    with pytest.raises(ValueError, match="^classref_binding_unknown:"):
         compose_manifest(
             derived.manifest,
             {"bindings": [{"id": "not-a-derived-binding", "kind": "dataset",

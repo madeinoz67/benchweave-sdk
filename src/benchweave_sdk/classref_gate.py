@@ -52,6 +52,7 @@ class _CensusParser(HTMLParser):
         self.lanes_figures = 0
         self.lane_kinds: dict[str, int] = {}
         self.confirms = 0
+        self.data_tables = 0
         self._button_depth = 0
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
@@ -68,6 +69,8 @@ class _CensusParser(HTMLParser):
             self.lane_kinds[kind] = self.lane_kinds.get(kind, 0) + 1
         if "bw-numeric" in classes:
             self.numerics += 1
+        if "bw-data-table" in classes:
+            self.data_tables += 1
         if "bw-confirm" in classes:
             self.confirms = 1
         if "bw-button" in classes and tag == "button":
@@ -95,6 +98,7 @@ def census(html: str) -> dict[str, Any]:
         "lanes_figures": parser.lanes_figures,
         "lane_kinds": dict(parser.lane_kinds),
         "confirms": parser.confirms,
+        "data_tables": parser.data_tables,
     }
 
 
@@ -122,27 +126,70 @@ def _page_ids(derived: Any) -> list[str]:
 def _assert_expect(
     expectation: dict[str, Any], censused: dict[str, dict[str, Any]]
 ) -> list[GateFinding]:
-    """Census-vs-expect deltas, typed (record §5/5)."""
+    """Census-vs-expect deltas, typed (record §5/5). M10/F7: an unknown
+    component name and a per_page naming a non-served page both refuse —
+    silence would launder the divergence. M8/F2: the attribute census is
+    asserted with the count."""
     findings: list[GateFinding] = []
     pages = sorted(censused)
+    census_map = {
+        "digital-lanes": "lanes_figures",
+        "button": "buttons",
+        "numeric-input": "numerics",
+        "panel": "panels",
+        "mode-banner": "mode_banners",
+        "data-table": "data_tables",
+    }
     for name, row in expectation["components"].items():
-        key = {
-            "digital-lanes": "lanes_figures",
-            "button": "buttons",
-            "numeric-input": "numerics",
-            "panel": "panels",
-            "mode-banner": "mode_banners",
-        }.get(name)
+        key = census_map.get(name)
         if key is None:
-            continue
+            raise ValueError(
+                f"classref_gate_unknown_component: {name!r} keys no "
+                "ui-contract §E.1 surface the census counts"
+            )
         per_page = row.get("per_page")
         if per_page == "*":
-            targets = {page: censused[page] for page in pages}
-        elif per_page in censused:
+            targets = {page: sc for page, sc in censused.items()}
+        elif per_page is not None and per_page in censused:
             targets = {per_page: censused[per_page]}
+        elif per_page is not None:
+            raise ValueError(
+                f"classref_gate_page: expectation per_page {per_page!r} names "
+                "a page the render did not serve"
+            )
         else:
-            # A row without per_page pools the whole render: the count is
-            # the sum across pages (panel == n_pages across all pages).
+            targets = None  # pooled across the render
+        if targets is not None:
+            for page, seen in targets.items():
+                actual = seen.get(key) or 0
+                if isinstance(actual, list):
+                    actual = len(actual)
+                if actual != row["count"]:
+                    findings.append(
+                        GateFinding(
+                            "classref_gate_missing"
+                            if isinstance(row["count"], int) and actual < row["count"]
+                            else "classref_gate_excess",
+                            f"{name} on {page}: expected {row['count']}, "
+                            f"censused {actual}",
+                        )
+                    )
+            seen_page = next(iter(targets.values())) if targets else {}
+            lane_kinds = seen_page.get("lane_kinds", {})
+            for selector, wanted in (row.get("attribute") or {}).items():
+                kind = selector.removeprefix("data-bw-lane-kind=")
+                seen_kind = lane_kinds.get(kind, 0)
+                if seen_kind != wanted:
+                    findings.append(
+                        GateFinding(
+                            "classref_gate_missing"
+                            if seen_kind < wanted
+                            else "classref_gate_excess",
+                            f"{name} attribute {selector}: expected {wanted}, "
+                            f"censused {seen_kind}",
+                        )
+                    )
+        else:
             total = 0
             for seen in censused.values():
                 value = seen.get(key)
@@ -155,20 +202,6 @@ def _assert_expect(
                         else "classref_gate_excess",
                         f"{name}: expected {row['count']} across the render, "
                         f"censused {total}",
-                    )
-                )
-            continue
-        for page, seen in targets.items():
-            actual = seen.get(key) or 0
-            if isinstance(actual, list):
-                actual = len(actual)
-            if actual != row["count"]:
-                findings.append(
-                    GateFinding(
-                        "classref_gate_missing"
-                        if isinstance(row["count"], int) and actual < row["count"]
-                        else "classref_gate_excess",
-                        f"{name} on {page}: expected {row['count']}, censused {actual}",
                     )
                 )
     return findings
@@ -203,7 +236,10 @@ def _coverage_findings(
         divergence = bool(row.get("divergence"))
         if covered and not divergence:
             continue
-        if urn in declared_ids or row.get("declared_deviation"):
+        # A6's mechanism: the AUTHOR's ledger downgrades — the expander's
+        # auto-deviation marks are informational only, or an emptied
+        # ledger would launder the divergence.
+        if urn in declared_ids:
             reported.append(urn)
             continue
         if divergence and not covered:

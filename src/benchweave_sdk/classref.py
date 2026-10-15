@@ -1530,13 +1530,20 @@ def compose_manifest(
             if key == "id":
                 continue
             existing[key] = json.loads(json.dumps(value))
-    derived_binding_ids = {row["id"] for row in composed["bindings"]}
+    derived_bindings = {row["id"]: row for row in composed["bindings"]}
     for row in overrides.get("bindings", []):
-        if str(row.get("id")) not in derived_binding_ids:
+        binding_id = str(row.get("id"))
+        if binding_id not in derived_bindings:
+            # M9: a NEW binding id is not an overlay edit — the overlay
+            # vocabulary cannot introduce bindings, distinct from deletion.
             raise _refuse(
-                "overlay_delete_refused",
-                f"binding {row.get('id')!r} is not a derived row (deletions refuse)",
+                "classref_binding_unknown",
+                f"binding {binding_id!r} is not a derived row; the overlay "
+                "composes derived bindings, it does not append them",
             )
+        derived_bindings[binding_id].update(
+            json.loads(json.dumps(row))
+        )
     if "extensions" in overrides:
         composed["extensions"] = {**composed.get("extensions", {}), **overrides["extensions"]}
     result: dict[str, Any] = composed
