@@ -150,3 +150,23 @@ def test_multi_profile_slot_conflict_refused() -> None:
             (FIXTURES / "descriptor-f1.json").read_bytes(), [REFERENCE, reference2],
             descriptor_path=FIXTURES / "descriptor-f1.json",
         )
+
+
+def test_decode_annotated_overlay_derives_lanes_rc4() -> None:
+    """RC-4's named test: with the descriptor declaring decode_annotated and
+    pinning decoder documents, decoder lanes derive (the annotation form)
+    and the action's coverage rides the rendered annotation surface (L4 on
+    the capture page) instead of an unofferable vendor-lane control."""
+    derived = _derive("descriptor-f1-da.json")
+    plot = derived.manifest["pages"][0]["plots"][0]
+    assert len(plot["decoder_lanes"]) == 1
+    lane = plot["decoder_lanes"][0]
+    assert lane["decoder"] == "uart"
+    # The other-action rule: the lanes bind the decode dataset binding on
+    # the capture page; decode_annotated's coverage rides that rendered
+    # annotation surface.
+    assert lane["binding_id"] == "decode"
+    row = derived.control_plan["otdp.logic_analyser.decode_annotated/1.0.0"]
+    assert row["level"] == "L4"
+    assert row["page"] == "capture"
+    assert not row["declared_deviation"]
