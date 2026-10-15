@@ -28,6 +28,9 @@
        hx-swap="innerHTML">
     {% include "page-readings.html" %}
   </div>
+  {% if layout_region %}
+  {{ layout_region }}
+  {% endif %}
   {% if controls %}
   {# Staged changes are HOST state: the inputs render outside the poll
      region (a poll must not wipe an operator's in-flight input), and a

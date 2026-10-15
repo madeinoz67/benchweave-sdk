@@ -367,6 +367,44 @@ def _page_views(
     return tuple(views)
 
 
+def _layout_block(manifest: Mapping[str, Any]) -> dict[str, Any] | None:
+    """The family layout block, validated against ITS OWN schema.
+
+    The canonical manifest validator is extension-blind, so the family
+    schema is the block's only validation authority; a block that fails it
+    renders NOTHING (degrade-by-ignoring, never an error) — and verify-ui
+    refuses it separately, so a malformed block never passes silently."""
+    block = (manifest.get("extensions") or {}).get(
+        "plugin-ui-class-reference:layout"
+    )
+    if not isinstance(block, dict):
+        return None
+    try:
+        from jsonschema import Draft202012Validator
+
+        from benchweave_sdk.classref import layout_schema
+
+        findings = list(Draft202012Validator(layout_schema()).iter_errors(block))
+    except Exception:  # noqa: BLE001 — degrade-by-ignoring is the contract
+        return None
+    return None if findings else block
+
+
+def _layout_sections(
+    manifest: Mapping[str, Any], page_id: str
+) -> list[dict[str, Any]]:
+    """One page's layout sections, or [] when the page carries none."""
+    block = (manifest.get("extensions") or {}).get(
+        "plugin-ui-class-reference:layout"
+    )
+    if not isinstance(block, dict):
+        return []
+    for page in block.get("pages", []):
+        if str(page.get("page_id")) == page_id:
+            return list(page.get("sections", []))
+    return []
+
+
 class HostPresentation:
     """The validated presentation, projected once at app construction."""
 
@@ -408,6 +446,7 @@ class HostPresentation:
         self.unavailable_pages = tuple(report.unavailable_pages)
         self.pages = _page_views(inputs.manifest, inputs.binding_catalogue)
         self.plot_views = project_plot_views(inputs)
+        self.layout = _layout_block(inputs.manifest)
 
     @property
     def available(self) -> bool:

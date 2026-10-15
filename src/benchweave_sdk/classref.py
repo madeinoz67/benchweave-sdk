@@ -1043,6 +1043,24 @@ def _finish(
     )
     return result
 
+def effective_action_fields(
+    descriptor: dict[str, Any], urn: str, descriptor_path: Path | None = None
+) -> list[dict[str, Any]]:
+    """The effective field rows for one action, resolved from the served
+    catalogs and the descriptor's constraints (the host composition's
+    admittance source; the same intersection the expander derives)."""
+    catalog = _catalog_documents(descriptor)
+    actions = dict(catalog.get("actions", {}))
+    actions.update(_vendor_catalogs(descriptor, descriptor_path))
+    if urn not in actions:
+        return []
+    constraints = (descriptor.get("actions") or {}).get(urn, {}).get(
+        "input_constraints"
+    ) or {}
+    effective = _effective_action_schema(urn, actions[urn], constraints)
+    return _field_rows(urn, "", effective)
+
+
 def _capture_page_id(pages: list[dict[str, Any]]) -> str:
     for page in pages:
         if page.get("plots"):
@@ -1098,11 +1116,40 @@ def _build_layout(
                             )
                 if level in ("L1", "L2"):
                     children.append({"binding_id": binding_id, "kind": "button"})
-                if level == "L3":
+                if level == "L3" and urn is not None:
+                    # L3 is preset-mediated; the numeric fields still offer
+                    # their effective admittance beside the preset surface.
+                    for field_row in plan[urn]["fields"]:
+                        if field_row["mode"] == "numeric":
+                            children.append(
+                                {"binding_id": binding_id, "kind": "numeric",
+                                 "field": field_row["field"]}
+                            )
                     children.append(
                         {"binding_id": binding_id, "kind": "reading",
                          "reading_kind": "data-table"}
                     )
+            # D14: actions whose bindings carry no page (vendor actions)
+            # still derive their controls on their plan page.
+            bound = {
+                str(row if isinstance(row, str) else row.get("id"))
+                for row in page.get("bindings", [])
+            }
+            for urn, plan_row in sorted(plan.items()):
+                if str(plan_row["page"]) != str(page["id"]):
+                    continue
+                slug = urn.split("/")[0].rsplit(".", 1)[-1]
+                if slug in bound or plan_row["level"] == "L4":
+                    continue
+                if plan_row["level"] in ("L1", "L2", "L3"):
+                    for field_row in plan_row["fields"]:
+                        if field_row["mode"] == "numeric":
+                            children.append(
+                                {"binding_id": slug, "kind": "numeric",
+                                 "field": field_row["field"]}
+                            )
+                    if plan_row["level"] in ("L1", "L2"):
+                        children.append({"binding_id": slug, "kind": "button"})
             sections = [{
                 "id": f"{page_id}-section",
                 "title": str(page.get("title", page_id)),
