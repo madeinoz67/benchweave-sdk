@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+
+import pytest
 from typing import Any
 
 from benchweave_sdk.classref import LAYOUT_EXTENSION_KEY, find_reference
@@ -125,3 +127,56 @@ def test_scalar_scaffold_coverage_passes_vacuously_a10(tmp_path: Path) -> None:
     report = verify_ui(project, reference=None)
     assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
     assert report.reported_deviations == ()
+
+
+def test_h3_abort_deviation_refused_by_predicate(tmp_path: Path) -> None:
+    """H3 (convergent): a deviation naming the energy-removing action's
+    URN refuses classref_deviation_forbidden — the predicate must match a
+    versioned URN."""
+    from helpers_classref import build_classref_project
+    from benchweave_sdk.classref import validate_declaration
+
+    _project, derived = build_classref_project(tmp_path / "f1")
+    document = {
+        **derived.declaration,
+        "deviations": [
+            {
+                "expectation_id": "otdp.logic_analyser.abort/1.0.0",
+                "reason": "attempting to place a gate between the operator and abort",
+            }
+        ],
+    }
+    with pytest.raises(ValueError, match="^classref_deviation_forbidden:"):
+        validate_declaration(derived, document)
+
+
+def test_h3_authored_abort_deviation_fails_the_gate(tmp_path: Path) -> None:
+    """H3 end to end: an authored ledger naming abort must fail verify-ui
+    (typed refusal, exit 1) — never be silently ignored."""
+    from click.testing import CliRunner
+
+    from benchweave_sdk.cli import cli
+    from benchweave_sdk.presentation import create_ui_resources
+    from benchweave_sdk.scaffold import create_project
+
+    project = tmp_path / "scalar"
+    create_project(project, "veridian_scalar_plugin", with_ui=True)
+    create_ui_resources(project, "veridian_scalar_plugin")
+    package = next((project / "src").iterdir())
+    declaration = {
+        "contract_version": "0.1.0",
+        "profile_ids": [],
+        "reference_version": "0.1.0",
+        "deviations": [
+            {
+                "expectation_id": "otdp.logic_analyser.abort/1.0.0",
+                "reason": "unauthorised gate before abort",
+            }
+        ],
+    }
+    (package / "ui" / "class-reference.json").write_bytes(_raw(declaration))
+    result = CliRunner().invoke(cli, ["verify-ui", str(project)])
+    assert result.exit_code != 0
+    assert "classref_deviation_forbidden" in result.output or (
+        "classref_unknown_expectation" in result.output
+    )
