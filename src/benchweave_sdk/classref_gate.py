@@ -315,20 +315,40 @@ def _abort_action_slugs(descriptor: dict[str, Any]) -> set[str]:
     }
 
 
-def _traceable_lane_labels(descriptor: dict[str, Any]) -> set[str]:
-    """Descriptor channel ids + labels, the group pattern instantiations
-    and the pinned decoder names — everything a lane label may trace to."""
+def _traceable_lane_labels(
+    descriptor: dict[str, Any], descriptor_path: Path | None = None
+) -> set[str]:
+    """Descriptor channel ids + labels, the pinned decoder ids AND their
+    document names (the same source the decoder-lane derivation uses),
+    and the group pattern instantiations — everything a lane label may
+    trace to (F4c)."""
     traceable: set[str] = set()
     for row in descriptor.get("channels") or []:
         traceable.add(str(row.get("id", "")))
         traceable.add(str(row.get("label", "")))
+    for pin in descriptor.get("decoders") or []:
+        traceable.add(str(pin.get("id", "")))
+        if descriptor_path is None:
+            continue
+        try:
+            from .presentation import read_file
+
+            doc = json.loads(
+                read_file(descriptor_path.parent / str(pin.get("path", "")))
+            )
+            traceable.add(str(doc.get("name", "")))
+            traceable.add(str(doc.get("longname", "")))
+        except (ValueError, OSError, json.JSONDecodeError):
+            traceable.add(str(pin.get("id", "")))
     return traceable
 
 
 def _lane_label_findings(
-    labels: list[str], descriptor: dict[str, Any]
+    labels: list[str],
+    descriptor: dict[str, Any],
+    descriptor_path: Path | None = None,
 ) -> list[GateFinding]:
-    traceable = _traceable_lane_labels(descriptor)
+    traceable = _traceable_lane_labels(descriptor, descriptor_path)
     findings: list[GateFinding] = []
     for label in labels:
         if label in traceable:
@@ -505,7 +525,9 @@ def verify_ui(
     # identity or the group pattern.
     for seen in censused.values():
         findings.extend(
-            _lane_label_findings(seen.get("lane_labels", []), descriptor)
+            _lane_label_findings(
+                seen.get("lane_labels", []), descriptor, descriptor_path
+            )
         )
     # A11's DOM-order arm made real: each layout page's button sequence
     # (the block's declaration order) appears in the censused page's

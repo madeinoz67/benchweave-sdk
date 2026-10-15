@@ -1214,6 +1214,14 @@ def coverage_plan_without_reference(
     actions_map: dict[str, Any] = dict(catalog.get("actions", {}))
     actions_map.update(_vendor_catalogs(descriptor, descriptor_path))
     actions = descriptor.get("actions") or {}
+    # F8b scalar arm: the reference-less path refuses typed exactly like
+    # derive_ui — never a bare KeyError from the ladder's lookup.
+    for urn in actions:
+        if urn not in actions_map:
+            raise _refuse(
+                "classref_unknown_action",
+                f"descriptor declares {urn}, absent from every served catalog",
+            )
     plan, _divergences = _derive_controls(
         actions, actions_map, {}, {}, {}
     )
@@ -1316,6 +1324,7 @@ def _build_layout(
                 "children": children,
             }] if children else []
         _insert_ladder_numerics(sections, plan)
+        _complete_authored_buttons(sections, plan, page_id)
         if sections:
             block_pages.append({"page_id": page_id, "sections": sections})
     block = {
@@ -1337,6 +1346,35 @@ def _build_layout(
             f"{findings[0].message}",
         )
     return block
+
+
+def _complete_authored_buttons(
+    sections: list[dict[str, Any]],
+    plan: dict[str, dict[str, Any]],
+    page_id: str,
+) -> None:
+    """A9's F3b arm: the reference's authored sections name only the
+    always-present bindings — a when-declared action (trigger) that
+    derives onto this page owes its button node too, or the census and
+    the coverage arm both miss it."""
+    present: set[str] = set()
+    for section in sections:
+        for node in section.get("children", []):
+            if node.get("kind") == "button":
+                present.add(str(node.get("binding_id", "")))
+    if not sections:
+        return
+    for urn, row in sorted(plan.items()):
+        if str(row.get("page", "")) != page_id:
+            continue
+        if row.get("level") not in ("L1", "L2"):
+            continue
+        slug = urn.split("/")[0].rsplit(".", 1)[-1]
+        if slug in present:
+            continue
+        sections[-1].setdefault("children", []).append(
+            {"binding_id": slug, "kind": "button"}
+        )
 
 
 def _urn_for_binding(plan: dict[str, dict[str, Any]], binding_id: str) -> str | None:

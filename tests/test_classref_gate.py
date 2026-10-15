@@ -581,6 +581,7 @@ def test_f3b_gate_passes_end_to_end_a9(tmp_path: Path) -> None:
     """A9's F3b acceptance, end to end: the gate passes with trigger and
     the partial group rendered (the arm that never ran)."""
     from helpers_classref import build_classref_project
+
     from benchweave_sdk.classref_gate import census
     from benchweave_sdk.classref_gate_render import render_pages
 
@@ -594,3 +595,23 @@ def test_f3b_gate_passes_end_to_end_a9(tmp_path: Path) -> None:
     seen = census(html)
     assert "trigger" in seen["buttons"], seen["buttons"]
     assert seen["numerics"] >= 1
+
+
+def test_f8b_reference_less_unknown_action_is_typed(tmp_path: Path) -> None:
+    """F8b scalar arm: the coverage_plan_without_reference path refuses
+    classref_unknown_action for a catalog-absent URN — never KeyError."""
+    from benchweave_sdk.classref import coverage_plan_without_reference
+
+    descriptor = json.loads((FIXTURES / "descriptor-f1.json").read_bytes())
+    descriptor["actions"]["com.veridian-labs.ghost/1.0.0"] = {
+        "binding": {"kind": "adapter", "key": "ghost"},
+        "input_constraints": {},
+        "timeout_ms": 1000,
+        "side_effect": "none",
+        "cancellable": True,
+        "retry": "never",
+    }
+    with pytest.raises(ValueError, match="^classref_unknown_action:"):
+        coverage_plan_without_reference(
+            descriptor, FIXTURES / "descriptor-f1.json"
+        )
