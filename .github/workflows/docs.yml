@@ -35,6 +35,10 @@ jobs:
   build-docs:
     name: "Build Docs"
     runs-on: ubuntu-latest
+    # Issue #475: 8 measured green runs, whole-job max 20m42s — 45m is 2.2x max,
+    # absorbing ~24 more release tags of isolated-build growth. A hang fails the
+    # job loudly here instead of sitting silent for the runner's 6h default.
+    timeout-minutes: 45
     concurrency:
       # Ref-scoped: a newer push to the same branch/PR supersedes (cancels)
       # only its own in-flight build — never anything in the `pages` group.
@@ -69,6 +73,10 @@ jobs:
         run: uv run python scripts/assemble_docs_site.py
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # changelog fetch; passed through to --from-repo builds
+          # Issue #475: a stalled --from-repo clone aborts after 30s below 1KB/s
+          # instead of hanging the job in silence (git low-speed abort).
+          GIT_HTTP_LOW_SPEED_LIMIT: "1000"
+          GIT_HTTP_LOW_SPEED_TIME: "30"
 
       - name: Link integrity (authored front-door pages + inbound citations)
         # Fold B-F1 (issue #347 WS4): the landing-flip defect was only visible on a
