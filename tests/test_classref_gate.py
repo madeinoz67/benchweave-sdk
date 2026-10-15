@@ -109,3 +109,19 @@ def test_banked_baseline_fails_loudly_a4(tmp_path: Path) -> None:
     assert not report.clean
     assert len(report.findings) >= 6, codes
     assert "classref_gate_missing" in codes
+
+
+def test_scalar_scaffold_coverage_passes_vacuously_a10(tmp_path: Path) -> None:
+    """A10's scalar arm (record §5.1): a fresh scalar scaffold (no class
+    reference; its descriptor declares no invoke-class actions) PASSES
+    coverage — the gate invents no obligations the descriptor does not
+    create, and the class-expect arm skips."""
+    from benchweave_sdk.presentation import create_ui_resources
+    from benchweave_sdk.scaffold import create_project
+
+    project = tmp_path / "scalar"
+    create_project(project, "veridian_scalar_plugin", with_ui=True)
+    create_ui_resources(project, "veridian_scalar_plugin")
+    report = verify_ui(project, reference=None)
+    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
+    assert report.reported_deviations == ()
