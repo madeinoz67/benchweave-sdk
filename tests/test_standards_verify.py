@@ -187,15 +187,15 @@ def test_train_sync_policy_mirror_carries_the_family() -> None:
     ]
 
 
-def test_train_sync_carries_the_sdk_0_14_0_bump() -> None:
+def test_train_sync_lock_anchor_moves_with_pyproject() -> None:
     """A carried-set change is version motion: the bump-class gate refuses
     an EQUAL-version sync carrying it, so the sync rides a MINOR and the
     lock anchor moves with pyproject."""
     lock = _train_lock()
     compat = lock.get("compatibility")
     assert isinstance(compat, dict)
-    assert compat.get("sdk") == "0.14.0", (
-        f"lock anchor at {compat.get('sdk')}, expected 0.14.0"
-    )
     pyproject = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))
-    assert pyproject["project"]["version"] == "0.14.0"
+    version = pyproject["project"]["version"]
+    assert compat.get("sdk") == version, (
+        f"lock anchor at {compat.get('sdk')}, pyproject at {version}"
+    )
