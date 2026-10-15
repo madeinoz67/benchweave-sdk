@@ -1,5 +1,7 @@
 @AGENTS.md
 
+Building a plugin or new here? `README.md` has the five-step workflow; the rendered walkthrough is https://sdk.benchweave.dev/docs/user-guide/getting-started.html
+
 Calibration: the graph narrows scope, it does not replace reading the implementation. For
 the symbol you are about to change or depend on, read its full body with
 `read(target:{symbol:…})` or `read(operation:"file", …)` — never act on a one-line summary
