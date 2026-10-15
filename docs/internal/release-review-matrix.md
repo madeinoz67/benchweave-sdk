@@ -220,3 +220,22 @@ Test surfaces: T1/T2 confirmed by the byte-parity suite at the staged tree (34/0
 | 7 | Contributor window `v0.11.0..HEAD` | 5 commits in the window — human authors other than the operator/bots: none; the walk acknowledges new human contributors and records an empty window as a result |
 | 8 | Gateway uv.lock SDK pin | recorded note — moves at the gateway's next lock run / pointer advance |
 | 9 | Served-set bump class | SERVED-SET MOTION in the window — the class is asserted by the sync machinery (sdk_bump_class_invalid:); the walk records it; release-cut refuses to guess a class (D7) |
+
+## Result record — v0.13.0 (2026-10-15)
+
+The bump rode the mechanically-coupled sync PR (#152 — release-cut's assert_increment refuses a same-version re-cut, so the full transaction never ran pre-bump); this walk performed the stamp substitutions the transaction would have made, occurrence-by-occurrence. Walk finding, recorded: no v0.12.0 result block exists in this matrix — the 0.12.0 registration commit (b7f8881) touched .release/plan.json only; noted, not backfilled (a record for a walk that did not happen would be fabricated).
+
+| # | Surface | Result |
+|---|---------|--------|
+| 1 | README stamp | updated BY THE WALK → SDK 0.13.0 (was 0.12.0) |
+| 1b | User-guide "current SDK" sentence | updated BY THE WALK → 0.13.0 / OTDP 0.2.3 / registry 0.1.3 — the row's own lag pattern again: the sentence sat three releases stale (0.10.0 / 0.2.2 / 0.1.2), last corrected at v0.10.0 |
+| 2 | Website hero status | updated BY THE WALK → SDK 0.13.0 · OTDP 0.2.3 · adapter API 1.1 (confirmed against the lock's active otdp row) |
+| 3 | Docs selector | PHASE-2 — patch staged at `.release/phase2-v0.13.0.patch` (both selector surfaces: latest option + demoted prior); the tag commit applies it (registration precedes the tag) |
+| 4 | Compatibility tagline | updated BY THE WALK → SDK 0.13.0 against the main-repository floor `>=0.1.0` (lock compatibility.main_project unchanged) |
+| 5 | Standards badges | updated BY THE WALK — plugin-ui 0.3.0 → 0.3.1 (stale since the 0.12.0 era), plugin-ui-class-reference 0.1.0 ADDED (seventh family); interface 0.1.0 and plugin-ui-preview 0.2.0 correct-as-is; all seven now match the lock's ACTIVE rows |
+| 6 | great-docs.yml versions | PHASE-2 — the tag commit applies the staged patch (the ordering constraint) |
+| 7 | Contributor window `v0.12.0..HEAD` | 3 commits in the window — human authors other than the operator/bots: none (madeinoz67 / Stephen Eaton + benchweave-changelog[bot]); empty window recorded as a result |
+| 8 | Gateway uv.lock SDK pin | recorded note — moves at the gateway pointer-pairing landing (this train's Landing 1/3 event) |
+| 9 | Served-set bump class | SERVED-SET MOTION — MINOR: plugin-ui-class-reference 0.1.0 added (pure ADD, 15th lock row, no refusals; asserted by the sync machinery's bump-class judgment in PR #152) |
+
+Test surfaces: T1/T2 — the fixtures were regenerated in-arc by the sync PR (release_cut.regenerate_fixtures at 0.13.0); T3 docstring names `make release-cut` (no motion); T4 inert by design.
