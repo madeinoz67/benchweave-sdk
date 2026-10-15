@@ -369,6 +369,7 @@ class TestFoldHardening:
             "interface",
             "otdp",
             "plugin-ui",
+            "plugin-ui-class-reference",
             "plugin-ui-preview",
             "registry",
         ]
@@ -571,6 +572,7 @@ class TestUnreadableRootRefuses:
                 "interface",
                 "plugin-ui",
                 "plugin-ui-preview",
+                "plugin-ui-class-reference",
             )
         ]
         (tmp_path / "standards-lock.json").write_text(

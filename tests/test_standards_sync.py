@@ -69,7 +69,8 @@ def test_first_sync_writes_lock_and_vendored_tree(tmp_path: Path) -> None:
     sdk = _synced_sdk(tmp_path, bundle)
     lock = json.loads((sdk / "standards-lock.json").read_bytes())
     assert {s["id"] for s in lock["standards"]} == {
-        "otdp", "registry", "execution", "interface", "plugin-ui", "plugin-ui-preview"
+        "otdp", "registry", "execution", "interface",
+        "plugin-ui", "plugin-ui-preview", "plugin-ui-class-reference",
     }
     stamp = sdk / "src/benchweave_sdk/standards/otdp/_GENERATED.txt"
     first_line = stamp.read_text(encoding="utf-8").splitlines()[0]
