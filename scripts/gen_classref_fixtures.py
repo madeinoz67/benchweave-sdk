@@ -204,6 +204,61 @@ def _digest(name: str) -> str:
     return hashlib.sha256((OUT / name).read_bytes()).hexdigest()
 
 
+def refusal_no_lanes() -> dict:
+    d = descriptor("nolanes", 2, decode=False, vendor=False)
+    d["channels"] = [
+        {"id": "an0", "label": "Analog line 0", "role": "analogue_input",
+         "quantities": ["voltage"], "parameter_names": []},
+        {"id": "an1", "label": "Analog line 1", "role": "analogue_input",
+         "quantities": ["voltage"], "parameter_names": []},
+    ]
+    return d
+
+
+def refusal_lane_ceiling() -> dict:
+    return descriptor("ceiling", 65, decode=False, vendor=False)
+
+
+def refusal_action_absent() -> dict:
+    d = descriptor("noabort", 2, decode=False, vendor=False)
+    del d["actions"]["otdp.logic_analyser.abort/1.0.0"]
+    return d
+
+
+def f1_annotation() -> dict:
+    """descriptor-f1-da: F1 plus decode_annotated declared and the uart pin."""
+    import hashlib
+
+    da = json.loads(json.dumps(descriptor("f1", 2, decode=True, vendor=True)))
+    da["provenance"]["test_vectors"] = _test_vectors()
+    da["id"] = "dev.veridian.f1-da-la"
+    da["display_name"] = "Veridian LA-32 f1-da fixture"
+    da["decoders"] = [{
+        "id": "uart",
+        "path": "decoder-uart.json",
+        "sha256": hashlib.sha256(
+            (OUT / "decoder-uart.json").read_bytes()
+        ).hexdigest(),
+    }]
+    da["actions"]["otdp.logic_analyser.decode_annotated/1.0.0"] = {
+        "binding": {"kind": "adapter", "key": "fixture"},
+        "input_constraints": {},
+        "timeout_ms": 30000,
+        "side_effect": "none",
+        "cancellable": True,
+        "retry": "idempotent",
+    }
+    return da
+
+
+def _test_vectors() -> list[dict]:
+    return [{
+        "id": "fixture-vectors",
+        "path": "vectors-f1.json",
+        "purpose": "Synthetic fixture vectors; not a device simulator",
+    }]
+
+
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     vendor_catalog = {
@@ -240,11 +295,34 @@ def main() -> None:
          dict(decode=True, vendor=True, trigger=True, constraints=f3b_constraints(),
               decoders=[])),
     ]
+    import hashlib as _hashlib
+
     for name, count, kwargs in specs:
         doc = descriptor(name, count, **kwargs)
+        if name == "f3b":
+            doc["decoders"] = [{
+                "id": "uart",
+                "path": "decoder-uart.json",
+                "sha256": _hashlib.sha256(
+                    (OUT / "decoder-uart.json").read_bytes()
+                ).hexdigest(),
+            }]
+        doc["provenance"]["test_vectors"] = _test_vectors()
         (OUT / f"descriptor-{name}.json").write_bytes(
             (json.dumps(doc, indent=2) + "\n").encode()
         )
+    for name, doc in (
+        ("refusal-no-lanes", refusal_no_lanes()),
+        ("refusal-lane-ceiling", refusal_lane_ceiling()),
+        ("refusal-action-absent", refusal_action_absent()),
+    ):
+        doc["provenance"]["test_vectors"] = _test_vectors()
+        (OUT / f"{name}.json").write_bytes(
+            (json.dumps(doc, indent=2) + "\n").encode()
+        )
+    (OUT / "descriptor-f1-da.json").write_bytes(
+        (json.dumps(f1_annotation(), indent=2) + "\n").encode()
+    )
     print("fixtures written to", OUT)
 
 
