@@ -393,11 +393,11 @@ def _layout_block(manifest: Mapping[str, Any]) -> dict[str, Any] | None:
 def _layout_sections(
     manifest: Mapping[str, Any], page_id: str
 ) -> list[dict[str, Any]]:
-    """One page's layout sections, or [] when the page carries none."""
-    block = (manifest.get("extensions") or {}).get(
-        "plugin-ui-class-reference:layout"
-    )
-    if not isinstance(block, dict):
+    """One page's layout sections, or [] when the page carries none (or
+    the block fails the family schema — degrade-by-ignoring; verify-ui
+    refuses it loudly on its side)."""
+    block = _layout_block(manifest)
+    if block is None:
         return []
     for page in block.get("pages", []):
         if str(page.get("page_id")) == page_id:
@@ -446,7 +446,6 @@ class HostPresentation:
         self.unavailable_pages = tuple(report.unavailable_pages)
         self.pages = _page_views(inputs.manifest, inputs.binding_catalogue)
         self.plot_views = project_plot_views(inputs)
-        self.layout = _layout_block(inputs.manifest)
 
     @property
     def available(self) -> bool:
