@@ -687,6 +687,25 @@ def _assemble(
         actions, catalog_actions, slot_for_urn, page_for_slot,
         merged["expect"]["controls"],
     )
+    plot_page = next(
+        (
+            str(page["id"])
+            for page in merged["pages"]
+            if page.get("plot")
+        ),
+        "",
+    )
+    for urn in actions:
+        if urn.split("/")[0].rsplit(".", 1)[-1] != "decode_annotated":
+            continue
+        if descriptor.get("decoders") and plot_page:
+            plan[urn] = {
+                "level": "L4",
+                "page": plot_page,
+                "fields": [],
+                "declared_deviation": False,
+                "rendered_by": "decoder annotation lanes",
+            }
     return _finish(
         descriptor, references, merged, lanes, actions, catalog_actions,
         plan, divergences, version, descriptor_path=descriptor_path,
@@ -767,8 +786,22 @@ def _finish(
     decode_declared = bool(
         decode_slot and str(decode_slot.get("action")) in actions
     )
+    # RC-4's decode_annotated overlay: the annotation form derives the same
+    # pinned-decoder lanes (same code surface); its coverage rides them.
+    decode_annotated_urn = next(
+        (
+            urn
+            for urn in actions
+            if urn.split("/")[0].rsplit(".", 1)[-1] == "decode_annotated"
+        ),
+        None,
+    )
     decoder_lanes: list[dict[str, Any]] = []
-    if decode_declared and descriptor.get("decoders") and descriptor_path is not None:
+    if (
+        (decode_declared or decode_annotated_urn)
+        and descriptor.get("decoders")
+        and descriptor_path is not None
+    ):
         for pin in descriptor["decoders"]:
             decoder_path = descriptor_path.parent / str(pin.get("path", ""))
             try:
@@ -797,6 +830,11 @@ def _finish(
                     "binding_id": decode_key,
                 }
             )
+    if decoder_lanes and decode_key and not decode_declared:
+        # Annotation-form lanes with no decode declaration bind the capture
+        # dataset binding (no decode target exists to carry them).
+        for lane_row in decoder_lanes:
+            lane_row["binding_id"] = capture_binding_id
     if decode_key and decode_declared:
         targets.append(
             {
