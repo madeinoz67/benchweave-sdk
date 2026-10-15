@@ -11,6 +11,8 @@ or permission to operate hardware.
 
 from __future__ import annotations
 
+import json
+
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from pathlib import Path
@@ -101,9 +103,8 @@ def _derive_for_project(
     descriptor_raw: bytes, reference: dict[str, Any] | None, descriptor_path: Path
 ) -> Any:
     if reference is None:
-        import json as _json
-
-        descriptor = _json.loads(descriptor_raw)
+        
+        descriptor = json.loads(descriptor_raw)
         references = [
             found
             for profile in descriptor.get("profiles") or []
@@ -237,14 +238,13 @@ def verify_ui(
         # The always-on arm alone (record §5.1): no class reference, no
         # expect assertions and no invented obligations — every declared
         # action still owes a rendered control or a declared deviation.
-        import json as _json
-
+        
         from .classref import coverage_plan_without_reference
         from .classref_gate_render import render_pages
 
-        descriptor = _json.loads(descriptor_raw)
+        descriptor = json.loads(descriptor_raw)
         plan, _actions_map = coverage_plan_without_reference(descriptor, descriptor_path)
-        manifest = _json.loads((package_dir / "ui" / "manifest.json").read_bytes())
+        manifest = json.loads((package_dir / "ui" / "manifest.json").read_bytes())
         pages = [str(page["id"]) for page in manifest.get("pages", [])]
         first = pages[0] if pages else ""
         plan = {urn: {**row, "page": row["page"] if row["page"] != "device-features" else first}
@@ -253,22 +253,37 @@ def verify_ui(
         censused = {page: census(html) for page, html in rendered.items()}
         declaration_path = package_dir / "ui" / "class-reference.json"
         declaration = (
-            _json.loads(declaration_path.read_bytes())
+            json.loads(declaration_path.read_bytes())
             if declaration_path.is_file()
             else {"deviations": []}
         )
+        from .classref import validate_declaration_vocabulary
+
+        validate_declaration_vocabulary(set(plan), declaration)
         coverage, reported = _coverage_findings(plan, censused, declaration)
         return GateReport(findings=tuple(coverage), reported_deviations=tuple(reported))
-    validate_declaration(derived, derived.declaration)
+    # The AUTHOR's ledger is the deviation record (A6's mechanism): when
+    # the project carries ui/class-reference.json the gate reads THAT,
+    # validated, in this arm too — the birth declaration is only the
+    # fallback. H3: validation runs in both arms.
+    from .classref import validate_declaration_vocabulary
+
+    authored_path = package_dir / "ui" / "class-reference.json"
+    ledger = (
+        json.loads(authored_path.read_bytes())
+        if authored_path.is_file()
+        else derived.declaration
+    )
+    vocabulary = set(derived.expectation.get("components", {}))
+    vocabulary.update(derived.control_plan)
+    validate_declaration_vocabulary(vocabulary, ledger)
     from .classref_gate_render import render_pages
 
     pages = _page_ids(derived)
     rendered = render_pages(project, pages)
     censused = {page: census(html) for page, html in rendered.items()}
     findings = _assert_expect(derived.expectation, censused)
-    coverage, reported = _coverage_findings(
-        derived.control_plan, censused, derived.declaration
-    )
+    coverage, reported = _coverage_findings(derived.control_plan, censused, ledger)
     findings.extend(coverage)
     forbidden = [
         GateFinding("classref_gate_forbidden", f"bw-confirm rendered on {page}")

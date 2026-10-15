@@ -422,6 +422,7 @@ def derive_ui_command(project: Path, force: bool) -> None:
 
 @cli.command("verify-ui")
 @click.argument("project", type=click.Path(path_type=Path, exists=True))
+@_domain_errors
 def verify_ui_command(project: Path) -> None:
     """Render the project's presentation and assert the class expectation.
 

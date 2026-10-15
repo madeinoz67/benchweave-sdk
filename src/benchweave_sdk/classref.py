@@ -1443,11 +1443,15 @@ def declaration_scaffold(derived: DerivedUI) -> dict[str, Any]:
 #: The expectation ids a declaration may name: the reference's component
 #: rows plus the resolved control-plan rows (action URNs). An unknown id
 #: cannot launder a divergence (record §4).
-def validate_declaration(
-    derived: DerivedUI, document: dict[str, Any]
+def validate_declaration_vocabulary(
+    vocabulary: set[str], document: dict[str, Any]
 ) -> dict[str, Any]:
-    vocabulary = set(derived.expectation.get("components", {}))
-    vocabulary.update(derived.control_plan)
+    """Validate one ledger (authored or birth) against an id vocabulary.
+
+    H3: the D7 guard matches the URN's action slug — the abort class per
+    the record §4 — so a versioned URN is what it sees, and it runs on
+    EVERY ledger the gate consumes, authored or derived, in both gate
+    arms."""
     for row in document.get("deviations", []):
         expectation_id = str(row.get("expectation_id", ""))
         if expectation_id not in vocabulary:
@@ -1455,13 +1459,22 @@ def validate_declaration(
                 "classref_unknown_expectation",
                 f"{expectation_id} is outside the reference's expect vocabulary",
             )
-        if expectation_id.rsplit(".", 1)[-1].startswith("abort/"):
+        slug = expectation_id.split("/")[0].rsplit(".", 1)[-1]
+        if slug == "abort":
             raise _refuse(
                 "classref_deviation_forbidden",
                 f"{expectation_id} names an energy-removing action's reachability; "
                 "nothing may stand between the operator and abort",
             )
     return document
+
+
+def validate_declaration(
+    derived: DerivedUI, document: dict[str, Any]
+) -> dict[str, Any]:
+    vocabulary = set(derived.expectation.get("components", {}))
+    vocabulary.update(derived.control_plan)
+    return validate_declaration_vocabulary(vocabulary, document)
 
 
 def compose_manifest(
