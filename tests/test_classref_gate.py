@@ -180,3 +180,45 @@ def test_h3_authored_abort_deviation_fails_the_gate(tmp_path: Path) -> None:
     assert "classref_deviation_forbidden" in result.output or (
         "classref_unknown_expectation" in result.output
     )
+
+
+def test_h2_derived_layout_block_matches_family_schema(tmp_path: Path) -> None:
+    """H2: the derived block must satisfy its own family schema — today the
+    reading nodes emit {kind: \"reading\", reading_kind: ...}, a shape the
+    schema's enum refuses."""
+    import jsonschema
+
+    from benchweave_sdk.classref import layout_schema
+    from helpers_classref import build_classref_project
+
+    _project, derived = build_classref_project(tmp_path / "f1")
+    errors = list(
+        jsonschema.Draft202012Validator(layout_schema()).iter_errors(
+            derived.layout_block
+        )
+    )
+    assert not errors, [e.message for e in errors[:3]]
+
+
+def test_h2_malformed_layout_block_refuses(tmp_path: Path) -> None:
+    """H2: a manifest carrying a block that fails the family schema refuses
+    classref_layout_invalid at the gate — it never renders, never passes."""
+    import hashlib
+
+    from helpers_classref import build_classref_project
+
+    project, derived = build_classref_project(tmp_path / "f1")
+    package = next((project / "src").iterdir())
+    manifest = json.loads((package / "ui" / "manifest.json").read_bytes())
+    block = manifest["extensions"]["plugin-ui-class-reference:layout"]
+    block["pages"][0]["sections"][0].pop("surface")  # schema-required key
+    manifest["extensions"]["plugin-ui-class-reference:layout"] = block
+    raw = (json.dumps(manifest, indent=2) + "\n").encode()
+    (package / "ui" / "manifest.json").write_bytes(raw)
+    envelope = json.loads((package / "presentation.json").read_bytes())
+    envelope["manifest"]["sha256"] = hashlib.sha256(raw).hexdigest()
+    (package / "presentation.json").write_bytes(
+        (json.dumps(envelope, indent=2) + "\n").encode()
+    )
+    with pytest.raises(ValueError, match="^classref_layout_invalid:"):
+        verify_ui(project, reference=REFERENCE)
