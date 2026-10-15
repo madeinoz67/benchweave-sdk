@@ -131,7 +131,6 @@ def _assert_expect(
     silence would launder the divergence. M8/F2: the attribute census is
     asserted with the count."""
     findings: list[GateFinding] = []
-    pages = sorted(censused)
     census_map = {
         "digital-lanes": "lanes_figures",
         "button": "buttons",
