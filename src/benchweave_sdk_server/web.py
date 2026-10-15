@@ -441,6 +441,161 @@ def _power_entry(power: Any) -> dict[str, Any]:
     }
 
 
+def _layout_region(
+    page: Any, manifest: Any, plugin: Any
+) -> str:
+    """The plugin-ui-class-reference:layout block, composed host-side.
+
+    Consumption is composition of the §E.1 partials this host already
+    renders (the record's D12a roll-in): one page panel (``bw-panel``),
+    the block's sections as children, buttons from ``render_button``,
+    numeric fields from the D13-effective admittance, text bodies
+    autoescaped. A host that does not know the namespace ignores the
+    block; a block failing the family schema never reaches here (the
+    loader refuses it), and verify-ui refuses it loudly."""
+    from benchweave_ui_html.data import ButtonData, NumericInputData
+    from benchweave_ui_html.partials import render_button, render_numeric_input
+    from markupsafe import escape
+
+    from benchweave_sdk.classref import effective_action_fields
+
+    from .presentation import _layout_sections
+
+    sections = _layout_sections(manifest, page.id)
+    if not sections:
+        return ""
+    descriptor = plugin.descriptor
+    package_dir = getattr(plugin, "package_dir", None)
+    descriptor_file = (
+        package_dir / "descriptor.json" if package_dir is not None else None
+    )
+
+    def node_html(node: dict[str, Any]) -> str:
+        if "plot_index" in node:
+            # The page's declared plots render in the lanes region above;
+            # a plot_ref places them — nothing additional to compose here.
+            return ""
+        if node.get("kind") == "button":
+            return render_button(ButtonData(label=str(node.get("binding_id", ""))))
+        if node.get("kind") in ("numeric", "rotary"):
+            binding_id = str(node.get("binding_id", ""))
+            field = str(node.get("field", ""))
+            urn = None
+            for candidate, _row in (descriptor.get("actions") or {}).items():
+                if candidate.split("/")[0].rsplit(".", 1)[-1] == binding_id:
+                    urn = candidate
+                    break
+            rows = (
+                effective_action_fields(descriptor, urn, descriptor_file)
+                if urn
+                else []
+            )
+            spec = next((row for row in rows if row["field"] == field), None)
+            if spec is None:
+                return ""
+            # L8: absent bounds render HONESTLY — empty attributes, never
+            # a fabricated zero (A02: the render offers nothing the schemas
+            # did not admit). The exclusive flags ride as data attributes
+            # (the HTML min/max cannot express exclusivity; the schema
+            # lanes keep enforcing it exactly).
+            minimum = spec.get("minimum")
+            maximum = spec.get("maximum")
+            step = spec.get("multipleOf")
+            exclusive_min = spec.get("exclusiveMinimum")
+            exclusive_max = spec.get("exclusiveMaximum")
+            if exclusive_min is not None:
+                minimum = exclusive_min
+            if exclusive_max is not None:
+                maximum = exclusive_max
+            value = str(minimum) if minimum is not None else ""
+            html = render_numeric_input(
+                NumericInputData(
+                    label=field,
+                    unit="",
+                    value=value,
+                    minimum="" if minimum is None else f"{minimum}",
+                    maximum="" if maximum is None else f"{maximum}",
+                    step="" if step is None else f"{step}",
+                    input_id=f"action-{binding_id}-{field}",
+                    help_id=f"action-{binding_id}-{field}-help",
+                )
+            )
+            flags = ""
+            if exclusive_min is not None:
+                flags += f' data-bw-exclusive-min="{exclusive_min}"'
+            if exclusive_max is not None:
+                flags += f' data-bw-exclusive-max="{exclusive_max}"'
+            if flags:
+                html = html.replace(
+                    '<div class="bw-numeric">',
+                    f'<div class="bw-numeric"{flags}>',
+                    1,
+                )
+            return html
+        if "body" in node:
+            return f"<p>{escape(str(node['body']))}</p>"
+        if node.get("kind") in ("reading-tile", "data-table"):
+            binding_id = str(node.get("binding_id", ""))
+            rows = []
+            for candidate, _action_row in (descriptor.get("actions") or {}).items():
+                slug = candidate.split("/")[0].rsplit(".", 1)[-1]
+                if slug == binding_id:
+                    for field_row in effective_action_fields(
+                        descriptor, candidate, descriptor_file
+                    ):
+                        rows.append(
+                            {
+                                "key": field_row["field"],
+                                "cells": [
+                                    field_row["field"],
+                                    str(
+                                        field_row.get(
+                                            "const",
+                                            field_row.get("enum", field_row.get(
+                                                "maximum", field_row.get("minimum", "")
+                                            )),
+                                        )
+                                    ),
+                                ],
+                            }
+                        )
+                    break
+            from benchweave_ui_html.data import TableData, TableDataRow
+            from benchweave_ui_html.partials import render_data_table
+
+            return render_data_table(
+                TableData(
+                    caption=f"{binding_id} effective admittance",
+                    headers=("field", "constraint"),
+                    rows=tuple(
+                        TableDataRow(key=row["key"], cells=tuple(row["cells"]))
+                        for row in (rows or [{"key": "-", "cells": ["-", "-"]}])
+                    ),
+                )
+            )
+        return ""
+
+    section_parts: list[str] = []
+    for section in sections:
+        children = "".join(node_html(node) for node in section.get("children", []))
+        title = escape(str(section.get("title", section.get("id", ""))))
+        surface = escape(str(section.get("surface", "raised")))
+        section_parts.append(
+            f'<section class="panel bw-section" data-surface="{surface}" '
+            f'aria-label="{escape(str(section.get("id", "")))}">'
+            f"<h2>{title}</h2>{children}</section>"
+        )
+    page_title = escape(str(page.title))
+    page_surface = escape(str(sections[0].get("surface", "raised")))
+    return (
+        f'<section class="bw-panel" data-surface="{page_surface}" '
+        f'aria-label="{escape(str(page.id))}">'
+        f'<header class="bw-panel__header"><span class="bw-panel__title">'
+        f"{page_title}</span></header>"
+        f'<div class="bw-panel__body">{"".join(section_parts)}</div></section>'
+    )
+
+
 def _add_html_routes(
     app: FastAPI,
     seam: StandaloneSeam,
@@ -806,6 +961,9 @@ def _add_html_routes(
             "refusal": refusal,
             "no_data": no_data,
             "panel_refusal": panel_refusal,
+            "layout_region": Markup(
+                _layout_region(page, pres().manifest, seam.session.plugin)
+            ),
         }
 
     def _page_plots(page_id: str) -> tuple[Markup, list[Markup]]:

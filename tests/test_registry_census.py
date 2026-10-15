@@ -90,6 +90,7 @@ def test_registry_group_command_set_is_pinned_exactly() -> None:
         "new", "upgrade", "adopt", "check", "inventory", "check-ui", "check-preset",
         "sync-standards", "package", "timestamp", "submit", "preview-ui",
         "registry", "doctor",
+        "derive-ui", "verify-ui",
     }
 
 

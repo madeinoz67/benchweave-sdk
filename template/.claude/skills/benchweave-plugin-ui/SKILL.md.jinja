@@ -7,8 +7,18 @@ description: Use when you validate or preview plugin UI presentation —
 
 # Plugin UI checks and preview
 
-All three commands work offline. None of them contacts a gateway, the registry
+The commands work offline. None of them contacts a gateway, the registry
 or hardware.
+
+## Derive the presentation set
+
+A class-conformant descriptor derives its presentation set. Derive the set
+with `derive-ui` before you write pages by hand. The `new --with-ui` scaffold
+derives the set already.
+
+The derivation shows the `cannot_derive` items. The items name what the
+derivation cannot decide. You decide them as the author. The AI-GUIDE names
+the items and the author actions. Verify the derived set with `verify-ui`.
 
 ## Validate a presentation candidate
 

@@ -1,0 +1,193 @@
+{
+  "otdp_version": "0.2.3",
+  "descriptor_version": "1.0.0",
+  "id": "dev.veridian.f1-la",
+  "display_name": "Veridian LA-32 f1 fixture",
+  "description": "Synthetic SDK acceptance fixture; not a real device.",
+  "identity": {
+    "strategy": "adapter",
+    "manufacturer": "Veridian Instruments",
+    "model": "LA-32-F1",
+    "firmware_policy": "listed",
+    "supported_firmware": [
+      "1.0"
+    ]
+  },
+  "integration": {
+    "mode": "adapter",
+    "adapter": {
+      "entry_point": "fixture_f1:create_plugin",
+      "api_version": "1.1",
+      "version": "1.0.0",
+      "dependencies": [],
+      "permissions": [
+        "scoped_transport",
+        "artifact_writer"
+      ]
+    }
+  },
+  "transport": {
+    "type": "serial",
+    "connection_key": "capture_device",
+    "settings": {
+      "baud": 115200,
+      "data_bits": 8,
+      "parity": "none",
+      "stop_bits": 1,
+      "rtscts": false,
+      "max_frame_bytes": 65536
+    }
+  },
+  "capabilities": [
+    "identify",
+    "invoke"
+  ],
+  "operations": {
+    "identify": {
+      "timeout_ms": 2000,
+      "side_effect": "none",
+      "retry": "never",
+      "cancellable": false,
+      "completion": "acknowledged"
+    },
+    "invoke": {
+      "timeout_ms": 30000,
+      "side_effect": "state_change",
+      "retry": "never",
+      "cancellable": true,
+      "completion": "acknowledged"
+    }
+  },
+  "parameters": [],
+  "required_features": [
+    "otdp.core/0.1.0",
+    "otdp.adapter/0.1.0",
+    "otdp.profile_actions/0.1.0",
+    "otdp.measurement/0.1.0",
+    "otdp.logic_analyser/1.0.0"
+  ],
+  "provenance": {
+    "sources": [
+      {
+        "title": "Synthetic fixture for SDK acceptance tests",
+        "reference": "../device-classes.md",
+        "revision": "1.0.0"
+      }
+    ],
+    "test_vectors": [
+      {
+        "id": "fixture-vectors",
+        "path": "vectors-f1.json",
+        "purpose": "Synthetic fixture vectors; not a device simulator"
+      }
+    ]
+  },
+  "channels": [
+    {
+      "id": "d0",
+      "label": "Data line 0",
+      "role": "digital_input",
+      "quantities": [
+        "digital_level"
+      ],
+      "parameter_names": []
+    },
+    {
+      "id": "d1",
+      "label": "Data line 1",
+      "role": "digital_input",
+      "quantities": [
+        "digital_level"
+      ],
+      "parameter_names": []
+    }
+  ],
+  "profiles": [
+    "otdp.logic_analyser/1.0.0"
+  ],
+  "contracts": [
+    {
+      "id": "urn:otdp:profile-catalog:0.2.3",
+      "path": "device-profile-catalog.json",
+      "sha256": "0bb1747fe84f047dbd34e77fb6f848bc8554b0fd1776e8988c79f8185e1273a4"
+    },
+    {
+      "id": "urn:otdp:measurement:0.2.3",
+      "path": "otdp-measurement.schema.json",
+      "sha256": "383fedc9af7515c17325d2abe938d3a60e23a2460a7153a710bba7fe41cf574b"
+    },
+    {
+      "id": "urn:veridian:vendor-catalog:1.0.0",
+      "path": "vendor-catalog.json",
+      "sha256": "a0eb338a526bb7174d8ff179a643ea0399dd02ad05d7747030ea4e77bc800c4d"
+    }
+  ],
+  "actions": {
+    "otdp.logic_analyser.configure/1.0.0": {
+      "binding": {
+        "kind": "adapter",
+        "key": "fixture"
+      },
+      "input_constraints": {},
+      "timeout_ms": 30000,
+      "side_effect": "state_change",
+      "cancellable": true,
+      "retry": "never"
+    },
+    "otdp.logic_analyser.arm/1.0.0": {
+      "binding": {
+        "kind": "adapter",
+        "key": "fixture"
+      },
+      "input_constraints": {},
+      "timeout_ms": 30000,
+      "side_effect": "state_change",
+      "cancellable": true,
+      "retry": "never"
+    },
+    "otdp.logic_analyser.fetch/1.0.0": {
+      "binding": {
+        "kind": "adapter",
+        "key": "fixture"
+      },
+      "input_constraints": {},
+      "timeout_ms": 30000,
+      "side_effect": "none",
+      "cancellable": true,
+      "retry": "never"
+    },
+    "otdp.logic_analyser.abort/1.0.0": {
+      "binding": {
+        "kind": "adapter",
+        "key": "fixture"
+      },
+      "input_constraints": {},
+      "timeout_ms": 30000,
+      "side_effect": "state_change",
+      "cancellable": true,
+      "retry": "never"
+    },
+    "otdp.logic_analyser.decode/1.0.0": {
+      "binding": {
+        "kind": "adapter",
+        "key": "fixture"
+      },
+      "input_constraints": {},
+      "timeout_ms": 30000,
+      "side_effect": "none",
+      "cancellable": true,
+      "retry": "never"
+    },
+    "com.veridian-labs.auto-threshold/1.0.0": {
+      "binding": {
+        "kind": "adapter",
+        "key": "fixture"
+      },
+      "input_constraints": {},
+      "timeout_ms": 30000,
+      "side_effect": "state_change",
+      "cancellable": true,
+      "retry": "never"
+    }
+  }
+}
