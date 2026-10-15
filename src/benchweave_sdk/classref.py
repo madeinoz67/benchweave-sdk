@@ -347,15 +347,33 @@ def _intersect_property(
 def _check_admittance(
     action_urn: str, property_name: str, effective: dict[str, Any]
 ) -> None:
-    """A required field narrowed to an empty admittance set refuses (D13)."""
+    """A required field narrowed to an empty admittance set refuses (D13).
+
+    M6: exclusivity is part of emptiness — a closed bound meeting an open
+    bound at the same value admits nothing, in both crossing directions."""
     if effective.get("const") is not None:
         return
-    low = effective.get("minimum", effective.get("exclusiveMinimum"))
-    high = effective.get("maximum", effective.get("exclusiveMaximum"))
+    if "minimum" in effective:
+        low: tuple[float, bool] | None = (float(effective["minimum"]), False)
+    elif "exclusiveMinimum" in effective:
+        low = (float(effective["exclusiveMinimum"]), True)
+    else:
+        low = None
+    if "maximum" in effective:
+        high: tuple[float, bool] | None = (float(effective["maximum"]), False)
+    elif "exclusiveMaximum" in effective:
+        high = (float(effective["exclusiveMaximum"]), True)
+    else:
+        high = None
     if low is None or high is None:
         return
-    span = (float(high) - float(low)) if effective.get("type") in _NUMERIC_TYPES else None
-    if span is not None and span < 0:
+    if effective.get("type") not in _NUMERIC_TYPES:
+        return
+    empty = (
+        low[0] > high[0]
+        or (low[0] == high[0] and (low[1] or high[1]))
+    )
+    if empty:
         raise _refuse(
             "classref_effective_schema_empty",
             f"action {action_urn} field {property_name}: bounds admit no value",
@@ -453,7 +471,10 @@ def _field_rows(
             rows.append({"field": full, "mode": "enum", "enum": sub["enum"]})
         elif sub.get("type") in _NUMERIC_TYPES:
             row = {"field": full, "mode": "numeric"}
-            for keyword in ("minimum", "maximum", "multipleOf"):
+            for keyword in (
+                "minimum", "maximum", "multipleOf",
+                "exclusiveMinimum", "exclusiveMaximum",
+            ):
                 if keyword in sub:
                     row[keyword] = sub[keyword]
             rows.append(row)

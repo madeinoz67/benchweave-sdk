@@ -236,7 +236,7 @@ def test_m6_exclusive_bounds_carry_on_control_rows() -> None:
     """M6: the control rows carry the exclusive flags the render needs."""
     descriptor = json.loads((FIXTURES / "descriptor-f3b.json").read_bytes())
     descriptor["actions"]["otdp.logic_analyser.arm/1.0.0"]["input_constraints"] = {
-        "properties": {"max_duration_ms": {"exclusiveMinimum": 0, "maximum": 60000}}
+        "properties": {"max_duration_ms": {"exclusiveMinimum": 5, "maximum": 60000}}
     }
     derived = derive_ui(
         json.dumps(descriptor).encode(), REFERENCE,
@@ -247,6 +247,9 @@ def test_m6_exclusive_bounds_carry_on_control_rows() -> None:
         for field in derived.control_plan["otdp.logic_analyser.arm/1.0.0"]["fields"]
         if field["field"] == "max_duration_ms"
     )
-    assert row["exclusiveMinimum"] is True
-    assert row["minimum"] == 0
+    # The constraint's exclusive bound is the tighter low end (catalogue
+    # minimum is 1): the exclusive flag carries as the KEY (the JSON-Schema
+    # convention the render reads), the bound as its value.
+    assert row["exclusiveMinimum"] == 5
+    assert "minimum" not in row
     assert row["maximum"] == 60000
