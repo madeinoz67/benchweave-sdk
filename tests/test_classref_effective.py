@@ -170,3 +170,47 @@ def test_decode_annotated_overlay_derives_lanes_rc4() -> None:
     assert row["level"] == "L4"
     assert row["page"] == "capture"
     assert not row["declared_deviation"]
+
+
+def test_h1_looser_bound_cannot_widen_past_catalogue() -> None:
+    """H1 (refute lane 1): the intersection must INTERSECT, not replace —
+    a looser descriptor bound leaves the catalogue bound intact; the
+    control must never offer a value the catalogue refuses."""
+    descriptor = json.loads((FIXTURES / "descriptor-f3b.json").read_bytes())
+    descriptor["actions"]["otdp.logic_analyser.configure/1.0.0"]["input_constraints"] = {
+        "type": "object",
+        "properties": {
+            # Catalogue sample_count is minimum 1, maximum 1000000.
+            "sample_count": {"type": "integer", "minimum": 10, "maximum": 5000000}
+        },
+    }
+    derived = derive_ui(
+        json.dumps(descriptor).encode(), REFERENCE,
+        descriptor_path=FIXTURES / "descriptor-f3b.json",
+    )
+    row = next(
+        field
+        for field in derived.control_plan["otdp.logic_analyser.configure/1.0.0"]["fields"]
+        if field["field"] == "sample_count"
+    )
+    assert row["minimum"] == 10, "the tighter low end still applies"
+    assert row["maximum"] == 1000000, "the catalogue ceiling cannot widen"
+
+
+def test_h1_const_outside_catalogue_enum_refuses() -> None:
+    """H1: a const outside the catalogue's enum is a CONFLICT, not a
+    replace that pops the enum."""
+    descriptor = json.loads((FIXTURES / "descriptor-f3b.json").read_bytes())
+    descriptor["actions"]["otdp.logic_analyser.arm/1.0.0"]["input_constraints"] = {
+        "properties": {"max_duration_ms": {"const": 99}}
+    }
+    # max_duration_ms is integer-bounded, not an enum: pin the conflict arm
+    # on an enum-bearing field instead — decode's protocol enum via a const.
+    descriptor["actions"]["otdp.logic_analyser.decode/1.0.0"]["input_constraints"] = {
+        "properties": {"protocol": {"const": "can"}}
+    }
+    with pytest.raises(ValueError, match="^classref_effective_schema_conflict:"):
+        derive_ui(
+            json.dumps(descriptor).encode(), REFERENCE,
+            descriptor_path=FIXTURES / "descriptor-f3b.json",
+        )
