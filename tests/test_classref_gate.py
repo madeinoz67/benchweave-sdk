@@ -520,3 +520,44 @@ def test_f5_component_id_downgrades_missing(tmp_path: Path) -> None:
     ]
     assert not numeric_missing, [f.detail for f in numeric_missing]
     assert "numeric-input" in report.reported_deviations
+
+
+def test_l11_l3_needs_the_named_surface_not_any_button(tmp_path: Path) -> None:
+    """L11: an L3 row is covered by its plan-named surface (the settings
+    data-table), not by any button that happens to render on the page."""
+    import hashlib
+
+    from helpers_classref import build_classref_project
+
+    project, derived = build_classref_project(tmp_path / "l11b")
+    package = next((project / "src").iterdir())
+    # Strip the configuration page's data-table and its ledger row; leave
+    # a foreign button so the any-button predicate would wrongly cover.
+    manifest = json.loads((package / "ui" / "manifest.json").read_bytes())
+    block = manifest["extensions"]["plugin-ui-class-reference:layout"]
+    config_page = next(p for p in block["pages"] if p["page_id"] == "configuration")
+    for section in config_page["sections"]:
+        section["children"] = [
+            node for node in section["children"]
+            if node.get("kind") != "data-table"
+        ] + [{"binding_id": "arm", "kind": "button"}]
+    raw = (json.dumps(manifest, indent=2) + "\n").encode()
+    (package / "ui" / "manifest.json").write_bytes(raw)
+    envelope = json.loads((package / "presentation.json").read_bytes())
+    envelope["manifest"]["sha256"] = hashlib.sha256(raw).hexdigest()
+    (package / "presentation.json").write_bytes(
+        (json.dumps(envelope, indent=2) + "\n").encode()
+    )
+    declaration = json.loads((package / "ui" / "class-reference.json").read_bytes())
+    declaration["deviations"] = [
+        row for row in declaration["deviations"]
+        if row["expectation_id"] != "otdp.logic_analyser.configure/1.0.0"
+    ]
+    (package / "ui" / "class-reference.json").write_bytes(
+        (json.dumps(declaration, indent=2) + "\n").encode()
+    )
+    report = verify_ui(project, reference=REFERENCE)
+    uncovered = [f for f in report.findings
+                 if f.code == "classref_gate_uncovered"
+                 and "configure" in f.detail]
+    assert uncovered, [f"{f.code}: {f.detail}" for f in report.findings]

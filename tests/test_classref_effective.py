@@ -306,3 +306,22 @@ def test_m4_envelope_pin_uses_the_file_bytes(tmp_path: Path) -> None:
     assert derived.envelope["descriptor_sha256"] == hashlib.sha256(
         non_canonical.encode()
     ).hexdigest()
+
+
+def test_f8b_unknown_descriptor_action_is_typed() -> None:
+    """F8b: a descriptor-declared action absent from every served catalog
+    refuses classref_unknown_action — never a bare KeyError."""
+    descriptor = json.loads((FIXTURES / "descriptor-f1.json").read_bytes())
+    descriptor["actions"]["com.veridian-labs.ghost/1.0.0"] = {
+        "binding": {"kind": "adapter", "key": "ghost"},
+        "input_constraints": {},
+        "timeout_ms": 1000,
+        "side_effect": "none",
+        "cancellable": True,
+        "retry": "never",
+    }
+    with pytest.raises(ValueError, match="^classref_unknown_action:"):
+        derive_ui(
+            json.dumps(descriptor).encode(), REFERENCE,
+            descriptor_path=FIXTURES / "descriptor-f1.json",
+        )
