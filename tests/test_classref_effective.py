@@ -268,8 +268,22 @@ def test_m7_required_actions_checked_across_all_profiles() -> None:
     ]
     descriptor = json.loads((FIXTURES / "descriptor-f1.json").read_bytes())
     descriptor["profiles"].append("otdp.dmm/1.0.0")
+    # The dmm required set is complete so ONLY the logic_analyser abort is
+    # missing — the refusal must name abort, proving the check crossed
+    # profiles (the dmm-first sort) instead of firing on references[0].
+    for urn in ("otdp.dmm.configure/1.0.0", "otdp.dmm.measure/1.0.0"):
+        descriptor["actions"][urn] = {
+            "binding": {"kind": "adapter", "key": "fixture"},
+            "input_constraints": {},
+            "timeout_ms": 30000,
+            "side_effect": "state_change",
+            "cancellable": True,
+            "retry": "never",
+        }
     del descriptor["actions"]["otdp.logic_analyser.abort/1.0.0"]
-    with pytest.raises(ValueError, match="^classref_required_action_absent:"):
+    with pytest.raises(
+        ValueError, match="^classref_required_action_absent:.*abort"
+    ):
         derive_ui(
             json.dumps(descriptor).encode(), [reference2, REFERENCE],
             descriptor_path=FIXTURES / "descriptor-f1.json",
