@@ -12,6 +12,7 @@ or permission to operate hardware.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from pathlib import Path
@@ -45,6 +46,8 @@ class _CensusParser(HTMLParser):
 
     def __init__(self) -> None:
         super().__init__()
+        self.lane_labels: list[str] = []
+        self._label_depth = 0
         self.panels = 0
         self.buttons: list[str] = []
         self.numerics = 0
@@ -64,6 +67,9 @@ class _CensusParser(HTMLParser):
             self.mode_banners += 1
         if "bw-lanes" in classes and tag == "figure":
             self.lanes_figures += 1
+        if "bw-lanes__label" in classes:
+            self.lane_labels.append("")
+            self._label_depth += 1
         if tag == "div" and "bw-lanes__lane" in classes:
             kind = data.get("data-bw-lane-kind") or ""
             self.lane_kinds[kind] = self.lane_kinds.get(kind, 0) + 1
@@ -80,10 +86,14 @@ class _CensusParser(HTMLParser):
     def handle_data(self, payload: str) -> None:
         if self._button_depth:
             self.buttons[-1] += payload
+        if self._label_depth and self.lane_labels:
+            self.lane_labels[-1] += payload
 
     def handle_endtag(self, tag: str) -> None:
         if tag == "button" and self._button_depth:
             self._button_depth -= 1
+        if tag == "span" and self._label_depth:
+            self._label_depth -= 1
 
 
 def census(html: str) -> dict[str, Any]:
@@ -99,6 +109,10 @@ def census(html: str) -> dict[str, Any]:
         "lane_kinds": dict(parser.lane_kinds),
         "confirms": parser.confirms,
         "data_tables": parser.data_tables,
+        "lane_labels": [
+            label.strip().removesuffix(" hidden").strip()
+            for label in parser.lane_labels
+        ],
     }
 
 
@@ -203,6 +217,114 @@ def _assert_expect(
                         f"censused {total}",
                     )
                 )
+    return findings
+
+
+#: The reference's forbid ids the gate implements (record §2.3/§5). The
+#: confirm arm is the render census; the rest are document-level scans
+#: over the served manifest — a schema-invalid manifest still gets the
+#: TYPED gate finding before the host's load refuses it.
+_FORBID_COLOR = "color-role-hint-on-lane"
+_FORBID_TRACE = "untraceable-lane-label"
+_FORBID_INTERMEDIATE = "intermediated-energy-removing-action"
+
+
+def _forbid_findings(
+    manifest: dict[str, Any],
+    descriptor: dict[str, Any],
+    plan: dict[str, dict[str, Any]],
+) -> list[GateFinding]:
+    findings: list[GateFinding] = []
+    abort_slugs = {
+        str(row.get("page"))  # placeholder replaced below
+        for row in plan.values()
+    }
+    del abort_slugs
+    for page in manifest.get("pages", []):
+        for plot in page.get("plots", []):
+            if plot.get("kind") != "digital_lanes":
+                continue
+            for hint in plot.get("channel_hints", []):
+                if "color_role" in hint:
+                    findings.append(
+                        GateFinding(
+                            "classref_gate_forbidden",
+                            f"{_FORBID_COLOR}: {page.get('id')} plot hint "
+                            f"{hint.get('variable_id')!r} carries "
+                            f"color_role {hint.get('color_role')!r}",
+                        )
+                    )
+    block = (manifest.get("extensions") or {}).get(LAYOUT_EXTENSION_KEY)
+    for page in (block or {}).get("pages", []):
+        for section in page.get("sections", []):
+            for node in section.get("children", []):
+                binding = str(node.get("binding_id", ""))
+                if (
+                    binding.split("/")[0].rsplit(".", 1)[-1] == "abort"
+                    and node.get("kind") in ("numeric", "rotary", "button")
+                    and node.get("kind") != "button"
+                ):
+                    findings.append(
+                        GateFinding(
+                            "classref_gate_forbidden",
+                            f"{_FORBID_INTERMEDIATE}: abort binding carries a "
+                            f"{node.get('kind')} control (record §C.1 "
+                            "R-DEENERGISE-1: nothing between the operator "
+                            "and de-energising)",
+                        )
+                    )
+                elif (
+                    binding in _abort_action_slugs(descriptor)
+                    and node.get("kind") in ("numeric", "rotary")
+                ):
+                    findings.append(
+                        GateFinding(
+                            "classref_gate_forbidden",
+                            f"{_FORBID_INTERMEDIATE}: {binding} binding carries "
+                            f"a {node.get('kind')} control (record §C.1 "
+                            "R-DEENERGISE-1)",
+                        )
+                    )
+    return findings
+
+
+def _abort_action_slugs(descriptor: dict[str, Any]) -> set[str]:
+    """The abort-class action slugs (the D7 set: energy-removing per the
+    record §4 — the class example's abort action)."""
+    return {
+        str(urn).split("/")[0].rsplit(".", 1)[-1]
+        for urn in descriptor.get("actions") or {}
+        if str(urn).split("/")[0].rsplit(".", 1)[-1] == "abort"
+    }
+
+
+def _traceable_lane_labels(descriptor: dict[str, Any]) -> set[str]:
+    """Descriptor channel ids + labels, the group pattern instantiations
+    and the pinned decoder names — everything a lane label may trace to."""
+    traceable: set[str] = set()
+    for row in descriptor.get("channels") or []:
+        traceable.add(str(row.get("id", "")))
+        traceable.add(str(row.get("label", "")))
+    return traceable
+
+
+def _lane_label_findings(
+    labels: list[str], descriptor: dict[str, Any]
+) -> list[GateFinding]:
+    traceable = _traceable_lane_labels(descriptor)
+    findings: list[GateFinding] = []
+    for label in labels:
+        if label in traceable:
+            continue
+        if re.fullmatch(r"D\d+-D\d+", label):
+            continue
+        findings.append(
+            GateFinding(
+                "classref_gate_forbidden",
+                f"{_FORBID_TRACE}: lane label {label!r} traces to no "
+                "descriptor channel and no group pattern",
+            )
+        )
     return findings
 
 
@@ -330,10 +452,30 @@ def verify_ui(
             )
     from .classref_gate_render import render_pages
 
-    pages = _page_ids(derived)
+    descriptor = json.loads(descriptor_raw)
+    # F4: the forbid arms run on the COMPOSED manifest before the render —
+    # a schema-invalid manifest still gets the TYPED gate finding, never
+    # only the host's load refusal.
+    forbid_findings = _forbid_findings(manifest, descriptor, derived.control_plan)
+    if forbid_findings:
+        raise ValueError(f"{forbid_findings[0].code}: {forbid_findings[0].detail}")
+    # F7: census the UNION — every derived page (the A4 baseline's
+    # missing pages still render and census) plus every overlay-appended
+    # page the served manifest declares, never silent on the extra set.
+    pages = list(dict.fromkeys(
+        _page_ids(derived)
+        + [str(row.get("id")) for row in manifest.get("pages", [])]
+    ))
     rendered = render_pages(project, pages)
     censused = {page: census(html) for page, html in rendered.items()}
     findings = _assert_expect(derived.expectation, censused)
+    findings.extend(forbid_findings)
+    # F4: every rendered lane label must trace to the descriptor's channel
+    # identity or the group pattern.
+    for seen in censused.values():
+        findings.extend(
+            _lane_label_findings(seen.get("lane_labels", []), descriptor)
+        )
     # A11's DOM-order arm made real: each layout page's button sequence
     # (the block's declaration order) appears in the censused page's
     # buttons in the same order — containment plus order, not counts.

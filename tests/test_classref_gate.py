@@ -405,3 +405,37 @@ def test_f4_intermediated_energy_removing_action(tmp_path: Path) -> None:
     )
     with pytest.raises(ValueError, match="^classref_gate_forbidden:"):
         verify_ui(project, reference=REFERENCE)
+
+
+def test_f4_untraceable_lane_label(tmp_path: Path) -> None:
+    """F4: a lane label not traceable to the descriptor's channel
+    identity or the group pattern is forbidden."""
+    import hashlib
+
+    from helpers_classref import build_classref_project
+
+    project, derived = build_classref_project(tmp_path / "f4u")
+    package = next((project / "src").iterdir())
+    catalogue = json.loads((package / "binding-catalogue.json").read_bytes())
+    target = next(t for t in catalogue["targets"] if t["id"] == "capture")
+    target["variables"].append(
+        {"id": "ghost", "type": "string", "unit": None, "shape": "vector"}
+    )
+    (package / "binding-catalogue.json").write_bytes(
+        (json.dumps(catalogue, indent=2) + "\n").encode()
+    )
+    manifest = json.loads((package / "ui" / "manifest.json").read_bytes())
+    plot = manifest["pages"][0]["plots"][0]
+    plot["y"] = ["ghost", "d1"]
+    plot["channel_hints"] = [{"variable_id": "ghost", "visible": True}]
+    plot["lane_groups"] = []
+    raw = (json.dumps(manifest, indent=2) + "\n").encode()
+    (package / "ui" / "manifest.json").write_bytes(raw)
+    envelope = json.loads((package / "presentation.json").read_bytes())
+    envelope["manifest"]["sha256"] = hashlib.sha256(raw).hexdigest()
+    (package / "presentation.json").write_bytes(
+        (json.dumps(envelope, indent=2) + "\n").encode()
+    )
+    report = verify_ui(project, reference=REFERENCE)
+    forbidden = [f for f in report.findings if f.code == "classref_gate_forbidden"]
+    assert forbidden, [f"{f.code}: {f.detail}" for f in report.findings]
