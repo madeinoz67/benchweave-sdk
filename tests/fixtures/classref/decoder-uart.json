@@ -1,0 +1,33 @@
+{
+  "id": "uart",
+  "version": "1.0.0",
+  "name": "UART",
+  "longname": "Universal Asynchronous Receiver/Transmitter",
+  "desc": "Synthetic fixture decoder; not a real protocol stack.",
+  "tags": [
+    "Embedded/industrial"
+  ],
+  "channels": [],
+  "optional_channels": [
+    {
+      "id": "rx",
+      "name": "RX",
+      "desc": "Receive line"
+    },
+    {
+      "id": "tx",
+      "name": "TX",
+      "desc": "Transmit line"
+    }
+  ],
+  "options": [
+    {
+      "id": "baudrate",
+      "desc": "Baud rate",
+      "default": 115200
+    }
+  ],
+  "annotations": [],
+  "annotation_rows": [],
+  "binary": false
+}

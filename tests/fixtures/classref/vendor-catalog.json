@@ -1,0 +1,34 @@
+{
+  "catalog_version": "1.0.0",
+  "vendor": "com.veridian-labs",
+  "actions": {
+    "com.veridian-labs.auto-threshold/1.0.0": {
+      "description": "Recompute the auto-threshold calibration.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "margin_ppm": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000
+          },
+          "hysteresis_mv": {
+            "type": "number",
+            "minimum": 0.0,
+            "maximum": 500.0
+          }
+        },
+        "required": [
+          "margin_ppm",
+          "hysteresis_mv"
+        ],
+        "additionalProperties": false,
+        "$id": "urn:veridian:action:auto-threshold:1.0.0:input"
+      },
+      "output_schema": {
+        "type": "object"
+      },
+      "side_effect": "state_change"
+    }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "rows": [
+    {
+      "request": {
+        "op": "identify"
+      },
+      "response": {
+        "ok": true
+      }
+    }
+  ]
+}
