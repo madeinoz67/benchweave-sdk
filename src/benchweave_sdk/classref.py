@@ -1265,8 +1265,7 @@ def _build_layout(
                                  "field": field_row["field"]}
                             )
                     children.append(
-                        {"binding_id": binding_id, "kind": "reading",
-                         "reading_kind": "data-table"}
+                        {"binding_id": binding_id, "kind": "data-table"}
                     )
             # D14: actions whose bindings carry no page (vendor actions)
             # still derive their controls on their plan page.
@@ -1299,12 +1298,25 @@ def _build_layout(
         _insert_ladder_numerics(sections, plan)
         if sections:
             block_pages.append({"page_id": page_id, "sections": sections})
-    # The layout block's contract_version is the FAMILY's active version,
-    # derived from the lock like every other stamp (derived, never stated).
-    return {
+    block = {
         "contract_version": active_version(_FAMILY),
         "pages": block_pages,
     }
+    # Internal consistency arm (H2): the expander's own emission satisfies
+    # the family schema — a violation is a bug here, refused loudly.
+    from jsonschema import Draft202012Validator
+
+    findings = sorted(
+        Draft202012Validator(layout_schema()).iter_errors(block),
+        key=lambda error: list(error.path),
+    )
+    if findings:
+        raise _refuse(
+            "classref_layout_invalid",
+            "the expander's derived block violates the family schema: "
+            f"{findings[0].message}",
+        )
+    return block
 
 
 def _urn_for_binding(plan: dict[str, dict[str, Any]], binding_id: str) -> str | None:

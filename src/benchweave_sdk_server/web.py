@@ -517,7 +517,7 @@ def _layout_region(
                 slug = candidate.split("/")[0].rsplit(".", 1)[-1]
                 if slug == binding_id:
                     for field_row in effective_action_fields(
-                        descriptor, candidate, package_dir
+                        descriptor, candidate, descriptor_file
                     ):
                         rows.append(
                             {

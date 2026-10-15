@@ -5,9 +5,9 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
-from typing import Any
 
 from benchweave_sdk.classref import LAYOUT_EXTENSION_KEY, find_reference
 from benchweave_sdk.classref_gate import census, verify_ui
@@ -134,6 +134,7 @@ def test_h3_abort_deviation_refused_by_predicate(tmp_path: Path) -> None:
     URN refuses classref_deviation_forbidden — the predicate must match a
     versioned URN."""
     from helpers_classref import build_classref_project
+
     from benchweave_sdk.classref import validate_declaration
 
     _project, derived = build_classref_project(tmp_path / "f1")
@@ -187,9 +188,9 @@ def test_h2_derived_layout_block_matches_family_schema(tmp_path: Path) -> None:
     reading nodes emit {kind: \"reading\", reading_kind: ...}, a shape the
     schema's enum refuses."""
     import jsonschema
+    from helpers_classref import build_classref_project
 
     from benchweave_sdk.classref import layout_schema
-    from helpers_classref import build_classref_project
 
     _project, derived = build_classref_project(tmp_path / "f1")
     errors = list(

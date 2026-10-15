@@ -12,16 +12,15 @@ or permission to operate hardware.
 from __future__ import annotations
 
 import json
-
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
 from .classref import (
+    LAYOUT_EXTENSION_KEY,
     derive_ui,
     find_reference,
-    validate_declaration,
 )
 
 
@@ -277,12 +276,55 @@ def verify_ui(
     vocabulary = set(derived.expectation.get("components", {}))
     vocabulary.update(derived.control_plan)
     validate_declaration_vocabulary(vocabulary, ledger)
+    # H2: the manifest's layout block — authored via the overlay or derived
+    # — is validated against the family schema; the canonical validator is
+    # extension-blind, so this refusal is the block's only authority.
+    from jsonschema import Draft202012Validator
+
+    from .classref import layout_schema
+
+    manifest = json.loads((package_dir / "ui" / "manifest.json").read_bytes())
+    block = (manifest.get("extensions") or {}).get(LAYOUT_EXTENSION_KEY)
+    if block is not None:
+        layout_findings = list(
+            Draft202012Validator(layout_schema()).iter_errors(block)
+        )
+        if layout_findings:
+            raise ValueError(
+                f"classref_layout_invalid: {layout_findings[0].message}"
+            )
     from .classref_gate_render import render_pages
 
     pages = _page_ids(derived)
     rendered = render_pages(project, pages)
     censused = {page: census(html) for page, html in rendered.items()}
     findings = _assert_expect(derived.expectation, censused)
+    # A11's DOM-order arm made real: each layout page's button sequence
+    # (the block's declaration order) appears in the censused page's
+    # buttons in the same order — containment plus order, not counts.
+    for layout_page in (block or {}).get("pages", []):
+        declared = [
+            str(node.get("binding_id"))
+            for section in layout_page.get("sections", [])
+            for node in section.get("children", [])
+            if node.get("kind") == "button"
+        ]
+        page_id = str(layout_page.get("page_id"))
+        seen_buttons = censused.get(page_id, {}).get("buttons", [])
+        cursor = 0
+        for binding_id in declared:
+            while cursor < len(seen_buttons) and seen_buttons[cursor] != binding_id:
+                cursor += 1
+            if cursor >= len(seen_buttons):
+                findings.append(
+                    GateFinding(
+                        "classref_gate_missing",
+                        f"layout order on {page_id}: {binding_id!r} button out of "
+                        f"declared position (censused {seen_buttons})",
+                    )
+                )
+                break
+            cursor += 1
     coverage, reported = _coverage_findings(derived.control_plan, censused, ledger)
     findings.extend(coverage)
     forbidden = [
