@@ -561,3 +561,36 @@ def test_l11_l3_needs_the_named_surface_not_any_button(tmp_path: Path) -> None:
                  if f.code == "classref_gate_uncovered"
                  and "configure" in f.detail]
     assert uncovered, [f"{f.code}: {f.detail}" for f in report.findings]
+
+
+def test_f4c_decoder_pinned_project_passes_the_gate_e2e(tmp_path: Path) -> None:
+    """F4c: the traceable set includes the pinned decoder names — the
+    decoder-labeled lanes of a decoder-pinned project trace (this e2e arm
+    is the suite gap that hid the omission)."""
+    from helpers_classref import build_classref_project
+
+    project, _derived = build_classref_project(
+        tmp_path / "f1da",
+        descriptor_fixture="descriptor-f1-da.json",
+    )
+    report = verify_ui(project, reference=REFERENCE)
+    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
+
+
+def test_f3b_gate_passes_end_to_end_a9(tmp_path: Path) -> None:
+    """A9's F3b acceptance, end to end: the gate passes with trigger and
+    the partial group rendered (the arm that never ran)."""
+    from helpers_classref import build_classref_project
+    from benchweave_sdk.classref_gate import census
+    from benchweave_sdk.classref_gate_render import render_pages
+
+    project, derived = build_classref_project(
+        tmp_path / "f3b",
+        descriptor_fixture="descriptor-f3b.json",
+    )
+    report = verify_ui(project, reference=REFERENCE)
+    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
+    html = render_pages(project, ["capture"])["capture"]
+    seen = census(html)
+    assert "trigger" in seen["buttons"], seen["buttons"]
+    assert seen["numerics"] >= 1
