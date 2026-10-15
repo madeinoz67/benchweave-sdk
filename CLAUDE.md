@@ -1,14 +1,6 @@
 @AGENTS.md
 
-## Using the SDK
-
-Building a plugin? Start with the [five-step workflow](README.md#five-steps) — install (with the `[scaffold]` extra; `new` renders through copier) → `new` → `check` → `build` → `inventory`. First time here? `user_guide/getting-started.qmd` walks the same steps as a numbered, runnable sequence with the expected output at each step (rendered: <https://sdk.benchweave.dev/docs/user-guide/getting-started.html>). Everything below is architecture and contributor doctrine.
-
-## MANDATORY: Use Gortex MCP tools instead of Read/Grep/Glob
-
-A Gortex daemon is configured machine-wide. Whenever you operate on indexed source, you
-MUST prefer graph queries over file reads. Hook posture is configurable; follow every
-Gortex hook instruction even when raw `Read` / `Grep` / `Glob` remain callable.
+Building a plugin or new here? `README.md` has the five-step workflow; the rendered walkthrough is https://sdk.benchweave.dev/docs/user-guide/getting-started.html
 
 Calibration: the graph narrows scope, it does not replace reading the implementation. For
 the symbol you are about to change or depend on, read its full body with
@@ -34,10 +26,6 @@ Every native bypass states which row covers it. Guessing `pytest -k` filters is
 the anti-pattern this table replaces — `change(operation:"tests")` names the files.
 
 ---
-
-This file governs how AI agents work in this repo: what the SDK *is*, the principles that
-must never be violated, and how to write and review changes that fit the project. The
-deep reference lives in `docs/internal/` — this file is the index and the non-negotiables.
 
 ## 1. What the plugin SDK is
 
@@ -176,9 +164,7 @@ instrument for them. Never change technical content to obey a register rule.
 hard invariants (`docs/internal/invariants.md`), and cross-surface drift, with its own
 verify-build-test protocol. Use it (or the `/code-review` skill) when reviewing a change,
 and proactively before opening a PR. It routes by what the diff touches and follows
-`docs/internal/review-rubric.md` as the authority. Behavioral tests live here (`tests/`);
-the modules that compare the SDK with the gateway stay main-side (`tests/sdk/` in the
-gateway checkout), and the reviewer says when it could not run one a change needed.
+`docs/internal/review-rubric.md` as the authority.
 
 ---
 

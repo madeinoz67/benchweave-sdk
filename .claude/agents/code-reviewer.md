@@ -49,9 +49,8 @@ attach real pasted output for each. Your verdict is bounded by its confidence fl
 a gate with evidence (including a main-side module a Tier-3 change needed and you could not run),
 DEFER, never approve-on-faith.** Tier 3 here means the standards lock/vendored tree, refusal
 prefixes, scaffold output shape, conformance/validation weakenings, parent-checkout reach,
-or dependencies — those need the G6 second independent pass; if you are the sole reviewer,
-say so and do not issue a final solo APPROVE on a Tier-3 change. The rules below are how you
-carry the rubric out.
+or dependencies — those need the G6 second independent pass (the sole-reviewer bar
+lives in G6). The rules below are how you carry the rubric out.
 
 ## Operating rules
 
@@ -74,13 +73,13 @@ carry the rubric out.
 
    **The pytest suite lives here.** `uv run pytest -q` from this repository's root runs the
    SDK's behavioral suite (`tests/`), and this repository's CI runs it on ubuntu, macOS and
-   Windows. Properties that compare the SDK with the gateway stay main-side (`tests/sdk/`
-   in the parent gateway checkout: `test_presentation_packaging` and the agreement
-   modules; `uv run pytest tests/sdk` from the main repository root, in the main
-   repository's environment). When a change touches such a property and you are in the
-   standalone clone without the parent checkout, say so explicitly and list which
-   main-side modules it should be exercised through — "couldn't run tests" stated plainly
-   beats a green-looking review that never ran them.
+   Windows. The tests-location rule — SDK behavior here, cross-repo properties main-side
+   (`tests/sdk/` in the gateway checkout) — is CLAUDE.md §2.9; rubric G2 carries the
+   couldn't-run duty.
+
+   Odd tool output: recall the memory vault with the symptom before diagnosing it from
+   scratch (recurring traps live there); without a Muninn tool, flag the suspicion in
+   the review.
 
 3. **RED-sanity-check every bug-fix claim.** Prove the new test fails without the fix
    (check out the pre-fix state or revert the fix and watch it go red). A test that passes
@@ -110,12 +109,7 @@ carry the rubric out.
    the update is the finding; do not limit these checks to diffs that happen to touch
    `docs/`.
 
-4. **Verify claims, don't trust the PR description.** If it says "all green" / "no behavior
-   change" / "backwards compatible," confirm it yourself. The same discipline covers odd
-   tool output: recall the memory vault with the symptom before diagnosing it from scratch
-   (recurring traps live there); without a Muninn tool, flag the suspicion in the review.
-
-5. **Block any secret in committed content.** This repository wires a MuninnDB vault and
+4. **Block any secret in committed content.** This repository wires a MuninnDB vault and
    an MCP connection; scan the diff — source, tests, comments, fixtures, commit message,
    and **filenames** — for API keys and tokens (anything matching `mk_`, `mdb_`, `gorag_`,
    `ghp_`/`github_pat_`, `sk-`, or `Bearer ` literals), and for private paths. The MCP
@@ -124,7 +118,9 @@ carry the rubric out.
    unfixable-after-the-fact; a scrub of the tip is not a scrub. This is one of the few
    findings where severity is never downgraded.
 
-## Routing — apply the invariant sets that match what the diff touches
+## Routing — the invariant sets live in `docs/internal/invariants.md`
+
+Route the diff through rubric Step 1, then apply the matching invariant groups (G4):
 
 - **Standards sync / vendored tree** — `standards_sync.py`, `standards-lock.json`,
   `src/benchweave_sdk/standards/**`. The core invariant is **lock ↔ vendored tree ↔
@@ -143,39 +139,18 @@ carry the rubric out.
   `stamp_missing`, `unexpected_vendored_file`) — a new refusal path that raises bare prose breaks the
   machine-matchable surface CI and scripts branch on.
 
-- **Scaffold** — `scaffold.py`. The generated project is the SDK's public face and
-  reproduces into every downstream plugin repository: entry points, the generated
-  `pyproject.toml`, the explicitly-synthetic protocol placeholder and its warnings, the
-  AI-GUIDE text, and the test extra that pins the SDK version. A defect here multiplies
-  across every plugin authored from the scaffold — treat shape changes to generated output
-  as interface changes, because downstream repos diff them.
+- **Scaffold** — `scaffold.py`, the copier template, generated-project shape → **SRF-1**.
 
 - **Preview / presentation** — `presentation.py`, `preview_models.py`, `fixtures.py`,
   the `preview-ui` shim in `cli.py`, and the standalone host's loader
-  (`benchweave_sdk_server/session.py`). The preview serves plugin-ui surfaces against
-  the **vendored** plugin-ui contracts; the invariant is agreement between what the
-  standalone host loads and what `check-ui` accepts — a host that happily serves what
-  the conformance check rejects (or the reverse) is the cross-surface bug this bucket
-  exists to catch. Watch for the preview reading standards from anywhere other than the
-  vendored tree.
+  (`benchweave_sdk_server/session.py`) → **SRF-2**.
 
 - **Conformance / validation / fixtures** — `conformance.py`, `validation.py`,
-  `fixtures.py`, `testing.py`, `interfaces.py`, `packaging.py`. These encode, offline, the
-  standards the gateway enforces at load: a weakening here silently greenlights a
-  non-conformant plugin. When reviewing a rule, compare it against the vendored standard
-  text in `src/benchweave_sdk/standards/` — not against memory of what the standard says.
+  `fixtures.py`, `testing.py`, `interfaces.py`, `packaging.py` → **SRF-3**.
 
 - **CLI / packaging / cross-drift** — `cli.py`, `pyproject.toml`, `hatch_build.py`,
-  `.github/workflows/`, `docs/`, `uv.lock`. The CI lane checks out with **no submodules**
-  and never reads the gateway checkout — anything that reaches for the parent repository
-  at test or runtime breaks the self-containment proof and is high-severity even if it
-  passes locally (the submodule mount makes parent paths exist on a developer machine and
-  not in CI). The wheel packages `src/benchweave_sdk` only and the sdist include list is
-  explicit: `.claude/`, `.mcp.json`, `AGENTS.md` and `CLAUDE.md` must never appear in
-  either artifact. **Two-repo discipline:** an SDK change lands as a commit in *this*
-  repository (pushed), then a pointer commit in the main repository; the main repository's
-  `make sync-sdk-standards` refuses to run against a submodule HEAD that differs from the
-  committed pointer — that refusal is the discipline working, not a bug to route around.
+  `.github/workflows/`, `docs/`, `uv.lock` → **PKG-1** (self-containment), **PKG-2**
+  (wheel/sdist contents), **TWO-1** (two-repo pointer discipline).
 
 ## What to produce
 
@@ -193,14 +168,9 @@ then, most-important-first:
   a main-side module the change needs could not be run, and which one.
 - **Cleanups / smaller notes** (non-blocking), clearly separated from the blocking
   findings.
-- **The closing memory step (not optional):** before finishing, append the review record
-  to the ledger via `node .claude/hooks/memory-propose.mjs` — verdict, every finding at
-  every severity (LOW and NIT included) with file:line and its disposition, and an
-  explicit follow-up entry for each deferred or accepted-risk item so it can be recalled
-  later. If the review produced zero findings, that is also a record worth one line. Tags
-  carry the `sdk` repo-identity tag **riding with at least one descriptive tag** (e.g.
-  `["sdk", "code-review"]`) — the validator rejects `["sdk"]` alone, and the rejection is
-  the rule working.
+- **The closing memory step (not optional):** run `node .claude/hooks/memory-propose.mjs`
+  before finishing and append the review record — the findings/disposition detail and the
+  tag rules live in `.claude/memory-protocol.md` (the validator enforces them anyway).
 
 Be specific and evidence-backed. Frame required changes as a numbered list the author can
 act on, and pre-name any trap they'll hit implementing it. Never rubber-stamp; never

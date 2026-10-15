@@ -25,8 +25,7 @@ gate runs after the bump commit exists and before the tag is cut.
    all rows (including the Test surfaces section). Each row: check the surface
    against its machine source, fix the prose where stale, and record the
    result (updated / correct-as-is / n-a) — confirming or correcting the
-   scaffolded rows. Every row records a result, including empty results; an
-   empty contributor window is a recorded result, not a skipped step.
+   scaffolded rows. Every row records a result, including empty results.
 3. **Registration precedes the tag.** Row 6 is the staged phase-2 patch:
    at the tag commit, apply `.release/phase2-vX.Y.Z.patch` (it inserts the
    new versions entry, demotes the old `latest` and updates the website
@@ -47,10 +46,8 @@ gate runs after the bump commit exists and before the tag is cut.
    the tag message is the permanent record, never the only home. If the
    rendered notes somehow lack the section (template regression, token
    missing), append it to the release body by hand before the review closes.
-6. **Release notes / tag message** are composed in the principal's voice via
-   the `stephens-digital-twin` skill (GitHub-facing prose directive). The
-   publish pipeline replaces the GitHub release body with git-cliff notes; the
-   tag message is the permanent record.
+6. **Release notes:** the publish pipeline replaces the GitHub release body with
+   git-cliff notes (the tag message's permanence is step 5's clause).
 7. **Post-release verification** (after the pipeline runs): PyPI JSON API shows
    the new version with wheel + sdist; the docs site selector shows the new
    bucket; the release body is the git-cliff notes. Appearance is not
@@ -59,5 +56,4 @@ gate runs after the bump commit exists and before the tag is cut.
 ## Scope
 
 SDK-repo surfaces. Row 8 (gateway `uv.lock`) is a recorded note, not a
-blocker. The gateway can adopt this skill/matrix pair when its own releases
-need the same gate.
+blocker. (The gateway-adoption note lives in `docs/internal/release-review-matrix.md`.)

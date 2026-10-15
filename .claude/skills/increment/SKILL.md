@@ -6,12 +6,9 @@ description: The repeatable build loop the plugin SDK holds itself to — design
 # increment — the SDK build loop
 
 This is the loop that ships qualified tooling: design before code, RED before GREEN,
-refute before PR, measurement before merge. The north star: **the offline authoring and
-conformance tooling a plugin developer can trust — scaffold, check, sync, preview, each
-doing exactly what the vendored standards say, on a machine that has never seen the
-gateway checkout.** The bar for every increment: **self-contained, standards-exact,
-measured — no smoke-and-mirrors, no claims about gateway behavior the main-side suite
-hasn't proven.**
+refute before PR, measurement before merge. The bar for every increment:
+**self-contained, standards-exact, measured — no smoke-and-mirrors, no claims about
+gateway behavior the main-side suite hasn't proven.**
 
 ## When to use
 
@@ -29,37 +26,19 @@ run the loop.
 2. **Defer-if-buggy over ship-to-hit-a-milestone.** If a refute pass finds a real defect
    you can't cleanly fix, ship the clean core and DEFER the broken part to a
    properly-designed increment. Name the deferral in the PR.
-3. **Honest negative results are first-class.** If the measurement shows no meaningful
-   value, or a gate can't be cleared, HOLD and report — don't dress up noise. A killed
-   idea is a real result.
-4. **Never trust a sub-agent's "green."** Independently re-run ruff, mypy,
-   `sync-standards --check` and the suite (`uv run pytest -q`) yourself, and read the counts from
-   the run, not from a summary line.
-5. **Minimal, reviewable increments referencing their design.** No sprawling PRs. Name
-   what you defer. Design docs live in `.claude/deep-review/` — committed artifacts, so
-   pre-committed acceptance rules are provably pre-committed (see its README for the
-   public/private triage rule).
-6. **The tool encodes the standard; it never reinterprets it.** Behavior is pinned
-   against the vendored corpus text, not against memory of what the standard says; the
-   observable emitted wire is what gets pinned, not what the source schema claims; and
-   normative content never changes here first — it arrives as a re-sync with a version
-   increment.
+3. **Never trust a sub-agent's "green."** Vet independently (the step-4 gates) and read
+   the counts from the run, not a summary line; if the measurement shows no meaningful
+   value or a gate can't be cleared, HOLD and report — don't dress up noise.
 
 ## The loop
 
 1. **Design.** Spawn the `increment-designer` agent grounded in the REAL code and the
-   vendored standards text. It must deliver: the mechanism, the minimal first-increment
-   scope with explicit deferrals, precedent from proven in-tree mechanisms, invariant
-   impacts, the MEASURABLE proof with a pre-committed acceptance rule, and top risks.
-   DON'T-BUILD is an accepted outcome.
+   vendored standards text. DON'T-BUILD is an accepted outcome.
 2. **Decide.** Read the design. Surface any genuine product-behavior fork to the owner;
    otherwise pick the defensible default and proceed. For a contested call, run the
    `panel` skill.
-3. **Build, RED-first.** The `increment-builder` agent works in a fresh worktree off
-   `origin/main` (`UV_PROJECT_ENVIRONMENT=venv`), writing its proving tests in this
-   repository's `tests/` (main-side, in the gateway checkout's `tests/sdk/`, only for a
-   property that compares the SDK with the gateway). For every behavior change: write the test,
-   show it FAILS without the code, then implement.
+3. **Build, RED-first.** Spawn the `increment-builder` agent. For every behavior change:
+   write the test, show it FAILS without the code, then implement.
 4. **Vet (you, independently).** `uv run ruff check .`, `uv run mypy` (strict;
    `files = ["src"]`), `uv run benchweave-sdk sync-standards --check`, the
    `benchweave-sdk --version` smoke — then `uv run pytest -q` for the touched modules,
@@ -78,11 +57,9 @@ run the loop.
    fix it; a genuine correctness split → DEFER to the owner. Fix every real finding,
    with RED-proven guards.
 6. **Measure — the acceptance gate.** The `bench-measurer` agent proves real value on
-   real data with a NON-GAMEABLE test. Prefer a control that fluff can't pass: a RED
-   check (mechanism disabled → effect gone), a golden-project diff, or a
-   permutation/shuffle null. Report the number.
-7. **Land.** PR into `main` (working branches only — never commit to `main` directly),
-   title + body naming what shipped + what's deferred, referencing the design — and
+   real data with a NON-GAMEABLE test. Report the number.
+7. **Land.** PR into `main`, title + body naming what shipped + what's deferred,
+   referencing the design — and
    **every deferral must cite its home (reviewer-enforced; no mechanical gate yet)**
    (main #69, amended 2026-09-20 by the backlog triage council): either (a) an open
    issue, created at PR-open time if absent, whose body names its carrier increment
@@ -115,10 +92,7 @@ do a small follow-up PR. Still hold the bar (Tier-3 refute, CI green).
 ## Golden projects and the main-side suite
 
 Prove scaffold and conformance behavior against pinned golden projects and the vendored
-corpus before claiming anything about the gateway — and remember where each proof
-lives: SDK behavior here (`tests/`), anything that compares the SDK with the gateway
-main-side (`tests/sdk/` in the gateway checkout). "Couldn't run the main-side suite"
-stated plainly beats a green-looking review that never ran it, when the change needed it. A change that
+corpus before claiming anything about the gateway. A change that
 expects a main-side counterpart (corpus re-sync, renderer rebuild, pointer advance)
 names that counterpart in its PR.
 

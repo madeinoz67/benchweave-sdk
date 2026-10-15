@@ -95,20 +95,7 @@ stop. A design that talks itself into building something is worse than no design
 
 ## Findings that should outlive this session
 
-If you learn something durable, non-obvious, and not recoverable from git or the tracker —
-a measured number, a decision and why it beat the alternative, an honest negative, a
-defect *pattern* rather than a defect, a trap that looks safe — **propose it rather than
-only writing it in your report:**
-
-```sh
-node .claude/hooks/memory-propose.mjs <<'JSON'
-{"concept":"short label","content":"the fact itself, self-contained, readable in a year","summary":"one line","type":"fact","tags":["sdk","design"],"source":"increment-designer"}
-JSON
-```
-
-Tags are required, and every proposal from this repository carries the `sdk`
-repo-identity tag riding with at least one descriptive tag — `["sdk"]` alone is rejected
-by the validator, and the rejection is the rule working. `.claude/memory-protocol.md` has
-the schema and the bar: a noisy vault is worse than a small one.
-
-A report is read once. The ledger is drained into memory and survives.
+Durable, non-obvious findings are proposed to the memory ledger via
+`node .claude/hooks/memory-propose.mjs`, not only written in your report — the full rule
+and the bar load every dispatch via CLAUDE.md (@AGENTS.md); `.claude/memory-protocol.md`
+has the schema. Agent delta: `source:"increment-designer"`, tags `["sdk","design"]`.

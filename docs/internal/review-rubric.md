@@ -96,8 +96,9 @@ the update is the finding even when the diff touches no docs.
 **G6 Adversarial refute (TIER 3 ONLY — mandatory).** A second, independent reviewer runs
 the gates again AND actively tries to break the change: what input, lock state, or packaging
 shape makes it wrong? For a standards change: what previously-synced tree does it now
-refuse or silently accept? Never the model that produced the change. The two reviews are
-compared:
+refuse or silently accept? Never the model that produced the change; if you are the sole
+reviewer, say so and do not issue a final solo APPROVE on a Tier-3 change. The two
+reviews are compared:
 - Both reach APPROVE with consistent evidence → APPROVE stands.
 - The refuter finds a real, evidenced failure → needs-work.
 - They disagree on a correctness point and evidence can't settle it → **DEFER**.
