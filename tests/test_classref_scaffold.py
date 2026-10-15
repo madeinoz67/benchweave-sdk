@@ -10,8 +10,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from benchweave_sdk.presentation import create_ui_resources
 from benchweave_sdk.scaffold import create_project
 

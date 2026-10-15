@@ -658,11 +658,54 @@ def _ui_targets(descriptor: dict[str, Any]) -> list[dict[str, Any]]:
     return targets
 
 
-def create_ui_resources(destination: Path, package: str) -> None:
-    """Add read-only presentation resources to an already generated SDK starter."""
+def create_ui_resources(destination: Path, package: str) -> list[dict[str, str]]:
+    """Add presentation resources to an already generated SDK starter.
+
+    A class-conformant descriptor (one whose profiles match a vendored
+    ``plugin-ui-class-reference`` document) derives through the class
+    expander — the full reference-shaped presentation set, the preset
+    scaffolds and the birth conformance declaration. Everything else takes
+    the legacy read-only-observations path. Returns the reference's
+    ``cannot_derive`` rows (empty on the legacy path) so the caller can
+    print them; successful scaffolding is never admission or approval to
+    apply settings."""
     root = destination / "src" / package
     raw = read_file(root / "descriptor.json")
     descriptor = _contract().parse_document(raw)
+    # The class-reference path first: the reference is the presentation
+    # authority for a class-conformant descriptor, whether or not the
+    # descriptor also carries readable parameters. (Body import: classref
+    # reads back through this module's read_file, so a module-level import
+    # would be a cycle.)
+    from .classref import derive_ui, find_reference
+
+    references = [
+        reference
+        for profile in descriptor.get("profiles") or []
+        if (reference := find_reference(str(profile))) is not None
+    ]
+    if references:
+        derived = derive_ui(raw, references[0], descriptor_path=root / "descriptor.json")
+
+        def raw_bytes(document: object) -> bytes:
+            return (json.dumps(document, indent=2) + "\n").encode()
+
+        ui = root / "ui"
+        ui.mkdir(exist_ok=True)
+        (ui / "manifest.json").write_bytes(raw_bytes(derived.manifest))
+        (root / "presentation.json").write_bytes(raw_bytes(derived.envelope))
+        (root / "binding-catalogue.json").write_bytes(raw_bytes(derived.catalogue))
+        settings = ui / "settings"
+        settings.mkdir(exist_ok=True)
+        (settings / "configure.schema.json").write_bytes(
+            raw_bytes(derived.settings_schema)
+        )
+        presets = ui / "presets"
+        presets.mkdir(exist_ok=True)
+        for slug, scaffold in derived.preset_scaffolds.items():
+            (presets / f"{slug}.json").write_bytes(raw_bytes(scaffold))
+        (ui / "class-reference.json").write_bytes(raw_bytes(derived.declaration))
+        return list(derived.cannot_derive)
     descriptor_hash = hashlib.sha256(raw).hexdigest()
     # Validate everything derivable before the first write so a rejected
     # descriptor leaves no half-generated project behind.
@@ -781,3 +824,4 @@ def create_ui_resources(destination: Path, package: str) -> None:
         encoding="utf-8",
         newline="\n",
     )
+    return []

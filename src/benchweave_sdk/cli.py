@@ -78,7 +78,12 @@ def new_command(directory: Path, package_name: str, with_ui: bool) -> None:
     if with_ui:
         from .presentation import create_ui_resources
 
-        create_ui_resources(destination, package_name)
+        for row in create_ui_resources(destination, package_name):
+            ConsoleOutput().message(
+                f"cannot_derive[{row['id']}]: {row['aspect']} - "
+                f"{row['author_action']}",
+                style="yellow",
+            )
     ConsoleOutput().message(
         f"Created synthetic plugin at {destination}; review before hardware or publication.",
         style="green",
