@@ -286,8 +286,9 @@ def test_m10_unknown_component_refuses() -> None:
 def test_m9_known_binding_overlay_applies_content(tmp_path: Path) -> None:
     """M9: an overlay row for a DERIVED binding id applies its content;
     a NEW binding id is refused with the unknown-binding message."""
-    from benchweave_sdk.classref import compose_manifest
     from helpers_classref import build_classref_project
+
+    from benchweave_sdk.classref import compose_manifest
 
     _project, derived = build_classref_project(tmp_path / "m9")
     composed = compose_manifest(
@@ -320,8 +321,8 @@ def test_l11_l3_coverage_needs_its_named_controls(tmp_path: Path) -> None:
     assert report.clean
     assert "otdp.logic_analyser.configure/1.0.0" in report.reported_deviations
     # The configuration page renders the L3 surface (data table + numerics).
+    from benchweave_sdk.classref_gate import census
     from benchweave_sdk.classref_gate_render import render_pages
-    from benchweave_sdk.classref_gate import census, _page_ids
 
     html = render_pages(project, ["configuration"])["configuration"]
     seen = census(html)
