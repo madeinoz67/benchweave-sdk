@@ -101,9 +101,17 @@ def _derive_for_project(
     descriptor_raw: bytes, reference: dict[str, Any] | None, descriptor_path: Path
 ) -> Any:
     if reference is None:
-        reference = find_reference("otdp.logic_analyser/1.0.0")
-    if reference is None:
-        return None
+        import json as _json
+
+        descriptor = _json.loads(descriptor_raw)
+        references = [
+            found
+            for profile in descriptor.get("profiles") or []
+            if (found := find_reference(str(profile))) is not None
+        ]
+        if not references:
+            return None
+        reference = references[0]
     return derive_ui(descriptor_raw, reference, descriptor_path=descriptor_path)
 
 
@@ -226,7 +234,31 @@ def verify_ui(
     descriptor_raw = descriptor_path.read_bytes()
     derived = _derive_for_project(descriptor_raw, reference, descriptor_path)
     if derived is None:
-        raise ValueError("classref_gate_reference: no reference matches this descriptor")
+        # The always-on arm alone (record §5.1): no class reference, no
+        # expect assertions and no invented obligations — every declared
+        # action still owes a rendered control or a declared deviation.
+        import json as _json
+
+        from .classref import coverage_plan_without_reference
+        from .classref_gate_render import render_pages
+
+        descriptor = _json.loads(descriptor_raw)
+        plan, _actions_map = coverage_plan_without_reference(descriptor, descriptor_path)
+        manifest = _json.loads((package_dir / "ui" / "manifest.json").read_bytes())
+        pages = [str(page["id"]) for page in manifest.get("pages", [])]
+        first = pages[0] if pages else ""
+        plan = {urn: {**row, "page": row["page"] if row["page"] != "device-features" else first}
+                for urn, row in plan.items()}
+        rendered = render_pages(project, pages)
+        censused = {page: census(html) for page, html in rendered.items()}
+        declaration_path = package_dir / "ui" / "class-reference.json"
+        declaration = (
+            _json.loads(declaration_path.read_bytes())
+            if declaration_path.is_file()
+            else {"deviations": []}
+        )
+        coverage, reported = _coverage_findings(plan, censused, declaration)
+        return GateReport(findings=tuple(coverage), reported_deviations=tuple(reported))
     validate_declaration(derived, derived.declaration)
     from .classref_gate_render import render_pages
 

@@ -1062,6 +1062,25 @@ def effective_action_fields(
     return _field_rows(urn, "", effective)
 
 
+def coverage_plan_without_reference(
+    descriptor: dict[str, Any],
+    descriptor_path: Path | None = None,
+) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
+    """The D14 coverage plan for a descriptor with NO class reference:
+    every declared action through the ladder with no named slots (the
+    acquisition-lifecycle names stay host-supplied; actions land on the
+    project's first page). D14 binds every plugin — the plan, not a
+    reference, is what the always-on arm checks."""
+    catalog = _catalog_documents(descriptor)
+    actions_map: dict[str, Any] = dict(catalog.get("actions", {}))
+    actions_map.update(_vendor_catalogs(descriptor, descriptor_path))
+    actions = descriptor.get("actions") or {}
+    plan, _divergences = _derive_controls(
+        actions, actions_map, {}, {}, {}
+    )
+    return plan, actions_map
+
+
 def _capture_page_id(pages: list[dict[str, Any]]) -> str:
     for page in pages:
         if page.get("plots"):
