@@ -620,10 +620,13 @@ def derive_ui(
                     f"page {page.get('id')!r} binds unknown slot(s) "
                     f"{', '.join(sorted(unknown))}",
                 )
-    row = _profile_row(catalog, references)
-    for urn in row.get("required_actions", []):
-        if urn not in actions:
-            raise _classref_required_absent(urn)
+    # M7: the §3.8 merge path checks EVERY claimed profile's required
+    # actions — the sort order must not decide which profile gets checked.
+    for item in references:
+        row = _profile_row(catalog, [item])
+        for urn in row.get("required_actions", []):
+            if urn not in actions:
+                raise _classref_required_absent(urn)
     for item in references:
         for key, slot in item.get("slots", {}).items():
             urn = slot.get("action")
@@ -634,7 +637,7 @@ def derive_ui(
                 )
     return _assemble(
         descriptor, references, actions, catalog_actions,
-        descriptor_path=descriptor_path,
+        descriptor_path=descriptor_path, descriptor_raw=descriptor_raw,
     )
 
 
@@ -751,6 +754,7 @@ def _assemble(
     actions: dict[str, Any],
     catalog_actions: dict[str, Any],
     descriptor_path: Path | None = None,
+    descriptor_raw: bytes | None = None,
 ) -> DerivedUI:
     version = active_version("plugin-ui")
     merged = _merge_references(references)
@@ -790,6 +794,7 @@ def _assemble(
     return _finish(
         descriptor, references, merged, lanes, actions, catalog_actions,
         plan, divergences, version, descriptor_path=descriptor_path,
+        descriptor_file_raw=descriptor_raw,
     )
 
 
@@ -804,12 +809,18 @@ def _finish(
     divergences: list[dict[str, str]],
     version: str,
     descriptor_path: Path | None = None,
+    descriptor_file_raw: bytes | None = None,
 ) -> DerivedUI:
     """Assemble every emitted document from the resolved inventory."""
     import hashlib
 
-    descriptor_raw = (json.dumps(descriptor, indent=2) + "\n").encode()
-    descriptor_hash = hashlib.sha256(descriptor_raw).hexdigest()
+    # M4: the envelope pins the FILE bytes (the legacy path's discipline),
+    # never re-serialised virtual bytes — a non-canonical descriptor file
+    # still yields a pin check-ui accepts.
+    pin_bytes = descriptor_file_raw if descriptor_file_raw is not None else (
+        json.dumps(descriptor, indent=2) + "\n"
+    ).encode()
+    descriptor_hash = hashlib.sha256(pin_bytes).hexdigest()
     profile_ids = sorted({str(row["profile_id"]) for row in references})
 
     bindings: list[dict[str, Any]] = []
