@@ -214,3 +214,39 @@ def test_h1_const_outside_catalogue_enum_refuses() -> None:
             json.dumps(descriptor).encode(), REFERENCE,
             descriptor_path=FIXTURES / "descriptor-f3b.json",
         )
+
+
+def test_m6_exclusive_boundary_admittance_is_empty() -> None:
+    """M6: minimum == exclusiveMaximum (and exclusiveMinimum == maximum)
+    admit nothing — the span test alone misses both boundaries."""
+    for fragment in (
+        {"properties": {"max_duration_ms": {"minimum": 5, "exclusiveMaximum": 5}}},
+        {"properties": {"max_duration_ms": {"exclusiveMinimum": 5, "maximum": 5}}},
+    ):
+        descriptor = json.loads((FIXTURES / "descriptor-f3b.json").read_bytes())
+        descriptor["actions"]["otdp.logic_analyser.arm/1.0.0"]["input_constraints"] = fragment
+        with pytest.raises(ValueError, match="^classref_effective_schema_empty:"):
+            derive_ui(
+                json.dumps(descriptor).encode(), REFERENCE,
+                descriptor_path=FIXTURES / "descriptor-f3b.json",
+            )
+
+
+def test_m6_exclusive_bounds_carry_on_control_rows() -> None:
+    """M6: the control rows carry the exclusive flags the render needs."""
+    descriptor = json.loads((FIXTURES / "descriptor-f3b.json").read_bytes())
+    descriptor["actions"]["otdp.logic_analyser.arm/1.0.0"]["input_constraints"] = {
+        "properties": {"max_duration_ms": {"exclusiveMinimum": 0, "maximum": 60000}}
+    }
+    derived = derive_ui(
+        json.dumps(descriptor).encode(), REFERENCE,
+        descriptor_path=FIXTURES / "descriptor-f3b.json",
+    )
+    row = next(
+        field
+        for field in derived.control_plan["otdp.logic_analyser.arm/1.0.0"]["fields"]
+        if field["field"] == "max_duration_ms"
+    )
+    assert row["exclusiveMinimum"] is True
+    assert row["minimum"] == 0
+    assert row["maximum"] == 60000
