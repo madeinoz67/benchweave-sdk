@@ -481,7 +481,7 @@ def _layout_region(
             binding_id = str(node.get("binding_id", ""))
             field = str(node.get("field", ""))
             urn = None
-            for candidate, row in (descriptor.get("actions") or {}).items():
+            for candidate, _row in (descriptor.get("actions") or {}).items():
                 if candidate.split("/")[0].rsplit(".", 1)[-1] == binding_id:
                     urn = candidate
                     break
@@ -513,7 +513,7 @@ def _layout_region(
         if node.get("kind") in ("reading-tile", "data-table"):
             binding_id = str(node.get("binding_id", ""))
             rows = []
-            for candidate, action_row in (descriptor.get("actions") or {}).items():
+            for candidate, _action_row in (descriptor.get("actions") or {}).items():
                 slug = candidate.split("/")[0].rsplit(".", 1)[-1]
                 if slug == binding_id:
                     for field_row in effective_action_fields(

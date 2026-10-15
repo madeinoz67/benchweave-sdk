@@ -46,7 +46,9 @@ def test_census_counts_the_contract_surfaces() -> None:
     html = (
         render_button(ButtonData(label="arm"))
         + render_button(ButtonData(label="abort"))
-        + render_mode_banner(ModeBannerData(modes=(ModeEntry(key="simulated", wording="Simulated"),)))
+        + render_mode_banner(
+        ModeBannerData(modes=(ModeEntry(key="simulated", wording="Simulated"),))
+    )
     )
     seen = census(html)
     assert seen["buttons"] == ["arm", "abort"]

@@ -26,7 +26,7 @@ def test_f3a_const_renders_read_only_a9() -> None:
     controls = _controls(derived)
     configure = controls["otdp.logic_analyser.configure/1.0.0"]
     # const threshold_v: read-only fixed display, never an editable offer.
-    fields = {row["field"]: row for row in configure["fields"]}
+    {row["field"]: row for row in configure["fields"]}
     threshold = next(
         row for row in configure["fields"] if row["field"].endswith("threshold_v")
     )

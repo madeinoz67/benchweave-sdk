@@ -236,12 +236,14 @@ def _intersect_property(
     effective = dict(catalogue_schema)
     for keyword in ("minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"):
         if keyword in constraint:
-            if not isinstance(catalogue_schema, dict) or catalogue_schema.get("type") not in _NUMERIC_TYPES:
+            declared_type = (
+                catalogue_schema.get("type") if isinstance(catalogue_schema, dict) else None
+            )
+            if declared_type not in _NUMERIC_TYPES:
                 raise _refuse(
                     "classref_effective_schema_conflict",
                     f"action {action_urn} field {property_name}: numeric bound "
-                    f"applied to catalogue type "
-                    f"{catalogue_schema.get('type')!r}",
+                    f"applied to catalogue type {declared_type!r}",
                 )
             effective[keyword] = constraint[keyword]
     if "multipleOf" in constraint:
@@ -713,7 +715,7 @@ def _finish(
     bindings: list[dict[str, Any]] = []
     targets: list[dict[str, Any]] = []
     assets: list[dict[str, Any]] = []
-    slot_for_urn = {
+    {
         slot["action"]: (key, slot)
         for key, slot in merged["slots"].items()
         if slot.get("action")
@@ -829,7 +831,6 @@ def _finish(
             "type": "object",
         }
         schema_name = f"settings/{config_key}.schema.json"
-        preset_name = f"presets/{config_key}.json"
         assets.append(
             {
                 "id": schema_name,
@@ -1160,7 +1161,12 @@ def _build_layout(
         _insert_ladder_numerics(sections, plan)
         if sections:
             block_pages.append({"page_id": page_id, "sections": sections})
-    return {"contract_version": "0.1.0", "pages": block_pages}
+    # The layout block's contract_version is the FAMILY's active version,
+    # derived from the lock like every other stamp (derived, never stated).
+    return {
+        "contract_version": active_version(_FAMILY),
+        "pages": block_pages,
+    }
 
 
 def _urn_for_binding(plan: dict[str, dict[str, Any]], binding_id: str) -> str | None:
@@ -1267,7 +1273,7 @@ def _build_declaration(
     ]
     preset_deviations = []
     for item in references:
-        for key, slot in item.get("slots", {}).items():
+        for _key, slot in item.get("slots", {}).items():
             if slot.get("kind") == "configuration":
                 preset_deviations.append(
                     {
@@ -1328,7 +1334,7 @@ def compose_manifest(
     the composed result still owes the canonical validator a clean pass."""
     composed = json.loads(json.dumps(derived_manifest))
     protected = ("contract_version", "plugin_id", "descriptor_sha256")
-    for key, value in overrides.items():
+    for key in overrides:
         if key in protected:
             raise _refuse(
                 "overlay_immutable_field", f"{key} is expander-owned"

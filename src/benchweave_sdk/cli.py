@@ -333,6 +333,115 @@ def check_preset_command(
     _render_report(report, note=note)
 
 
+@cli.command("derive-ui")
+@click.argument("project", type=click.Path(path_type=Path, exists=True))
+@click.option("--force", is_flag=True, help="Overwrite a changed ui/manifest.json")
+@_domain_errors
+def derive_ui_command(project: Path, force: bool) -> None:
+    """Derive the class-reference presentation set into a plugin project.
+
+    Expands the project's descriptor through the vendored class reference
+    for its profile and writes ui/manifest.json, presentation.json,
+    binding-catalogue.json, the effective settings schema, the preset
+    scaffolds and the birth conformance declaration. A manifest that
+    differs from the expander's own last output refuses without --force
+    (the upgrade_dirty_tree posture); author edits belong in
+    ui/manifest.overrides.json."""
+    import hashlib
+    import json
+
+    from .classref import derive_ui, find_reference
+
+    package_dir = next(
+        (path for path in (project / "src").iterdir() if path.is_dir()), None
+    )
+    if package_dir is None:
+        raise ValueError(f"derive_ui_project: no package under {project / 'src'}")
+    descriptor_path = package_dir / "descriptor.json"
+    descriptor = json.loads(descriptor_path.read_bytes())
+    profiles = descriptor.get("profiles") or []
+    references = [
+        reference
+        for profile in profiles
+        if (reference := find_reference(str(profile))) is not None
+    ]
+    if not references:
+        raise ValueError(
+            "derive_ui_reference: no vendored class reference matches this "
+            "descriptor's profiles"
+        )
+    derived = derive_ui(
+        descriptor_path.read_bytes(), references[0], descriptor_path=descriptor_path
+    )
+
+    def raw(document: object) -> bytes:
+        return (json.dumps(document, indent=2) + "\n").encode()
+
+    ui = package_dir / "ui"
+    ui.mkdir(exist_ok=True)
+    manifest_path = ui / "manifest.json"
+    if manifest_path.exists() and not force:
+        current = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+        last = derived.envelope["manifest"]["sha256"]
+        if current != last:
+            raise ValueError(
+                "derive_ui_dirty_tree: ui/manifest.json differs from the "
+                "expander's own output; pass --force or move author edits "
+                "into ui/manifest.overrides.json"
+            )
+    manifest_path.write_bytes(raw(derived.manifest))
+    (package_dir / "presentation.json").write_bytes(raw(derived.envelope))
+    (package_dir / "binding-catalogue.json").write_bytes(raw(derived.catalogue))
+    settings = ui / "settings"
+    settings.mkdir(exist_ok=True)
+    (settings / "configure.schema.json").write_bytes(raw(derived.settings_schema))
+    presets = ui / "presets"
+    presets.mkdir(exist_ok=True)
+    for slug, scaffold in derived.preset_scaffolds.items():
+        (presets / f"{slug}.json").write_bytes(raw(scaffold))
+    (ui / "class-reference.json").write_bytes(raw(derived.declaration))
+    output = ConsoleOutput()
+    for row in derived.cannot_derive:
+        output.message(
+            f"cannot_derive[{row['id']}]: {row['aspect']} - {row['author_action']}",
+            style="yellow",
+        )
+    output.message(
+        f"Derived the class-reference presentation set into {package_dir}; "
+        "commission presets via check-preset, then wire them into the "
+        "configuration target's preset_asset_ids. Offline derivation is "
+        "never admission or approval to operate hardware.",
+        style="green",
+    )
+
+
+@cli.command("verify-ui")
+@click.argument("project", type=click.Path(path_type=Path, exists=True))
+def verify_ui_command(project: Path) -> None:
+    """Render the project's presentation and assert the class expectation.
+
+    The gate: validate, derive, render through the standalone host over
+    in-process ASGI, census the served HTML on the ui-contract §E.1
+    surfaces, assert the numeric expectation, the coverage arm and the
+    declared deviation ledger. Requires the [server] extra."""
+    from .classref_gate import verify_ui
+
+    report = verify_ui(project)
+    output = ConsoleOutput()
+    for expectation_id in report.reported_deviations:
+        output.message(f"reported deviation: {expectation_id}", style="yellow")
+    if report.findings:
+        output.findings([(f.code, f.detail, "") for f in report.findings])
+        raise click.ClickException(
+            f"verify-ui failed with {len(report.findings)} finding(s)."
+        )
+    output.message(
+        "Rendered gate clean; not admission, qualification or approval to "
+        "apply settings.",
+        style="green",
+    )
+
+
 def _sdk_checkout_root() -> Path | None:
     """The SDK repository checkout containing this module, or None when installed.
 

@@ -39,7 +39,7 @@ def render_pages(project: Path, page_ids: list[str]) -> dict[str, str]:
     if package_dir is None:
         raise ValueError(f"classref_gate_project: no package under {project / 'src'}")
     plugin = load_plugin_project(project)
-    descriptor = json.loads((package_dir / "descriptor.json").read_bytes())
+    json.loads((package_dir / "descriptor.json").read_bytes())
     seam = StandaloneSeam(
         PluginSession(plugin, lambda: LoopingMockHost(mock_exchanges(plugin))),
         transport_kind="mock",

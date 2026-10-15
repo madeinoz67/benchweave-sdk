@@ -170,7 +170,7 @@ class TestTwinCounter:
             check=False,
         )
         assert result.returncode == 0, result.stdout + result.stderr
-        assert json.loads(result.stdout)["scanned"] == 45, (
+        assert json.loads(result.stdout)["scanned"] == 48, (
 
             "the scanned-file census moved — update this pin in the "
             "same commit as the tree change (the ratchet discipline)"
