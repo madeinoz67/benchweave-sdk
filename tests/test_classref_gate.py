@@ -439,3 +439,84 @@ def test_f4_untraceable_lane_label(tmp_path: Path) -> None:
     report = verify_ui(project, reference=REFERENCE)
     forbidden = [f for f in report.findings if f.code == "classref_gate_forbidden"]
     assert forbidden, [f"{f.code}: {f.detail}" for f in report.findings]
+
+
+def test_m5_uncovered_alone_is_pinned() -> None:
+    """M5-residual (lane 1): a plan row with no divergence, no control
+    and no ledger entry yields classref_gate_uncovered ALONE — the
+    uncovered emission cannot die under the undeclared disjunction."""
+    from benchweave_sdk.classref_gate import _coverage_findings
+
+    plan = {
+        "otdp.logic_analyser.trigger/1.0.0": {
+            "level": "L1", "page": "capture", "fields": [],
+            "declared_deviation": False,
+        }
+    }
+    censused = {
+        "capture": {"buttons": [], "lanes_figures": 0, "panels": 1,
+                     "numerics": 0, "mode_banners": 1, "lane_kinds": {},
+                     "confirms": 0, "data_tables": 0, "lane_labels": []}
+    }
+    findings, reported = _coverage_findings(plan, censused, {"deviations": []})
+    assert [f.code for f in findings] == ["classref_gate_uncovered"]
+    assert findings[0].detail.startswith("otdp.logic_analyser.trigger/1.0.0")
+    assert reported == []
+
+
+def test_l8_absent_bounds_render_without_fabricated_values(tmp_path: Path) -> None:
+    """L8: the F1 arm's max_duration_ms has no catalogue maximum; the
+    render must not fabricate max=\"0\" (or min/step zeros)."""
+    from helpers_classref import build_classref_project
+    from benchweave_sdk.classref_gate import census
+    from benchweave_sdk.classref_gate_render import render_pages
+
+    project, _derived = build_classref_project(tmp_path / "l8")
+    html = render_pages(project, ["capture"])["capture"]
+    assert 'max="0"' not in html, "a fabricated ceiling escaped the render"
+    assert 'min="0"' not in html, "a fabricated floor escaped the render"
+    assert "action-arm-max_duration_ms" in html  # the control still renders
+
+
+def test_f5_component_id_downgrades_missing(tmp_path: Path) -> None:
+    """F5-component (record §4's letter): a declared deviation downgrades
+    exactly that expectation — a component id is in the vocabulary and
+    the missing count becomes REPORTED."""
+    import hashlib
+
+    from helpers_classref import build_classref_project
+
+    project, derived = build_classref_project(tmp_path / "f5")
+    package = next((project / "src").iterdir())
+    # The ledger declares the numeric-input expectation id.
+    declaration = json.loads((package / "ui" / "class-reference.json").read_bytes())
+    declaration["deviations"].append(
+        {"expectation_id": "numeric-input",
+         "reason": "numeric surfaces deferred at birth"}
+    )
+    (package / "ui" / "class-reference.json").write_bytes(
+        (json.dumps(declaration, indent=2) + "\n").encode()
+    )
+    # Strip every numeric control from the render (strip the layout nodes).
+    manifest = json.loads((package / "ui" / "manifest.json").read_bytes())
+    block = manifest["extensions"]["plugin-ui-class-reference:layout"]
+    for page in block["pages"]:
+        for section in page["sections"]:
+            section["children"] = [
+                node for node in section["children"]
+                if node.get("kind") != "numeric"
+            ]
+    raw = (json.dumps(manifest, indent=2) + "\n").encode()
+    (package / "ui" / "manifest.json").write_bytes(raw)
+    envelope = json.loads((package / "presentation.json").read_bytes())
+    envelope["manifest"]["sha256"] = hashlib.sha256(raw).hexdigest()
+    (package / "presentation.json").write_bytes(
+        (json.dumps(envelope, indent=2) + "\n").encode()
+    )
+    report = verify_ui(project, reference=REFERENCE)
+    numeric_missing = [
+        f for f in report.findings if f.code == "classref_gate_missing"
+        and "numeric-input" in f.detail
+    ]
+    assert not numeric_missing, [f.detail for f in numeric_missing]
+    assert "numeric-input" in report.reported_deviations
