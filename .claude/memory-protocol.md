@@ -127,6 +127,15 @@ It drains itself. `PreCompact`, `SessionEnd` and a debounced `Stop` are wired in
 session transcripts: the two sessions holding 81.3% of all events fired `SessionEnd`
 **zero** times and compacted 18 times between them) is why `PreCompact` leads.
 
+Local measurement (2026-09-18, all BenchWeave project transcript dirs, this repo
+included): 394 transcripts, 46,020 events, top sessions 0.7-1.15 days, only 4 in-file
+compaction markers detected — under this setup's 1M-context windows sessions compact far
+less often, so `PreCompact` fires less here and `Stop` and `SessionEnd` carry
+correspondingly more of the load. All three are kept because the local shape is a
+window-size artifact, not a property of the work. A periodic OS timer was rejected: it
+has no `CLAUDE_PROJECT_DIR` so it cannot find the right ledger, and it would fire
+mid-append.
+
 To run it by hand: `node .claude/hooks/memory-drain.mjs --base http://127.0.0.1:8125/mcp`
 (`--dry-run` to see what it would do, `--max N` to cap a run). It targets the same MuninnDB
 MCP endpoint as the main repo: `http://127.0.0.1:8125/mcp`, vault `benchweave`, credential

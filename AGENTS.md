@@ -65,18 +65,6 @@ the single issue stream carries this repo's rows too):
    `worktree remove` while parallel agents are active (2026-09-23: one agent's
    cleanup deleted another's live worktree).
 
-## Gortex first
-
-A Gortex daemon serves this repository machine-wide. On every task here, prefer graph
-queries over file reads — `read(operation:"file", …)` for a known file,
-`explore`/`search` when the target must be discovered, `change(operation:"impact")`
-before mutation, `edit`/`refactor` to mutate. The graph narrows scope; the source
-confirms behavior — for the symbol you are about to change, read its full body, and be
-deliberate with behavior-critical code (the standards-sync digests and refusal paths,
-scaffold output, packaging). Follow every Gortex hook instruction even when raw
-`Read`/`Grep`/`Glob` remain callable. If the daemon does not yet track this checkout,
-say so and fall back — do not start a daemon.
-
 ## Findings that outlive the session
 
 **This applies to you, the main session, not only to subagents.** If a session produces

@@ -59,16 +59,12 @@ Given a change, or a design that has not been built yet.
   the bypass is, not whether the check is present.
 - Claims made in the change's own documentation. A comment asserting "this cannot happen"
   is a target. Overstated claims are defects in this project. Ask of every sentence:
-  **would this read the same if it were false?** A set named in prose — "every refusal
-  path", "all three check lanes" — re-derive it from the mechanism rather than from the
-  names, and see whether it comes back the same size. A guard that cannot say what it
-  does NOT catch is pinning an instance and calling it a class. The claim rules live in
+  **would this read the same if it were false?** The claim rules live in
   the review rubric's G4 — apply them.
 - A green run that ran nothing. `no tests ran` is a FAILED check — pytest exits 5 when it
   collects nothing. Confirm the collected count and your test's name in the output, not
   just the exit code, and read counts from the raw run, never from an output-filter
-  summary. The proving suite for SDK behavior lives here (`tests/`);
-  properties that compare the SDK with the gateway are proven main-side (`tests/sdk/`).
+  summary.
 
 **On a design**, attack the premise before the machinery. What must be true about the
 standards, the generated projects, or the plugin authors for this to work at all — and is
@@ -90,8 +86,6 @@ Given a claim — usually a contributor's, sometimes ours.
 3. **Prove the fix eliminates it** — same probe, same conditions, on the fixed code.
 4. **Prove the fix is complete, not cosmetic.** Enumerate every path in the class and try
    to construct one the fix misses.
-5. If the bug does **not** reproduce, stop and say so. That is a finding, and an important
-   one.
 
 ## Anti-goals
 
@@ -111,26 +105,11 @@ Per finding: what breaks, the exact reproduction, the captured output, the blast
 and the severity you actually believe. Then the attack lines you ran that found nothing.
 Then, if you have one, the machine check that would pin the defect permanently.
 
-State plainly whether the change should be considered defended or not, and confirm your
-scratch worktree is gone.
+State plainly whether the change should be considered defended or not.
 
 ## Findings that should outlive this session
 
-If you learn something durable, non-obvious, and not recoverable from git or the tracker —
-a measured number, a decision and why it beat the alternative, an honest negative, a
-defect *pattern* rather than a defect, a trap that looks safe — **propose it rather than
-only writing it in your report:**
-
-```sh
-node .claude/hooks/memory-propose.mjs <<'JSON'
-{"concept":"short label","content":"the fact itself, self-contained, readable in a year","summary":"one line","type":"fact","tags":["sdk","adversary"],"source":"adversary"}
-JSON
-```
-
-Tags are required (at least one), and every proposal from this repository carries the
-`sdk` repo-identity tag riding with at least one descriptive tag — `["sdk"]` alone is
-rejected by the validator, and the rejection is the rule working. `.claude/memory-protocol.md`
-has the schema and the bar: a noisy vault is worse than a small one, so progress narration
-and restatements of the diff do not qualify.
-
-A report is read once. The ledger is drained into memory and survives.
+Durable, non-obvious findings are proposed to the memory ledger via
+`node .claude/hooks/memory-propose.mjs`, not only written in your report — the full rule
+and the bar load every dispatch via CLAUDE.md (@AGENTS.md); `.claude/memory-protocol.md`
+has the schema. Agent delta: `source:"adversary"`, tags `["sdk","adversary"]`.

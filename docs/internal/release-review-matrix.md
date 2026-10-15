@@ -61,6 +61,8 @@ minutes; the review exists so the next release does not depend on luck.
   version with wheel + sdist; the docs site shows the new bucket in the
   selector; the release body is the git-cliff notes.
 
+The gateway can adopt this skill/matrix pair when its own releases need the same gate.
+
 ## Result record — v0.1.0 (2026-09-22)
 
 | # | Surface | Result |
