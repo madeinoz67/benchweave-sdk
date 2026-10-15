@@ -352,3 +352,56 @@ def test_m5_coverage_emission_is_load_bearing(tmp_path: Path) -> None:
     codes = [finding.code for finding in report.findings]
     assert not report.clean
     assert "classref_gate_uncovered" in codes or "classref_gate_undeclared" in codes, codes
+
+
+def test_f4_color_role_hint_on_lanes_forbidden(tmp_path: Path) -> None:
+    """F4: a color-role hint on a digital_lanes channel is forbidden in
+    the composed manifest (belt over the schema's own refusal)."""
+    import hashlib
+
+    from helpers_classref import build_classref_project
+
+    project, derived = build_classref_project(tmp_path / "f4c")
+    package = next((project / "src").iterdir())
+    manifest = json.loads((package / "ui" / "manifest.json").read_bytes())
+    plot = manifest["pages"][0]["plots"][0]
+    plot["channel_hints"] = [
+        {"variable_id": "d0", "visible": True, "color_role": "accent"}
+    ]
+    raw = (json.dumps(manifest, indent=2) + "\n").encode()
+    (package / "ui" / "manifest.json").write_bytes(raw)
+    envelope = json.loads((package / "presentation.json").read_bytes())
+    envelope["manifest"]["sha256"] = hashlib.sha256(raw).hexdigest()
+    (package / "presentation.json").write_bytes(
+        (json.dumps(envelope, indent=2) + "\n").encode()
+    )
+    with pytest.raises(ValueError, match="^classref_gate_forbidden:"):
+        verify_ui(project, reference=REFERENCE)
+
+
+def test_f4_intermediated_energy_removing_action(tmp_path: Path) -> None:
+    """F4: a staging control on the abort binding — any control between
+    the operator and the energy-removing action — is forbidden."""
+    import hashlib
+
+    from helpers_classref import build_classref_project
+
+    project, derived = build_classref_project(tmp_path / "f4i")
+    package = next((project / "src").iterdir())
+    manifest = json.loads((package / "ui" / "manifest.json").read_bytes())
+    block = manifest["extensions"]["plugin-ui-class-reference:layout"]
+    run = next(
+        section for page in block["pages"] if page["page_id"] == "capture"
+        for section in page["sections"] if section["id"] == "run"
+    )
+    run["children"].append({"binding_id": "abort", "kind": "numeric",
+                            "field": "max_duration_ms"})
+    raw = (json.dumps(manifest, indent=2) + "\n").encode()
+    (package / "ui" / "manifest.json").write_bytes(raw)
+    envelope = json.loads((package / "presentation.json").read_bytes())
+    envelope["manifest"]["sha256"] = hashlib.sha256(raw).hexdigest()
+    (package / "presentation.json").write_bytes(
+        (json.dumps(envelope, indent=2) + "\n").encode()
+    )
+    with pytest.raises(ValueError, match="^classref_gate_forbidden:"):
+        verify_ui(project, reference=REFERENCE)
