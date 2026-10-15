@@ -240,7 +240,9 @@ def _intersect_property(
     # Bounds INTERSECT (H1, refute lane 1): a looser constraint can never
     # widen the catalogue's admittance — the tighter end of each side wins,
     # the exclusivity flags carry, and an empty result refuses.
-    def _bound(source: dict[str, Any], exclusive_key: str, plain_key: str) -> tuple[Any, bool] | None:
+    def _bound(
+        source: dict[str, Any], exclusive_key: str, plain_key: str
+    ) -> tuple[Any, bool] | None:
         if exclusive_key in source:
             return source[exclusive_key], True
         if plain_key in source:
@@ -251,8 +253,9 @@ def _intersect_property(
     high_catalogue = _bound(effective, "exclusiveMaximum", "maximum")
     low_constraint = _bound(constraint, "exclusiveMinimum", "minimum")
     high_constraint = _bound(constraint, "exclusiveMaximum", "maximum")
-    if low_constraint is not None or high_constraint is not None:
-        if declared_type not in _NUMERIC_TYPES:
+    if (
+        low_constraint is not None or high_constraint is not None
+    ) and declared_type not in _NUMERIC_TYPES:
             raise _refuse(
                 "classref_effective_schema_conflict",
                 f"action {action_urn} field {property_name}: numeric bound "
