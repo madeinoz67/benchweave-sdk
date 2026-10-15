@@ -610,6 +610,15 @@ def derive_ui(
     catalog_actions: dict[str, Any] = dict(catalog.get("actions", {}))
     catalog_actions.update(_vendor_catalogs(descriptor, descriptor_path))
     actions = descriptor.get("actions") or {}
+    # F8b: a descriptor-declared action absent from every served catalog
+    # is a typed refusal — the ladder cannot derive what the catalogs do
+    # not describe, and a bare KeyError is not an SDK error face.
+    for urn in actions:
+        if urn not in catalog_actions:
+            raise _refuse(
+                "classref_unknown_action",
+                f"descriptor declares {urn}, absent from every served catalog",
+            )
     for item in references:
         slot_keys = set(item.get("slots", {}))
         for page in item.get("pages", []):

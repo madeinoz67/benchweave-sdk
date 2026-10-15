@@ -493,21 +493,45 @@ def _layout_region(
             spec = next((row for row in rows if row["field"] == field), None)
             if spec is None:
                 return ""
-            minimum = spec.get("minimum", 0)
-            maximum = spec.get("maximum", 0)
-            step = spec.get("multipleOf", 1)
-            return render_numeric_input(
+            # L8: absent bounds render HONESTLY — empty attributes, never
+            # a fabricated zero (A02: the render offers nothing the schemas
+            # did not admit). The exclusive flags ride as data attributes
+            # (the HTML min/max cannot express exclusivity; the schema
+            # lanes keep enforcing it exactly).
+            minimum = spec.get("minimum")
+            maximum = spec.get("maximum")
+            step = spec.get("multipleOf")
+            exclusive_min = spec.get("exclusiveMinimum")
+            exclusive_max = spec.get("exclusiveMaximum")
+            if exclusive_min is not None:
+                minimum = exclusive_min
+            if exclusive_max is not None:
+                maximum = exclusive_max
+            value = str(minimum) if minimum is not None else ""
+            html = render_numeric_input(
                 NumericInputData(
                     label=field,
                     unit="",
-                    value=f"{minimum}" if minimum else "0",
-                    minimum=f"{minimum}",
-                    maximum=f"{maximum}",
-                    step=f"{step}",
+                    value=value,
+                    minimum="" if minimum is None else f"{minimum}",
+                    maximum="" if maximum is None else f"{maximum}",
+                    step="" if step is None else f"{step}",
                     input_id=f"action-{binding_id}-{field}",
                     help_id=f"action-{binding_id}-{field}-help",
                 )
             )
+            flags = ""
+            if exclusive_min is not None:
+                flags += f' data-bw-exclusive-min="{exclusive_min}"'
+            if exclusive_max is not None:
+                flags += f' data-bw-exclusive-max="{exclusive_max}"'
+            if flags:
+                html = html.replace(
+                    '<div class="bw-numeric">',
+                    f'<div class="bw-numeric"{flags}>',
+                    1,
+                )
+            return html
         if "body" in node:
             return f"<p>{escape(str(node['body']))}</p>"
         if node.get("kind") in ("reading-tile", "data-table"):

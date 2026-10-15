@@ -249,7 +249,7 @@ def test_m8_attribute_rows_are_asserted() -> None:
             "confirms": 0, "data_tables": 0,
         }
     }
-    findings = _assert_expect(expectation, censused)
+    findings, reported = _assert_expect(expectation, censused)
     assert findings, "a laundered group count must fail"
     assert "classref_gate_excess" in findings[0].code
 
@@ -468,7 +468,7 @@ def test_l8_absent_bounds_render_without_fabricated_values(tmp_path: Path) -> No
     """L8: the F1 arm's max_duration_ms has no catalogue maximum; the
     render must not fabricate max=\"0\" (or min/step zeros)."""
     from helpers_classref import build_classref_project
-    from benchweave_sdk.classref_gate import census
+
     from benchweave_sdk.classref_gate_render import render_pages
 
     project, _derived = build_classref_project(tmp_path / "l8")

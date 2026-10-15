@@ -137,14 +137,25 @@ def _page_ids(derived: Any) -> list[str]:
     return [str(page["id"]) for page in derived.manifest["pages"]]
 
 
+def _not_d7(expectation_id: str) -> bool:
+    """The D7 carve-out: an id naming the abort class never downgrades."""
+    slug = str(expectation_id).split("/")[0].rsplit(".", 1)[-1]
+    return slug != "abort"
+
+
 def _assert_expect(
-    expectation: dict[str, Any], censused: dict[str, dict[str, Any]]
-) -> list[GateFinding]:
+    expectation: dict[str, Any],
+    censused: dict[str, dict[str, Any]],
+    declared: frozenset[str] = frozenset(),
+) -> tuple[list[GateFinding], list[str]]:
     """Census-vs-expect deltas, typed (record §5/5). M10/F7: an unknown
     component name and a per_page naming a non-served page both refuse —
     silence would launder the divergence. M8/F2: the attribute census is
-    asserted with the count."""
+    asserted with the count. F5-component (record §4's letter): a declared
+    id downgrades exactly that expectation's failure to REPORTED, with
+    the D7 carve-out untouched."""
     findings: list[GateFinding] = []
+    reported: list[str] = []
     census_map = {
         "digital-lanes": "lanes_figures",
         "button": "buttons",
@@ -178,15 +189,18 @@ def _assert_expect(
                 if isinstance(actual, list):
                     actual = len(actual)
                 if actual != row["count"]:
-                    findings.append(
-                        GateFinding(
-                            "classref_gate_missing"
-                            if isinstance(row["count"], int) and actual < row["count"]
-                            else "classref_gate_excess",
-                            f"{name} on {page}: expected {row['count']}, "
-                            f"censused {actual}",
+                    if name in declared and _not_d7(name):
+                        reported.append(name)
+                    else:
+                        findings.append(
+                            GateFinding(
+                                "classref_gate_missing"
+                                if isinstance(row["count"], int) and actual < row["count"]
+                                else "classref_gate_excess",
+                                f"{name} on {page}: expected {row['count']}, "
+                                f"censused {actual}",
+                            )
                         )
-                    )
             seen_page = next(iter(targets.values())) if targets else {}
             lane_kinds = seen_page.get("lane_kinds", {})
             for selector, wanted in (row.get("attribute") or {}).items():
@@ -208,16 +222,19 @@ def _assert_expect(
                 value = seen.get(key)
                 total += len(value) if isinstance(value, list) else (value or 0)
             if total != row["count"]:
-                findings.append(
-                    GateFinding(
-                        "classref_gate_missing"
-                        if total < row["count"]
-                        else "classref_gate_excess",
-                        f"{name}: expected {row['count']} across the render, "
-                        f"censused {total}",
+                if name in declared and _not_d7(name):
+                    reported.append(name)
+                else:
+                    findings.append(
+                        GateFinding(
+                            "classref_gate_missing"
+                            if total < row["count"]
+                            else "classref_gate_excess",
+                            f"{name}: expected {row['count']} across the render, "
+                            f"censused {total}",
+                        )
                     )
-                )
-    return findings
+    return findings, reported
 
 
 #: The reference's forbid ids the gate implements (record §2.3/§5). The
@@ -351,23 +368,31 @@ def _coverage_findings(
         if level in ("L1", "L2") and slug in buttons:
             covered = level == "L1" or seen.get("numerics", 0) >= 1
         elif level == "L3":
-            covered = slug in buttons or bool(buttons)
+            # L11: the plan's NAMED class — the settings data-table the
+            # L3 layout derives — never any button that happens to render.
+            covered = seen.get("data_tables", 0) >= 1
         elif level == "L4":
             covered = seen.get("lanes_figures", 0) >= 1
         divergence = bool(row.get("divergence"))
-        if covered and not divergence:
-            continue
         # A6's mechanism: the AUTHOR's ledger downgrades — the expander's
         # auto-deviation marks are informational only, or an emptied
-        # ledger would launder the divergence.
+        # ledger would launder the divergence. A declaration is itself
+        # part of the report (A1/A10: the birth deviation REPORTS whether
+        # or not the surface renders).
         if urn in declared_ids:
             reported.append(urn)
             continue
-        if divergence and not covered:
+        if divergence:
+            # An undeclared intended-vs-derived divergence FAILS whether
+            # or not a control happens to render (record §3.9).
             findings.append(
-                GateFinding("classref_gate_undeclared", f"{urn}: {row.get('divergence')}")
+                GateFinding(
+                    "classref_gate_undeclared",
+                    f"{urn}: {row.get('divergence')}",
+                )
             )
-        elif not covered:
+            continue
+        if not covered:
             findings.append(
                 GateFinding("classref_gate_uncovered", f"{urn} renders no control at {level}")
             )
@@ -433,6 +458,9 @@ def verify_ui(
     vocabulary = set(derived.expectation.get("components", {}))
     vocabulary.update(derived.control_plan)
     validate_declaration_vocabulary(vocabulary, ledger)
+    ledger_ids = {
+        str(row.get("expectation_id")) for row in ledger.get("deviations", [])
+    }
     # H2: the manifest's layout block — authored via the overlay or derived
     # — is validated against the family schema; the canonical validator is
     # extension-blind, so this refusal is the block's only authority.
@@ -468,7 +496,10 @@ def verify_ui(
     ))
     rendered = render_pages(project, pages)
     censused = {page: census(html) for page, html in rendered.items()}
-    findings = _assert_expect(derived.expectation, censused)
+    component_findings, component_reported = _assert_expect(
+        derived.expectation, censused, frozenset(ledger_ids)
+    )
+    findings = list(component_findings)
     findings.extend(forbid_findings)
     # F4: every rendered lane label must trace to the descriptor's channel
     # identity or the group pattern.
@@ -503,6 +534,7 @@ def verify_ui(
                 break
             cursor += 1
     coverage, reported = _coverage_findings(derived.control_plan, censused, ledger)
+    reported.extend(component_reported)
     findings.extend(coverage)
     forbidden = [
         GateFinding("classref_gate_forbidden", f"bw-confirm rendered on {page}")
