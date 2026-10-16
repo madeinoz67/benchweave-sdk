@@ -453,8 +453,20 @@ def _layout_region(
     autoescaped. A host that does not know the namespace ignores the
     block; a block failing the family schema never reaches here (the
     loader refuses it), and verify-ui refuses it loudly."""
-    from benchweave_ui_html.data import ButtonData, NumericInputData
-    from benchweave_ui_html.partials import render_button, render_numeric_input
+    from benchweave_ui_html.data import (
+        BooleanInputData,
+        ButtonData,
+        NumericInputData,
+        SelectData,
+        TextInputData,
+    )
+    from benchweave_ui_html.partials import (
+        render_boolean,
+        render_button,
+        render_numeric_input,
+        render_select,
+        render_text_input,
+    )
     from markupsafe import escape
 
     from benchweave_sdk.classref import effective_action_fields
@@ -477,6 +489,64 @@ def _layout_region(
             return ""
         if node.get("kind") == "button":
             return render_button(ButtonData(label=str(node.get("binding_id", ""))))
+        if node.get("kind") in ("text", "select", "boolean"):
+            # The §E.1 input trio (gateway #463 L5): schema-derived staging
+            # controls over the effective intersection. Bounds and options
+            # ride only when the effective schema declares them (A02: the
+            # render offers nothing the schemas did not admit).
+            binding_id = str(node.get("binding_id", ""))
+            field = str(node.get("field", ""))
+            urn = None
+            for candidate, _row in (descriptor.get("actions") or {}).items():
+                if candidate.split("/")[0].rsplit(".", 1)[-1] == binding_id:
+                    urn = candidate
+                    break
+            rows = (
+                effective_action_fields(descriptor, urn, descriptor_file)
+                if urn
+                else []
+            )
+            spec = next((row for row in rows if row["field"] == field), None)
+            if spec is None:
+                return ""
+            kind = node["kind"]
+            if kind == "text":
+                minimum_length = spec.get("minLength")
+                maximum_length = spec.get("maxLength")
+                return render_text_input(
+                    TextInputData(
+                        label=field,
+                        value="",
+                        input_id=f"action-{binding_id}-{field}",
+                        help_id=f"action-{binding_id}-{field}-help",
+                        minlength=None if minimum_length is None else str(minimum_length),
+                        maxlength=None if maximum_length is None else str(maximum_length),
+                    )
+                )
+            if kind == "select":
+                if spec.get("const") is not None:
+                    options: tuple[str, ...] = (str(spec["const"]),)
+                else:
+                    options = tuple(
+                        str(option) for option in (spec.get("enum") or ())
+                    )
+                return render_select(
+                    SelectData(
+                        label=field,
+                        options=options,
+                        value="",
+                        select_id=f"action-{binding_id}-{field}",
+                        help_id=f"action-{binding_id}-{field}-help",
+                    )
+                )
+            return render_boolean(
+                BooleanInputData(
+                    label=field,
+                    checked=False,
+                    control_id=f"action-{binding_id}-{field}",
+                    help_id=f"action-{binding_id}-{field}-help",
+                )
+            )
         if node.get("kind") in ("numeric", "rotary"):
             binding_id = str(node.get("binding_id", ""))
             field = str(node.get("field", ""))

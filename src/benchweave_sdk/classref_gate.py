@@ -51,6 +51,9 @@ class _CensusParser(HTMLParser):
         self.panels = 0
         self.buttons: list[str] = []
         self.numerics = 0
+        self.texts = 0
+        self.selects = 0
+        self.booleans = 0
         self.mode_banners = 0
         self.lanes_figures = 0
         self.lane_kinds: dict[str, int] = {}
@@ -75,6 +78,12 @@ class _CensusParser(HTMLParser):
             self.lane_kinds[kind] = self.lane_kinds.get(kind, 0) + 1
         if "bw-numeric" in classes:
             self.numerics += 1
+        if "bw-text" in classes:
+            self.texts += 1
+        if "bw-select" in classes:
+            self.selects += 1
+        if "bw-boolean" in classes:
+            self.booleans += 1
         if "bw-data-table" in classes:
             self.data_tables += 1
         if "bw-confirm" in classes:
@@ -104,6 +113,9 @@ def census(html: str) -> dict[str, Any]:
         "panels": parser.panels,
         "buttons": [label.strip() for label in parser.buttons],
         "numerics": parser.numerics,
+        "text": parser.texts,
+        "select": parser.selects,
+        "boolean": parser.booleans,
         "mode_banners": parser.mode_banners,
         "lanes_figures": parser.lanes_figures,
         "lane_kinds": dict(parser.lane_kinds),
@@ -160,6 +172,9 @@ def _assert_expect(
         "digital-lanes": "lanes_figures",
         "button": "buttons",
         "numeric-input": "numerics",
+        "text-input": "text",
+        "select": "select",
+        "boolean-input": "boolean",
         "panel": "panels",
         "mode-banner": "mode_banners",
         "data-table": "data_tables",
@@ -386,7 +401,12 @@ def _coverage_findings(
         level = row["level"]
         covered = False
         if level in ("L1", "L2") and slug in buttons:
-            covered = level == "L1" or seen.get("numerics", 0) >= 1
+            covered = level == "L1" or (
+                seen.get("numerics", 0)
+                + seen.get("text", 0)
+                + seen.get("select", 0)
+                + seen.get("boolean", 0)
+            ) >= 1
         elif level == "L3":
             # L11: the plan's NAMED class — the settings data-table the
             # L3 layout derives — never any button that happens to render.

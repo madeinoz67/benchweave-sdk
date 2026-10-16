@@ -24,7 +24,8 @@ def channel(index: int, role: str = "digital_input") -> dict:
     }
 
 
-def actions(*, decode: bool, vendor: bool, trigger: bool = False) -> dict:
+def actions(*, decode: bool, vendor: bool, trigger: bool = False,
+            trio: bool = False) -> dict:
     def row(side_effect: str) -> dict:
         return {
             "binding": {"kind": "adapter", "key": "fixture"},
@@ -45,12 +46,15 @@ def actions(*, decode: bool, vendor: bool, trigger: bool = False) -> dict:
         rows["otdp.logic_analyser.trigger/1.0.0"] = row("state_change")
     if decode:
         rows["otdp.logic_analyser.decode/1.0.0"] = row("none")
-    if vendor:
+    if vendor and not trio:
         rows["com.veridian-labs.auto-threshold/1.0.0"] = row("state_change")
+    if trio:
+        rows["com.veridian-labs.auto-band/1.0.0"] = row("state_change")
     return rows
 
 
 def descriptor(name: str, count: int, *, decode: bool, vendor: bool, trigger: bool = False,
+               trio: bool = False, module: str | None = None,
                constraints: dict | None = None, decoders: list | None = None) -> dict:
     doc = {
         "otdp_version": "0.2.3",
@@ -68,7 +72,7 @@ def descriptor(name: str, count: int, *, decode: bool, vendor: bool, trigger: bo
         "integration": {
             "mode": "adapter",
             "adapter": {
-                "entry_point": f"fixture_{name}:create_plugin",
+                "entry_point": f"fixture_{module or name}:create_plugin",
                 "api_version": "1.1",
                 "version": "1.0.0",
                 "dependencies": [],
@@ -135,19 +139,29 @@ def descriptor(name: str, count: int, *, decode: bool, vendor: bool, trigger: bo
                 "sha256": "383fedc9af7515c17325d2abe938d3a60e23a2460a7153a710bba7fe41cf574b",
             },
         ],
-        "actions": actions(decode=decode, vendor=vendor, trigger=trigger),
+        "actions": actions(
+            decode=decode, vendor=vendor, trigger=trigger, trio=trio
+        ),
     }
     if constraints:
         for urn, fragment in constraints.items():
             doc["actions"][urn]["input_constraints"] = fragment
     if decoders:
         doc["decoders"] = decoders
-    if vendor:
+    if vendor and not trio:
         doc["contracts"].append(
             {
                 "id": "urn:veridian:vendor-catalog:1.0.0",
                 "path": "vendor-catalog.json",
                 "sha256": _digest("vendor-catalog.json"),
+            }
+        )
+    if trio:
+        doc["contracts"].append(
+            {
+                "id": "urn:veridian:vendor-catalog-trio:1.0.0",
+                "path": "vendor-catalog-trio.json",
+                "sha256": _digest("vendor-catalog-trio.json"),
             }
         )
     return doc
@@ -286,6 +300,31 @@ def main() -> None:
     (OUT / "vendor-catalog.json").write_bytes(
         (json.dumps(vendor_catalog, indent=2) + "\n").encode()
     )
+    trio_catalog = {
+        "catalog_version": "1.0.0",
+        "vendor": "com.veridian-labs",
+        "actions": {
+            "com.veridian-labs.auto-band/1.0.0": {
+                "description": "Recompute the auto band-per-division grouping.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "label": {"type": "string"},
+                        "band_class": {"enum": ["wide", "narrow"]},
+                        "holdoff_enable": {"type": "boolean"},
+                    },
+                    "required": ["label", "band_class", "holdoff_enable"],
+                    "additionalProperties": False,
+                    "$id": "urn:veridian:action:auto-band:1.0.0:input",
+                },
+                "output_schema": {"type": "object"},
+                "side_effect": "state_change",
+            }
+        },
+    }
+    (OUT / "vendor-catalog-trio.json").write_bytes(
+        (json.dumps(trio_catalog, indent=2) + "\n").encode()
+    )
     specs = [
         ("f1", CHANNEL_COUNTS["f1"], dict(decode=True, vendor=True)),
         ("f2", CHANNEL_COUNTS["f2"], dict(decode=True, vendor=True)),
@@ -294,6 +333,8 @@ def main() -> None:
         ("f3b", CHANNEL_COUNTS["f3b"],
          dict(decode=True, vendor=True, trigger=True, constraints=f3b_constraints(),
               decoders=[])),
+        ("f5-trio", CHANNEL_COUNTS["f1"],
+         dict(decode=True, vendor=False, trio=True, module="f5")),
     ]
     import hashlib as _hashlib
 
