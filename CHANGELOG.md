@@ -2,6 +2,125 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.15.0] - 2026-10-16
+
+### Bug Fixes
+
+- Restore the getting-started citation in CLAUDE.md — the inbound-citation arm requires the rendered URL in-repo (C09 cut too deep; CI caught it)
+- Advance the train-sync SDK anchor pin to 0.14.0 — the v0.14.0 release stamp missed it (pre-existing main red since 09:25; follows the 0.12→0.13 pattern)
+- The lock-anchor test derives its version from pyproject
+- Make Build Docs visible and bounded (gateway #475)
+- Fold the four L5 refute rows (gateway #463)
+
+### Documentation
+
+- Apply the 20 verified BPE instruction-set trims
+- The SDK version sentence re-points to 0.15.0 (gateway #463 L5)
+
+### Features
+
+- L5 train sync — plugin-ui 0.4.0 + class-reference 0.2.0, SDK 0.14.0->0.15.0 (gateway #463)
+- The §E.1 input trio in the derivation, gate census and host render (gateway #463 L5)
+
+### Miscellaneous
+
+- Align the version source to the pre-cut state — release-cut performs the bump (its assert_increment requires target > pyproject; #157 pre-moved the bump per the checklist, which the tool's contract rejects)
+- Stamp and register v0.15.0 — the L5 input trio release (gateway #463)
+- The v0.15.0 phase-2 registration — versions list + selector, at the tag commit
+
+
+### Contributors
+
+- Stephen Eaton (12 commits)
+## [0.14.0] - 2026-10-15
+
+### Bug Fixes
+
+- H1 — the D13 intersection intersects instead of replacing (gateway #463 refute lane 1)
+- M6 — exclusive-bound emptiness and exclusive flags on control rows (gateway #463)
+- H3 + M5 + F8 — the abort guard lives, the author's ledger rules, typed CLI errors (gateway #463 convergent)
+- H2 — layout blocks validate against the family schema everywhere (gateway #463 lanes 1+2)
+- M7 + M4 — all-profile required checks and file-byte envelope pins (gateway #463)
+- M8/F2 + M10/F7 + M9 + M5 + L11/F9 — the gate batch (gateway #463)
+- F6 — the fixture generator reproduces the committed contract (gateway #463)
+- F4 — the three unimplemented forbid arms + the label trace (gateway #463 fold round 2)
+- F5 + M5-residual + L8 + F8b + L11 — the fold-round-2 tail (gateway #463)
+- F4c decoder-name trace + F8b scalar refusal + trigger completion on authored layouts (gateway #463 round 3)
+
+### Features
+
+- The expander — reference + descriptor to plugin-ui manifest set (gateway #463 L2)
+- The rendered-output gate + host layout consumption (gateway #463 L2)
+- Derive-ui / verify-ui CLI + ratchet pins (gateway #463 L2)
+- New --with-ui derives class-conformant descriptors (gateway #463 row 1)
+- The gate's always-on arm runs reference-less (gateway #463, A10 scalar arm)
+- The decode_annotated overlay — annotation lanes + L4 coverage (RC-4, gateway #463)
+
+### Miscellaneous
+
+- Regenerate the committed scaffold fixtures after the template D8 prose landed (gateway #463)
+- Cut v0.14.0 — the class-reference expander release
+- Stamp and register v0.14.0
+
+### Refactoring
+
+- Wire the host's dead validating path (H2 tail)
+
+### Style
+
+- Lint folds from the M6 wave
+- Ruff fold (unused variable in the census rewrite)
+- Drop the dead pages local
+
+### Testing
+
+- RED — new --with-ui must derive a class-shaped descriptor (gateway #463 row 1)
+- RED — the A10 scalar-scaffold coverage arm (gateway #463)
+- RED — the decode_annotated overlay arm (RC-4, gateway #463)
+- RED — H1 the D13 intersection must intersect, not replace (gateway #463 refute lane 1)
+- RED — M6 exclusive-bound emptiness and exclusive flags on control rows (gateway #463)
+- RED — H3 the abort guard is dead three ways (gateway #463 convergent)
+- RED — H2 layout validation absent (gateway #463 lanes 1+2)
+- RED — M7 all-profile required checks + M4 file-byte pins (gateway #463)
+- M7's arm tightened — the refusal must name abort (gateway #463)
+- RED — M8/F2 attribute assertions, M10/F7 refusals, M9 overlay bindings (gateway #463)
+- RED — F4 the three unimplemented forbid arms (gateway #463 fold round 2)
+- RED — M5-residual uncovered pin, L8 fabricated bounds, F5 component downgrade (gateway #463 fold round 2)
+- RED — F8b typed unknown action + L11 named L3 surface (gateway #463 fold round 2)
+- RED — F4c decoder-name trace + A9's F3b end-to-end arm (gateway #463 round 3)
+
+
+### Contributors
+
+- Stephen Eaton (37 commits)
+## [0.13.0] - 2026-10-15
+
+### Bug Fixes
+
+- Fold wave — viewport refusal channel, window honesty, rate and invariant refusals (#449)
+
+### Documentation
+
+- Viewport controls section — STE register (#449 slice 3)
+- SDK pointer record for the class-reference Landing-2 sync+release arc
+
+### Features
+
+- Viewport partials — windowed lanes recomposition (#449 slice 3)
+- Sync plugin-ui-class-reference 0.1.0 — the classref train's SDK leg (gateway #463)
+
+### Miscellaneous
+
+- Stamp and register v0.13.0
+
+### Testing
+
+- RED — the classref 0.1.0 sync arms (gateway #463)
+
+
+### Contributors
+
+- Stephen Eaton (7 commits)
 ## [0.12.0] - 2026-10-14
 
 ### Bug Fixes
