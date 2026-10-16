@@ -17,7 +17,7 @@ from referencing.jsonschema import DRAFT202012
 
 MAX_DOCUMENT_BYTES = 262144
 MAX_DEPTH = 32
-SCHEMA_ROOT = "https://benchweave.dev/contracts/plugin-ui/0.3.1/"
+SCHEMA_ROOT = "https://benchweave.dev/contracts/plugin-ui/0.4.0/"
 
 
 class DocumentError(ValueError):
@@ -244,7 +244,7 @@ def validate_preset(
         except DocumentError as exc:
             return ValidationReport((Finding(exc.code, path, str(exc)),))
     preset, descriptor, settings_schema = decoded
-    if preset.get("contract_version") != "0.3.1":
+    if preset.get("contract_version") != "0.4.0":
         return ValidationReport(
             (
                 Finding(
@@ -369,7 +369,7 @@ def _checked_document(
     raw: bytes, name: str, documents: Mapping[str, dict[str, Any]]
 ) -> dict[str, Any]:
     document = parse_document(raw)
-    if document.get("contract_version") != "0.3.1":
+    if document.get("contract_version") != "0.4.0":
         raise _Rejected((Finding("unsupported_version", name, "Unsupported contract version"),))
     schema = documents.get(SCHEMA_ROOT + name + ".schema.json")
     if schema is None:

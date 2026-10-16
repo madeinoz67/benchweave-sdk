@@ -159,7 +159,7 @@ wheels = [
 
 [[package]]
 name = "benchweave-sdk"
-version = "0.14.0"
+version = "0.15.0"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
@@ -205,7 +205,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "benchweave-ui-html", marker = "extra == 'server'", specifier = "==0.2.1" },
+    { name = "benchweave-ui-html", marker = "extra == 'server'", specifier = "==0.3.0" },
     { name = "click", specifier = ">=8.3,<9" },
     { name = "copier", marker = "extra == 'scaffold'", specifier = ">=9.18,<10" },
     { name = "copier", marker = "extra == 'server'", specifier = ">=9.18,<10" },
@@ -239,15 +239,15 @@ dev = [
 
 [[package]]
 name = "benchweave-ui-html"
-version = "0.2.1"
+version = "0.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jinja2" },
     { name = "markupsafe" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/0c/1e/280424947f9b76bd0e95817a07d68a805dc133e62a11e222c7d75eb6d324/benchweave_ui_html-0.2.1.tar.gz", hash = "sha256:0e0136df49fb45ddec6084f119ff7fcd9e9ed15e9ef8c48b3359a9ae2b968f22", size = 108508, upload-time = "2026-10-04T03:17:34.737Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e8/ac/f15603b081ffed8ffefdb27b13971c61cd2effb89f7f132d02d001d64d2c/benchweave_ui_html-0.3.0.tar.gz", hash = "sha256:08f8d2f1a53fb1a89fe77e3bd6918a0eb887414bf852dc32380e679a878b3e36", size = 113867, upload-time = "2026-10-16T00:21:33.184Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/3c/73/1d679d2c86bdaf788a43ec4c8f87187dd722dc1b0c692d7da999c05adb2c/benchweave_ui_html-0.2.1-py3-none-any.whl", hash = "sha256:fb58e5f013d1a75d9a8a70f5013c55bee591c09b1f1cf58be555812ecce8587d", size = 130178, upload-time = "2026-10-04T03:17:33.215Z" },
+    { url = "https://files.pythonhosted.org/packages/34/3f/98c077ac1cb1e74072b4b90cc63612897fce537bfdc416f8471562844aad/benchweave_ui_html-0.3.0-py3-none-any.whl", hash = "sha256:253ac207b1f8d4a072112ef3bc642e1a3f41aefaf595134ab765e6613a8317bf", size = 137117, upload-time = "2026-10-16T00:21:31.512Z" },
 ]
 
 [[package]]

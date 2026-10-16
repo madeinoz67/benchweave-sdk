@@ -1,5 +1,5 @@
 {
-  "contract_version": "0.3.1",
+  "contract_version": "0.4.0",
   "plugin_id": "dev.example.example-plugin",
   "descriptor_sha256": "47ff6853aca32ee36540c1b4710a135d22fd11b46826c3bec217914530463f0d",
   "bindings": [
