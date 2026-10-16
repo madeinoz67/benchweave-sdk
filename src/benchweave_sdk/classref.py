@@ -1,7 +1,7 @@
 """Class-reference expander (gateway #463 Landing 2).
 
 Turns a class-conformant descriptor plus a ``plugin-ui-class-reference``
-reference document into a normal plugin-ui 0.3.1 manifest set, the numeric
+reference document into a normal plugin-ui 0.4.0 manifest set, the numeric
 expectation document the rendered gate asserts, the
 ``plugin-ui-class-reference:layout`` block (the namespaced extension seam),
 the effective settings schema and preset scaffolds.
@@ -491,16 +491,33 @@ def _row_mode(fragment: dict[str, Any]) -> str | None:
 
 
 def _field_rows(
-    action_urn: str, prefix: str, schema: dict[str, Any]
+    action_urn: str,
+    prefix: str,
+    schema: dict[str, Any],
+    _seen: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     """The renderable field rows (numeric bounds / const / enum / text /
     boolean) of one effective schema, descending array items and object
-    properties. A pattern-narrowed string emits no row (inexpressible)."""
+    properties. A pattern-narrowed string emits no row (inexpressible).
+
+    Fully-qualified field names are REFUSED on collision: dotted flattening
+    gives a nested ``a``→``b`` and a flat property literally named ``a.b``
+    the same name, and two rows under one name render two controls for one
+    declared field. The collision refuses typed, naming the field."""
     rows: list[dict[str, Any]] = []
+    seen = _seen if _seen is not None else set()
     for name, sub in (schema.get("properties") or {}).items():
         full = f"{prefix}{name}"
         mode = _row_mode(sub)
         if mode is not None:
+            if full in seen:
+                raise _refuse(
+                    "classref_duplicate_field",
+                    f"{action_urn} mints field {full!r} from two schema paths "
+                    "(a nested object/array descent and a literal property "
+                    "name collide after qualification)",
+                )
+            seen.add(full)
             row: dict[str, Any] = {"field": full, "mode": mode}
             if mode == "const":
                 row["const"] = sub["const"]
@@ -520,13 +537,13 @@ def _field_rows(
             rows.append(row)
         if isinstance(sub.get("properties"), dict):
             rows.extend(
-                _field_rows(action_urn, f"{full}.", sub)
+                _field_rows(action_urn, f"{full}.", sub, seen)
             )
         if isinstance(sub.get("items"), dict) and isinstance(
             sub["items"].get("properties"), dict
         ):
             rows.extend(
-                _field_rows(action_urn, f"{full}[].", sub["items"])
+                _field_rows(action_urn, f"{full}[].", sub["items"], seen)
             )
     return rows
 

@@ -25,6 +25,7 @@ def build_classref_project(
     for pinned in (
         "vendor-catalog.json",
         "vendor-catalog-trio.json",
+        "vendor-catalog-pair.json",
         "decoder-uart.json",
         "vectors-f1.json",
     ):

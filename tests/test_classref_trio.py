@@ -13,6 +13,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from benchweave_sdk.classref import (
     LAYOUT_EXTENSION_KEY,
     _field_rows,
@@ -224,29 +226,150 @@ def test_gate_census_map_carries_the_trio() -> None:
 
 
 def test_coverage_counts_the_trio_as_staging() -> None:
+    """The D14 L2 arm, updated to the per-action fold (row 2): the trio
+    action is covered by ITS OWN control ids, not the page's summed input
+    count — a sibling L2 action's controls standing on the page do not
+    cover it."""
     from benchweave_sdk.classref_gate import _coverage_findings
 
-    plan = {TRIO_URN: {"level": "L2", "page": "device-features"}}
+    plan = {
+        TRIO_URN: {
+            "level": "L2",
+            "page": "device-features",
+            "fields": [
+                {"field": "label", "mode": "text"},
+                {"field": "band_class", "mode": "enum"},
+                {"field": "holdoff_enable", "mode": "boolean"},
+            ],
+        }
+    }
     declaration: dict[str, Any] = {"deviations": []}
     censused = {
         "device-features": {
-            "buttons": ["auto-band"],
+            "buttons": ["auto-band", "re-band"],
             "numerics": 0,
             "text": 1,
-            "select": 1,
+            "select": 2,
             "boolean": 1,
+            "staged_control_ids": [
+                "action-auto-band-label",
+                "action-auto-band-band_class",
+                "action-auto-band-holdoff_enable",
+                "action-re-band-stacked",
+            ],
         }
     }
     findings, _reported = _coverage_findings(plan, censused, declaration)
     assert findings == []
-    empty = {
+    # A sibling L2 action's controls still stand (select 1) — the page-summed
+    # arm would launder the stripped action; the per-action arm does not.
+    sibling_only = {
         "device-features": {
-            "buttons": ["auto-band"],
+            "buttons": ["auto-band", "re-band"],
             "numerics": 0,
             "text": 0,
-            "select": 0,
+            "select": 1,
             "boolean": 0,
+            "staged_control_ids": ["action-re-band-stacked"],
         }
     }
-    findings, _reported = _coverage_findings(plan, empty, declaration)
+    findings, _reported = _coverage_findings(plan, sibling_only, declaration)
     assert [f.code for f in findings] == ["classref_gate_uncovered"]
+
+
+# --- L5 fold rows 1/3/4 (refute folds) --------------------------------------
+
+
+def test_classref_docstring_names_the_active_manifest_set() -> None:
+    """L5 fold row 1 (sync lane, LOW): the module docstring's manifest-set
+    version tracks the active plugin-ui version — prose defers to the
+    machine source (it read 0.3.1 past the 0.4.0 bump)."""
+    import benchweave_sdk.classref as classref_module
+    from benchweave_sdk.served import active_version
+
+    docstring = classref_module.__doc__ or ""
+    assert f"plugin-ui {active_version('plugin-ui')} manifest set" in docstring
+
+
+def test_field_rows_refuse_duplicate_qualified_field_names() -> None:
+    """L5 fold row 3 (derivation lane F3's guard path): the dotted-flattening
+    collision — a flat property literally named ``a.b`` beside a nested
+    ``a``→``b`` — mints two rows under one name and doubles the rendered
+    control (the numeric doubling's legal path). The derivation refuses
+    instead, naming the colliding field."""
+    colliding: dict[str, Any] = {
+        "type": "object",
+        "properties": {
+            "a": {"type": "object", "properties": {"b": {"type": "string"}}},
+            "a.b": {"type": "string"},
+        },
+    }
+    with pytest.raises(ValueError, match="^classref_duplicate_field:"):
+        _field_rows("urn:t/1.0.0", "", colliding)
+
+
+def test_derive_refuses_the_flattening_field_collision(tmp_path: Path) -> None:
+    """Row 3 end to end: a descriptor whose vendor action carries the
+    dotted-flattening collision refuses through the full derivation — today
+    it derives and the collision doubles the rendered control silently."""
+    import hashlib
+    import json
+
+    descriptor = json.loads(
+        (FIXTURES / "descriptor-f5-trio.json").read_bytes()
+    )
+    catalog = {
+        "catalog_version": "1.0.0",
+        "vendor": "com.veridian-labs",
+        "actions": {
+            "com.veridian-labs.auto-band/1.0.0": {
+                "description": "Colliding flattening fixture.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "a": {
+                            "type": "object",
+                            "properties": {"b": {"type": "string"}},
+                        },
+                        "a.b": {"type": "string"},
+                    },
+                    "required": ["a", "a.b"],
+                    "additionalProperties": False,
+                    "$id": "urn:veridian:action:auto-band:1.0.0:input",
+                },
+                "output_schema": {"type": "object"},
+                "side_effect": "state_change",
+            }
+        },
+    }
+    raw = (json.dumps(catalog, indent=2) + "\n").encode()
+    (tmp_path / "vendor-catalog-collide.json").write_bytes(raw)
+    for row in descriptor["contracts"]:
+        if str(row.get("path")) == "vendor-catalog-trio.json":
+            row["path"] = "vendor-catalog-collide.json"
+            row["sha256"] = hashlib.sha256(raw).hexdigest()
+    with pytest.raises(ValueError, match="^classref_duplicate_field:"):
+        derive_ui(
+            json.dumps(descriptor).encode(),
+            REFERENCE,
+            descriptor_path=tmp_path / "descriptor.json",
+        )
+
+
+def test_boolean_enum_options_render_their_json_form(tmp_path: Path) -> None:
+    """L5 fold row 4 (derivation lane F4, LOW): a non-string enum renders its
+    JSON form — ``true``/``false`` for a boolean-typed option set — so the
+    rendered option equals the admitted value in the declared type, not the
+    Python ``str()`` spelling (``True``/``False``)."""
+    from helpers_classref import build_classref_project
+
+    from benchweave_sdk.classref_gate_render import render_pages
+
+    project, _derived = build_classref_project(
+        tmp_path / "f6opt", descriptor_fixture="descriptor-f6-pair.json"
+    )
+    html = render_pages(project, ["device-features"])["device-features"]
+    assert 'value="true"' in html
+    assert 'value="false"' in html
+    assert 'value="True"' not in html
+    assert 'value="False"' not in html

@@ -441,6 +441,16 @@ def _power_entry(power: Any) -> dict[str, Any]:
     }
 
 
+def _option_text(value: Any) -> str:
+    """One select option's rendered text: a string renders as declared, a
+    non-string renders its JSON form (``true``/``false``, numbers) so the
+    rendered option IS the admitted value in the declared type — never the
+    Python ``str()`` spelling (``True``/``False``) of a boolean option."""
+    if isinstance(value, str):
+        return value
+    return json.dumps(value)
+
+
 def _layout_region(
     page: Any, manifest: Any, plugin: Any
 ) -> str:
@@ -525,10 +535,10 @@ def _layout_region(
                 )
             if kind == "select":
                 if spec.get("const") is not None:
-                    options: tuple[str, ...] = (str(spec["const"]),)
+                    options: tuple[str, ...] = (_option_text(spec["const"]),)
                 else:
                     options = tuple(
-                        str(option) for option in (spec.get("enum") or ())
+                        _option_text(option) for option in (spec.get("enum") or ())
                     )
                 return render_select(
                     SelectData(

@@ -615,3 +615,48 @@ def test_f8b_reference_less_unknown_action_is_typed(tmp_path: Path) -> None:
         coverage_plan_without_reference(
             descriptor, FIXTURES / "descriptor-f1.json"
         )
+
+
+def test_l2_coverage_is_per_action_not_per_page(tmp_path: Path) -> None:
+    """L5 fold row 2 (derivation lane F1, MEDIUM): the D14 L2 arm covers an
+    action by ITS OWN rendered inputs, never by the page's summed input
+    count. Two L2 vendor actions share device-features; stripping ONE
+    action's inputs (keeping its button) leaves the other action's inputs
+    standing — the stripped action must be named classref_gate_uncovered,
+    while a page-summed arm would launder it with the sibling's controls."""
+    import hashlib
+
+    from helpers_classref import build_classref_project
+
+    project, _derived = build_classref_project(
+        tmp_path / "f6cov", descriptor_fixture="descriptor-f6-pair.json"
+    )
+    package = next((project / "src").iterdir())
+    # Baseline: both L2 vendor actions render their own inputs — clean.
+    baseline = verify_ui(project, reference=REFERENCE)
+    assert baseline.clean, [f"{f.code}: {f.detail}" for f in baseline.findings]
+    manifest = json.loads((package / "ui" / "manifest.json").read_bytes())
+    block = manifest["extensions"]["plugin-ui-class-reference:layout"]
+    page = next(p for p in block["pages"] if p["page_id"] == "device-features")
+    stripped_kinds = {"text", "select", "boolean", "numeric"}
+    for section in page["sections"]:
+        section["children"] = [
+            node
+            for node in section["children"]
+            if not (
+                node.get("binding_id") == "auto-band"
+                and node.get("kind") in stripped_kinds
+            )
+        ]
+    raw = (json.dumps(manifest, indent=2) + "\n").encode()
+    (package / "ui" / "manifest.json").write_bytes(raw)
+    envelope = json.loads((package / "presentation.json").read_bytes())
+    envelope["manifest"]["sha256"] = hashlib.sha256(raw).hexdigest()
+    (package / "presentation.json").write_bytes(
+        (json.dumps(envelope, indent=2) + "\n").encode()
+    )
+    report = verify_ui(project, reference=REFERENCE)
+    uncovered = [f for f in report.findings if f.code == "classref_gate_uncovered"]
+    assert any(
+        "com.veridian-labs.auto-band/1.0.0" in f.detail for f in uncovered
+    ), [(f.code, f.detail) for f in report.findings]
