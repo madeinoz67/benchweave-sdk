@@ -77,6 +77,15 @@ TAG_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
 RASTER_FAVICONS = ("favicon.ico", "favicon-16x16.png", "favicon-32x32.png", "apple-touch-icon.png")
 ALIASES = ("latest", "stable")
 
+# Subprocess bounds (issue #475): a wedged git helper or great-docs build
+# must fail fast and name itself, not hang the Build Docs job until the
+# runner-level timeout. 900s per great-docs build sits well above any single
+# build's share of the #475 measurement (8 green runs, whole-job max 20m42s
+# including every build); 60s covers the local read-only git helpers
+# (tag/cat-file/rev-parse/ls-files), which are single-object lookups.
+GIT_TIMEOUT = 60
+GREAT_DOCS_TIMEOUT = 900
+
 # Reference-section order markup as great-docs 0.17.0 emits it: the sidebar
 # switcher reads data-gd-ref-sections (inline DOMContentLoaded script; a plain
 # body attribute is the other historically documented form). 0.17.0 hard-codes
@@ -101,20 +110,37 @@ SITE_LINK_MARKER = '<span class="menu-text">← BenchWeave</span>'
 
 
 def log(msg: str) -> None:
-    print(f"[assemble] {msg}")
+    # flush: CI log viewers line-buffer at best; an unflushed print is exactly
+    # the invisible phase issue #475 chased (log ends, job still running).
+    print(f"[assemble] {msg}", flush=True)
 
 
-def run(cmd: list[str], *, cwd: Path | None = None) -> str:
-    proc = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+def run(
+    cmd: list[str], *, cwd: Path | None = None, timeout: float | None = None, stream: bool = False
+) -> str:
+    """Run a subprocess loudly (issue #475: no silent phases, no unbounded children).
+
+    ``stream=True`` leaves the child's stdout/stderr un-captured so build output
+    reaches the CI log as it happens — for callers that ignore stdout. The
+    default captures, for callers that parse it (git helpers). A timeout aborts
+    with the command named; a non-zero exit prints the captured output first.
+    """
+    try:
+        proc = subprocess.run(
+            cmd, cwd=cwd, capture_output=not stream, text=True, timeout=timeout
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise SystemExit(f"command timed out after {exc.timeout}s: {' '.join(cmd)}") from exc
     if proc.returncode != 0:
-        sys.stderr.write(proc.stdout + proc.stderr)
+        if not stream:
+            sys.stderr.write(proc.stdout + proc.stderr)
         raise SystemExit(f"command failed ({proc.returncode}): {' '.join(cmd)}")
-    return proc.stdout
+    return proc.stdout or ""
 
 
 def release_tags() -> list[str]:
     """Release tags (vX.Y.Z) in ascending version order."""
-    tags = run(["git", "tag", "--list", "v*"], cwd=REPO).split()
+    tags = run(["git", "tag", "--list", "v*"], cwd=REPO, timeout=GIT_TIMEOUT).split()
     parsed = [t for t in tags if TAG_RE.match(t)]
     return sorted(parsed, key=lambda t: tuple(int(g) for g in TAG_RE.match(t).groups()))  # type: ignore[union-attr]
 
@@ -126,6 +152,7 @@ def ref_has_config(ref: str) -> bool:
             ["git", "cat-file", "-e", f"{ref}:great-docs.yml"],
             cwd=REPO,
             capture_output=True,
+            timeout=GIT_TIMEOUT,
         ).returncode
         == 0
     )
@@ -218,6 +245,8 @@ def isolated_build(great_docs: str, repo_url: str, ref: str, version: str, out_d
             str(out_dir),
         ],
         cwd=REPO,
+        timeout=GREAT_DOCS_TIMEOUT,
+        stream=True,  # issue #475: --from-repo output must stream, never sit captured
     )
 
 
@@ -573,7 +602,9 @@ def guard_dest(dest: Path) -> None:
     if dest == REPO or dest in REPO.parents:
         raise SystemExit(f"--dest {dest} is the repository root or an ancestor of it — refusing")
     if REPO in dest.parents and dest.exists():
-        tracked = run(["git", "ls-files", "--", str(dest.relative_to(REPO))], cwd=REPO).split()
+        tracked = run(
+            ["git", "ls-files", "--", str(dest.relative_to(REPO))], cwd=REPO, timeout=GIT_TIMEOUT
+        ).split()
         if tracked:
             raise SystemExit(
                 f"--dest {dest} contains {len(tracked)} tracked file(s), "
@@ -624,11 +655,12 @@ def main() -> None:
         cache = REPO / ".great-docs-cache"
         if cache.exists():
             shutil.rmtree(cache)  # hermetic: tag snapshots must reflect current config
-        proc = subprocess.run(
-            [args.great_docs, "build", "--versions", ",".join(inproc_versions)], cwd=REPO
+        run(
+            [args.great_docs, "build", "--versions", ",".join(inproc_versions)],
+            cwd=REPO,
+            timeout=GREAT_DOCS_TIMEOUT,
+            stream=True,  # issue #475: in-process build output streams, bounded at 900s
         )
-        if proc.returncode != 0:
-            raise SystemExit(f"in-process docs build failed ({proc.returncode})")
         replace_dir(REPO / "great-docs" / "_site", docs_root)
     else:
         docs_root.mkdir(parents=True, exist_ok=True)
@@ -660,6 +692,7 @@ def main() -> None:
                 ["git", "rev-parse", "--verify", "--quiet", main_ref],
                 cwd=REPO,
                 capture_output=True,
+                timeout=GIT_TIMEOUT,
             ).returncode
             == 0
         )
