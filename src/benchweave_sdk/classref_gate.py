@@ -41,6 +41,19 @@ class GateReport:
         return not self.findings
 
 
+#: The §E.1 field-element class hooks whose `id` is the host render's
+#: ``action-<binding>-<field>`` control key — the per-action attribution the
+#: L2 coverage arm reads (the wrapper ``bw-<kind>`` hook carries no id).
+_STAGED_FIELD_CLASSES = frozenset(
+    {
+        "bw-numeric__field",
+        "bw-text__field",
+        "bw-select__field",
+        "bw-boolean__control",
+    }
+)
+
+
 class _CensusParser(HTMLParser):
     """Counts components by contract-pinned surfaces only (record §5/4)."""
 
@@ -51,16 +64,27 @@ class _CensusParser(HTMLParser):
         self.panels = 0
         self.buttons: list[str] = []
         self.numerics = 0
+        self.texts = 0
+        self.selects = 0
+        self.booleans = 0
         self.mode_banners = 0
         self.lanes_figures = 0
         self.lane_kinds: dict[str, int] = {}
         self.confirms = 0
         self.data_tables = 0
         self._button_depth = 0
+        # The rendered staging controls' own `id`s — one per input
+        # element, carrying the host render's `action-<binding>-<field>`
+        # key, so the coverage arm can attribute a control to its action.
+        self.staged_control_ids: list[str] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         classes = (dict(attrs).get("class") or "").split()
         data = dict(attrs)
+        if _STAGED_FIELD_CLASSES.intersection(classes):
+            control_id = data.get("id")
+            if control_id:
+                self.staged_control_ids.append(control_id)
         if "bw-panel" in classes:
             self.panels += 1
         if "bw-mode-banner" in classes:
@@ -75,6 +99,12 @@ class _CensusParser(HTMLParser):
             self.lane_kinds[kind] = self.lane_kinds.get(kind, 0) + 1
         if "bw-numeric" in classes:
             self.numerics += 1
+        if "bw-text" in classes:
+            self.texts += 1
+        if "bw-select" in classes:
+            self.selects += 1
+        if "bw-boolean" in classes:
+            self.booleans += 1
         if "bw-data-table" in classes:
             self.data_tables += 1
         if "bw-confirm" in classes:
@@ -104,6 +134,9 @@ def census(html: str) -> dict[str, Any]:
         "panels": parser.panels,
         "buttons": [label.strip() for label in parser.buttons],
         "numerics": parser.numerics,
+        "text": parser.texts,
+        "select": parser.selects,
+        "boolean": parser.booleans,
         "mode_banners": parser.mode_banners,
         "lanes_figures": parser.lanes_figures,
         "lane_kinds": dict(parser.lane_kinds),
@@ -113,6 +146,7 @@ def census(html: str) -> dict[str, Any]:
             label.strip().removesuffix(" hidden").strip()
             for label in parser.lane_labels
         ],
+        "staged_control_ids": list(dict.fromkeys(parser.staged_control_ids)),
     }
 
 
@@ -160,6 +194,9 @@ def _assert_expect(
         "digital-lanes": "lanes_figures",
         "button": "buttons",
         "numeric-input": "numerics",
+        "text-input": "text",
+        "select": "select",
+        "boolean-input": "boolean",
         "panel": "panels",
         "mode-banner": "mode_banners",
         "data-table": "data_tables",
@@ -372,7 +409,15 @@ def _coverage_findings(
 ) -> tuple[list[GateFinding], list[str]]:
     """The always-on D14 coverage arm (record §5.1): per action, a rendered
     control at its ladder level OR a declared deviation. Declared
-    divergences ride back as REPORTED rows; undeclared ones fail."""
+    divergences ride back as REPORTED rows; undeclared ones fail.
+
+    The L2 test is PER ACTION (RC fold, gateway #463): an L2 action is
+    covered when ITS OWN inputs render — the host render's
+    ``action-<binding>-<field>`` control ids for that action's derived field
+    rows — never by the page's summed input count, which lets one L2
+    action's controls cover a stripped sibling on the same page. The L1
+    test stays its own button; the L3/L4 tests stay the plan-named page
+    surface (data-table / lanes figure), counted per page, not per action."""
     findings: list[GateFinding] = []
     reported: list[str] = []
     declared_ids = {
@@ -385,8 +430,14 @@ def _coverage_findings(
         buttons = seen.get("buttons", [])
         level = row["level"]
         covered = False
-        if level in ("L1", "L2") and slug in buttons:
-            covered = level == "L1" or seen.get("numerics", 0) >= 1
+        if level == "L1" and slug in buttons:
+            covered = True
+        elif level == "L2" and slug in buttons:
+            staged = set(seen.get("staged_control_ids", ()))
+            covered = any(
+                f"action-{slug}-{field_row.get('field')}" in staged
+                for field_row in row.get("fields", ())
+            )
         elif level == "L3":
             # L11: the plan's NAMED class — the settings data-table the
             # L3 layout derives — never any button that happens to render.

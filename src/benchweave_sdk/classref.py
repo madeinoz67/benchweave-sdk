@@ -1,7 +1,7 @@
 """Class-reference expander (gateway #463 Landing 2).
 
 Turns a class-conformant descriptor plus a ``plugin-ui-class-reference``
-reference document into a normal plugin-ui 0.3.1 manifest set, the numeric
+reference document into a normal plugin-ui 0.4.0 manifest set, the numeric
 expectation document the rendered gate asserts, the
 ``plugin-ui-class-reference:layout`` block (the namespaced extension seam),
 the effective settings schema and preset scaffolds.
@@ -38,6 +38,17 @@ _LANE_CEILING = 64
 _GROUP_SIZE = 8
 _HOST_SUPPLIED_UNIVERSAL = ("acquisition_id", "configuration_id")
 _NUMERIC_TYPES = ("number", "integer")
+#: The layout-node kind each field-row mode emits (the L5 widening, gateway
+#: #463). A literal const renders the §E.1 select's read-only fixed display —
+#: the F2 ruling (design-record addendum, 2026-10-16): the landed contract
+#: row and the renderer both say a const renders the fixed display.
+_MODE_KIND: dict[str, str] = {
+    "numeric": "numeric",
+    "text": "text",
+    "const": "select",
+    "enum": "select",
+    "boolean": "boolean",
+}
 #: The closed constraint vocabulary (record §3.7): the first group narrows a
 #: rendered control; the riders (required/properties/items/min/max/unique)
 #: ride the conjunctive validation lanes untouched and derive no controls.
@@ -460,36 +471,79 @@ def _merge_deep(
     return effective
 
 
+def _row_mode(fragment: dict[str, Any]) -> str | None:
+    """The field-row mode one property fragment renders, or None when the
+    fragment is inexpressible: a pattern-narrowed string admits values no
+    staging control can enumerate, so it derives no row and keeps its
+    action off L2 (RC-L5-3/4, the closed intersection vocabulary)."""
+    if fragment.get("const") is not None:
+        return "const"
+    if fragment.get("enum") is not None:
+        return "enum"
+    declared = fragment.get("type")
+    if declared == "string":
+        return None if "pattern" in fragment else "text"
+    if declared == "boolean":
+        return "boolean"
+    if declared in _NUMERIC_TYPES:
+        return "numeric"
+    return None
+
+
 def _field_rows(
-    action_urn: str, prefix: str, schema: dict[str, Any]
+    action_urn: str,
+    prefix: str,
+    schema: dict[str, Any],
+    _seen: set[str] | None = None,
 ) -> list[dict[str, Any]]:
-    """The renderable field rows (numeric bounds / const / enum) of one
-    effective schema, descending array items and object properties."""
+    """The renderable field rows (numeric bounds / const / enum / text /
+    boolean) of one effective schema, descending array items and object
+    properties. A pattern-narrowed string emits no row (inexpressible).
+
+    Fully-qualified field names are REFUSED on collision: dotted flattening
+    gives a nested ``a``→``b`` and a flat property literally named ``a.b``
+    the same name, and two rows under one name render two controls for one
+    declared field. The collision refuses typed, naming the field."""
     rows: list[dict[str, Any]] = []
+    seen = _seen if _seen is not None else set()
     for name, sub in (schema.get("properties") or {}).items():
         full = f"{prefix}{name}"
-        if sub.get("const") is not None:
-            rows.append({"field": full, "mode": "const", "const": sub["const"]})
-        elif sub.get("enum") is not None:
-            rows.append({"field": full, "mode": "enum", "enum": sub["enum"]})
-        elif sub.get("type") in _NUMERIC_TYPES:
-            row = {"field": full, "mode": "numeric"}
-            for keyword in (
-                "minimum", "maximum", "multipleOf",
-                "exclusiveMinimum", "exclusiveMaximum",
-            ):
-                if keyword in sub:
-                    row[keyword] = sub[keyword]
+        mode = _row_mode(sub)
+        if mode is not None:
+            if full in seen:
+                raise _refuse(
+                    "classref_duplicate_field",
+                    f"{action_urn} mints field {full!r} from two schema paths "
+                    "(a nested object/array descent and a literal property "
+                    "name collide after qualification)",
+                )
+            seen.add(full)
+            row: dict[str, Any] = {"field": full, "mode": mode}
+            if mode == "const":
+                row["const"] = sub["const"]
+            elif mode == "enum":
+                row["enum"] = sub["enum"]
+            elif mode == "text":
+                for keyword in ("minLength", "maxLength"):
+                    if keyword in sub:
+                        row[keyword] = sub[keyword]
+            elif mode == "numeric":
+                for keyword in (
+                    "minimum", "maximum", "multipleOf",
+                    "exclusiveMinimum", "exclusiveMaximum",
+                ):
+                    if keyword in sub:
+                        row[keyword] = sub[keyword]
             rows.append(row)
         if isinstance(sub.get("properties"), dict):
             rows.extend(
-                _field_rows(action_urn, f"{full}.", sub)
+                _field_rows(action_urn, f"{full}.", sub, seen)
             )
         if isinstance(sub.get("items"), dict) and isinstance(
             sub["items"].get("properties"), dict
         ):
             rows.extend(
-                _field_rows(action_urn, f"{full}[].", sub["items"])
+                _field_rows(action_urn, f"{full}[].", sub["items"], seen)
             )
     return rows
 
@@ -502,8 +556,10 @@ def _ladder_level(
     A configuration slot's action is L3 (preset-mediated); a dataset slot's
     action is L4 (dataset binding + plot/table). Otherwise the effective
     required set (minus the acquisition-lifecycle names the host supplies)
-    decides: empty L1 (bare button), all numeric L2 (staging), and anything
-    else L0 (declared deviation required)."""
+    decides: empty L1 (bare button), all-required-expressible L2 (staging —
+    the L5 widening: a field is expressible when the derivation renders it,
+    numeric, text, enum, const or boolean; a pattern-narrowed string stays
+    inexpressible), and anything else L0 (declared deviation required)."""
     if slot_kind == "configuration":
         return "L3"
     if slot_kind == "dataset":
@@ -513,7 +569,7 @@ def _ladder_level(
         return "L1"
     schemas = effective["properties"]
     if all(
-        schemas.get(name, {}).get("type") in _NUMERIC_TYPES for name in required
+        _row_mode(schemas.get(name, {})) is not None for name in required
     ):
         return "L2"
     return "L0"
@@ -1242,6 +1298,26 @@ def _configure_numeric_count(plan: dict[str, dict[str, Any]]) -> int:
     return 0
 
 
+def _numeric_nodes(binding_id: str, fields: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {"binding_id": binding_id, "kind": "numeric", "field": field["field"]}
+        for field in fields
+        if field["mode"] == "numeric"
+    ]
+
+
+def _staging_nodes(binding_id: str, fields: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Per-mode staging nodes (the L5 widening): numeric→numeric, text→text,
+    enum/const→select, boolean→boolean. Inexpressible fields emit no node
+    (they derived no row)."""
+    out: list[dict[str, Any]] = []
+    for field in fields:
+        kind = _MODE_KIND.get(field["mode"])
+        if kind is not None:
+            out.append({"binding_id": binding_id, "kind": kind, "field": field["field"]})
+    return out
+
+
 def _build_layout(
     pages: list[dict[str, Any]],
     plots: list[dict[str, Any]],
@@ -1275,12 +1351,9 @@ def _build_layout(
                 urn = _urn_for_binding(plan, binding_id)
                 level = plan.get(urn, {}).get("level") if urn else None
                 if level == "L2" and urn is not None:
-                    for field_row in plan[urn]["fields"]:
-                        if field_row["mode"] == "numeric":
-                            children.append(
-                                {"binding_id": binding_id, "kind": "numeric",
-                                 "field": field_row["field"]}
-                            )
+                    children.extend(
+                        _staging_nodes(binding_id, plan[urn]["fields"])
+                    )
                 if level in ("L1", "L2"):
                     children.append({"binding_id": binding_id, "kind": "button"})
                 if level == "L3" and urn is not None:
@@ -1308,12 +1381,18 @@ def _build_layout(
                 if slug in bound or plan_row["level"] == "L4":
                     continue
                 if plan_row["level"] in ("L1", "L2", "L3"):
-                    for field_row in plan_row["fields"]:
-                        if field_row["mode"] == "numeric":
-                            children.append(
-                                {"binding_id": slug, "kind": "numeric",
-                                 "field": field_row["field"]}
-                            )
+                    if plan_row["level"] == "L3":
+                        # L3 is preset-mediated; its numeric admittance
+                        # renders beside the preset surface and data-table
+                        # (the pinned family shape — no per-mode widening
+                        # on this arm).
+                        children.extend(
+                            _numeric_nodes(slug, plan_row["fields"])
+                        )
+                    else:
+                        children.extend(
+                            _staging_nodes(slug, plan_row["fields"])
+                        )
                     if plan_row["level"] in ("L1", "L2"):
                         children.append({"binding_id": slug, "kind": "button"})
             sections = [{

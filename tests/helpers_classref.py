@@ -22,7 +22,13 @@ def build_classref_project(
     fixture_dir = Path(__file__).parent / "fixtures" / "classref"
     descriptor_raw = (fixture_dir / descriptor_fixture).read_bytes()
     (package / "descriptor.json").write_bytes(descriptor_raw)
-    for pinned in ("vendor-catalog.json", "decoder-uart.json", "vectors-f1.json"):
+    for pinned in (
+        "vendor-catalog.json",
+        "vendor-catalog-trio.json",
+        "vendor-catalog-pair.json",
+        "decoder-uart.json",
+        "vectors-f1.json",
+    ):
         source = fixture_dir / pinned
         if source.is_file():
             (package / pinned).write_bytes(source.read_bytes())

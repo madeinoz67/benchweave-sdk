@@ -60,5 +60,5 @@ the items and the author actions. Verify the derived set with `verify-ui`.
 The plugin SDK guide covers this in section "Local UI preview (simulated)".
 
 ---
-Maintained by benchweave-sdk 0.14.0; `benchweave-sdk upgrade`
+Maintained by benchweave-sdk 0.15.0; `benchweave-sdk upgrade`
 refreshes this skill.

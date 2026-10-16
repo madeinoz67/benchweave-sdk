@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "benchweave-sdk"
-version = "0.14.0"
+version = "0.15.0"
 description = "Offline authoring and conformance tools for BenchWeave OTDP device plugins."
 readme = "README.md"
 requires-python = ">=3.13"
@@ -52,7 +52,7 @@ server = [
   # The renderer's tokens/themes arrive by release + pin bump (PRD 12
   # Q5): an EXACT pin — a range would re-open silent drift between the
   # gateway's renderer corpus and what this host serves.
-  "benchweave-ui-html==0.2.1",
+  "benchweave-ui-html==0.3.0",
   "uvicorn>=0.52.4",
   # The serial provider backend (issue #285 I3a): pyserial rides the server
   # extra ONLY — the default install never gains it (PKG-1/2 hold).
