@@ -502,3 +502,47 @@ row of the slotted set open and the L8-recorded pointer (D-L8-1's "row-8/L10 sli
 framing) unanswered — this record answers it by separating the two pin families the
 pointer conflated, taking the fixture half, and leaving the asset-digest half at its
 recorded home.
+
+---
+
+## Addendum — build-time corrections (2026-10-17, builder; folded before the refute)
+
+Two premises in §8 did not survive contact with the built tree. Both corrected with
+live evidence; neither changes the mechanism.
+
+**A1 — the end-to-end smoke step as written is unreachable.** §8 says "rename the
+first observation target in the descriptor + catalogue → its pytest RED with
+`preview_unknown_binding`". Neither edit can produce that refusal:
+
+- descriptor edit → `preview_invalid_presentation: digest_mismatch: envelope:
+  Descriptor bytes differ` (the envelope pins the descriptor's sha256; every
+  descriptor byte change reds at the digest gate first);
+- catalogue-only edit → `preview_invalid_presentation: capability_mismatch:
+  targets.<new>: Target exceeds descriptor capabilities` (the presentation
+  validator cross-checks catalogue targets against descriptor parameters).
+
+The reachable stale-fixture state — and the honest reading of §3's axis A — is the
+COHERENT post-edit set: descriptor parameter renamed, envelope/manifest/catalogue
+re-stamped (new descriptor hash, new manifest hash, bindings and target renamed in
+all three), with only `ui/fixtures/*.json` left speaking the old binding. The built
+smoke scripted exactly that: project pytest `1 failed, 4 passed` with
+`ValueError: preview_unknown_binding: …/ui/fixtures/normal.json: voltage` →
+`regen-fixtures` exit 0 → `5 passed`. Future runs of this row's smoke use the
+coherent-rename form; the two-line literal form is retired.
+
+**A2 — AR-L10-2 arm 3 was green on main by coincidence.** §8 claims all three CLI
+arms are red on main. The unknown-project arm asserts exit 2 — and on main
+"No such command 'regen-fixtures'" is ALSO exit 2, so the bare exit-code assertion
+passed vacuously before the command existed. The built arm adds a stderr assertion
+("No such command" absent, "does not exist" present) so the check pins the
+path-validation refusal itself; red on main, unchanged semantics. Second vacuous
+arm caught in this set today (the first was elsewhere in the train) — the pattern:
+an exit-code-only assertion over a usage-error family passes for the wrong reason
+whenever two failure modes share a code. Name the failure mode, not just the code.
+
+**Build note (not a correction):** the full battery surfaced two pins §6's table
+did not name — `test_registry_census`'s exact top-level click-group set (new
+member re-pinned consciously) and `test_zero_literal_gate`'s two body-imports of
+`_preview_fixture` (re-pointed to its moved `fixtures.py` address; assertions
+untouched). Plus one mypy annotation (`seen: set[str]`) forced by the extraction's
+changed inference context.
