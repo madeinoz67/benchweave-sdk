@@ -43,6 +43,17 @@ the items and the author actions. Verify the derived set with `verify-ui`.
   is served by `benchweave-sdk-server serve --transport serial`; preview-ui
   never leaves the mock transport.
 
+## Restyle the preview pages (optional)
+
+A manifest `assets[]` row with `path` exactly `preview.css` restyles the
+preview pages. The row also declares the `sha256` digest of the file bytes,
+and the host checks the digest again at serve time. The file can be 64 KiB
+at most. The override serves on the standalone host only, and the gateway
+never serves a plugin stylesheet override. A refused override gives
+`standalone_preview_override_refused:` while the page renders the default
+tokens. The plugin SDK guide covers this in
+section "The plugin stylesheet override (preview.css)".
+
 ## Rules that bite
 
 - The preview listener uses loopback only. A non-loopback host needs
