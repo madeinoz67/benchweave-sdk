@@ -512,7 +512,7 @@ def test_upgrade_moves_managed_state_and_preserves_author(tmp_path: Path) -> Non
     )
     author_state = _tree(project)
     _author_commit(project)
-    conflicted, _restored = upgrade_project(project, target_ref=TARGET_TAG)
+    conflicted, _restored, _skipped = upgrade_project(project, target_ref=TARGET_TAG)
     # A1 managed: AI-GUIDE rides the 3-way merge; the author edited it too,
     # so it conflicts loudly (both sides intact) and is reported.
     assert conflicted == ["AI-GUIDE.md"]
@@ -555,7 +555,7 @@ def test_upgrade_conflicts_loudly_on_an_author_edited_managed_skill(tmp_path: Pa
         skill.read_bytes().replace(b"# Descriptor authoring", b"# AUTHOR-tuned skill")
     )
     _author_commit(project)
-    conflicted, restored = upgrade_project(project, target_ref=TARGET_TAG)
+    conflicted, restored, _skipped = upgrade_project(project, target_ref=TARGET_TAG)
     assert restored == []
     assert conflicted == [".claude/skills/benchweave-descriptor/SKILL.md"]
     text = skill.read_text(encoding="utf-8")
@@ -611,8 +611,8 @@ def test_upgrade_renders_managed_assets_with_the_installed_stamp(tmp_path: Path)
         encoding="utf-8"
     )
     _author_commit(project)
-    conflicted, restored = upgrade_project(project, target_ref=TARGET_TAG)
-    assert conflicted == [] and restored == []
+    conflicted, restored, _skipped = upgrade_project(project, target_ref=TARGET_TAG)
+    assert conflicted == [] and restored == [] and _skipped == []
     managed = sorted(
         member.removeprefix("template/").removesuffix(".jinja")
         for member in base
@@ -656,7 +656,7 @@ def test_skip_list_is_load_bearing_on_update(tmp_path: Path) -> None:
     )
     readme.write_bytes(author_readme)
     _author_commit(project)
-    _conflicted, _restored = upgrade_project(project, target_ref=TARGET_TAG)
+    _conflicted, _restored, _skipped = upgrade_project(project, target_ref=TARGET_TAG)
     after = readme.read_text(encoding="utf-8")
     assert after != author_readme, "without the skip list A2 must fail"
     assert "<<<<<<< before updating" in after
@@ -680,7 +680,7 @@ def test_upgrade_keeps_author_bytes_when_seeds_are_unchanged(tmp_path: Path) -> 
         path.write_bytes(path.read_bytes() + AUTHOR_LINE.encode())
     author_state = _tree(project)
     _author_commit(project)
-    conflicted, _restored = upgrade_project(project, target_ref=TARGET_TAG)
+    conflicted, _restored, _skipped = upgrade_project(project, target_ref=TARGET_TAG)
     assert conflicted == []
     for relative, content in author_state.items():
         if relative == ".copier-answers.yml":
@@ -830,7 +830,7 @@ def test_upgrade_restores_skip_protected_files_the_template_dropped(tmp_path: Pa
         path = project / relative
         path.write_bytes(path.read_bytes() + b"# AUTHOR EDIT\n")
     _author_commit(project)
-    conflicted, restored = upgrade_project(project, target_ref=TARGET_TAG)
+    conflicted, restored, _skipped = upgrade_project(project, target_ref=TARGET_TAG)
     assert conflicted == []
     assert sorted(restored) == [f"src/{PACKAGE}/adapter.py", "tests/test_plugin.py"]
     for relative in ("tests/test_plugin.py", f"src/{PACKAGE}/adapter.py"):
@@ -929,7 +929,7 @@ def test_adopted_project_first_upgrade_conflicts_honestly_on_managed_edits(
     ]
     answers.write_bytes("".join(rendered).encode())
     _author_commit(project)
-    conflicted, restored = upgrade_project(project, target_ref=TARGET_TAG)
+    conflicted, restored, _skipped = upgrade_project(project, target_ref=TARGET_TAG)
     assert conflicted == ["AI-GUIDE.md"]
     assert restored == []
     text = guide.read_text(encoding="utf-8")
@@ -964,8 +964,8 @@ def test_upgrade_resolves_a_symlinked_project_path(tmp_path: Path) -> None:
         link.symlink_to(project, target_is_directory=True)
     except OSError:
         pytest.skip("symlinks unavailable (privilege or filesystem)")
-    conflicted, restored = upgrade_project(link, target_ref=TARGET_TAG)
-    assert conflicted == [] and restored == []
+    conflicted, restored, _skipped = upgrade_project(link, target_ref=TARGET_TAG)
+    assert conflicted == [] and restored == [] and _skipped == []
 
 
 def test_adopt_refuses_a_dangling_symlink_answers_file(tmp_path: Path) -> None:
@@ -1057,15 +1057,15 @@ def test_upgrade_command_prints_the_staleness_notice(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """The CLI wiring: the notice rides after the restore/conflict report.
-    ``upgrade_project`` is stubbed here — its own 2-tuple contract and its
-    walk behavior are pinned by the lanes above and stay untouched (the
-    notice is the only thing this arm exercises)."""
+    ``upgrade_project`` is stubbed here — its own 3-tuple contract and its
+    walk behavior are pinned by the lanes above (the notice is the only
+    thing this arm exercises)."""
     from benchweave_sdk import scaffold_update
     from benchweave_sdk.scaffold import create_project
 
     stale = tmp_path / "P-notice"
     _coherently_stale_ui(stale)
-    monkeypatch.setattr(scaffold_update, "upgrade_project", lambda project: ([], []))
+    monkeypatch.setattr(scaffold_update, "upgrade_project", lambda project: ([], [], []))
     capsys.readouterr()
     assert cli_main(["upgrade", str(stale)]) == 0
     rendered = capsys.readouterr().out
@@ -1078,3 +1078,249 @@ def test_upgrade_command_prints_the_staleness_notice(
     capsys.readouterr()
     assert cli_main(["upgrade", str(fresh)]) == 0
     assert "migrate-ui" not in capsys.readouterr().out
+
+
+# --- issue #461: the upgrade walk and the LF rewrite leave the content boundary ---
+
+
+VENV_SDK_MEMBER = "venv/lib/python3.13/site-packages/benchweave_sdk/scaffold_update.py"
+CRLF_MEMBER = "docs/release-notes.md"
+CRLF_MEMBER_BYTES = b"# Release notes\r\n\r\nThe template added this CRLF member.\r\n"
+CRLF_FIXTURE_BYTES = b"# CRLF fixture\r\nauthor-committed CRLF bytes\r\n"
+
+
+def _boundary_project(tmp_path: Path) -> tuple[Path, Path, bool]:
+    """The issue #461 fixture (design §8): a committed clean project whose
+    author's own ``.gitignore`` carries ``venv/``, a stand-in interpreter
+    OUTSIDE the project root linked from ``venv/bin/python*``, the OLD SDK's
+    conflict-marker literal inside ``venv/lib``, a tracked author CRLF file
+    under the ``tests/**`` skip pattern and outside the update's delta, a
+    tracked symlink, and a target template that ADDS one CRLF-bearing member
+    (the PR #93 positive control). Returns (project, interpreter, linked):
+    ``linked`` is False on a platform that refuses symlink creation (F4) —
+    the fixture degrades, never skips, so the link-independent clauses
+    (AR-2's venv invisibility, AR-3, AR-4) still execute there.
+
+    Two refute-fold details keep AR-4 NON-vacuous (F1/F2): the target
+    commit carries the CRLF member's bytes RAW (committed with
+    ``core.autocrlf=false`` — every ``_git`` call pins ``input``, which
+    would normalize the blob at add time and hand the update an LF member,
+    leaving the LF pass nothing to rewrite), and the member is
+    template-ADDED in a NEW directory, the exact shape the porcelain
+    directory collapse (``?? docs/``, closed by ``--untracked-files=all``)
+    made invisible — this fixture is F1's standing detector."""
+    base = _base_members(tmp_path)
+    assert base is not None
+    target = dict(base)
+    target[f"template/{CRLF_MEMBER}"] = CRLF_MEMBER_BYTES
+    # Local template repo: the BASE commit rides the shared helpers (base
+    # members are LF), but the TARGET commit must keep the CRLF bytes raw,
+    # so its add/commit bypass _git's per-command autocrlf=input pin.
+    repo = tmp_path / "template-repo-boundary"
+    repo.mkdir()
+    _git_init(repo)
+    _write_tree(repo, base)
+    _git(repo, "add", "-A")
+    _git(repo, "-c", "user.email=r4@benchweave", "-c", "user.name=r4", "commit", "-qm", "base")
+    _git(repo, "tag", BASE_TAG)
+    _write_tree(repo, target)
+    for args in (  # raw git, autocrlf=false: the blob keeps the CRLF bytes
+        ("add", "-A"),
+        ("-c", "user.email=r4@benchweave", "-c", "user.name=r4",
+         "commit", "--allow-empty", "-qm", "target"),
+    ):
+        subprocess.run(
+            ["git", "-c", "core.autocrlf=false", "-C", str(repo), *args],
+            check=True,
+            capture_output=True,
+        )
+    _git(repo, "tag", TARGET_TAG)
+    materialized = tmp_path / "materialized-boundary"
+    _write_tree(materialized, base)
+    project = tmp_path / "P-boundary"
+    _scaffold_offline(materialized, repo, project)
+    # The author's own ignore (the template ships none) — the repro shape.
+    (project / ".gitignore").write_bytes(b"venv/\n")
+    # AR-3's vehicle: tracked CRLF bytes a skip pattern protects and the
+    # update never touches — the upgrade must not rewrite them either.
+    (project / "tests" / "crlf-fixture.md").write_bytes(CRLF_FIXTURE_BYTES)
+    # The ignored venv: interpreter links out of the tree plus the
+    # installed-SDK literal that made the old scan report venv files. The
+    # interpreter bytes carry BOTH defect triggers by construction — \r\n
+    # pairs (the LF-rewrite damage) and a marker run (the conflict-scan
+    # false notice) — and the run does not overlap a \r\n pair, so the
+    # corruption cannot destroy the notice evidence.
+    interpreter = tmp_path / "outside" / "interpreter"
+    interpreter.parent.mkdir()
+    interpreter.write_bytes(b"#!/stand-in interpreter\r\nTRIGGER\r\n<<<<<<<\r\nEOF\r\n")
+    venv_bin = project / "venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    venv_sdk = project / "venv" / "lib" / "python3.13" / "site-packages" / "benchweave_sdk"
+    venv_sdk.mkdir(parents=True)
+    (venv_sdk / "scaffold_update.py").write_bytes(b'_CONFLICT_MARKER = b"<<<<<<<"\n')
+    # AR-5's vehicle and the venv interpreter links: created when the
+    # platform allows, skipped per-link when it refuses (F4 — the
+    # link-independent clauses above still run on that platform).
+    linked = True
+    try:
+        (project / "tools").mkdir()
+        (project / "tools" / "guide-link").symlink_to("../AI-GUIDE.md")
+        for name in ("python", "python3", "python3.13"):
+            (venv_bin / name).symlink_to(interpreter)
+    except OSError:
+        linked = False
+    _author_commit(project)
+    return project, interpreter, linked
+
+
+def test_upgrade_stays_inside_the_project_content_boundary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue #461 (design §8, AR-1..AR-5): the upgrade reads and writes the
+    git-tracked set plus what the update itself changed — nothing else. The
+    file outside the project root keeps its bytes (AR-1, sha256 equality),
+    the ignored venv is invisible in every report channel (AR-2), the
+    tracked author CRLF file is untouched (AR-3), the update-written CRLF
+    member still ends LF-only (AR-4 — the narrowing did not over-narrow),
+    and the tracked symlink is skipped exactly once (AR-5, where the
+    platform creates links).
+
+    AR-1/AR-2 are checked through indexing BEFORE the 3-tuple unpack and
+    their evidence is joined into one assert message: the RED control (the
+    fix reverted) must surface BOTH the outside-root hash mismatch and the
+    venv notice from a single run — first-assert-only ordering would stop at
+    whichever clause came first and mask the other fact.
+
+    AR-4's non-vacuousness is proven here too (refute F2): a spy on the
+    guarded write records every file the LF pass rewrites, and the CRLF
+    member must be among them. If the fixture ever regresses to delivering
+    an LF member (an autocrlf-normalized blob) or the walk ever misses it
+    again (the F1 directory collapse), this spy assert fails loudly instead
+    of passing green over a no-op pass."""
+    import hashlib
+
+    from benchweave_sdk import scaffold as scaffold_module
+    from benchweave_sdk.scaffold_update import upgrade_project
+
+    project, interpreter, linked = _boundary_project(tmp_path)
+    # F2's spy: record what the LF pass actually rewrites. _guarded_write
+    # lives in scaffold's namespace (the circular-import ruling); patching
+    # it there captures _enforce_lf's writes only — the restore loop calls
+    # scaffold_update's own imported binding and stays unrecorded.
+    lf_rewrites: list[str] = []
+    real_write = scaffold_module._guarded_write
+
+    def _recording_write(path: Path, content: bytes) -> None:
+        real_write(path, content)
+        lf_rewrites.append(path.relative_to(project).as_posix())
+
+    monkeypatch.setattr(scaffold_module, "_guarded_write", _recording_write)
+
+    before = hashlib.sha256(interpreter.read_bytes()).hexdigest()
+    result = upgrade_project(project, target_ref=TARGET_TAG)
+    after = hashlib.sha256(interpreter.read_bytes()).hexdigest()
+    damage: list[str] = []
+    if before != after:
+        damage.append(
+            f"AR-1: the file outside the project root changed (sha256 {before} -> {after})"
+        )
+    # result[0]/result[1] are (conflicted, restored) in BOTH the fixed
+    # 3-tuple and the pre-fix 2-tuple shape — the RED run must reach this
+    # check, not die on the unpack.
+    venv_reported = sorted(
+        path for channel in (result[0], result[1]) for path in channel
+        if path.startswith("venv/")
+    )
+    if venv_reported:
+        damage.append(f"AR-2: ignored venv paths reported: {venv_reported}")
+    assert not damage, f"the upgrade left the project content boundary: {'; '.join(damage)}"
+
+    conflicted, restored, skipped = result
+    assert conflicted == []
+    assert restored == []
+    if linked:
+        assert skipped == ["tools/guide-link"], (
+            "AR-5: the tracked symlink is reported exactly once"
+        )
+    else:
+        assert skipped == []
+    # AR-2, full clause: no venv path in any channel of the fixed shape.
+    assert not [p for p in (*conflicted, *restored, *skipped) if p.startswith("venv/")]
+    # AR-3: byte-identical author CRLF bytes (equality, not absence of noise).
+    assert (project / "tests" / "crlf-fixture.md").read_bytes() == CRLF_FIXTURE_BYTES
+    # AR-4: the update-written member is LF-only after the upgrade, and the
+    # LF pass was LIVE — the member really carried CRLF and really got
+    # rewritten (the F2 non-vacuousness proof).
+    assert CRLF_MEMBER in lf_rewrites, (
+        f"AR-4 vacuous: the LF pass rewrote only {lf_rewrites} — the member "
+        "arrived LF or the walk missed it"
+    )
+    assert (project / CRLF_MEMBER).read_bytes() == CRLF_MEMBER_BYTES.replace(b"\r\n", b"\n")
+
+
+def test_the_boundary_fixture_still_reproduces_the_unguarded_walk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Design §8's falsifier, standing: with the boundary walk neutralized
+    back to the pre-fix rglob shape (the exact walk #461 replaced), the SAME
+    fixture reports venv paths — and, where the platform creates links,
+    corrupts the outside-root file. This arm proves the fixture reproduces
+    the defect class the guard cures — if it ever passes, the boundary test
+    above asserts nothing and the fixture is void (§8: re-fixture, do not
+    ship a green-but-empty proof)."""
+    import hashlib
+
+    from benchweave_sdk import scaffold_update
+    from benchweave_sdk.scaffold_update import upgrade_project
+
+    def _unguarded_walk(project: Path, relatives: list[str]) -> tuple[list[Path], list[str]]:
+        # The pre-#461 walk: everything under the root, links followed by
+        # is_file(), no boundary — the shape whose damage #461 reported.
+        return (
+            [
+                entry
+                for entry in sorted(project.rglob("*"))
+                if entry.is_file() and ".git" not in entry.relative_to(project).parts
+            ],
+            [],
+        )
+
+    def _unguarded_enforce_lf(root: Path, *, paths: list[str] | None = None) -> None:
+        for entry in root.rglob("*"):
+            if entry.is_file() and ".git" not in entry.relative_to(root).parts:
+                content = entry.read_bytes()
+                if b"\r\n" in content:
+                    entry.write_bytes(content.replace(b"\r\n", b"\n"))
+
+    monkeypatch.setattr(scaffold_update, "_walk_content", _unguarded_walk)
+    monkeypatch.setattr(scaffold_update, "_enforce_lf", _unguarded_enforce_lf)
+
+    project, interpreter, linked = _boundary_project(tmp_path)
+    before = hashlib.sha256(interpreter.read_bytes()).hexdigest()
+    conflicted, _restored, _skipped = upgrade_project(project, target_ref=TARGET_TAG)
+    after = hashlib.sha256(interpreter.read_bytes()).hexdigest()
+    if linked:
+        assert after != before, "the unguarded walk must damage the outside-root file"
+    assert VENV_SDK_MEMBER in conflicted, (
+        "the unguarded walk must report the OLD SDK's conflict-marker literal in venv"
+    )
+
+
+def test_upgrade_command_renders_each_skipped_link_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """AR-5's CLI half (design §3): one yellow line per skipped symlink,
+    after the restore/conflict lines and before the staleness notice."""
+    from benchweave_sdk import scaffold_update
+    from benchweave_sdk.scaffold import create_project
+
+    project = tmp_path / "P-skip-notice"
+    create_project(project, PACKAGE)
+    monkeypatch.setattr(
+        scaffold_update, "upgrade_project", lambda project: ([], [], ["tools/guide-link"])
+    )
+    capsys.readouterr()
+    assert cli_main(["upgrade", str(project)]) == 0
+    rendered = capsys.readouterr().out
+    assert rendered.count("tools/guide-link") == 1
+    assert "a symlink is not upgraded through" in rendered
