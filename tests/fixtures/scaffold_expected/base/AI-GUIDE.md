@@ -21,6 +21,10 @@ With --with-ui, the SDK also generates UI-GUIDE.md at the project root and
 presentation.json, binding-catalogue.json and ui/manifest.json inside src/<package>/.
 Add optional settings schemas under src/<package>/ui/settings/, complete presets
 under src/<package>/ui/presets/, and declared assets under src/<package>/ui/assets/.
+A stylesheet at `src/<package>/ui/preview.css`, declared in the manifest
+with `path` exactly `preview.css`, restyles the preview pages; see
+UI-GUIDE.md and the user guide section
+"The plugin stylesheet override (preview.css)".
 Those optional directories and configuration files are author-supplied. See
 UI-GUIDE.md when present. For configuration without UI, use src/<package>/config/
 with settings.schema.json and presets/. When UI presents those settings, keep one

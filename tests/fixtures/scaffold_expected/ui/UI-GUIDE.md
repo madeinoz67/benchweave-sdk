@@ -23,11 +23,28 @@ Keep resources inside the Python package so they ship in the wheel.
 Keep collected data, credentials and deployment configuration outside it.
 
 Run from the project root: `benchweave-sdk check-ui src/example_plugin/presentation.json --descriptor src/example_plugin/descriptor.json --resources src/example_plugin --catalogue src/example_plugin/binding-catalogue.json`.
+When a new SDK release moves the active plugin-ui version,
+`benchweave-sdk migrate-ui` re-stamps the three presentation documents and
+takes the same arguments as check-ui.
 
 --resources names the package root; the envelope selects resource_root=ui.
 Manifest asset paths are relative to ui/, for example presets/default.json.
 Use canonical paths without symlink components. Keep the binding catalogue
 aligned with the descriptor and update exact byte hashes after edits.
+
+A manifest `assets[]` row whose `path` is exactly `preview.css` restyles
+the preview pages. Put the file at
+`src/example_plugin/ui/preview.css`, beside ui/manifest.json. The row
+path is relative to ui/, the resource root. Do not put the file
+under ui/assets/. The row also declares the `sha256` digest of the
+file bytes, and the host checks the digest again at serve time. The
+file can be 64 KiB at most. The override serves on the standalone
+host only, and the gateway never serves a plugin stylesheet
+override. A refused override gives the prefix
+`standalone_preview_override_refused:`, and the page carries the
+marker `data-bw-override-refused` while the default tokens render.
+The user guide covers the override in
+section "The plugin stylesheet override (preview.css)".
 
 Preview with: `benchweave-sdk preview-ui .` from the project root (the standalone host on the scripted mock transport; needs the `benchweave-sdk[server]` extra).
 

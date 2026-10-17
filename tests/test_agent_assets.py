@@ -12,8 +12,10 @@ that make the check honest):
 
 - **codes**: a backticked snake_case identifier with a trailing colon —
   `` `version_not_served:` ``. Citable only where BOTH the SDK source and the
-  user guide carry it. Prose-refusal surfaces (capture; the plugin-ui lane's
-  schema-shaped refusals) cite none — see ``CODE_FREE_SKILLS``.
+  user guide carry it. The remaining code-free surfaces (capture's prose
+  refusals; adapter-testing's module APIs) cite none — see
+  ``CODE_FREE_SKILLS``; plugin-ui left that set at L8 (#463 row 3) and cites
+  the preview-override refusal prefix.
 - **commands**: a code span beginning with the binary name —
   `` `benchweave-sdk check ...` ``. The first word after the binary must be a
   subcommand the click group registers at test time; a ``registry`` first word
@@ -71,8 +73,12 @@ ASSET_MEMBERS: dict[str, str] = {
 # named prefixes — the skills describe behavior and cite no codes. The zero
 # assertion pins the design rule; adding a code citation to one of these
 # skills is a deliberate design change that updates this set consciously.
+# L8 (issue #463 row 3, design 2026-10-17 §5 item 3) made exactly that
+# change for plugin-ui: the preview-override surface refuses through the
+# named prefix `standalone_preview_override_refused:`, so the skill now
+# cites it and the triangulation checker pins the citation against the SDK
+# source and the user guide.
 CODE_FREE_SKILLS = (
-    ".claude/skills/benchweave-plugin-ui/SKILL.md",
     ".claude/skills/benchweave-adapter-testing/SKILL.md",
     ".claude/skills/benchweave-capture/SKILL.md",
 )
@@ -315,15 +321,56 @@ def test_every_citation_class_is_exercised() -> None:
 
 
 def test_prose_refusal_skills_cite_no_codes() -> None:
-    """Design §2.2: the plugin-ui, adapter-testing and capture skills cite no
-    codes. The capture surface refuses in prose; the plugin-ui lane refuses
-    through the schema/validator surface; adapter-testing documents module
-    APIs. A code-shaped token in these files is an invented citation."""
+    """Design §2.2: the adapter-testing and capture skills cite no codes.
+    The capture surface refuses in prose; adapter-testing documents module
+    APIs. The plugin-ui skill LEFT this set at L8 (issue #463 row 3): the
+    preview-override refusal is a named prefix, and the skill now cites it
+    under the ordinary triangulation. A code-shaped token in the remaining
+    files is an invented citation."""
     assets = load_assets()
     for name in CODE_FREE_SKILLS:
         assert not CODE_CITATION.findall(assets[name]), (
             f"{name} cites a code the design says it must not"
         )
+
+
+# --- L8 (issue #463 row 3): the preview override is named where authors read ---
+
+
+def test_plugin_ui_skill_documents_the_preview_override() -> None:
+    """AR-L8-1 arm 1 (L8 design §10): the plugin-ui skill names the override
+    — the asset name, the cap, the pin, the refusal prefix and the guide
+    section. The skill is what the author's agent loads; a fact absent here
+    is absent at the point of work."""
+    skill = (
+        TEMPLATE / ".claude/skills/benchweave-plugin-ui/SKILL.md.jinja"
+    ).read_text(encoding="utf-8")
+    for token in (
+        "preview.css",
+        "64 KiB",
+        "sha256",
+        "`standalone_preview_override_refused:`",
+        'section "The plugin stylesheet override (preview.css)"',
+    ):
+        assert token in skill, f"plugin-ui skill lost the override fact: {token!r}"
+
+
+def test_ui_guide_documents_the_preview_override() -> None:
+    """AR-L8-1 arm 2: the committed ui-arm UI-GUIDE.md names the override
+    (asset, cap, pin). R-2 byte parity carries the same assertion to the
+    emitter by construction — the fixture IS the render."""
+    guide = (FIXTURES / "ui" / "UI-GUIDE.md").read_text(encoding="utf-8")
+    for token in ("preview.css", "64 KiB", "sha256"):
+        assert token in guide, f"UI-GUIDE.md fixture lost the override fact: {token!r}"
+
+
+def test_ai_guide_names_the_preview_override() -> None:
+    """AR-L8-1 arm 3: both arms' AI-GUIDE.md name the override stylesheet.
+    The AI-GUIDE paragraph is unconditional (with-ui framed in prose), so
+    both arms must carry it."""
+    for arm in ("base", "ui"):
+        guide = (FIXTURES / arm / "AI-GUIDE.md").read_text(encoding="utf-8")
+        assert "preview.css" in guide, f"{arm} arm AI-GUIDE.md does not name preview.css"
 
 
 def test_the_versioned_docs_url_uses_the_tag_prefixed_bucket() -> None:
