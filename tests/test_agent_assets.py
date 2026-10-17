@@ -12,8 +12,10 @@ that make the check honest):
 
 - **codes**: a backticked snake_case identifier with a trailing colon —
   `` `version_not_served:` ``. Citable only where BOTH the SDK source and the
-  user guide carry it. Prose-refusal surfaces (capture; the plugin-ui lane's
-  schema-shaped refusals) cite none — see ``CODE_FREE_SKILLS``.
+  user guide carry it. The remaining code-free surfaces (capture's prose
+  refusals; adapter-testing's module APIs) cite none — see
+  ``CODE_FREE_SKILLS``; plugin-ui left that set at L8 (#463 row 3) and cites
+  the preview-override refusal prefix.
 - **commands**: a code span beginning with the binary name —
   `` `benchweave-sdk check ...` ``. The first word after the binary must be a
   subcommand the click group registers at test time; a ``registry`` first word
