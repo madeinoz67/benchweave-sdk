@@ -8,3 +8,13 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    groups:
+      # CodeQL requires `init` and `analyze` at the SAME version. Bumped
+      # separately (which is what the github-actions ecosystem does by
+      # default) the workflow half-moves and the run ends in
+      # "CodeQL job status was configuration error" — a split bump is
+      # structurally unmergeable, since neither half is green alone and
+      # merging one half reds main. Group them so they always move together.
+      codeql-action:
+        patterns:
+          - "github/codeql-action*"
