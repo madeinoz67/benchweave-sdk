@@ -46,7 +46,11 @@ the invariants below anchor there.
   and `upgrade_answers_missing`, `upgrade_requires_git`, `upgrade_dirty_tree`,
   `upgrade_tag_missing`, `adopt_answers_present`, `adopt_provenance_unknown` —
   the WS2 scaffold lane
-  (`scaffold.py`, `scaffold_update.py`, the copier render/update path); ordinary
+  (`scaffold.py`, `scaffold_update.py`, the copier render/update path); the
+  migrate-ui lane (issue #460) adds `migrate_ui_ahead:`,
+  `migrate_ui_version_absent:`, `migrate_ui_stamp_unlocatable:` and
+  `migrate_ui_invalid_after_stamp:` — every refusal before the write step,
+  so a refused migration writes nothing (`presentation.py`); ordinary
   descriptor schema-shape failures keep the existing
   descriptor-validation error surface. The standalone host's stdio shim
   (issue #440) adds three, each naming its resolving action in the

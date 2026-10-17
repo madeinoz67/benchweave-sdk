@@ -456,3 +456,43 @@ def test_listed_policy_missing_firmware_refuses() -> None:
         None,
     )
     assert [(f.code, f.path, f.message) for f in report.findings] == [_INCOMPATIBLE]
+
+
+# --- issue #460 §4: check-ui points unsupported_version findings at migrate-ui ---
+
+
+def test_check_ui_points_unsupported_version_at_migrate_ui(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The remediation line rides the findings, names the concrete command
+    shape, and fires ONLY on unsupported_version over the three contract
+    documents — a digest_mismatch (hand-corrupted bytes at the right version)
+    is a different failure with a different remedy."""
+    from test_migrate_ui import _coherent_stale
+
+    stale = _coherent_stale(tmp_path / "stale")
+    capsys.readouterr()
+    assert check(monkeypatch, stale) == 1
+    rendered = capsys.readouterr().out
+    assert "benchweave-sdk migrate-ui" in rendered, rendered
+    assert "--resources" in rendered
+    assert "--catalogue" in rendered
+
+    # A fresh project hears nothing about migration.
+    run(monkeypatch, "new", tmp_path / "fresh", "--with-ui")
+    fresh = tmp_path / "fresh/src/example_plugin"
+    capsys.readouterr()
+    assert check(monkeypatch, fresh) == 0
+    assert "migrate-ui" not in capsys.readouterr().out
+
+    # A digest_mismatch is not version staleness: no remediation line. (The
+    # corrupted manifest must live on the AT-ACTIVE project — on the stale
+    # one the envelope's version gate rejects first and the finding stays
+    # unsupported_version.)
+    manifest = fresh / "ui/manifest.json"
+    manifest.write_bytes(manifest.read_bytes() + b"\n")
+    capsys.readouterr()
+    assert check(monkeypatch, fresh) == 1
+    rendered = capsys.readouterr().out
+    assert "digest_mismatch" in rendered, rendered
+    assert "migrate-ui" not in rendered

@@ -438,7 +438,9 @@ reference:
       - presentation.validate_preset
       - presentation.validate_presentation
       - presentation.load_validated_preview_inputs
+      - presentation.migrate_ui
       - presentation.ValidatedPreviewInputs
+      - presentation.MigrationOutcome
       - presentation.resolve_preset_action
   - title: Packaging
     desc: Deterministic bundle inventory helpers

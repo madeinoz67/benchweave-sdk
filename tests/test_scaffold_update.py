@@ -986,3 +986,95 @@ def test_adopt_refuses_a_dangling_symlink_answers_file(tmp_path: Path) -> None:
         adopt_project(project)
     assert (project / ".copier-answers.yml").is_symlink(), "the link itself is left alone"
     assert not (project / "nowhere.yml").exists(), "nothing was written through the link"
+
+
+# --- issue #460 §4: the upgrade staleness notice (advisory detection only) ------
+
+
+def _coherently_stale_ui(project: Path) -> None:
+    """All three plugin-ui documents at 0.3.0 with a coherent envelope hash
+    (the migrate-ui fixture shape, built by the inverse of the migration —
+    the tests/test_migrate_ui.py builder, kept local to this lane's import
+    surface)."""
+    import hashlib
+    import json
+
+    from benchweave_sdk.scaffold import create_project
+
+    active = active_version("plugin-ui")
+    old = "0.3.0"
+    create_project(project, PACKAGE, with_ui=True)
+    create_ui_resources(project, PACKAGE)
+    package = project / "src" / PACKAGE
+    manifest_path = package / "ui/manifest.json"
+    manifest_raw = manifest_path.read_bytes().replace(
+        f'"contract_version": "{active}"'.encode(),
+        f'"contract_version": "{old}"'.encode(),
+    )
+    manifest_path.write_bytes(manifest_raw)
+    for name in ("presentation.json", "binding-catalogue.json"):
+        path = package / name
+        path.write_bytes(
+            path.read_bytes().replace(
+                f'"contract_version": "{active}"'.encode(),
+                f'"contract_version": "{old}"'.encode(),
+            )
+        )
+    envelope_path = package / "presentation.json"
+    envelope = json.loads(envelope_path.read_bytes())
+    envelope["manifest"]["sha256"] = hashlib.sha256(manifest_raw).hexdigest()
+    envelope_path.write_bytes((json.dumps(envelope, indent=2) + "\n").encode())
+
+
+def test_upgrade_notice_helper_detects_stale_artifacts(tmp_path: Path) -> None:
+    """Detection only, envelope-driven, three paths read: a stale trio names
+    migrate-ui; an at-active project prints nothing."""
+    from benchweave_sdk.cli import _ui_staleness_notice
+    from benchweave_sdk.scaffold import create_project
+
+    fresh = tmp_path / "P-fresh"
+    create_project(fresh, PACKAGE, with_ui=True)
+    create_ui_resources(fresh, PACKAGE)
+    assert _ui_staleness_notice(fresh) is None
+
+    stale = tmp_path / "P-stale"
+    _coherently_stale_ui(stale)
+    notice = _ui_staleness_notice(stale)
+    assert notice is not None
+    assert "plugin-ui contract artifacts at 0.3.0" in notice
+    assert f"(active {active_version('plugin-ui')})" in notice
+    assert "migrate-ui" in notice
+    assert "after committing this upgrade" in notice
+
+    # A project without the artifacts (plain scaffold, no --with-ui) is not
+    # stale — it simply has nothing to migrate.
+    plain = tmp_path / "P-plain"
+    create_project(plain, PACKAGE)
+    assert _ui_staleness_notice(plain) is None
+
+
+def test_upgrade_command_prints_the_staleness_notice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The CLI wiring: the notice rides after the restore/conflict report.
+    ``upgrade_project`` is stubbed here — its own 2-tuple contract and its
+    walk behavior are pinned by the lanes above and stay untouched (the
+    notice is the only thing this arm exercises)."""
+    from benchweave_sdk import scaffold_update
+    from benchweave_sdk.scaffold import create_project
+
+    stale = tmp_path / "P-notice"
+    _coherently_stale_ui(stale)
+    monkeypatch.setattr(scaffold_update, "upgrade_project", lambda project: ([], []))
+    capsys.readouterr()
+    assert cli_main(["upgrade", str(stale)]) == 0
+    rendered = capsys.readouterr().out
+    assert "plugin-ui contract artifacts at 0.3.0" in rendered
+    assert "migrate-ui" in rendered
+
+    fresh = tmp_path / "P-notice-fresh"
+    create_project(fresh, PACKAGE, with_ui=True)
+    create_ui_resources(fresh, PACKAGE)
+    capsys.readouterr()
+    assert cli_main(["upgrade", str(fresh)]) == 0
+    assert "migrate-ui" not in capsys.readouterr().out

@@ -44,7 +44,7 @@ New here? The [getting-started page](https://sdk.benchweave.dev/docs/user-guide/
 
 The generated runtime has no dependency on this SDK. The plugin test extra pins the SDK version from PyPI. Run `benchweave-sdk doctor` from the project to check that the pin matches the installed SDK. The command works offline. Generate a plugin dependency lock for the plugin. Retain it in the plugin repository.
 
-Scaffolded projects carry `.copier-answers.yml` (template provenance). `benchweave-sdk upgrade` moves a committed, clean git project to the installed SDK's released template tag — author-owned files are preserved; a file both sides changed comes back with conflict markers to resolve and commit. Pre-copier projects gain provenance with `benchweave-sdk adopt` (infers the base from the pyproject pin; refuses what it cannot provenance).
+Scaffolded projects carry `.copier-answers.yml` (template provenance). `benchweave-sdk upgrade` moves a committed, clean git project to the installed SDK's released template tag — author-owned files are preserved; a file both sides changed comes back with conflict markers to resolve and commit. The upgrade refreshes the template only; when a `--with-ui` project's presentation artifacts carry an older plugin-ui contract version, the upgrade report says so, and `benchweave-sdk migrate-ui` re-stamps them (it also repairs the envelope hash; it validates before it writes). Pre-copier projects gain provenance with `benchweave-sdk adopt` (infers the base from the pyproject pin; refuses what it cannot provenance).
 
 ## Documentation
 
