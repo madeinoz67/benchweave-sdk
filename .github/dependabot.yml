@@ -1,6 +1,9 @@
 version: 2
 updates:
-  - package-ecosystem: pip
+  # The uv engine reads uv.lock and moves it with pyproject.toml in the same
+  # pull request. The pip engine edits pyproject.toml only, which cannot keep
+  # `uv sync --locked` satisfied, so every pip bump arrived red. Ref #486.
+  - package-ecosystem: uv
     directory: /
     schedule:
       interval: weekly
