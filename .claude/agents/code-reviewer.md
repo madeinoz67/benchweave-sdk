@@ -8,6 +8,7 @@ description: >-
   strict, sync-standards --check); the pytest suite lives in this repository's
   `tests/`, with the cross-repo agreement modules in the parent gateway checkout. Produces a review as text; never posts, approves,
   or merges.
+model: sonnet
 tools: ["Read", "Grep", "Glob", "Bash", "mcp__gortex"]
 disallowedTools: ["mcp__gortex__change", "mcp__gortex__edit", "mcp__gortex__refactor", "mcp__gortex__overlay", "mcp__gortex__remember", "mcp__gortex__session", "mcp__gortex__workspace_admin", "mcp__gortex__pr", "mcp__gortex__review", "mcp__gortex__publish_review", "mcp__gortex__response"]
 ---
