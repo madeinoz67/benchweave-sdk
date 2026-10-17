@@ -53,15 +53,20 @@ def _git_project_paths(project: Path) -> tuple[list[str], list[str]]:
 
     ``tracked`` is ``git ls-files`` — the set the update's merge operates on
     and the author will commit; ``changed`` is ``git status --porcelain``
-    taken AFTER the update ran on a clean tree, so every difference from
-    HEAD is the update's own write-set. No ignore rules are parsed anywhere:
-    git's view is the boundary (issue #461 §1).
+    taken AFTER the update ran on a clean tree, so every REPORTED
+    difference from HEAD was made by the update. The reported set is a
+    subset of everything the update may have written: a byte-identical
+    write or a write into an ignored path stays invisible (residual D2).
+    No ignore rules are parsed anywhere: git's view is the boundary
+    (issue #461 §1).
 
     ``-z`` records are NUL-separated (no quoting, no ``core.quotePath``
     escapes); a rename/copy record carries its pre-image as the following
     field, which is consumed and dropped — the post-image path is the one
     that exists on disk. Deletions stay in the lists; the walk, not the
-    parser, drops paths missing on disk.
+    parser, drops paths missing on disk. ``--untracked-files=all`` keeps a
+    fully untracked directory from collapsing to a ``?? dir/`` entry the
+    walk would drop (refute F1).
     """
     tracked_out = subprocess.run(  # noqa: S603, S607 — git has no in-process API
         ["git", "-C", str(project), "ls-files", "-z"],
@@ -69,7 +74,15 @@ def _git_project_paths(project: Path) -> tuple[list[str], list[str]]:
         check=True,
     ).stdout
     status_out = subprocess.run(  # noqa: S603, S607
-        ["git", "-C", str(project), "status", "--porcelain", "-z"],
+        [
+            "git",
+            "-C",
+            str(project),
+            "status",
+            "--porcelain",
+            "-z",
+            "--untracked-files=all",
+        ],
         capture_output=True,
         check=True,
     ).stdout
@@ -312,11 +325,14 @@ def upgrade_project(
         overwrite=True,
         quiet=True,
     )
-    # Post-update on a was-clean tree, porcelain IS the update's write-set —
-    # every difference from HEAD was made by the update. PR #93's Windows
-    # lane normalizes exactly that set to LF (the scaffold's output
-    # contract): an author's tracked CRLF file outside the delta is never
-    # rewritten (issue #461), and nothing outside the boundary is walked.
+    # Post-update on a was-clean tree, every REPORTED difference from HEAD
+    # was made by the update — porcelain (with --untracked-files=all, so a
+    # new directory's files are enumerated, not collapsed to "dir/") is the
+    # update's visible write-set; a byte-identical write or a write into an
+    # ignored path stays invisible (D2). PR #93's Windows lane normalizes
+    # exactly that reported set to LF (the scaffold's output contract): an
+    # author's tracked CRLF file outside the delta is never rewritten
+    # (issue #461), and nothing outside the boundary is walked.
     tracked, changed = _git_project_paths(project)
     _enforce_lf(project, paths=sorted(set(changed)))
     restored = []
