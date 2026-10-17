@@ -165,7 +165,7 @@ plugins/acme/model100/                 # independent plugin project
     └── fixtures/                      # author-supplied exchanges by model/firmware
 ```
 
-The SDK generates `ui/manifest.json`, schema-valid synthetic examples under `ui/fixtures/`, and `tests/test_presentation_preview.py`. The `docs/`, `firmware/`, `config/`, optional UI asset directories and additional test files remain author-supplied extensions. Add only the features the device plugin supports. `default.json` is an example filename. The SDK does not select or apply it automatically.
+The SDK generates `ui/manifest.json`, schema-valid synthetic examples under `ui/fixtures/`, and `tests/test_presentation_preview.py`. Regenerate the examples after a catalogue edit or a preview-contract bump with `benchweave-sdk regen-fixtures <project>`. The `docs/`, `firmware/`, `config/`, optional UI asset directories and additional test files remain author-supplied extensions. Add only the features the device plugin supports. `default.json` is an example filename. The SDK does not select or apply it automatically.
 
 | Optional feature | Recommended location | Behaviour and ownership |
 | --- | --- | --- |

@@ -373,6 +373,45 @@ def test_ai_guide_names_the_preview_override() -> None:
         assert "preview.css" in guide, f"{arm} arm AI-GUIDE.md does not name preview.css"
 
 
+# --- L10 (issue #463 row 8): the fixture-regeneration command is named -------
+
+
+def test_plugin_ui_skill_documents_regen_fixtures() -> None:
+    """AR-L10-3 arm 1: the plugin-ui skill carries a "Refresh the example
+    fixtures" section naming the command — the asset the author's agent
+    loads must name the repair path for the examples it also names."""
+    skill = (
+        TEMPLATE / ".claude/skills/benchweave-plugin-ui/SKILL.md.jinja"
+    ).read_text(encoding="utf-8")
+    assert "## Refresh the example fixtures" in skill, (
+        "plugin-ui skill lost the regen-fixtures section"
+    )
+    assert "regen-fixtures" in skill
+
+
+def test_ui_guide_documents_regen_fixtures() -> None:
+    """AR-L10-3 arm 2: the committed ui-arm UI-GUIDE.md names the command.
+    R-2 byte parity carries the same assertion to the emitter by
+    construction — the fixture IS the render."""
+    guide = (FIXTURES / "ui" / "UI-GUIDE.md").read_text(encoding="utf-8")
+    assert "regen-fixtures" in guide, "UI-GUIDE.md fixture does not name regen-fixtures"
+
+
+def test_regen_fixtures_subcommand_triangulates() -> None:
+    """AR-L10-3 arm 3: the skill's `benchweave-sdk regen-fixtures` citation
+    resolves against the click group at test time — the R-5b mechanism
+    applied to the new command citation (test_real_assets_pass_triangulation
+    holds the exhaustive guarantee; this arm names the new member)."""
+    skill = (
+        TEMPLATE / ".claude/skills/benchweave-plugin-ui/SKILL.md.jinja"
+    ).read_text(encoding="utf-8")
+    assert "regen-fixtures" in registered_commands(), (
+        "regen-fixtures is not registered in the click group"
+    )
+    cited = {match.group(1) for match in COMMAND_CITATION.finditer(skill)}
+    assert "regen-fixtures" in cited, "the skill no longer cites the regen-fixtures command"
+
+
 def test_the_versioned_docs_url_uses_the_tag_prefixed_bucket() -> None:
     """Adversary fold A-F1: the versioned docs buckets are keyed by the
     release TAG — ``docs/v/v0.6.0/``, tags carry the leading ``v`` (the same

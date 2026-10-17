@@ -158,6 +158,34 @@ Two surfaces point at the command. `check-ui` adds a remediation line when a fin
 
 Migration is not re-derivation. `migrate-ui` keeps your manifest content. It does not derive pages or plots from the descriptor. For that path, use `benchweave-sdk derive-ui`. A class-conformant project also carries `ui/class-reference.json`. When that file is behind the active class-reference version, `migrate-ui` prints a pointer. Re-derive with `benchweave-sdk derive-ui --force`. Author overlays survive in `ui/manifest.overrides.json`.
 
+### Refresh the example fixtures (`regen-fixtures`) {#regen-fixtures}
+
+The scaffold writes two example preview fixtures into `ui/fixtures/`. The files are `normal.json` and `warning.json`. The examples are generated synthetic content. They are a valid, copyable format model. They are also the input that makes the scaffolded project test exercise the fixture loader.
+
+[`benchweave-sdk regen-fixtures`](../reference/cli/regen_fixtures.qmd) `<project>` writes the two examples again. The command takes the project root as its only argument. It uses the same generator as the scaffold.
+
+The example fixtures go stale on two axes. On the first axis, you edit the descriptor or the binding catalogue. A target id, unit or type moves. The project's own test then fails with `preview_unknown_binding:`, `preview_unit_mismatch:` or `preview_type_mismatch:`.
+
+On the second axis, a plugin-ui-preview contract bump moves the active version. The fixture schema pins `contract_version` as a const. Older fixtures then fail `preview_invalid_fixture:` until a re-stamp. A single run of the command rewrites both files at the lock's active plugin-ui-preview version.
+
+The command is idempotent. It does not rewrite bytes that are already current. A run with nothing to do is a no-op. It exits 0. This makes the command safe in scripts and CI.
+
+The command keeps author content safe. The two example ids are `example-normal` and `example-warning`. A file at an example filename whose scenario `id` is one of these ids is an example. A file at an example filename with any other scenario `id` is author content.
+
+The command refuses an author-content file and writes nothing. The command writes both files or neither file. The command never touches any other `*.json` in the directory. Put author scenarios at their own ids.
+
+The command refuses with named prefixes:
+
+- `regen_fixtures_author_content:` means that an example filename holds author content. The command writes nothing.
+- `regen_fixtures_no_package:` means that the project has no package under `src/`.
+- `regen_fixtures_no_catalogue:` means that the project has no `binding-catalogue.json`.
+- `regen_fixtures_no_observation_target:` means that the catalogue declares no observation target.
+- `regen_fixtures_invalid_generated:` means that an internally generated document failed validation. This is an internal guard, and the command writes nothing.
+
+A project can have no `ui/fixtures/` directory. A class-reference derived project is an example. The scaffold's classref path writes no examples. The command then creates the directory and writes the two examples. The author decides whether to wire the examples into project tests.
+
+Regeneration is not admission, qualification or approval to operate hardware.
+
 For real hardware, use `benchweave-sdk-server serve --transport serial` directly. The command starts without a device path. Scan from the index page, then bind one listed port with its Bind button. Bind and Unbind need the operator action token. `serve` prints this token at startup. The launch URL carries it. The command also writes it to `operator-action-token.json` under the capture root. The binding is stored in `device-bindings.json` under the working directory. Name another file with `--bindings <path>` or `BENCHWEAVE_STANDALONE_BINDINGS`. The stored binding survives a restart: the next serve connects to the bound port without a device path. A connect refuses `not_ready` with reason `binding_stale` when the bound port is gone. The device page shows a re-pick action beside this refusal. A bind also refuses when the picked port is no longer present, or when the port now carries a different USB serial than the scan recorded. Scan again, then pick one of the listed ports. A connect also refuses when the unit answers the identify request with a different manufacturer or model than the descriptor declares. The session stays closed. Pass `--device <path>` for the headless form. The host then serves that constant path. The bindings file is still opened and validated at startup. The stored binding is not consulted to resolve the endpoint in this form. The pick flow in the UI can still write the file.
 
 The SDK's runtime dependencies are Click, jsonschema (with the referencing, rfc3339-validator and rfc3987 format backends) and Rich. This repository's `pyproject.toml` declares them all. In a main-checkout layout, the file is at `packages/sdk/pyproject.toml`. The wheel vendors the canonical contract JSONs and the pure presentation validator.
