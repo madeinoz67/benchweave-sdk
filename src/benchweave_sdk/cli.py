@@ -377,7 +377,12 @@ def check_ui_command(
 @click.argument("preset", type=click.Path(path_type=Path))
 @click.option("--descriptor", required=True, type=click.Path(path_type=Path))
 @click.option("--settings-schema", required=True, type=click.Path(path_type=Path))
-@click.option("--firmware", required=True)
+@click.option(
+    "--firmware",
+    help="Omit to validate structurally under a commissioned descriptor "
+    "(no offline-decidable firmware judgment); under the listed policy a "
+    "firmware value is required to judge compatibility",
+)
 @click.option(
     "--action",
     "action",
@@ -387,7 +392,11 @@ def check_ui_command(
 )
 @_domain_errors
 def check_preset_command(
-    preset: Path, descriptor: Path, settings_schema: Path, firmware: str, action: str | None
+    preset: Path,
+    descriptor: Path,
+    settings_schema: Path,
+    firmware: str | None,
+    action: str | None,
 ) -> None:
     """Validate complete settings offline."""
     from .presentation import read_file, resolve_preset_action, validate_preset

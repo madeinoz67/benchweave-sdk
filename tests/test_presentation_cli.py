@@ -458,6 +458,130 @@ def test_listed_policy_missing_firmware_refuses() -> None:
     assert [(f.code, f.path, f.message) for f in report.findings] == [_INCOMPATIBLE]
 
 
+# --- issue #463 row 7: check-preset --firmware reaches the #444 postures -------
+
+_COMMISSIONED_IDENTITY = {
+    "strategy": "adapter",
+    "manufacturer": "BenchWeave Labs",
+    "model": "setpoint-demo",
+    "firmware_policy": "commissioned",
+}
+_LISTED_IDENTITY = {
+    "strategy": "adapter",
+    "manufacturer": "BenchWeave Labs",
+    "model": "setpoint-demo",
+    "firmware_policy": "listed",
+    "supported_firmware": ["1.0.0"],
+}
+
+
+def _check_preset_arguments(
+    tmp_path: Path, identity: dict, *extra: str
+) -> list[str | Path]:
+    """Materialise a descriptor with the given identity (the #444 pairs, on
+    disk for the CLI surface) and build the check-preset argv for the fixture
+    preset and settings schema."""
+    descriptor = json.loads((_SETPOINT / "descriptor.json").read_bytes())
+    descriptor["identity"] = identity
+    descriptor_path = tmp_path / "descriptor.json"
+    descriptor_path.write_text(json.dumps(descriptor), encoding="utf-8")
+    return [
+        "check-preset",
+        _SETPOINT / "config/presets/steady.json",
+        "--descriptor",
+        descriptor_path,
+        "--settings-schema",
+        _SETPOINT / "config/settings.schema.json",
+        *extra,
+    ]
+
+
+def test_check_preset_omitted_firmware_commissioned_passes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """--firmware omitted under commissioned policy is the #444 honest
+    offline input: the CLI runs the validation and passes (exit 0), it does
+    not refuse the invocation as a usage error (row 7's flag burden)."""
+    arguments = _check_preset_arguments(tmp_path, _COMMISSIONED_IDENTITY)
+    assert run(monkeypatch, *arguments) == 0
+    assert "Offline presentation checks passed" in capsys.readouterr().out
+
+
+def test_check_preset_omitted_firmware_listed_refuses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The same omission under listed policy is a finding, not a usage error:
+    the gate cannot decide compatibility offline, so the validation runs and
+    refuses with incompatible_firmware."""
+    arguments = _check_preset_arguments(tmp_path, _LISTED_IDENTITY)
+    assert run(monkeypatch, *arguments) == 1
+    rendered = capsys.readouterr()
+    assert (
+        f"{_INCOMPATIBLE[0]}: {_INCOMPATIBLE[1]}: {_INCOMPATIBLE[2]}\n" in rendered.out
+    )
+    assert "Presentation validation failed." in rendered.err
+
+
+@pytest.mark.parametrize(
+    ("identity", "firmware", "expected"),
+    [
+        (_COMMISSIONED_IDENTITY, "1.0.0", 0),
+        (_COMMISSIONED_IDENTITY, "2.0.0", 1),
+        (_LISTED_IDENTITY, "1.0.0", 0),
+        (_LISTED_IDENTITY, "2.0.0", 1),
+    ],
+    ids=[
+        "commissioned-compatible",
+        "commissioned-mismatch",
+        "listed-compatible",
+        "listed-mismatch",
+    ],
+)
+def test_check_preset_supplied_firmware_unchanged(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    identity: dict,
+    firmware: str,
+    expected: int,
+) -> None:
+    """AR-4: with --firmware supplied, exit code and rendered output are
+    identical for both policies — the option's optionality is the only
+    behaviour change."""
+    arguments = _check_preset_arguments(tmp_path, identity, "--firmware", firmware)
+    assert run(monkeypatch, *arguments) == expected
+    rendered = capsys.readouterr()
+    if expected == 0:
+        assert "Offline presentation checks passed" in rendered.out
+        assert "incompatible_firmware" not in rendered.out
+    else:
+        assert (
+            f"{_INCOMPATIBLE[0]}: {_INCOMPATIBLE[1]}: {_INCOMPATIBLE[2]}\n"
+            in rendered.out
+        )
+        assert "Presentation validation failed." in rendered.err
+
+
+def test_check_preset_settings_schema_stays_required(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """AR-3: --settings-schema keeps its usage-error refusal — a URN-pinned
+    schema reference carries no path, so there is nothing sound to default
+    (design §4.3)."""
+    descriptor = json.loads((_SETPOINT / "descriptor.json").read_bytes())
+    descriptor_path = tmp_path / "descriptor.json"
+    descriptor_path.write_text(json.dumps(descriptor), encoding="utf-8")
+    exit_code = run(
+        monkeypatch,
+        "check-preset",
+        _SETPOINT / "config/presets/steady.json",
+        "--descriptor",
+        descriptor_path,
+    )
+    assert exit_code == 2
+    assert "Missing option '--settings-schema'." in capsys.readouterr().err
+
+
 # --- issue #460 §4: check-ui points unsupported_version findings at migrate-ui ---
 
 
