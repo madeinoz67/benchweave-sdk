@@ -6,6 +6,11 @@ unreleased template state from ``main``. ``adopt`` writes the provenance
 record for projects scaffolded before the copier port. The answers file
 ``.copier-answers.yml`` is the durable provenance surface (SRF-1); both
 commands refuse with STD-4 ``snake_case:`` prefixes.
+
+The upgrade's walk contract (issue #461): the upgrade reads and writes the
+git-tracked set plus what the update itself changed; it never parses ignore
+rules and never traverses a symlink (a final-component symlink or Windows
+junction is skipped and reported, never read or written through).
 """
 
 from __future__ import annotations
@@ -20,6 +25,7 @@ from . import __version__
 from .scaffold import (
     CANONICAL_TEMPLATE_URL,
     _enforce_lf,
+    _guarded_write,
     _normalize_version,
     recorded_sdk_version,
 )
@@ -42,12 +48,70 @@ def _load_run_update() -> Any:
     return run_update
 
 
-def _project_files(project: Path) -> list[Path]:
-    return [
-        entry
-        for entry in sorted(project.rglob("*"))
-        if entry.is_file() and ".git" not in entry.relative_to(project).parts
-    ]
+def _git_project_paths(project: Path) -> tuple[list[str], list[str]]:
+    """Git's own view of the project's content boundary: ``(tracked, changed)``.
+
+    ``tracked`` is ``git ls-files`` — the set the update's merge operates on
+    and the author will commit; ``changed`` is ``git status --porcelain``
+    taken AFTER the update ran on a clean tree, so every difference from
+    HEAD is the update's own write-set. No ignore rules are parsed anywhere:
+    git's view is the boundary (issue #461 §1).
+
+    ``-z`` records are NUL-separated (no quoting, no ``core.quotePath``
+    escapes); a rename/copy record carries its pre-image as the following
+    field, which is consumed and dropped — the post-image path is the one
+    that exists on disk. Deletions stay in the lists; the walk, not the
+    parser, drops paths missing on disk.
+    """
+    tracked_out = subprocess.run(  # noqa: S603, S607 — git has no in-process API
+        ["git", "-C", str(project), "ls-files", "-z"],
+        capture_output=True,
+        check=True,
+    ).stdout
+    status_out = subprocess.run(  # noqa: S603, S607
+        ["git", "-C", str(project), "status", "--porcelain", "-z"],
+        capture_output=True,
+        check=True,
+    ).stdout
+    tracked = [name for name in tracked_out.split(b"\x00") if name]
+    records = status_out.split(b"\x00")
+    changed: list[bytes] = []
+    index = 0
+    while index < len(records):
+        record = records[index]
+        index += 1
+        if not record:
+            continue  # the NUL-separated tail
+        if b"R" in record[:2] or b"C" in record[:2]:
+            index += 1  # the pre-image field of a rename/copy pair
+        changed.append(record[3:])
+    return (
+        [name.decode("utf-8", "surrogateescape") for name in tracked],
+        [name.decode("utf-8", "surrogateescape") for name in changed],
+    )
+
+
+def _walk_content(project: Path, relatives: list[str]) -> tuple[list[Path], list[str]]:
+    """Walk project-relative paths inside the content boundary (issue #461 §2).
+
+    A final-component symlink or Windows junction — dangling or not — is
+    never project content: it is excluded from the file set and collected
+    into ``skipped`` (a dangling link is a link; only a true deletion, which
+    cannot be a link, is dropped silently). No ``rglob`` here: only the
+    paths git knows plus what the update wrote are ever walked.
+    """
+    files: list[Path] = []
+    skipped: list[str] = []
+    for relative in relatives:
+        entry = project / relative
+        if entry.is_symlink() or entry.is_junction():
+            skipped.append(relative)
+            continue
+        if not entry.exists():
+            continue  # deleted on disk (a porcelain D entry)
+        if entry.is_file():
+            files.append(entry)
+    return files, skipped
 
 
 def _skip_patterns() -> list[str]:
@@ -70,20 +134,22 @@ def _skip_patterns() -> list[str]:
     return []
 
 
-def _protected_snapshot(project: Path) -> dict[str, bytes]:
+def _protected_snapshot(project: Path, tracked: list[str]) -> dict[str, bytes]:
     """Skip-protected project bytes, taken before the update runs.
 
     copier's update DELETES project files the template no longer renders —
     skip patterns protect content, not existence — so the guard restores
-    what the update removed. Only files present on the clean pre-update
-    tree are snapshotted: an author's own committed deletion was never
-    here to restore.
+    what the update removed. The snapshot walks the tracked set (the clean
+    pre-update tree; an author's own committed deletion was never here to
+    restore), and a symlink is never snapshotted — the restore loop can
+    then never write through one.
     """
     patterns = _skip_patterns()
     if not patterns:
         return {}
+    files, _skipped = _walk_content(project, tracked)
     snapshot: dict[str, bytes] = {}
-    for entry in _project_files(project):
+    for entry in files:
         relative = entry.relative_to(project).as_posix()
         if any(fnmatch.fnmatch(relative, pattern) for pattern in patterns):
             snapshot[relative] = entry.read_bytes()
@@ -136,7 +202,9 @@ def _require_target_ref(source: str, ref: str, *, role: str = "target") -> None:
         )
 
 
-def upgrade_project(project: Path, *, target_ref: str | None = None) -> tuple[list[str], list[str]]:
+def upgrade_project(
+    project: Path, *, target_ref: str | None = None
+) -> tuple[list[str], list[str], list[str]]:
     """Update ``project`` to the installed SDK's template tag.
 
     The git pre-checks (repo present, tree clean) are ours so the refusals
@@ -147,7 +215,13 @@ def upgrade_project(project: Path, *, target_ref: str | None = None) -> tuple[li
     unresolvable one BEFORE copier shells git — a development install's
     version has no tag).
 
-    Two protections wrap the update (adversary fold):
+    The walk contract (issue #461): the upgrade reads and writes the
+    git-tracked set plus what the update itself changed; it never parses
+    ignore rules and never traverses a symlink. Ignored and untracked trees
+    (a virtualenv, a build directory) produce no output; a tracked symlink
+    is skipped and reported.
+
+    Three protections wrap the update (adversary fold):
 
     - Skip-protected files the template DELETED are restored and reported —
       copier's update removes project files the template no longer renders,
@@ -155,6 +229,8 @@ def upgrade_project(project: Path, *, target_ref: str | None = None) -> tuple[li
     - Files that ended in conflict markers are reported by name — the author
       resolves both sides and commits; an update never fails on conflicts,
       and never resolves them silently.
+    - Symlinks and Windows junctions are never read or written through;
+      each is reported once in ``skipped``.
 
     Parameters
     ----------
@@ -169,10 +245,11 @@ def upgrade_project(project: Path, *, target_ref: str | None = None) -> tuple[li
 
     Returns
     -------
-    tuple[list[str], list[str]]
-        (conflicted, restored): relative paths that ended in conflict
-        markers, and skip-protected files the template dropped which were
-        restored to their pre-update bytes.
+    tuple[list[str], list[str], list[str]]
+        (conflicted, restored, skipped): relative paths that ended in
+        conflict markers; skip-protected files the template dropped which
+        were restored to their pre-update bytes; and tracked symlinks or
+        junctions the upgrade refused to traverse.
 
     Raises
     ------
@@ -217,7 +294,10 @@ def upgrade_project(project: Path, *, target_ref: str | None = None) -> tuple[li
         base = _answers_commit(project)
         if base:
             _require_target_ref(source, base, role="base")
-    protected = _protected_snapshot(project)
+    # Pre-update, the clean-tree gate makes tracked == all non-ignored
+    # content (§1); the porcelain half of the pair is provably empty here.
+    tracked, _pre_changed = _git_project_paths(project)
+    protected = _protected_snapshot(project, tracked)
     run_update = _load_run_update()
     run_update(
         str(project),
@@ -232,23 +312,27 @@ def upgrade_project(project: Path, *, target_ref: str | None = None) -> tuple[li
         overwrite=True,
         quiet=True,
     )
-    # PR #93's Windows lane: normalize the update's written files to LF (the
-    # scaffold's output contract) — .git is never touched, and the managed
-    # files' content is unchanged apart from line endings.
-    _enforce_lf(project)
+    # Post-update on a was-clean tree, porcelain IS the update's write-set —
+    # every difference from HEAD was made by the update. PR #93's Windows
+    # lane normalizes exactly that set to LF (the scaffold's output
+    # contract): an author's tracked CRLF file outside the delta is never
+    # rewritten (issue #461), and nothing outside the boundary is walked.
+    tracked, changed = _git_project_paths(project)
+    _enforce_lf(project, paths=sorted(set(changed)))
     restored = []
     for relative, content in sorted(protected.items()):
         if not (project / relative).is_file():
             # The update may have removed emptied parent directories too.
             (project / relative).parent.mkdir(parents=True, exist_ok=True)
-            (project / relative).write_bytes(content)
+            _guarded_write(project / relative, content)
             restored.append(relative)
+    files, skipped = _walk_content(project, sorted(set(tracked) | set(changed)))
     conflicted = [
         entry.relative_to(project).as_posix()
-        for entry in _project_files(project)
+        for entry in files
         if _CONFLICT_MARKER in entry.read_bytes()
     ]
-    return conflicted, restored
+    return conflicted, restored, skipped
 
 
 def _inferred_package(project: Path) -> str | None:

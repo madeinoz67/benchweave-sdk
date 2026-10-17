@@ -205,7 +205,7 @@ def upgrade_command(directory: str) -> None:
         raise ValueError(f"project_directory_not_found: {project}")
     if not project.is_dir():
         raise ValueError(f"project_not_a_directory: {project}")
-    conflicted, restored = upgrade_project(project)
+    conflicted, restored, skipped = upgrade_project(project)
     output = ConsoleOutput()
     output.message(
         f"Updated to template v{__version__} (answers advanced); review and commit.",
@@ -219,6 +219,12 @@ def upgrade_command(directory: str) -> None:
     for relative in conflicted:
         output.message(
             f"conflict markers in {relative}: resolve both sides, then commit",
+            style="yellow",
+        )
+    for relative in skipped:
+        output.message(
+            f"skipped {relative}: a symlink is not upgraded through — "
+            "the upgrade never reads or writes through a link",
             style="yellow",
         )
     # The template refresh never touches src/** (the skip list protects it),

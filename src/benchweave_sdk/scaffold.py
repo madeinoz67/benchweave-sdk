@@ -141,22 +141,58 @@ def _materialize_template(scratch: Path) -> Path:
     return root
 
 
-def _enforce_lf(root: Path) -> None:
-    """Rewrite CRLF to LF across a rendered tree (PR #93's Windows lane).
+def _guarded_write(path: Path, content: bytes) -> None:
+    """Write bytes without traversing a final-component symlink or junction.
 
-    The Windows CI lane observes CRLF bytes in rendered members (AI-GUIDE,
-    README, adapter, ...) even though the template checkout is LF and the
-    parity fixture is LF — whatever the exact stage introduces it, the
-    scaffold's output contract is LF on every platform, and this makes it
-    hold mechanically. Every template member is text, so any file whose
-    bytes carry \\r\\n is normalized in place; ``.git`` is never touched
-    (``upgrade`` runs this inside a live project repository).
+    The gate is re-checked immediately before the write (gate-then-write,
+    not an atomic ``O_NOFOLLOW`` open): a path that became a link between
+    the walk and this write is refused, never followed. A gated path
+    reaching this writer is an internal invariant breach, not an operator
+    condition — the message names the path for the traceback, and no
+    ``snake_case:`` refusal prefix exists for an unreachable arm.
     """
-    for entry in root.rglob("*"):
-        if entry.is_file() and ".git" not in entry.relative_to(root).parts:
-            content = entry.read_bytes()
-            if b"\r\n" in content:
-                entry.write_bytes(content.replace(b"\r\n", b"\n"))
+    if path.is_symlink() or path.is_junction():
+        raise ValueError(
+            f"guarded write refused: {path} is a symlink or junction — "
+            "a gated path reached the writer (internal invariant breach)"
+        )
+    path.write_bytes(content)
+
+
+def _enforce_lf(root: Path, *, paths: list[str] | None = None) -> None:
+    """Rewrite CRLF to LF (PR #93's Windows lane — the output contract is LF
+    on every platform), in two modes:
+
+    - staging (``paths is None``): walk ``root`` recursively. A fresh
+      materialized render contains only regular files (links cannot exist
+      in it), so the symlink gate applies vacuously.
+    - project (``paths`` given): walk exactly those root-relative paths —
+      the update's own write-set (issue #461: the walk never leaves the
+      project's content boundary, so an author's tracked CRLF file outside
+      the delta is never rewritten, and a venv behind a symlink is never
+      read or written through). Links among them are skipped: a link is
+      never content to normalize.
+
+    Every walked member is text, so any file whose bytes carry \\r\\n is
+    normalized in place; ``.git`` is never touched; the write always goes
+    through the guarded helper.
+    """
+    if paths is None:
+        walked = sorted(
+            entry
+            for entry in root.rglob("*")
+            if ".git" not in entry.relative_to(root).parts
+        )
+    else:
+        walked = sorted(root / relative for relative in paths)
+    for entry in walked:
+        if entry.is_symlink() or entry.is_junction():
+            continue
+        if not entry.is_file():
+            continue
+        content = entry.read_bytes()
+        if b"\r\n" in content:
+            _guarded_write(entry, content.replace(b"\r\n", b"\n"))
 
 
 def _pin_answers(project: Path, sdk_version: str) -> None:
