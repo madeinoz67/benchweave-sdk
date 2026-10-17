@@ -132,6 +132,54 @@ def doctor_command(directory: str) -> None:
     )
 
 
+def _ui_staleness_notice(project: Path) -> str | None:
+    """Advisory detection of stale plugin-ui contract artifacts (issue #460 §4).
+
+    Reads at most the three named artifact paths under one package directory
+    — the manifest located through the envelope, exactly as ``migrate-ui``
+    resolves it, and no tree walk (that surface belongs to L7). Any read or
+    parse failure returns None: the notice is advisory, ``check-ui`` remains
+    the authority — a project whose artifacts do not parse gets no notice,
+    and its next check still refuses loudly.
+    """
+    from .presentation import read_file
+    from .served import _tuple, active_version
+
+    src = project / "src"
+    if not src.is_dir():
+        return None
+    package_dir = next((path for path in src.iterdir() if path.is_dir()), None)
+    if package_dir is None:
+        return None
+    active = active_version("plugin-ui")
+    stale: set[str] = set()
+    try:
+        envelope = json.loads(read_file(package_dir / "presentation.json"))
+        targets = (
+            package_dir / "presentation.json",
+            package_dir / envelope["resource_root"] / envelope["manifest"]["path"],
+            package_dir / "binding-catalogue.json",
+        )
+        for path in targets:
+            version = json.loads(read_file(path)).get("contract_version")
+            if (
+                isinstance(version, str)
+                and _tuple(version) < _tuple(active)
+            ):
+                stale.add(version)
+    except (ValueError, OSError, KeyError, TypeError):
+        return None
+    if not stale:
+        return None
+    return (
+        f"plugin-ui contract artifacts at {', '.join(sorted(stale))} (active {active}): "
+        f"run 'benchweave-sdk migrate-ui {package_dir / 'presentation.json'} "
+        f"--descriptor {package_dir / 'descriptor.json'} --resources {package_dir} "
+        f"--catalogue {package_dir / 'binding-catalogue.json'}' after committing this "
+        "upgrade."
+    )
+
+
 @cli.command("upgrade")
 @click.argument("directory", default=".", required=False)
 @_domain_errors
@@ -173,6 +221,13 @@ def upgrade_command(directory: str) -> None:
             f"conflict markers in {relative}: resolve both sides, then commit",
             style="yellow",
         )
+    # The template refresh never touches src/** (the skip list protects it),
+    # so a plugin-ui version bump between SDK releases leaves the artifacts
+    # stamped at the old active — detection here, repair stays migrate-ui's
+    # (issue #460 §4; upgrade_project's own contract is unchanged).
+    notice = _ui_staleness_notice(project)
+    if notice is not None:
+        output.message(notice, style="yellow")
 
 
 @cli.command("adopt")
@@ -248,12 +303,16 @@ def inventory_command(directory: Path) -> None:
     ConsoleOutput().document(inventory(directory))
 
 
-def _render_report(report: object, note: str | None = None) -> None:
+def _render_report(
+    report: object, note: str | None = None, remediation: str | None = None
+) -> None:
     output = ConsoleOutput()
     findings = [(row.code, row.path, row.message) for row in report.findings]  # type: ignore[attr-defined]
     findings.extend(("panel_unavailable", str(page), "") for page in report.unavailable_pages)  # type: ignore[attr-defined]
     if findings:
         output.findings(findings)
+    if remediation is not None:
+        output.message(remediation, style="yellow")
     if not report.valid:  # type: ignore[attr-defined]
         raise click.ClickException("Presentation validation failed.")
     output.message(
@@ -289,7 +348,23 @@ def check_ui_command(
         features=frozenset(feature),
         panels=frozenset(panel),
     )
-    _render_report(report)
+    # An unsupported_version finding on one of the three contract documents
+    # is exactly the staleness migrate-ui repairs (issue #460) — from any
+    # path it arrived by, not just upgrade.
+    stale = any(
+        row.code == "unsupported_version"
+        and row.path in ("presentation-envelope", "ui-manifest", "binding-catalogue")
+        for row in report.findings
+    )
+    remediation = (
+        "plugin-ui contract artifacts carry a version this SDK does not serve; run "
+        f"'benchweave-sdk migrate-ui {envelope} --descriptor {descriptor} "
+        f"--resources {resources} --catalogue {catalogue}' to re-stamp them to the "
+        "active plugin-ui version"
+        if stale
+        else None
+    )
+    _render_report(report, remediation=remediation)
 
 
 @cli.command("check-preset")
@@ -336,6 +411,54 @@ def check_preset_command(
             "action schema; pass --action to force one)"
         )
     _render_report(report, note=note)
+
+
+@cli.command("migrate-ui")
+@click.argument("envelope", type=click.Path(path_type=Path))
+@_presentation_options
+@_domain_errors
+def migrate_ui_command(
+    envelope: Path,
+    descriptor: Path,
+    resources: Path,
+    catalogue: Path,
+    firmware: str | None,
+    feature: tuple[str, ...],
+    panel: tuple[str, ...],
+) -> None:
+    """Re-stamp the plugin-ui contract artifacts to this SDK's active version.
+
+    The migration semantics are a version re-stamp plus the envelope hash
+    repair — author formatting and content are preserved byte-for-byte
+    outside the version string, the re-stamped set is validated before any
+    write, and a set that does not validate is refused with nothing written.
+    Artifacts already at the active are a no-op success; artifacts above it
+    are refused (install the newer SDK). Re-derivation is derive-ui's job.
+    """
+    from .presentation import migrate_ui
+
+    outcome = migrate_ui(
+        envelope,
+        descriptor,
+        resources,
+        catalogue,
+        firmware=firmware,
+        features=frozenset(feature),
+        panels=frozenset(panel),
+    )
+    output = ConsoleOutput()
+    if outcome.noop:
+        output.message(f"already at plugin-ui {outcome.target}; nothing to do.", style="green")
+        return
+    for line in outcome.lines:
+        output.message(line, style="green")
+    for note in outcome.notes:
+        output.message(note, style="yellow")
+    output.message(
+        f"Re-stamped {len(outcome.lines)} file(s) to plugin-ui {outcome.target}; review "
+        "and commit. Offline migration is not admission or approval to apply settings.",
+        style="green",
+    )
 
 
 @cli.command("derive-ui")

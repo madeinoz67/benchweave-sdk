@@ -1,4 +1,14 @@
-"""Offline UI authoring helpers; successful validation is never device approval."""
+"""Offline UI authoring helpers; successful validation is never device approval.
+
+The ``migrate_ui`` lane (issue #460) refuses with these ``snake_case:`` prefixes
+(STD-4): ``migrate_ui_ahead:`` (a document above the lock's active — install the
+newer SDK, never a downgrade write), ``migrate_ui_version_absent:`` (a document
+that is unparseable or carries no version-shaped ``contract_version``),
+``migrate_ui_stamp_unlocatable:`` (the version value parses but its byte pattern
+cannot be located for in-place re-stamping), and
+``migrate_ui_invalid_after_stamp:`` (the re-stamped set fails the same vendored
+validation ``check-ui`` runs; nothing is written).
+"""
 
 from __future__ import annotations
 
@@ -7,6 +17,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
 import stat
 import sys
 from dataclasses import dataclass
@@ -14,7 +25,7 @@ from functools import cache
 from pathlib import Path
 from typing import Any
 
-from .served import active_version
+from .served import _tuple, _tuple_or_none, active_version
 from .validation import contract_documents, validate_descriptor
 
 
@@ -531,6 +542,264 @@ def load_validated_preview_inputs(
             f"preview_invalid_presentation: {finding.code}: {finding.path}: {finding.message}"
         )
     return candidate
+
+
+@dataclass(frozen=True, slots=True)
+class MigrationOutcome:
+    """What one ``migrate_ui`` run did, as report lines for the CLI to render.
+
+    ``noop`` marks the already-at-active case (no lines, nothing written);
+    ``notes`` carries advisory pointers that are not migration results (the
+    classref-family staleness detection, which points at ``derive-ui``).
+    """
+
+    target: str
+    lines: tuple[str, ...] = ()
+    notes: tuple[str, ...] = ()
+    noop: bool = False
+
+
+def _restamp(raw: bytes, *, key: str, old: str, new: str) -> tuple[bytes, int]:
+    """Swap one raw-bytes JSON string value by exact key pattern.
+
+    A targeted substitution, never a re-dump: key order, spacing and the
+    trailing newline survive untouched, so the migration's diff is the value
+    and nothing else. The count lets the caller refuse (never re-serialize)
+    when the parsed value exists but the byte pattern does not.
+    """
+    pattern = re.compile(('("' + key + '"\\s*:\\s*")' + re.escape(old) + '(")').encode())
+    return pattern.subn(b"\\g<1>" + new.encode() + b"\\g<2>", raw)
+
+
+def migrate_ui(
+    envelope_path: Path,
+    descriptor_path: Path,
+    root: Path,
+    catalogue_path: Path,
+    *,
+    firmware: str | None,
+    features: frozenset[str],
+    panels: frozenset[str],
+) -> MigrationOutcome:
+    """Re-stamp the plugin-ui contract documents to the lock's active version.
+
+    The migration semantics are a version re-stamp plus the envelope hash
+    repair (issue #460; the corpus's own sanctioned migration for the
+    plugin-ui family), never re-derivation: the manifest is author-editable
+    content under a protected tree, so the migration's diff must be the
+    version string and nothing else. The re-stamped set is validated in
+    memory through the same vendored validator ``check-ui`` runs (SRF-2's
+    one gate) BEFORE any write; a set that does not validate is refused with
+    nothing written. The three sequential writes are not atomic — the
+    author's VCS is the recovery, the same disclosed posture as
+    ``derive-ui``.
+
+    Parameters
+    ----------
+    envelope_path, descriptor_path, catalogue_path
+        The presentation envelope, the device descriptor and the binding catalogue.
+    root
+        The package resource root the envelope's paths are relative to.
+    firmware
+        Firmware version the re-stamped set is judged against, or None.
+    features, panels
+        What the renderer under test supports; passed to the pre-write
+        validation unchanged so ``migrate-ui`` accepts exactly what
+        ``check-ui`` with the same flags accepts.
+
+    Returns
+    -------
+    MigrationOutcome
+        ``noop`` when all three documents already carry the active version
+        (safe to run in scripts and CI); otherwise one line per changed file
+        plus advisory notes, with ``target`` the lock's active plugin-ui.
+
+    Raises
+    ------
+    ValueError
+        ``migrate_ui_ahead:`` when any document orders above the active
+        (install the newer SDK; a downgrade write would produce documents the
+        newer SDK that authored them no longer validates),
+        ``migrate_ui_version_absent:``, ``migrate_ui_stamp_unlocatable:`` or
+        ``migrate_ui_invalid_after_stamp:`` (each naming its file; the first
+        three before any byte is composed, the last before any byte is
+        written); otherwise as ``check_ui``.
+    """
+    contract = _contract()
+    target = active_version("plugin-ui")
+    envelope_raw = read_file(envelope_path)
+    descriptor_raw = read_file(descriptor_path)
+    catalogue_raw = read_file(catalogue_path)
+    try:
+        envelope = contract.parse_document(envelope_raw)
+        resource_root = envelope["resource_root"]
+        manifest_path = envelope["manifest"]["path"]
+        if not contract.safe_resource_path(resource_root) or not contract.safe_resource_path(
+            manifest_path
+        ):
+            raise ValueError("Unsafe presentation resource path")
+    except contract.DocumentError as exc:
+        raise ValueError(f"migrate_ui_version_absent: presentation.json: {exc}") from exc
+    except (KeyError, TypeError) as exc:
+        raise ValueError("Malformed presentation resource references") from exc
+    base = root / resource_root
+    manifest_file = base / manifest_path
+    manifest_raw = read_file(manifest_file)
+    manifest_label = f"{resource_root}/{manifest_path}"
+    # The manifest's declared assets ride the validation set unchanged —
+    # the migration never touches asset bytes (the _load_ui_candidate shape).
+    resources: dict[str, bytes] = {manifest_path: manifest_raw}
+    total = len(manifest_raw)
+    raw_by_label = {
+        "presentation.json": envelope_raw,
+        manifest_label: manifest_raw,
+        "binding-catalogue.json": catalogue_raw,
+    }
+    try:
+        manifest = contract.parse_document(manifest_raw)
+        assets = manifest.get("assets", [])
+        if not isinstance(assets, list) or len(assets) > 256:
+            raise ValueError("Asset collection exceeds limit")
+        for asset in assets:
+            name = asset["path"]
+            if not contract.safe_resource_path(name):
+                raise ValueError("Unsafe asset path")
+            if name not in resources:
+                raw = read_file(base / name, min(16 * 1024 * 1024, 64 * 1024 * 1024 - total))
+                resources[name] = raw
+                total += len(raw)
+    except contract.DocumentError as exc:
+        raise ValueError(f"migrate_ui_version_absent: {manifest_label}: {exc}") from exc
+    except (KeyError, TypeError) as exc:
+        raise ValueError("Malformed presentation resource references") from exc
+
+    stamps: dict[str, str] = {}
+    for label, raw in raw_by_label.items():
+        try:
+            document = contract.parse_document(raw)
+        except contract.DocumentError as exc:
+            raise ValueError(f"migrate_ui_version_absent: {label}: {exc}") from exc
+        version = document.get("contract_version")
+        if not isinstance(version, str) or _tuple_or_none(version) is None:
+            raise ValueError(
+                f"migrate_ui_version_absent: {label}: no version-shaped "
+                f"MAJOR.MINOR.PATCH contract_version ({version!r})"
+            )
+        stamps[label] = version
+    ahead = [
+        (label, version)
+        for label, version in stamps.items()
+        if _tuple(version) > _tuple(target)
+    ]
+    if ahead:
+        label, version = ahead[0]
+        raise ValueError(
+            f"migrate_ui_ahead: {label} is at plugin-ui {version}, above this SDK's "
+            f"active {target}; install the newer SDK that serves {version} — "
+            "migrate-ui never writes versions down"
+        )
+    if all(version == target for version in stamps.values()):
+        return MigrationOutcome(target=target, noop=True)
+
+    new_by_label: dict[str, bytes] = {}
+    for label, raw in raw_by_label.items():
+        old = stamps[label]
+        if old == target:
+            new_by_label[label] = raw
+            continue
+        new, count = _restamp(raw, key="contract_version", old=old, new=target)
+        if count == 0:
+            raise ValueError(
+                f"migrate_ui_stamp_unlocatable: {label}: the contract_version pattern "
+                f"for {old!r} is not present in the raw bytes; migrate-ui re-stamps "
+                "bytes in place, it never re-serializes"
+            )
+        new_by_label[label] = new
+    # The hash chain repair: the envelope's manifest.sha256 becomes the hash
+    # of the re-stamped manifest bytes — requirement (2) of the issue,
+    # mechanized with the same substitution discipline.
+    new_hash = hashlib.sha256(new_by_label[manifest_label]).hexdigest()
+    stated_hash = envelope["manifest"]["sha256"]
+    if not isinstance(stated_hash, str):
+        raise ValueError("Malformed presentation resource references")
+    if stated_hash != new_hash:
+        envelope_new, count = _restamp(
+            new_by_label["presentation.json"], key="sha256", old=stated_hash, new=new_hash
+        )
+        if count == 0:
+            raise ValueError(
+                "migrate_ui_stamp_unlocatable: presentation.json: the manifest sha256 "
+                "pattern cannot be located in the raw bytes; migrate-ui re-stamps "
+                "bytes in place, it never re-serializes"
+            )
+        new_by_label["presentation.json"] = envelope_new
+
+    resources_new = dict(resources)
+    resources_new[manifest_path] = new_by_label[manifest_label]
+    report = validate_presentation(
+        new_by_label["presentation.json"],
+        descriptor_raw=descriptor_raw,
+        resources=resources_new,
+        binding_catalogue=contract.parse_document(new_by_label["binding-catalogue.json"]),
+        supported_features=features,
+        supported_panels=panels,
+        firmware=firmware,
+    )
+    if not report.valid:
+        findings = "; ".join(
+            f"{row.code}: {row.path}: {row.message}" for row in report.findings
+        )
+        raise ValueError(
+            "migrate_ui_invalid_after_stamp: the re-stamped set does not validate "
+            f"against plugin-ui {target}: {findings}. The findings name changes the "
+            "re-stamp does not make (a drifted descriptor needs re-derivation, not "
+            "migration); nothing was written"
+        )
+
+    lines: list[str] = []
+    hash_only = (
+        stamps["presentation.json"] == target
+        and new_by_label["presentation.json"] != envelope_raw
+    )
+    for label in ("presentation.json", manifest_label, "binding-catalogue.json"):
+        path = {
+            "presentation.json": envelope_path,
+            manifest_label: manifest_file,
+            "binding-catalogue.json": catalogue_path,
+        }[label]
+        new = new_by_label[label]
+        if new == raw_by_label[label]:
+            continue
+        path.absolute().write_bytes(new)
+        line = f"migrated {label}: plugin-ui {stamps[label]} -> {target}"
+        if label == "presentation.json" and hash_only:
+            line += ", manifest hash repaired"
+        lines.append(line)
+
+    notes: list[str] = []
+    declaration = base / "class-reference.json"
+    if declaration.is_file():
+        # Detection only (design §3 step 8): the classref re-stamp itself is
+        # deferred (D2) — re-derivation is the sanctioned path, and the
+        # author overlay mechanism is where author content survives it.
+        try:
+            declaration_version = contract.parse_document(read_file(declaration)).get(
+                "contract_version"
+            )
+            classref_active = active_version("plugin-ui-class-reference")
+            if (
+                isinstance(declaration_version, str)
+                and _tuple_or_none(declaration_version) is not None
+                and _tuple(declaration_version) < _tuple(classref_active)
+            ):
+                notes.append(
+                    f"class-reference at {declaration_version} is below the active "
+                    f"{classref_active}: re-derive with 'benchweave-sdk derive-ui "
+                    "--force' (author overlays survive in ui/manifest.overrides.json)"
+                )
+        except (ValueError, OSError, KeyError, TypeError):
+            pass  # advisory only; check-ui remains the authority
+    return MigrationOutcome(target=target, lines=tuple(lines), notes=tuple(notes))
 
 
 def _preview_fixture(target: dict[str, Any], *, suffix: str, severity: str) -> dict[str, Any]:
