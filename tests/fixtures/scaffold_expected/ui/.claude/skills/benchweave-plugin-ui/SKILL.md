@@ -30,9 +30,11 @@ the items and the author actions. Verify the derived set with `verify-ui`.
 ## Validate a complete preset
 
 - `benchweave-sdk check-preset <preset.json> --descriptor <descriptor.json>
-  --settings-schema <settings.schema.json> --firmware <version>` — validate one
-  complete settings file offline. `--action` forces the action whose envelope
-  is applied.
+  --settings-schema <settings.schema.json>` — validate one complete settings
+  file offline. Optional flag: `--firmware`. Omit it to validate structurally
+  under a commissioned descriptor; under the listed policy the check needs a
+  firmware value to judge compatibility. `--action` forces the action whose
+  envelope is applied.
 
 ## Preview simulated states
 
