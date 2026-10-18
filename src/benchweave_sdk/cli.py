@@ -480,9 +480,14 @@ def _package_dir(project: Path, *, refusal: str) -> Path:
     """The single package directory under ``<project>/src`` — derive-ui's own
     discovery, minted as a helper when regen-fixtures became its second user
     (issue #463 row 8). The refusal prefix is the CALLER's (STD-4: each
-    command refuses in its own voice)."""
-    package_dir = next(
-        (path for path in (project / "src").iterdir() if path.is_dir()), None
+    command refuses in its own voice). The ``is_dir`` guard covers the
+    missing-src/ half of the input space too: ``iterdir`` on an absent
+    directory is a raw errno, and the named refusal is the better message."""
+    src = project / "src"
+    package_dir = (
+        next((path for path in src.iterdir() if path.is_dir()), None)
+        if src.is_dir()
+        else None
     )
     if package_dir is None:
         raise ValueError(f"{refusal}: no package under {project / 'src'}")

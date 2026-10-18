@@ -6,16 +6,24 @@ project's binding catalogue is absent), ``regen_fixtures_no_observation_target:`
 (the catalogue declares no observation target, so no example can be
 composed), ``regen_fixtures_author_content:`` (an example filename already
 carries a non-example scenario id — author content; nothing is written,
-all-or-nothing) and ``regen_fixtures_invalid_generated:`` (a generated
-document fails the same validation ``load_author_fixtures`` applies — the
-generator/loader-drift guard; nothing is written). The CLI adds
-``regen_fixtures_no_package:`` for a project without a package under
-``src/``.
+all-or-nothing), ``regen_fixtures_unreadable_example:`` (an example
+filename exists but cannot be OPENED — distinct from author content: the
+file was never judged), ``regen_fixtures_id_collision:`` (another fixture
+file already carries an example id, so writing the example at its own
+name would mint a duplicate the loader refuses; nothing is written),
+``regen_fixtures_invalid_generated:`` (a generated document fails the same
+validation ``load_author_fixtures`` applies — the generator/loader-drift
+guard; nothing is written) and ``regen_fixtures_write_failed:`` (staging
+or replacing the generated documents failed — the staged-tempfile write
+path). The CLI adds ``regen_fixtures_no_package:`` for a project without
+a package under ``src/``.
 """
 
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -324,13 +332,23 @@ def regenerate_example_fixtures(catalogue_path: Path, fixtures_dir: Path) -> Reg
     One generator, two callers: this is the scaffold's own
     ``_preview_fixture`` (moved here so a command can reach it, issue #463
     row 8), composed over the FIRST ``kind == "observation"`` target in
-    catalogue order. Both documents are validated in memory through the same
-    per-document checks ``load_author_fixtures`` applies BEFORE any write;
-    a document that would not load refuses with nothing written. An example
-    filename whose parsed ``id`` is not the matching example id is author
-    content — the named refusal, nothing written, all-or-nothing. Every
-    other ``*.json`` in the directory is untouched. Unchanged bytes are not
-    rewritten, so the run is idempotent; an absent directory is minted.
+    catalogue order whose shape ``_observation_value_variable`` admits (a
+    malformed first target refuses through the loader's own
+    ``preview_unsupported_shape:``). Both documents are validated in memory
+    through the same per-document checks ``load_author_fixtures`` applies
+    BEFORE any write; a document that would not load refuses with nothing
+    written. An example filename whose parsed ``id`` is not the matching
+    example id is author content — the named refusal, nothing written,
+    all-or-nothing; an example filename that cannot be opened refuses as
+    unreadable instead (F5). Another fixture file already carrying an
+    example id refuses as an id collision — writing the example at its own
+    name would mint a duplicate the loader refuses (F2). Writes go through
+    staged tempfiles replaced onto their targets, so a read-only example
+    FILE still regenerates (rename needs the directory's permission, not
+    the file's) and every deterministic write failure refuses with nothing
+    written (F1). Every other ``*.json`` in the directory is untouched.
+    Unchanged bytes are not rewritten, so the run is idempotent; an absent
+    directory is minted.
 
     Parameters
     ----------
@@ -349,8 +367,11 @@ def regenerate_example_fixtures(catalogue_path: Path, fixtures_dir: Path) -> Reg
     ------
     ValueError
         ``regen_fixtures_no_catalogue:``, ``regen_fixtures_no_observation_target:``,
-        ``regen_fixtures_author_content:`` or ``regen_fixtures_invalid_generated:``
-        — each before any byte is written.
+        ``preview_unsupported_shape:`` (a malformed target, the loader's own
+        path), ``regen_fixtures_author_content:``,
+        ``regen_fixtures_unreadable_example:``, ``regen_fixtures_id_collision:``,
+        ``regen_fixtures_invalid_generated:`` (each before any byte is
+        written) or ``regen_fixtures_write_failed:``.
     """
     if not catalogue_path.is_file():
         raise ValueError(f"regen_fixtures_no_catalogue: {catalogue_path}")
@@ -369,6 +390,10 @@ def regenerate_example_fixtures(catalogue_path: Path, fixtures_dir: Path) -> Reg
         raise ValueError(
             f"regen_fixtures_no_observation_target: {catalogue_path}"
         )
+    # F3: the selection admits only shapes the loader itself admits, so a
+    # malformed first observation target refuses through the loader's named
+    # path — never a KeyError/StopIteration from the generator's internals.
+    _observation_value_variable(target)
     documents = {
         filename: _preview_fixture(
             dict(target), suffix=filename, severity=severity
@@ -377,18 +402,46 @@ def regenerate_example_fixtures(catalogue_path: Path, fixtures_dir: Path) -> Reg
     }
     # The ownership guard runs before any write for BOTH files — a refusal
     # on one leaves the other untouched too (the migrate-ui validate-before-
-    # write posture). A file that does not parse is content the generator
-    # never wrote; it refuses as author content, never overwrites.
+    # write posture). F5: a file that cannot be OPENED was never judged —
+    # that is an unreadable example, not author content; a file that does
+    # not PARSE is content the generator never wrote — author content,
+    # never overwritten. (read_file's own ValueError refusals, e.g.
+    # symlinked components, propagate under their own names.)
     for filename, document in documents.items():
         path = fixtures_dir / f"{filename}.json"
         if not path.exists():
             continue
         try:
-            existing = json.loads(read_file(path))
-        except (ValueError, OSError):
+            raw_existing = read_file(path)
+        except OSError as exc:
+            raise ValueError(f"regen_fixtures_unreadable_example: {path}") from exc
+        try:
+            existing = json.loads(raw_existing)
+        except ValueError:
             raise ValueError(f"regen_fixtures_author_content: {path}") from None
         if not isinstance(existing, Mapping) or existing.get("id") != document["id"]:
             raise ValueError(f"regen_fixtures_author_content: {path}")
+    # F2: census the MERGED directory before writing. The guide calls the
+    # examples "a valid, copyable format model", so an author copy at its
+    # own filename carrying an example id is an invited state — and
+    # writing the example at its canonical name beside that copy would
+    # mint a duplicate the loader refuses, reddening the project test
+    # AFTER a successful regen. Refuse, naming the colliding author file.
+    # (Files that do not parse are the loader's jurisdiction, not regen's;
+    # the census skips them.)
+    example_ids = {document["id"] for document in documents.values()}
+    for path in sorted(fixtures_dir.glob("*.json")):
+        if path.name in {f"{filename}.json" for filename in documents}:
+            continue
+        try:
+            other = json.loads(read_file(path))
+        except (ValueError, OSError):
+            continue
+        if isinstance(other, Mapping) and other.get("id") in example_ids:
+            raise ValueError(
+                f"regen_fixtures_id_collision: {path}: {other['id']} — the id "
+                "belongs to a generated example; delete or re-id this copy"
+            )
     # In-memory validation through the ONE loader mechanism, before any
     # write: a generated document the loader would refuse is a
     # generator/loader drift, not an author error.
@@ -402,6 +455,15 @@ def regenerate_example_fixtures(catalogue_path: Path, fixtures_dir: Path) -> Reg
             )
     except ValueError as exc:
         raise ValueError(f"regen_fixtures_invalid_generated: {exc}") from exc
+    pending: dict[str, bytes] = {}
+    for filename, document in documents.items():
+        path = fixtures_dir / f"{filename}.json"
+        raw = (json.dumps(document, indent=2) + "\n").encode("utf-8")
+        if path.is_file() and path.read_bytes() == raw:
+            continue
+        pending[f"{filename}.json"] = raw
+    if not pending:
+        return RegenOutcome(noop=True)
     notes: tuple[str, ...] = ()
     if not fixtures_dir.exists():
         notes = (
@@ -410,16 +472,39 @@ def regenerate_example_fixtures(catalogue_path: Path, fixtures_dir: Path) -> Reg
             "wiring the examples into project tests is the author's choice",
         )
         fixtures_dir.mkdir(parents=True)
+    # F1: stage BOTH documents as tempfiles inside the target directory,
+    # then rename each onto its target. Staging is the write — if it fails
+    # (an unwritable directory), NO target has been touched. Rename needs
+    # the DIRECTORY's write permission, not the target file's, so the
+    # refute's read-only-example repro regenerates cleanly instead of
+    # tearing the pair. A failure between the two renames is the residual
+    # torn window (directory revocation mid-pair); the staged tempfile is
+    # cleaned up and the refusal names the file — the author's VCS is the
+    # recovery, the same disclosed posture as migrate-ui's sequential
+    # writes.
+    staged: dict[str, Path] = {}
+    try:
+        for name, raw in pending.items():
+            descriptor, temporary_name = tempfile.mkstemp(
+                dir=fixtures_dir, prefix=".regen-", suffix=".tmp"
+            )
+            staged[name] = Path(temporary_name)
+            with os.fdopen(descriptor, "wb") as stream:
+                stream.write(raw)
+    except OSError as exc:
+        for leftover in staged.values():
+            leftover.unlink(missing_ok=True)
+        raise ValueError(f"regen_fixtures_write_failed: {fixtures_dir}") from exc
     written: list[str] = []
-    for filename, document in documents.items():
-        path = fixtures_dir / f"{filename}.json"
-        raw = (json.dumps(document, indent=2) + "\n").encode("utf-8")
-        if path.is_file() and path.read_bytes() == raw:
-            continue
-        path.write_bytes(raw)
-        written.append(f"{filename}.json")
-    if not written:
-        return RegenOutcome(noop=True, notes=notes)
+    try:
+        for name, staged_path in staged.items():
+            os.replace(staged_path, fixtures_dir / name)
+            written.append(name)
+    except OSError as exc:
+        for leftover in staged.values():
+            leftover.unlink(missing_ok=True)
+        failed = fixtures_dir / next(name for name in staged if name not in written)
+        raise ValueError(f"regen_fixtures_write_failed: {failed}") from exc
     return RegenOutcome(written=tuple(written), notes=notes)
 
 

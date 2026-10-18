@@ -170,17 +170,20 @@ On the second axis, a plugin-ui-preview contract bump moves the active version. 
 
 The command is idempotent. It does not rewrite bytes that are already current. A run with nothing to do is a no-op. It exits 0. This makes the command safe in scripts and CI.
 
-The command keeps author content safe. The two example ids are `example-normal` and `example-warning`. A file at an example filename whose scenario `id` is one of these ids is an example. A file at an example filename with any other scenario `id` is author content.
+The command keeps author content safe. The two example ids are `example-normal` and `example-warning`. A file at an example filename whose scenario `id` is one of these ids is an example. A file at an example filename with any other scenario `id` is author content. When the command writes the file again, it discards edits that keep an example id.
 
-The command refuses an author-content file and writes nothing. The command writes both files or neither file. The command never touches any other `*.json` in the directory. Put author scenarios at their own ids.
+The command refuses an author-content file and writes nothing. The command writes both files or neither file. The command writes the files through staged temporary files, and it does not lock the project tree. Use your version control to review the change and to undo it. The command never touches any other `*.json` in the directory. Put author scenarios at their own ids.
 
 The command refuses with named prefixes:
 
 - `regen_fixtures_author_content:` means that an example filename holds author content. The command writes nothing.
+- `regen_fixtures_unreadable_example:` means that the command could not open a file at an example filename. The command did not judge the file, and it writes nothing.
+- `regen_fixtures_id_collision:` means that another fixture file already carries an example id (`example-normal` or `example-warning`). If the command writes the example at its own name, a duplicate exists. The command refuses and names the colliding file. Delete the copy or give it its own id.
 - `regen_fixtures_no_package:` means that the project has no package under `src/`.
 - `regen_fixtures_no_catalogue:` means that the project has no `binding-catalogue.json`.
 - `regen_fixtures_no_observation_target:` means that the catalogue declares no observation target.
 - `regen_fixtures_invalid_generated:` means that an internally generated document failed validation. This is an internal guard, and the command writes nothing.
+- `regen_fixtures_write_failed:` means that the command could not write the staged files. The command writes nothing when staging fails in the fixtures directory.
 
 A project can have no `ui/fixtures/` directory. A class-reference derived project is an example. The scaffold's classref path writes no examples. The command then creates the directory and writes the two examples. The author decides whether to wire the examples into project tests.
 

@@ -692,3 +692,21 @@ def test_regen_fixtures_cli_unknown_project(
     captured = capsys.readouterr()
     assert "No such command" not in captured.err, captured.err
     assert "does not exist" in captured.err, captured.err
+
+
+def test_regen_fixtures_cli_no_src_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """F4 (refute fold): a project with NO src/ at all is the other half of
+    regen_fixtures_no_package's input space — the named refusal, never a raw
+    iterdir errno. (Pre-fold this surfaced as `Error: [Errno 2] No such file
+    or directory: .../src`.)"""
+    project = tmp_path / "empty-project"
+    project.mkdir()
+    capsys.readouterr()
+
+    assert run(monkeypatch, "regen-fixtures", project) == 1
+
+    captured = capsys.readouterr()
+    assert "regen_fixtures_no_package:" in captured.err, captured.err
+    assert "Errno" not in captured.err, captured.err
