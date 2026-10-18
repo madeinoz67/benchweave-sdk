@@ -476,6 +476,24 @@ def migrate_ui_command(
     )
 
 
+def _package_dir(project: Path, *, refusal: str) -> Path:
+    """The single package directory under ``<project>/src`` — derive-ui's own
+    discovery, minted as a helper when regen-fixtures became its second user
+    (issue #463 row 8). The refusal prefix is the CALLER's (STD-4: each
+    command refuses in its own voice). The ``is_dir`` guard covers the
+    missing-src/ half of the input space too: ``iterdir`` on an absent
+    directory is a raw errno, and the named refusal is the better message."""
+    src = project / "src"
+    package_dir = (
+        next((path for path in src.iterdir() if path.is_dir()), None)
+        if src.is_dir()
+        else None
+    )
+    if package_dir is None:
+        raise ValueError(f"{refusal}: no package under {project / 'src'}")
+    return package_dir
+
+
 @cli.command("derive-ui")
 @click.argument("project", type=click.Path(path_type=Path, exists=True))
 @click.option("--force", is_flag=True, help="Overwrite a changed ui/manifest.json")
@@ -495,11 +513,7 @@ def derive_ui_command(project: Path, force: bool) -> None:
 
     from .classref import derive_ui, find_reference
 
-    package_dir = next(
-        (path for path in (project / "src").iterdir() if path.is_dir()), None
-    )
-    if package_dir is None:
-        raise ValueError(f"derive_ui_project: no package under {project / 'src'}")
+    package_dir = _package_dir(project, refusal="derive_ui_project")
     descriptor_path = package_dir / "descriptor.json"
     descriptor = json.loads(descriptor_path.read_bytes())
     profiles = descriptor.get("profiles") or []
@@ -552,8 +566,10 @@ def derive_ui_command(project: Path, force: bool) -> None:
     output.message(
         f"Derived the class-reference presentation set into {package_dir}; "
         "commission presets via check-preset, then wire them into the "
-        "configuration target's preset_asset_ids. Offline derivation is "
-        "never admission or approval to operate hardware.",
+        "configuration target's preset_asset_ids. 'benchweave-sdk "
+        "regen-fixtures' refreshes the example preview fixtures after "
+        "catalogue edits. Offline derivation is never admission or approval "
+        "to operate hardware.",
         style="green",
     )
 
@@ -582,6 +598,38 @@ def verify_ui_command(project: Path) -> None:
     output.message(
         "Rendered gate clean; not admission, qualification or approval to "
         "apply settings.",
+        style="green",
+    )
+
+
+@cli.command("regen-fixtures")
+@click.argument("project", type=click.Path(path_type=Path, exists=True))
+@_domain_errors
+def regen_fixtures_command(project: Path) -> None:
+    """Regenerate the scaffolded example preview fixtures from the catalogue.
+
+    The same generator the scaffold used, run on demand (issue #463 row 8):
+    after a catalogue edit moves a target, or after a plugin-ui-preview
+    contract bump, one command rewrites ui/fixtures/normal.json and
+    warning.json at the active version. An example file whose scenario id
+    is not the example id is author content — refused, nothing written.
+    Author scenarios at their own ids are never touched."""
+    from .fixtures import regenerate_example_fixtures
+
+    package_dir = _package_dir(project, refusal="regen_fixtures_no_package")
+    outcome = regenerate_example_fixtures(
+        package_dir / "binding-catalogue.json", package_dir / "ui" / "fixtures"
+    )
+    output = ConsoleOutput()
+    for name in outcome.written:
+        output.message(f"regenerated {name}", style="green")
+    if outcome.noop:
+        output.message("example fixtures already current; nothing to do.", style="green")
+    for note in outcome.notes:
+        output.message(note, style="yellow")
+    output.message(
+        "Offline fixture regeneration is not admission, qualification or "
+        "approval to operate hardware.",
         style="green",
     )
 

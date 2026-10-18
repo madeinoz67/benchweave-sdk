@@ -56,6 +56,15 @@ never serves a plugin stylesheet override. A refused override gives
 tokens. The plugin SDK guide covers this in
 section "The plugin stylesheet override (preview.css)".
 
+## Refresh the example fixtures
+
+The scaffold writes two example fixtures into `ui/fixtures/`. The examples
+track the binding catalogue. Run `benchweave-sdk regen-fixtures <project>`
+after you edit the binding catalogue. Run it also after a plugin-ui-preview
+version bump. The command refuses to overwrite a file whose scenario id is
+not `example-normal` or `example-warning`. The command never touches author
+scenarios at their own ids.
+
 ## Rules that bite
 
 - The preview listener uses loopback only. A non-loopback host needs

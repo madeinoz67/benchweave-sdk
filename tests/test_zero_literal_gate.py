@@ -49,10 +49,10 @@ class TestScaffoldDerivation:
 
 
 class TestGeneratedDocumentDerivations:
-    """presentation.py ×4 — the fixture and the generated plugin-ui set."""
+    """The example fixture (fixtures.py since #463 row 8) ×2 + the generated plugin-ui set."""
 
     def test_preview_fixture_carries_the_lock_active_version(self) -> None:
-        from benchweave_sdk.presentation import _preview_fixture
+        from benchweave_sdk.fixtures import _preview_fixture
 
         target = {
             "id": "voltage",
@@ -76,7 +76,7 @@ class TestGeneratedDocumentDerivations:
         validate against — byte-parity with the pre-derivation literal."""
         from jsonschema import Draft202012Validator
 
-        from benchweave_sdk.presentation import _preview_fixture
+        from benchweave_sdk.fixtures import _preview_fixture
 
         target = {
             "id": "voltage",

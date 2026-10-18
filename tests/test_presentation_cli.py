@@ -620,3 +620,93 @@ def test_check_ui_points_unsupported_version_at_migrate_ui(
     rendered = capsys.readouterr().out
     assert "digest_mismatch" in rendered, rendered
     assert "migrate-ui" not in rendered
+
+
+# --- issue #463 row 8 (L10): the regen-fixtures command ------------------------
+
+
+def _stale_the_examples(package: Path) -> None:
+    """Rename the observation targets in the catalogue, leaving the scaffolded
+    example fixtures speaking the old binding ids — the axis-A state the
+    command exists to repair."""
+    catalogue = json.loads((package / "binding-catalogue.json").read_bytes())
+    for target in catalogue["targets"]:
+        target["id"] = f"renamed-{target['id']}"
+        target["parameter_id"] = f"renamed-{target['parameter_id']}"
+    (package / "binding-catalogue.json").write_text(
+        json.dumps(catalogue), encoding="utf-8"
+    )
+
+
+def test_regen_fixtures_cli_happy_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """AR-L10-2 arm 1: after a catalogue edit the command exits 0, names both
+    written files, and carries the standing offline disclaimer."""
+    project = tmp_path / "project"
+    run(monkeypatch, "new", project, "--with-ui")
+    package = project / "src/example_plugin"
+    _stale_the_examples(package)
+    capsys.readouterr()
+
+    assert run(monkeypatch, "regen-fixtures", project) == 0
+
+    rendered = capsys.readouterr().out
+    assert "normal.json" in rendered, rendered
+    assert "warning.json" in rendered, rendered
+    assert "not admission" in rendered, rendered
+
+
+def test_regen_fixtures_cli_refuses_author_content(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """AR-L10-2 arm 2: author content at an example filename is exit 1 with
+    the `regen_fixtures_author_content:` prefix — never an overwrite."""
+    project = tmp_path / "project"
+    run(monkeypatch, "new", project, "--with-ui")
+    package = project / "src/example_plugin"
+    authored = json.loads((package / "ui/fixtures/normal.json").read_bytes())
+    authored["id"] = "custom"
+    (package / "ui/fixtures/normal.json").write_text(
+        json.dumps(authored), encoding="utf-8"
+    )
+    capsys.readouterr()
+
+    assert run(monkeypatch, "regen-fixtures", project) == 1
+
+    captured = capsys.readouterr()
+    assert "regen_fixtures_author_content:" in captured.err
+    assert json.loads((package / "ui/fixtures/normal.json").read_bytes())["id"] == "custom"
+
+
+def test_regen_fixtures_cli_unknown_project(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """AR-L10-2 arm 3: a project path that does not exist is a usage error
+    (exit 2, the Path(exists=True) family). The stderr assertion pins WHICH
+    usage error — on main this arm's exit code alone is green by coincidence
+    ("No such command" also exits 2), so the arm names the path refusal to
+    stay a real check."""
+    capsys.readouterr()
+    assert run(monkeypatch, "regen-fixtures", tmp_path / "missing") == 2
+    captured = capsys.readouterr()
+    assert "No such command" not in captured.err, captured.err
+    assert "does not exist" in captured.err, captured.err
+
+
+def test_regen_fixtures_cli_no_src_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """F4 (refute fold): a project with NO src/ at all is the other half of
+    regen_fixtures_no_package's input space — the named refusal, never a raw
+    iterdir errno. (Pre-fold this surfaced as `Error: [Errno 2] No such file
+    or directory: .../src`.)"""
+    project = tmp_path / "empty-project"
+    project.mkdir()
+    capsys.readouterr()
+
+    assert run(monkeypatch, "regen-fixtures", project) == 1
+
+    captured = capsys.readouterr()
+    assert "regen_fixtures_no_package:" in captured.err, captured.err
+    assert "Errno" not in captured.err, captured.err

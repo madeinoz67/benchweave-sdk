@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import shutil
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -598,3 +600,371 @@ def test_lanes_view_projects_and_validates_against_the_wire() -> None:
     schema = json.loads(DOCUMENT_SCHEMA.read_bytes())
     errors = list(Draft202012Validator(schema).iter_errors(document))
     assert not errors, [error.message for error in errors]
+
+
+# --- example-fixture regeneration (issue #463 row 8, L10 design §8 AR-L10-1) ---
+
+
+def _regen_catalogue(target_id: str, unit: str | None) -> dict[str, object]:
+    """A minimal binding catalogue with one observation target, written to disk."""
+    return {
+        "contract_version": "0.1.0",
+        "targets": [
+            {
+                "id": target_id,
+                "kind": "observation",
+                "parameter_id": target_id,
+                "variables": [
+                    {
+                        "id": "value",
+                        "type": "number",
+                        "unit": unit,
+                        "shape": "scalar",
+                        "axis_role": "value",
+                    }
+                ],
+            }
+        ],
+    }
+
+
+def _write_catalogue(path: Path, target_id: str, unit: str | None) -> dict[str, object]:
+    catalogue = _regen_catalogue(target_id, unit)
+    path.write_text(json.dumps(catalogue), encoding="utf-8")
+    return catalogue
+
+
+def _fixture_binding(path: Path) -> dict[str, object]:
+    return json.loads((path / "normal.json").read_bytes())["bindings"][0]  # type: ignore[return-value]
+
+
+def test_regen_tracks_catalogue_edits(tmp_path: Path) -> None:
+    """AR-L10-1 arm 1 (the round trip): what regen writes, the loader accepts
+    — and a catalogue edit moves both example files with it."""
+    catalogue_path = tmp_path / "binding-catalogue.json"
+    _write_catalogue(catalogue_path, "t1", "V")
+    fixtures_dir = tmp_path / "fixtures"
+    fixtures.regenerate_example_fixtures(catalogue_path, fixtures_dir)
+
+    _write_catalogue(catalogue_path, "t2", "A")
+    fixtures.regenerate_example_fixtures(catalogue_path, fixtures_dir)
+
+    for name in ("normal.json", "warning.json"):
+        binding = json.loads((fixtures_dir / name).read_bytes())["bindings"][0]
+        assert binding["id"] == "t2", name
+        assert binding["unit"] == "A", name
+    scenarios = fixtures.load_author_fixtures(
+        fixtures_dir, _regen_catalogue("t2", "A")
+    )
+    assert {row.id for row in scenarios} == {"example-normal", "example-warning"}
+
+
+def test_regen_refuses_author_content_and_writes_nothing(tmp_path: Path) -> None:
+    """AR-L10-1 arm 2: a file whose scenario id is not the example id is
+    author content — the named refusal fires and NOTHING is written (the
+    all-or-nothing posture; the untouched file's bytes prove it)."""
+    catalogue_path = tmp_path / "binding-catalogue.json"
+    _write_catalogue(catalogue_path, "t1", "V")
+    fixtures_dir = tmp_path / "fixtures"
+    fixtures.regenerate_example_fixtures(catalogue_path, fixtures_dir)
+    authored = json.loads((fixtures_dir / "normal.json").read_bytes())
+    authored["id"] = "custom"
+    (fixtures_dir / "normal.json").write_text(json.dumps(authored), encoding="utf-8")
+    warning_before = (fixtures_dir / "warning.json").read_bytes()
+    normal_before = (fixtures_dir / "normal.json").read_bytes()
+
+    with pytest.raises(ValueError, match="regen_fixtures_author_content:") as excinfo:
+        fixtures.regenerate_example_fixtures(catalogue_path, fixtures_dir)
+    assert "normal.json" in str(excinfo.value)
+
+    assert (fixtures_dir / "normal.json").read_bytes() == normal_before
+    assert (fixtures_dir / "warning.json").read_bytes() == warning_before
+
+
+def test_regen_preserves_author_scenarios(tmp_path: Path) -> None:
+    """AR-L10-1 arm 3: every OTHER *.json in the directory is author
+    territory — byte-identical survival, named in no written line."""
+    catalogue_path = tmp_path / "binding-catalogue.json"
+    _write_catalogue(catalogue_path, "t1", "V")
+    fixtures_dir = tmp_path / "fixtures"
+    fixtures.regenerate_example_fixtures(catalogue_path, fixtures_dir)
+    mine = author_fixture()
+    mine["id"] = "my-scenario"
+    author_bytes = (json.dumps(mine, indent=2) + "\n").encode("utf-8")
+    (fixtures_dir / "my-scenario.json").write_bytes(author_bytes)
+
+    outcome = fixtures.regenerate_example_fixtures(catalogue_path, fixtures_dir)
+
+    assert (fixtures_dir / "my-scenario.json").read_bytes() == author_bytes
+    assert "my-scenario.json" not in outcome.written
+
+
+def test_regen_is_idempotent(tmp_path: Path) -> None:
+    """AR-L10-1 arm 4: a second consecutive run over unchanged inputs is a
+    noop — byte compare, no write."""
+    catalogue_path = tmp_path / "binding-catalogue.json"
+    _write_catalogue(catalogue_path, "t1", "V")
+    fixtures_dir = tmp_path / "fixtures"
+    first = fixtures.regenerate_example_fixtures(catalogue_path, fixtures_dir)
+    assert first.written and not first.noop
+
+    second = fixtures.regenerate_example_fixtures(catalogue_path, fixtures_dir)
+
+    assert second.noop is True
+    assert second.written == ()
+
+
+def test_regen_stamps_active_preview_contract(tmp_path: Path) -> None:
+    """AR-L10-1 arm 5 (staleness axis B): a project scaffolded before a
+    plugin-ui-preview bump carries stale-const fixtures; one regen re-stamps
+    both to the lock's active version and they load clean."""
+    catalogue_path = tmp_path / "binding-catalogue.json"
+    _write_catalogue(catalogue_path, "t1", "V")
+    fixtures_dir = tmp_path / "fixtures"
+    fixtures.regenerate_example_fixtures(catalogue_path, fixtures_dir)
+    stale = json.loads((fixtures_dir / "normal.json").read_bytes())
+    stale["contract_version"] = "0.0.1"
+    (fixtures_dir / "normal.json").write_text(json.dumps(stale), encoding="utf-8")
+
+    fixtures.regenerate_example_fixtures(catalogue_path, fixtures_dir)
+
+    document = json.loads((fixtures_dir / "normal.json").read_bytes())
+    assert document["contract_version"] == ACTIVE_PREVIEW
+    scenarios = fixtures.load_author_fixtures(fixtures_dir, _regen_catalogue("t1", "V"))
+    assert {row.id for row in scenarios} == {"example-normal", "example-warning"}
+
+
+def test_regen_output_matches_scaffold_bytes() -> None:
+    """AR-L10-1 arm 6 (the parity arm): regen over the scaffold-expected
+    project's catalogue produces bytes EQUAL to the committed example
+    fixtures — scaffold and regen share one generator, and this arm is what
+    pins that (a regen that drifted from the scaffold reddens HERE)."""
+    scaffolded = REPO / "tests/fixtures/scaffold_expected/ui/src/example_plugin"
+    catalogue_path = scaffolded / "binding-catalogue.json"
+    out = Path(tempfile.mkdtemp())
+    try:
+        fixtures.regenerate_example_fixtures(catalogue_path, out)
+        for name in ("normal.json", "warning.json"):
+            assert (out / name).read_bytes() == (
+                scaffolded / "ui/fixtures" / name
+            ).read_bytes(), name
+    finally:
+        shutil.rmtree(out)
+
+
+def test_regen_no_observation_target_refuses(tmp_path: Path) -> None:
+    """AR-L10-1 arm 7: a catalogue with no observation target has no example
+    to compose — the named refusal, nothing written."""
+    catalogue = {
+        "contract_version": "0.1.0",
+        "targets": [waveform_target(["signal"])],
+    }
+    catalogue_path = tmp_path / "binding-catalogue.json"
+    catalogue_path.write_text(json.dumps(catalogue), encoding="utf-8")
+    fixtures_dir = tmp_path / "fixtures"
+
+    with pytest.raises(ValueError, match="regen_fixtures_no_observation_target"):
+        fixtures.regenerate_example_fixtures(catalogue_path, fixtures_dir)
+
+    assert not fixtures_dir.exists()
+
+
+# --- refute fold F1-F5 (issue #463 row 8, L10 refute pass 2026-10-17) ----------
+
+
+def _chmod_or_skip(path: Path, mode: int) -> None:
+    """chmod with a Windows skip — the permission arms are POSIX-behaviour
+    pins (the CI matrix's Windows lane skips, not fails)."""
+    import sys
+
+    if sys.platform == "win32":
+        pytest.skip("permission bits are not enforced the same way on Windows")
+    path.chmod(mode)
+
+
+def _generated_bytes(target_id: str, unit: str | None, name: str) -> bytes:
+    """What the one generator produces for this catalogue, at the name given."""
+    catalogue = _regen_catalogue(target_id, unit)
+    document = fixtures._preview_fixture(
+        catalogue["targets"][0],  # type: ignore[index]
+        suffix=name,
+        severity="neutral" if name == "normal" else "warning",
+    )
+    return (json.dumps(document, indent=2) + "\n").encode("utf-8")
+
+
+def test_regen_rewrites_read_only_example_files(tmp_path: Path) -> None:
+    """F1 arm A (the refute's repro): a read-only example FILE must not tear
+    the pair — staging plus rename replaces it (rename needs the DIRECTORY's
+    write permission, not the target file's), so both files regenerate."""
+    catalogue_path = tmp_path / "binding-catalogue.json"
+    _write_catalogue(catalogue_path, "t1", "V")
+    fixtures_dir = tmp_path / "fixtures"
+    fixtures.regenerate_example_fixtures(catalogue_path, fixtures_dir)
+    for name in ("normal.json", "warning.json"):
+        document = json.loads((fixtures_dir / name).read_bytes())
+        document["bindings"][0]["unit"] = "A"  # stale content, example ids kept
+        (fixtures_dir / name).write_text(json.dumps(document), encoding="utf-8")
+    _chmod_or_skip(fixtures_dir / "warning.json", 0o444)
+
+    outcome = fixtures.regenerate_example_fixtures(catalogue_path, fixtures_dir)
+
+    assert outcome.written == ("normal.json", "warning.json"), outcome
+    assert (fixtures_dir / "normal.json").read_bytes() == _generated_bytes("t1", "V", "normal")
+    assert (fixtures_dir / "warning.json").read_bytes() == _generated_bytes("t1", "V", "warning")
+
+
+def test_regen_write_failure_is_named_and_writes_nothing(tmp_path: Path) -> None:
+    """F1 arm B: when staging cannot even begin (an unwritable directory),
+    the refusal is the named prefix and NEITHER file is touched."""
+    catalogue_path = tmp_path / "binding-catalogue.json"
+    _write_catalogue(catalogue_path, "t1", "V")
+    fixtures_dir = tmp_path / "fixtures"
+    fixtures.regenerate_example_fixtures(catalogue_path, fixtures_dir)
+    for name in ("normal.json", "warning.json"):
+        document = json.loads((fixtures_dir / name).read_bytes())
+        document["bindings"][0]["unit"] = "A"
+        (fixtures_dir / name).write_text(json.dumps(document), encoding="utf-8")
+    before = {
+        name: (fixtures_dir / name).read_bytes() for name in ("normal.json", "warning.json")
+    }
+    _chmod_or_skip(fixtures_dir, 0o555)
+    try:
+        with pytest.raises(ValueError, match="regen_fixtures_write_failed"):
+            fixtures.regenerate_example_fixtures(catalogue_path, fixtures_dir)
+    finally:
+        fixtures_dir.chmod(0o755)
+    assert {
+        name: (fixtures_dir / name).read_bytes() for name in ("normal.json", "warning.json")
+    } == before
+
+
+def test_regen_replace_failure_is_a_named_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F1 arm C (portable): a replace failing mid-pair surfaces as the named
+    prefix, never a raw errno — the staged-tempfile half of the mechanism.
+    The staged tempfile is cleaned up; the author's directory keeps only
+    its fixture files."""
+    import os
+
+    catalogue_path = tmp_path / "binding-catalogue.json"
+    _write_catalogue(catalogue_path, "t1", "V")
+    fixtures_dir = tmp_path / "fixtures"
+    fixtures.regenerate_example_fixtures(catalogue_path, fixtures_dir)
+    for name in ("normal.json", "warning.json"):
+        document = json.loads((fixtures_dir / name).read_bytes())
+        document["bindings"][0]["unit"] = "A"
+        (fixtures_dir / name).write_text(json.dumps(document), encoding="utf-8")
+
+    real_replace = os.replace
+
+    def replace_that_fails_on_warning(source, destination) -> None:
+        if Path(destination).name == "warning.json":
+            raise OSError("simulated replace failure")
+        real_replace(source, destination)
+
+    monkeypatch.setattr(os, "replace", replace_that_fails_on_warning)
+    with pytest.raises(ValueError, match="regen_fixtures_write_failed") as excinfo:
+        fixtures.regenerate_example_fixtures(catalogue_path, fixtures_dir)
+    assert "warning.json" in str(excinfo.value)
+    assert sorted(path.name for path in fixtures_dir.iterdir()) == [
+        "normal.json",
+        "warning.json",
+    ]
+
+
+def test_regen_refuses_when_an_author_file_holds_an_example_id(tmp_path: Path) -> None:
+    """F2 (the refute's worst): an author copy at its own filename carrying
+    an example id — the state the guide's own 'copyable format model'
+    invites — must REFUSE naming the colliding file, because regen writing
+    the example at its canonical name would mint a duplicate the loader
+    refuses. Before regen the directory loads clean; after a successful
+    regen it would not — so regen must not succeed."""
+    catalogue_path = tmp_path / "binding-catalogue.json"
+    _write_catalogue(catalogue_path, "t1", "V")
+    fixtures_dir = tmp_path / "fixtures"
+    fixtures.regenerate_example_fixtures(catalogue_path, fixtures_dir)
+    # The copy: guide-invited, valid, and it loads clean beside the original.
+    (fixtures_dir / "my-scenario.json").write_bytes(
+        (fixtures_dir / "normal.json").read_bytes()
+    )
+    # ...then the original goes away (the refute's exact repro).
+    (fixtures_dir / "normal.json").unlink()
+    scenarios = fixtures.load_author_fixtures(fixtures_dir, _regen_catalogue("t1", "V"))
+    assert {row.id for row in scenarios} == {"example-normal", "example-warning"}
+    copy_before = (fixtures_dir / "my-scenario.json").read_bytes()
+    warning_before = (fixtures_dir / "warning.json").read_bytes()
+
+    with pytest.raises(ValueError, match="regen_fixtures_id_collision") as excinfo:
+        fixtures.regenerate_example_fixtures(catalogue_path, fixtures_dir)
+
+    assert "my-scenario.json" in str(excinfo.value)
+    # Zero writes: the colliding copy and the surviving example are untouched,
+    # and the absent normal.json stays absent.
+    assert (fixtures_dir / "my-scenario.json").read_bytes() == copy_before
+    assert (fixtures_dir / "warning.json").read_bytes() == warning_before
+    assert not (fixtures_dir / "normal.json").exists()
+
+
+@pytest.mark.parametrize("shape", ["variables-absent", "receipt-only"])
+def test_regen_refuses_malformed_observation_target(tmp_path: Path, shape: str) -> None:
+    """F3: a malformed observation target must refuse through the loader's
+    own NAMED path (`preview_unsupported_shape:`) — never a raw KeyError
+    (variables absent) or StopIteration (receipt-only) traceback."""
+    target: dict[str, object] = {
+        "id": "t1",
+        "kind": "observation",
+        "parameter_id": "t1",
+    }
+    if shape == "variables-absent":
+        target["variables"] = []
+    else:
+        target["variables"] = [
+            {
+                "id": "time",
+                "type": "number",
+                "unit": "s",
+                "shape": "scalar",
+                "axis_role": "receipt_time",
+            }
+        ]
+    catalogue_path = tmp_path / "binding-catalogue.json"
+    catalogue_path.write_text(
+        json.dumps({"contract_version": "0.1.0", "targets": [target]}), encoding="utf-8"
+    )
+    fixtures_dir = tmp_path / "fixtures"
+
+    with pytest.raises(ValueError, match="preview_unsupported_shape"):
+        fixtures.regenerate_example_fixtures(catalogue_path, fixtures_dir)
+
+    assert not fixtures_dir.exists()
+
+
+def test_regen_unreadable_example_is_named_not_author_content(tmp_path: Path) -> None:
+    """F5: an example filename that cannot be READ (here: a directory
+    squatting the name — an OSError on every platform) is a distinct
+    refusal from author content: the file was never judged, it could not
+    be opened."""
+    catalogue_path = tmp_path / "binding-catalogue.json"
+    _write_catalogue(catalogue_path, "t1", "V")
+    fixtures_dir = tmp_path / "fixtures"
+    fixtures.regenerate_example_fixtures(catalogue_path, fixtures_dir)
+    (fixtures_dir / "normal.json").unlink()
+    (fixtures_dir / "normal.json").mkdir()
+
+    with pytest.raises(ValueError, match="regen_fixtures_unreadable_example"):
+        fixtures.regenerate_example_fixtures(catalogue_path, fixtures_dir)
+
+    assert (fixtures_dir / "normal.json").is_dir()  # untouched, never replaced
+
+    # The other half of the F5 mapping: a file that opens but does not
+    # PARSE keeps the author-content label — content the generator never
+    # wrote (the OSError-only split the guide glosses).
+    import shutil
+
+    shutil.rmtree(fixtures_dir / "normal.json")
+    (fixtures_dir / "normal.json").write_text('{"id": ', encoding="utf-8")
+    with pytest.raises(ValueError, match="regen_fixtures_author_content"):
+        fixtures.regenerate_example_fixtures(catalogue_path, fixtures_dir)
+    assert (fixtures_dir / "normal.json").read_text(encoding="utf-8") == '{"id": '

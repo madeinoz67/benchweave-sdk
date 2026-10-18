@@ -18,6 +18,8 @@ src/example_plugin/
 ```
 
 The SDK generates ui/manifest.json and schema-valid examples in ui/fixtures/.
+Run `benchweave-sdk regen-fixtures <project>` to write the two examples
+again after you edit the binding catalogue.
 Add settings/ and presets/ only for configuration actions the descriptor implements.
 Keep resources inside the Python package so they ship in the wheel.
 Keep collected data, credentials and deployment configuration outside it.
