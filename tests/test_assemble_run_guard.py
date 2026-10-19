@@ -66,6 +66,21 @@ open(sys.argv[1], "w").write(str(os.getpgrp()))
 time.sleep(3600)
 """
 
+# F3's shape: a SUCCESS banner first, the failure banner later — both before
+# the OK grace expires. Whichever ending fires says whether FAIL outranks.
+_CHILD_OK_THEN_FAIL = f"""
+import os, subprocess, sys, time
+subprocess.Popen([sys.executable, "-c", {GRANDCHILD!r}])
+for line in ({BANNER_OK_HEAD!r}, {BANNER_TOTAL_TIME!r}, {BANNER_SITE_READY!r}):
+    sys.stdout.write(line + "\\n")
+sys.stdout.flush()
+open(sys.argv[1], "w").write(str(os.getpgrp()))
+time.sleep(2.5)
+sys.stdout.write({BANNER_FAIL!r} + "\\n")
+sys.stdout.flush()
+time.sleep(3600)
+"""
+
 _CHILD_CLEAN_EXIT = f"""
 import sys
 for line in ({BANNER_OK_HEAD!r}, {BANNER_TOTAL_TIME!r}, {BANNER_SITE_READY!r}):
@@ -221,11 +236,31 @@ def test_clean_exit_child_pays_no_grace_and_honors_the_real_code(
 
 
 @POSIX_ONLY
+def test_an_ok_banner_then_a_fail_banner_still_fails(tmp_path: Path) -> None:
+    """F3 (fold wave): a sighted FAIL banner prohibits E2 outright — the
+    earlier OK's grace deadline must not win the race. Both markers land
+    inside one grace window here (OK at ~0s, FAIL at ~2.5s, grace 6s): the
+    pre-fix code returned SUCCESS at the OK deadline with the FAIL banner
+    never gated; the fix waits out the fail grace and ends E3."""
+    mod = _load()
+    pgid_file = tmp_path / "ok-then-fail-pgid"
+    with pytest.raises(SystemExit, match=r"command failed \(banner\)"):
+        mod.run(
+            [sys.executable, "-c", _CHILD_OK_THEN_FAIL, str(pgid_file)],
+            cwd=tmp_path,
+            done_marker=True,
+            grace=6.0,  # both markers sighted inside this window
+            timeout=60.0,
+        )
+    assert _group_is_empty(pgid_file)
+
+
+@POSIX_ONLY
 def test_fail_banner_hang_fails_loudly_naming_the_command(tmp_path: Path) -> None:
-    """Acceptance §8 item 3: the FAIL banner outranks everything (checked
-    first) — the run reclaims the group, then raises SystemExit naming the
-    command; no exit code exists to report, and the message says 'banner'
-    rather than fabricating one."""
+    """Acceptance §8 item 3: the FAIL banner outranks everything — a sighted
+    FAIL prohibits E2 (F3), so the run reclaims the group and raises
+    SystemExit naming the command; no exit code exists to report, and the
+    message says 'banner' rather than fabricating one."""
     mod = _load()
     pgid_file = tmp_path / "fail-hang-pgid"
     with pytest.raises(SystemExit, match=r"command failed \(banner\)") as excinfo:

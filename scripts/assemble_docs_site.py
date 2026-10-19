@@ -344,7 +344,10 @@ def _run_marker_guarded(
             _reclaim_group(proc)
             _join_reader(reader)
             raise SystemExit(f"command failed (banner): {' '.join(cmd)}")
-        if marked["ok"] and now - marked["ok"] >= grace:  # E2 — the work is done
+        # F3: a sighted FAIL banner prohibits E2 outright — an earlier-sighted
+        # OK must not win the sight-time + grace race; the loop then waits out
+        # the fail grace above and ends E3.
+        if marked["ok"] and marked["fail"] == 0.0 and now - marked["ok"] >= grace:
             _reclaim_group(proc)
             _join_reader(reader)
             log(
