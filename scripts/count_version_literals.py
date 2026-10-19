@@ -67,7 +67,8 @@ plugin and docs trees.
 PROSE SCOPE (issue #412, design record 2026-10-19): a second scan class
 over this repository's release-managed prose surfaces — every file under
 ``website/`` (assets included), ``README.md``, ``index.qmd`` and every
-``*.qmd`` under ``user_guide/`` — the gateway docs scope's shape (VR-24)
+file under ``user_guide/`` (F2 fold wave: the directory gates, any
+extension and case) — the gateway docs scope's shape (VR-24)
 with register pins instead of a snapshot, because these literals
 legitimately move every release. The matcher is ``PATTERN_DOCS``, copied
 VERBATIM from the gateway copy (``scripts/standards/
@@ -687,7 +688,8 @@ def _refuse_symlinks(paths: list[Path]) -> None:
 def _prose_files() -> list[Path]:
     """The enumerated prose surface set (issue #412): every FILE under
     ``website/`` (assets included), ``README.md``, ``index.qmd`` and every
-    ``*.qmd`` under ``user_guide/`` — an allowlist of surfaces, not a
+    FILE under ``user_guide/`` (F2: directory-gated, any name) — an
+    allowlist of surfaces, not a
     tree walk, so the excluded classes named in the docstring are
     outside the denominator by construction. A missing surface root is
     a refusal, never a silently narrower denominator (the code roots'
@@ -702,16 +704,22 @@ def _prose_files() -> list[Path]:
         if surface.is_symlink():
             raise OSError(f"prose surface is a symlink: {surface.name}")
     website_entries = sorted(website.rglob("*"))
-    guide_entries = sorted(user_guide.rglob("*.qmd"))
+    # F2 (fold wave 2026-10-19): user_guide/ is DIRECTORY-gated, not
+    # extension-gated — every file under it counts. The extension gate
+    # (rglob('*.qmd')) missed a renamed page in one edit and was
+    # case-sensitive on POSIX besides; the directory has no case to be
+    # wrong about.
+    guide_entries = sorted(user_guide.rglob("*"))
     # Every WALK entry is symlink-checked, not only the kept files: a
     # directory symlink fails is_file and would otherwise skip the check
     # that exists to catch exactly it.
     _refuse_symlinks(website_entries + guide_entries + [readme, index_qmd])
     website_files = [path for path in website_entries if path.is_file()]
+    guide_files = [path for path in guide_entries if path.is_file()]
     files = website_files
     files.append(readme)
     files.append(index_qmd)
-    files.extend(guide_entries)
+    files.extend(guide_files)
     return sorted(files)
 
 

@@ -868,3 +868,31 @@ class TestProseFoldHardening:
         assert code == 1, out
         assert "version_literal_count_failed" in out
         assert "website/legacy-docs" in out
+
+    def test_a_markdown_file_under_user_guide_refuses(self, tmp_path: Path, capsys) -> None:
+        """F2: user_guide/ coverage was extension-gated (*.qmd), so a
+        renamed page escapes the scan and the census with one edit —
+        user_guide/notes.md carrying a stale claim exits 0."""
+        scratch = _prose_scratch(tmp_path)
+        (scratch / "user_guide/notes.md").write_text(
+            "Requires SDK 0.7.1 or later.\n", encoding="utf-8"
+        )
+        code, out = _prose_run(scratch, capsys)
+        assert code == 1, out
+        assert "user_guide/notes.md:1" in out
+        assert "prose census failed" in out
+
+    def test_an_uppercase_extension_under_user_guide_refuses(
+        self, tmp_path: Path, capsys
+    ) -> None:
+        """F2: the extension gate was also CASE-sensitive on POSIX —
+        NOTES.QMD is invisible to rglob('*.qmd') on the very platform
+        CI runs it. The directory walk has no case to be wrong about."""
+        scratch = _prose_scratch(tmp_path)
+        (scratch / "user_guide/NOTES.QMD").write_text(
+            "Requires SDK 0.7.1 or later.\n", encoding="utf-8"
+        )
+        code, out = _prose_run(scratch, capsys)
+        assert code == 1, out
+        assert "user_guide/NOTES.QMD:1" in out
+        assert "prose census failed" in out
