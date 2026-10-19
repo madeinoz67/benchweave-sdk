@@ -25,6 +25,13 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "assemble_docs_site.py"
 
+# The repo's POSIX-only convention (tests/server/test_lifecycle.py): arms that
+# exercise process groups / signals skip on Windows, where CPython silently
+# ignores start_new_session and os.getpgrp does not exist.
+POSIX_ONLY = pytest.mark.skipif(
+    sys.platform == "win32", reason="process-group arm: POSIX only"
+)
+
 # The literal great-docs 0.17.0 banner shape (design §2.3's local 2m20s run).
 # Counts and the output path are synthetic; the marker strings the runner
 # matches on are the tool's own fixed text.
@@ -87,6 +94,36 @@ import os, sys, time
 sys.stdout.write({BANNER_SITE_READY!r} + "\\n")
 sys.stdout.flush()
 open(sys.argv[1], "w").write(str(os.getpgrp()))
+time.sleep(3600)
+"""
+
+# The --from-repo wrapper's own completion line (great_docs/core.py:16736 in
+# 0.17.0): printed after the built site is copied into --output-dir, before
+# the finally-rmtree of the temp clone.
+SITE_BUILT_LINE = "Site built successfully"
+
+# A faithful --from-repo child: the INNER build's banner first, then 32 files
+# of copy work in four batches (the copytree tail the outer process still has
+# ahead of it when the inner banner lands), then the OUTER completion line,
+# then the CI wedge (never exits, two grandchildren held).
+_CHILD_ISO_FAITHFUL = f"""
+import os, subprocess, sys, time
+out = sys.argv[1]
+os.makedirs(out, exist_ok=True)
+for _ in range(2):
+    subprocess.Popen([sys.executable, "-c", {GRANDCHILD!r}])
+for line in ({BANNER_OK_HEAD!r}, {BANNER_TOTAL_TIME!r}, {BANNER_SITE_READY!r}):
+    sys.stdout.write(line + "\\n")
+sys.stdout.flush()
+open(sys.argv[2], "w").write(str(os.getpgrp()))
+for batch in range(4):
+    for i in range(8):
+        open(os.path.join(out, f"page-{{batch}}-{{i}}.html"), "w").write("<html>x</html>\\n")
+    sys.stdout.write(f"copied batch {{batch}}\\n")
+    sys.stdout.flush()
+    time.sleep(0.5)
+sys.stdout.write({SITE_BUILT_LINE!r} + "\\n")
+sys.stdout.flush()
 time.sleep(3600)
 """
 
@@ -234,6 +271,44 @@ def test_a_lone_site_ready_line_does_not_complete_the_marker(tmp_path: Path) -> 
             grace=1.5,  # a false-positive marker would end here first, via E2
             timeout=4.0,
         )
+    assert _group_is_empty(pgid_file)
+
+
+@POSIX_ONLY
+def test_isolated_marker_waits_for_the_outer_completion_line(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """F1 (fold wave): the --from-repo call site's marker is the OUTER
+    process's own completion line — "Site built successfully", printed after
+    the built site is copied into --output-dir — never the inner build's
+    banner, which lands while the outer still has the copy (and the temp
+    clone cleanup) ahead of it. A faithful child (inner banner, 32 files of
+    copy work in four batches, outer line, then the wedge) must return with
+    EVERY file present: a reclaim at the inner banner is silent truncation
+    reported as success — lane A measured 1337/3000 files with index.html
+    present, which bucket_source() and the existence-only verify_tree()
+    would both pass. Real-run confirmation: the captured 0.17.0 --from-repo
+    tail is inner banner box, "Copying built site to <out>...",
+    "Site built successfully: <out>"."""
+    mod = _load()
+    out_dir = tmp_path / "iso-out"
+    pgid_file = tmp_path / "iso-pgid"
+    out = mod.run(
+        [sys.executable, "-c", _CHILD_ISO_FAITHFUL, str(out_dir), str(pgid_file)],
+        cwd=tmp_path,
+        done_marker="isolated",
+        grace=1.0,  # below the ~2s copy tail: an inner-banner match fires mid-copy
+        timeout=60.0,
+    )
+    assert out == ""
+    copied = sorted(out_dir.glob("page-*.html"))
+    assert len(copied) == 32, (
+        f"truncated copy reported as success: {len(copied)}/32 files at return"
+    )
+    captured = capsys.readouterr().out
+    assert captured.index("Site built successfully") < captured.index(
+        "reclaimed after"
+    ), "the reclaim must follow the outer completion line, not the inner banner"
     assert _group_is_empty(pgid_file)
 
 

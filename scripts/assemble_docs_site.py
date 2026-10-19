@@ -95,17 +95,29 @@ GREAT_DOCS_TIMEOUT = 900
 # on CI the tool can print its completion banner and then never exit
 # (interpreter shutdown wedges with the work already done; local 0.17.0 runs
 # exit cleanly — root cause named upstream, evidence in the design record).
-# The two great-docs call sites run with done_marker=True, so the step ends
-# at the tool's own banner instead of waiting for a process exit that never
-# comes: the OK marker is the conjunction of "[OK] Build complete" and a
-# following "Site ready" line inside the one banner box (a lone quoted string
-# cannot complete it), "[FAIL] Build failed" outranks both, and the child's
-# whole process group is reclaimed after a grace period — the masked exit
-# code is disclosed in the log and the artifacts are still gated downstream
-# by bucket_source()/verify_tree().
+# The two great-docs call sites run with done_marker set, so the step ends at
+# the tool's own work-done signal instead of waiting for a process exit that
+# never comes — and the marker is PER CALL SITE (fold F1):
+# - "inproc" (the in-process multi-version build): the tool's own banner box
+#   — the conjunction of "[OK] Build complete" and a following "Site ready"
+#   line (a lone quoted string cannot complete it), "[FAIL] Build failed"
+#   outranks both. The banner is provably build()'s final statement on this
+#   path, so a reclaim after it discards nothing.
+# - "isolated" (the --from-repo wrapper): the OUTER process's completion line
+#   "Site built successfully", printed only after the built site is copied
+#   into --output-dir (great_docs/core.py:16734-16736). The inner build's
+#   banner DOES appear here — with real work (the copy, then the temp-clone
+#   rmtree) still ahead of the outer process — so matching it would kill a
+#   healthy build mid-copy and report truncated output as success. The inner
+#   FAIL banner is ignored for the same reason: an inner failure makes the
+#   outer exit non-zero (E1) or hang (E4), both loud already.
+# In every E2 the child's whole process group is reclaimed after the grace
+# period — the masked exit code is disclosed in the log, and the artifacts
+# are still gated downstream by bucket_source()/verify_tree().
 OK_BANNER_HEAD_RE = re.compile(r"\[OK\] Build complete")
 SITE_READY_RE = re.compile(r"Site ready")
 FAIL_BANNER_RE = re.compile(r"\[FAIL\] Build failed")
+SITE_BUILT_RE = re.compile(r"Site built successfully")
 RECLAIM_TERM_TO_KILL_S = 10.0
 RECLAIM_PROBE_DRAIN_S = 2.0
 
@@ -144,7 +156,7 @@ def run(
     cwd: Path | None = None,
     timeout: float | None = None,
     stream: bool = False,
-    done_marker: bool = False,
+    done_marker: bool | str = False,
     grace: float = 30.0,
 ) -> str:
     """Run a subprocess loudly (issue #475: no silent phases, no unbounded children).
@@ -154,14 +166,20 @@ def run(
     default captures, for callers that parse it (git helpers). A timeout aborts
     with the command named; a non-zero exit prints the captured output first.
 
-    ``done_marker=True`` (the two great-docs call sites only) ends the run at
-    the tool's own completion banner — the marker contract above — reclaiming
-    the child's process group when the tool hangs past its last word. ``stream``
-    is superseded there: the guarded path forwards output through a reader
-    thread instead of inheriting the fds.
+    ``done_marker`` (the two great-docs call sites only) ends the run at the
+    tool's own work-done signal — the marker contract above, PER CALL SITE:
+    ``"inproc"`` (or ``True``) watches the in-process banner box,
+    ``"isolated"`` watches the --from-repo wrapper's "Site built successfully"
+    line. The guarded path reclaims the child's process group when the tool
+    hangs past its last word; ``stream`` is superseded there (a reader thread
+    forwards output instead of inheriting the fds). ``timeout`` stays
+    mandatory in practice for a guarded run: with ``timeout=None`` the E4
+    backstop cannot fire, so a child that never exits and never markers would
+    hang forever — both call sites pass GREAT_DOCS_TIMEOUT.
     """
     if done_marker:
-        return _run_marker_guarded(cmd, cwd=cwd, timeout=timeout, grace=grace)
+        marker = "inproc" if done_marker is True else done_marker
+        return _run_marker_guarded(cmd, cwd=cwd, timeout=timeout, grace=grace, marker=marker)
     try:
         proc = subprocess.run(
             cmd, cwd=cwd, capture_output=not stream, text=True, timeout=timeout
@@ -175,17 +193,27 @@ def run(
     return proc.stdout or ""
 
 
-def _forward_and_mark(proc: subprocess.Popen[str], marked: dict[str, float]) -> None:
+def _forward_and_mark(
+    proc: subprocess.Popen[str], marked: dict[str, float], marker: str
+) -> None:
     """Daemon reader: forward every child line to stdout, flushed (the live
     build output issue #475 fought for), and time-stamp the first sight of
-    each completion marker. The FAIL banner is checked first — a failure
-    banner outranks any earlier success text; the OK marker is completed only
-    by a "Site ready" line that follows the "[OK] Build complete" head."""
+    the call site's completion marker. "inproc": the FAIL banner is checked
+    first — a failure banner outranks any earlier success text — and the OK
+    marker is completed only by a "Site ready" line that follows the
+    "[OK] Build complete" head. "isolated": only the outer wrapper's "Site
+    built successfully" line completes the OK marker; the inner build's
+    banner and FAIL lines are deliberately not watched (see the marker
+    contract above)."""
     out = proc.stdout
     assert out is not None
     for line in out:
         sys.stdout.write(line)
         sys.stdout.flush()
+        if marker == "isolated":
+            if SITE_BUILT_RE.search(line) and marked["ok"] == 0.0:
+                marked["ok"] = time.monotonic()
+            continue
         if FAIL_BANNER_RE.search(line):
             if marked["fail"] == 0.0:
                 marked["fail"] = time.monotonic()
@@ -253,7 +281,12 @@ def _join_reader(reader: threading.Thread) -> None:
 
 
 def _run_marker_guarded(
-    cmd: list[str], *, cwd: Path | None, timeout: float | None, grace: float
+    cmd: list[str],
+    *,
+    cwd: Path | None,
+    timeout: float | None,
+    grace: float,
+    marker: str = "inproc",
 ) -> str:
     """run() under the #476 marker contract — four endings, all loud:
 
@@ -280,7 +313,9 @@ def _run_marker_guarded(
         bufsize=1,
     )
     marked: dict[str, float] = {"ok": 0.0, "fail": 0.0, "head": 0.0}
-    reader = threading.Thread(target=_forward_and_mark, args=(proc, marked), daemon=True)
+    reader = threading.Thread(
+        target=_forward_and_mark, args=(proc, marked, marker), daemon=True
+    )
     reader.start()
     started = time.monotonic()
     while True:
@@ -421,7 +456,10 @@ def isolated_build(great_docs: str, repo_url: str, ref: str, version: str, out_d
         cwd=REPO,
         timeout=GREAT_DOCS_TIMEOUT,
         stream=True,  # issue #475: --from-repo output must stream, never sit captured
-        done_marker=True,  # issue #476: end at the tool's banner (the wedged-CI child never exits)
+        # F1: the OUTER wrapper's completion line is the marker here — the
+        # inner build's banner lands with the copy still ahead (see the
+        # marker contract above); matching it truncates a healthy build.
+        done_marker="isolated",
     )
 
 
@@ -835,7 +873,7 @@ def main() -> None:
             cwd=REPO,
             timeout=GREAT_DOCS_TIMEOUT,
             stream=True,  # issue #475: in-process build output streams, bounded at 900s
-            done_marker=True,  # issue #476: end at the banner, not at a bound
+            done_marker="inproc",  # issue #476: end at the banner box, not at a bound
         )
         replace_dir(REPO / "great-docs" / "_site", docs_root)
     else:
