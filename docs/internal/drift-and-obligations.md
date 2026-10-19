@@ -84,6 +84,22 @@ rubric's G5 gate is the obligation; this file is the detail behind it.
    (design §3 residual) — those stay review's job; the prose-refusal surfaces are pinned
    code-free by `CODE_FREE_SKILLS` in the same module.
 
+10. **Release-managed prose surfaces** (issue #412) → `website/**`, `README.md`,
+   `index.qmd`, `user_guide/**/*.qmd`: every three-component version literal on these
+   surfaces is counted by the twin's prose scan class
+   (`scripts/count_version_literals.py`, the CI "Version-literal zero gate" step) against
+   per-file site pins (`PROSE_REGISTER`), a pinned scanned-file census
+   (`PROSE_FILE_CENSUS`) and the derived `website/index.html` expectation (from
+   `great-docs.yml`'s versions map). Motion mechanisms: release-cut's
+   occurrence-validated substitutions move the README stamp, the hero and the tagline;
+   the badge row, the landing-page baseline claim and the guide's pedagogy examples move
+   by editorial pass in the arc that changes their authority — the release-review
+   matrix's walked row 5 remains the VALUE check, because the gate pins counts, not
+   values (the value-drift class is deferral V1 in the #412 design record,
+   `.claude/deep-review/2026-10-19-issue412-version-literal-gate-design.md`). The
+   gateway's obligation-18 amendment and obligation-22 annotation land with the gateway
+   docs PR after this repository's PR merges (the design's ordering, risk R5).
+
 ## CI map
 
 | Job | What it catches |
