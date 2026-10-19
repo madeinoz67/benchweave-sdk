@@ -51,6 +51,7 @@ GRANDCHILD = "import time; time.sleep(3600)"
 # run() returns.
 _CHILD_OK_HANG = f"""
 import os, subprocess, sys, time
+sys.stdout.reconfigure(encoding="utf-8")
 for _ in range(2):
     subprocess.Popen([sys.executable, "-c", {GRANDCHILD!r}])
 for line in ({BANNER_OK_HEAD!r}, {BANNER_TOTAL_TIME!r}, {BANNER_SITE_READY!r}):
@@ -62,6 +63,7 @@ time.sleep(3600)
 
 _CHILD_FAIL_HANG = f"""
 import os, subprocess, sys, time
+sys.stdout.reconfigure(encoding="utf-8")
 subprocess.Popen([sys.executable, "-c", {GRANDCHILD!r}])
 sys.stdout.write({BANNER_FAIL!r} + "\\n")
 sys.stdout.flush()
@@ -73,6 +75,7 @@ time.sleep(3600)
 # the OK grace expires. Whichever ending fires says whether FAIL outranks.
 _CHILD_OK_THEN_FAIL = f"""
 import os, subprocess, sys, time
+sys.stdout.reconfigure(encoding="utf-8")
 subprocess.Popen([sys.executable, "-c", {GRANDCHILD!r}])
 for line in ({BANNER_OK_HEAD!r}, {BANNER_TOTAL_TIME!r}, {BANNER_SITE_READY!r}):
     sys.stdout.write(line + "\\n")
@@ -86,6 +89,7 @@ time.sleep(3600)
 
 _CHILD_CLEAN_EXIT = f"""
 import sys
+sys.stdout.reconfigure(encoding="utf-8")
 for line in ({BANNER_OK_HEAD!r}, {BANNER_TOTAL_TIME!r}, {BANNER_SITE_READY!r}):
     sys.stdout.write(line + "\\n")
 sys.stdout.flush()
@@ -93,12 +97,14 @@ sys.stdout.flush()
 
 _CHILD_EXIT_SEVEN = """
 import sys
+sys.stdout.reconfigure(encoding="utf-8")
 sys.stdout.write("partial output before failure\\n")
 sys.exit(7)
 """
 
 _CHILD_NO_BANNER_HANG = f"""
 import os, subprocess, sys, time
+sys.stdout.reconfigure(encoding="utf-8")
 for _ in range(2):
     subprocess.Popen([sys.executable, "-c", {GRANDCHILD!r}])
 sys.stdout.write("step 12/19 rendering reference pages\\n")
@@ -109,6 +115,7 @@ time.sleep(3600)
 
 _CHILD_SITE_READY_ONLY = f"""
 import os, sys, time
+sys.stdout.reconfigure(encoding="utf-8")
 sys.stdout.write({BANNER_SITE_READY!r} + "\\n")
 sys.stdout.flush()
 open(sys.argv[1], "w").write(str(os.getpgrp()))
@@ -126,6 +133,7 @@ SITE_BUILT_LINE = "Site built successfully"
 # then the CI wedge (never exits, two grandchildren held).
 _CHILD_ISO_FAITHFUL = f"""
 import os, subprocess, sys, time
+sys.stdout.reconfigure(encoding="utf-8")
 out = sys.argv[1]
 os.makedirs(out, exist_ok=True)
 for _ in range(2):
@@ -375,7 +383,12 @@ def test_reclaim_reaps_a_zombie_leader_instead_of_stranding_it(
     class only (disclosed)."""
     mod = _load()
     proc = subprocess.Popen(
-        [sys.executable, "-c", "import sys; sys.stdout.write('exited\\n')"],
+        [
+            sys.executable,
+            "-c",
+            "import sys; sys.stdout.reconfigure(encoding='utf-8'); "
+            "sys.stdout.write('exited\\n')",
+        ],
         stdout=subprocess.DEVNULL,
         start_new_session=True,
     )
