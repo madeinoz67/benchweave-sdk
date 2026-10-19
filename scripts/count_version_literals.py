@@ -820,7 +820,7 @@ def main(argv: list[str] | None = None) -> int:
     except StandardSetDrift as exc:
         print(str(exc), file=sys.stderr)
         return 1
-    except (OSError, SyntaxError) as exc:
+    except (OSError, SyntaxError, UnicodeDecodeError) as exc:
         print(f"version_literal_count_failed: {exc}", file=sys.stderr)
         return 1
 

@@ -896,3 +896,16 @@ class TestProseFoldHardening:
         assert code == 1, out
         assert "user_guide/NOTES.QMD:1" in out
         assert "prose census failed" in out
+
+    def test_non_utf8_bytes_refuse_with_the_documented_shape(
+        self, tmp_path: Path, capsys
+    ) -> None:
+        """F3: unreadable bytes are a REFUSAL in the documented shape —
+        version_literal_count_failed naming the failure — not a raw
+        UnicodeDecodeError traceback. The exit code was already 1
+        (fail-closed held) but the reader saw the wrong thing."""
+        scratch = _prose_scratch(tmp_path)
+        (scratch / "website/assets/bad.css").write_bytes(b"/* caf\xe9 */\n")
+        code, out = _prose_run(scratch, capsys)
+        assert code == 1, out
+        assert "version_literal_count_failed" in out
