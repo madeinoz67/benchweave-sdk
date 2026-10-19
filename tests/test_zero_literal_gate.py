@@ -27,6 +27,18 @@ FIXTURE_SCHEMA_TEMPLATE = (
 )
 
 
+def _copy_prose_surfaces(scratch: Path) -> None:
+    """The bare gate's second scope (issue #412): the prose surfaces must
+    ride every scratch tree the battery runs the widened bare command
+    over — a scratch tree without them refuses on the missing surface,
+    which is the counter's fail-closed posture working, not a defect."""
+    shutil.copytree(REPO / "website", scratch / "website")
+    shutil.copytree(REPO / "user_guide", scratch / "user_guide")
+    shutil.copy(REPO / "README.md", scratch / "README.md")
+    shutil.copy(REPO / "index.qmd", scratch / "index.qmd")
+    shutil.copy(REPO / "great-docs.yml", scratch / "great-docs.yml")
+
+
 class TestScaffoldDerivation:
     """The example descriptor's pin is derived (§1.4). Since WS2 the
     descriptor is template output, so the derivation is pinned through the
@@ -216,6 +228,7 @@ class TestTwinCounter:
         shutil.copytree(
             REPO / "src/benchweave_sdk_server", scratch / "src/benchweave_sdk_server"
         )
+        _copy_prose_surfaces(scratch)
         planted = scratch / "src/benchweave_sdk_server/session.py"
         planted.write_text('_PLANT = "9.9.9"\n', encoding="utf-8")
         result = subprocess.run(
@@ -257,6 +270,7 @@ class TestTwinCounter:
         shutil.copytree(
             REPO / "src/benchweave_sdk_server", scratch / "src/benchweave_sdk_server"
         )
+        _copy_prose_surfaces(scratch)
         planted = scratch / "src/benchweave_sdk/packaging.py"
         planted.write_text('_PLANT = "9.9.9"\n', encoding="utf-8")
         result = subprocess.run(
@@ -281,6 +295,7 @@ class TestTwinCounter:
         shutil.copytree(
             REPO / "src/benchweave_sdk_server", scratch / "src/benchweave_sdk_server"
         )
+        _copy_prose_surfaces(scratch)
         planted = scratch / "src/benchweave_sdk/packaging.py"
         planted.write_text('_PLANT = "9." + "9.9"\n', encoding="utf-8")
         result = subprocess.run(
@@ -307,6 +322,7 @@ class TestTwinCounter:
         shutil.copytree(
             REPO / "src/benchweave_sdk_server", scratch / "src/benchweave_sdk_server"
         )
+        _copy_prose_surfaces(scratch)
         registered = scratch / "src/benchweave_sdk/publishing.py"
         registered.write_bytes(
             registered.read_bytes() + b'\n_PLANT = "9.9.9"\n',  # noqa: E501
@@ -356,6 +372,7 @@ class TestFoldHardening:
         (scratch / "scripts").mkdir(exist_ok=True)
         shutil.copy(COUNTER, scratch / "scripts/count_version_literals.py")
         shutil.copy(REPO / "standards-lock.json", scratch / "standards-lock.json")
+        _copy_prose_surfaces(scratch)
         return scratch
 
     def test_standard_id_set_is_pinned_to_the_lock(self) -> None:
@@ -663,11 +680,7 @@ class TestProseScope:
         (scratch / "scripts").mkdir(parents=True)
         shutil.copy(COUNTER, scratch / "scripts/count_version_literals.py")
         shutil.copy(REPO / "standards-lock.json", scratch / "standards-lock.json")
-        shutil.copytree(REPO / "website", scratch / "website")
-        shutil.copytree(REPO / "user_guide", scratch / "user_guide")
-        shutil.copy(REPO / "README.md", scratch / "README.md")
-        shutil.copy(REPO / "index.qmd", scratch / "index.qmd")
-        shutil.copy(REPO / "great-docs.yml", scratch / "great-docs.yml")
+        _copy_prose_surfaces(scratch)
         return scratch
 
     def _counter_at(self, scratch: Path):

@@ -64,6 +64,37 @@ a silent pass). ``scripts/``, ``tests/`` and ``.github/`` of
 this repository are OUTSIDE the gate; the gateway's lanes own the gateway,
 plugin and docs trees.
 
+PROSE SCOPE (issue #412, design record 2026-10-19): a second scan class
+over this repository's release-managed prose surfaces — every file under
+``website/`` (assets included), ``README.md``, ``index.qmd`` and every
+``*.qmd`` under ``user_guide/`` — the gateway docs scope's shape (VR-24)
+with register pins instead of a snapshot, because these literals
+legitimately move every release. The matcher is ``PATTERN_DOCS``, copied
+VERBATIM from the gateway copy (``scripts/standards/
+count_version_literals.py`` in the gateway repository — that copy is this
+definition's authority; folding it into the shared counter region above
+is deferral H1 of the design record, carried by the next gateway pointer
+PR). The surface set is an enumerated allowlist of surfaces, NOT a tree
+walk: ``docs/superpowers`` (local-untracked planning trees),
+``CHANGELOG.md`` (tool-generated history), ``docs/**`` (internal history
+records), ``great-docs.yml`` (release machinery — the DERIVATION source,
+below), ``pyproject.toml``/``uv.lock``/``standards-lock.json`` (machine
+authorities), ``template/``, ``.github/`` and ``scripts/`` are outside
+the denominator by construction; any future widening onto ``docs/`` must
+add named-exclusion constants (the gateway ``DOCS_EXCLUDED_DIRS``
+precedent). ``website/index.html``'s expectation is DERIVED from the
+``great-docs.yml`` versions map (``2 x release_count +
+PROSE_INDEX_STATIC``), so a clean release train never reddens: a cut
+moves hero/tagline values in place (count-neutral) and the phase-2
+registration adds one map row plus its selector occurrences (the
+derivation reads the new map length). Every other carried file is pinned
+per-file in ``PROSE_REGISTER`` with EXACT counts — shrinkage reds like
+growth — and the scanned-file census (``PROSE_FILE_CENSUS``) reds on any
+new or removed prose file even when it carries zero literals. Count pins
+do NOT catch value drift on registered sites (in-place substitutions at
+unchanged cardinality) — that class is deferral V1, fixed editorially by
+the design's R1 riders at land time.
+
 THE REGISTER — the exemption list with teeth (the gateway register's own
 shape, #221 §1.3): each entry names a file, the reason it is authored data
 rather than a derivation site, and the EXACT number of literals it may
@@ -530,6 +561,213 @@ def count_sites() -> tuple[list[dict[str, Any]], int]:
     return sites, scanned
 
 
+# --- the prose scan class (issue #412, design record 2026-10-19) ----------
+# The PROSE matcher (docs scope): three-component versions with the cheap
+# widenings (fold row 7b) — an optional v/V prefix and a -dev/-rc/-alpha/
+# -beta prerelease suffix — anchored so dotted quads stop counting: an IP
+# fragment like ``127.0.0`` inside ``127.0.0.1`` is preceded by or followed
+# by another dotted component and matches neither boundary rule. A
+# sentence-final period survives (``(?!\.\d)`` only excludes a FOLLOWING
+# dotted component).
+PATTERN_DOCS = re.compile(r"(?<![\w.])(?:[vV])?\d+\.\d+\.\d+(?:-(?:dev|rc|alpha|beta)\d*)?(?!\.\d)")
+
+# The prose register (the code REGISTER's exact-count semantics, kept in a
+# second constant so the register SEMANTICS are unchanged):
+# display-relative path -> (reason naming the motion mechanism,
+# expected_sites). website/index.html is NOT here — its expectation is
+# derived (below).
+PROSE_REGISTER: dict[str, tuple[str, int]] = {
+    "README.md": (
+        "release-cut occurrence-validated substitution moves the baseline "
+        "stamp; the --firmware example and the plugin-ui/0.3.0 guide "
+        "citation are authored data (the citation resolves against the "
+        "gateway's copy-never-move corpus tree)",
+        4,
+    ),
+    "index.qmd": (
+        "baseline claim naming the lock's ACTIVE otdp row; motion = the "
+        "standards-bump arc's editorial pass (value drift at unchanged "
+        "cardinality is deferral V1 — this gate pins counts, not values)",
+        1,
+    ),
+    "user_guide/plugin-sdk.qmd": (
+        "pinned-descriptor pedagogy (the per-pin examples name retained "
+        "versions by intent) plus the versionless current-SDK claim (the "
+        "R1 rider: no mechanism moves a hand-stamped SDK number, so the "
+        "guide claims none)",
+        7,
+    ),
+    "user_guide/getting-started.qmd": (
+        "authored example inside the executed sh fence — cross-pinned by "
+        "tests/test_getting_started.py's firmware arm",
+        1,
+    ),
+}
+
+# website/index.html's derived expectation: every registered release
+# contributes its selector row's two occurrences EXCEPT the current
+# release's row (one — its value attribute is "docs/"), so
+# expected = 2 * release_count + static. A template redesign changes the
+# multiplicity: the gate reds loudly and the fix is this one constant — a
+# visible register diff.
+PROSE_INDEX_STATIC = 11
+VERSIONS_MAP_ROW = re.compile(r"^\s*- tag: v\d+\.\d+\.\d+\s*$")
+
+# The scanned-file census (the gateway snapshot's file_count discipline,
+# named): the enumerated prose surface set, pinned — a new or removed file
+# reds even when it carries zero literals.
+PROSE_FILE_CENSUS: frozenset[str] = frozenset(
+    {
+        "README.md",
+        "index.qmd",
+        "user_guide/getting-started.qmd",
+        "user_guide/glossary.qmd",
+        "user_guide/plugin-sdk.qmd",
+        "user_guide/troubleshooting.qmd",
+        "user_guide/which-checkout.qmd",
+        "website/assets/logo.svg",
+        "website/assets/site.js",
+        "website/assets/styles.css",
+        "website/index.html",
+    }
+)
+
+
+def _release_count_from_versions_map() -> int:
+    """The ``great-docs.yml`` ``versions:`` map's release rows —
+    uncommented ``- tag: vX.Y.Z`` lines only (the anchored pattern cannot
+    match the commented header examples or the trailing ``dev`` row). A
+    future prerelease-tagged map row with selector occurrences reddens
+    the derived expectation — a visible one-constant edit, the same
+    posture as a template-multiplicity change."""
+    map_path = REPO_ROOT / "great-docs.yml"
+    if not map_path.is_file():
+        raise OSError("prose derivation source missing: great-docs.yml")
+    return sum(
+        1
+        for line in map_path.read_text(encoding="utf-8").splitlines()
+        if VERSIONS_MAP_ROW.match(line)
+    )
+
+
+def _prose_expectations() -> dict[str, tuple[str, int]]:
+    """Per-file (reason, expected_sites) over the whole prose surface:
+    the register rows plus the DERIVED website/index.html row."""
+    derived = (
+        f"derived: 2 x releases + {PROSE_INDEX_STATIC} static, from "
+        "great-docs.yml's versions map",
+        2 * _release_count_from_versions_map() + PROSE_INDEX_STATIC,
+    )
+    return {**PROSE_REGISTER, "website/index.html": derived}
+
+
+def _prose_files() -> list[Path]:
+    """The enumerated prose surface set (issue #412): every FILE under
+    ``website/`` (assets included), ``README.md``, ``index.qmd`` and every
+    ``*.qmd`` under ``user_guide/`` — an allowlist of surfaces, not a
+    tree walk, so the excluded classes named in the docstring are
+    outside the denominator by construction. A missing surface root is
+    a refusal, never a silently narrower denominator (the code roots'
+    own rule)."""
+    website = REPO_ROOT / "website"
+    user_guide = REPO_ROOT / "user_guide"
+    readme = REPO_ROOT / "README.md"
+    index_qmd = REPO_ROOT / "index.qmd"
+    for surface in (website, user_guide, readme, index_qmd):
+        if not surface.exists():
+            raise OSError(f"prose surface missing: {surface.name}")
+    files = [path for path in sorted(website.rglob("*")) if path.is_file()]
+    files.append(readme)
+    files.append(index_qmd)
+    files.extend(sorted(user_guide.rglob("*.qmd")))
+    return sorted(files)
+
+
+def count_prose_sites() -> tuple[list[dict[str, Any]], list[str]]:
+    """Every prose literal site — one row per per-line ``PATTERN_DOCS``
+    match — plus the scanned file names (the census denominator)."""
+    sites: list[dict[str, Any]] = []
+    paths = _prose_files()
+    for path in paths:
+        relative = path.relative_to(REPO_ROOT).as_posix()
+        for line_number, line in enumerate(
+            path.read_text(encoding="utf-8").splitlines(), start=1
+        ):
+            for match in PATTERN_DOCS.finditer(line):
+                sites.append(
+                    {
+                        "file": relative,
+                        "line": line_number,
+                        "pattern": "PROSE",
+                        "text": match.group(0),
+                    }
+                )
+    sites.sort(key=lambda row: (row["file"], row["line"]))
+    return sites, [path.relative_to(REPO_ROOT).as_posix() for path in paths]
+
+
+def _check_prose_register(
+    sites: list[dict[str, Any]],
+    scanned_files: list[str],
+    expectations: dict[str, tuple[str, int]],
+) -> tuple[list[str], int]:
+    """The prose leg's register + derivation + census checks: the
+    violation lines and the outside-site count. On a file whose
+    expectation FAILS, every site of that file is listed unregistered —
+    the gate cannot know which site is new, and picking one would be
+    fabrication; a count-neutral substitution (deferral V1) does not
+    land here at all."""
+    violations: list[str] = []
+    by_file: dict[str, list[dict[str, Any]]] = {}
+    for row in sites:
+        by_file.setdefault(row["file"], []).append(row)
+
+    scanned = set(scanned_files)
+    if scanned != PROSE_FILE_CENSUS:
+        added = sorted(scanned - PROSE_FILE_CENSUS)
+        removed = sorted(PROSE_FILE_CENSUS - scanned)
+        violations.append(
+            f"prose census failed: scanned {len(scanned)} prose files, "
+            f"pinned {len(PROSE_FILE_CENSUS)} — added: {added}; removed: {removed}"
+        )
+
+    outside = 0
+    for file_name in sorted(set(expectations) | set(by_file)):
+        found_rows = by_file.get(file_name, [])
+        entry = expectations.get(file_name)
+        if entry is None:
+            # A file carrying sites that no register row or derivation
+            # vouches for — the issue's shape 1.
+            for row in found_rows:
+                outside += 1
+                violations.append(
+                    f"unregistered prose literal: {row['file']}:{row['line']} "
+                    f"[{row['pattern']}] {row['text']} — derive it, register it "
+                    "with reason and expected_sites, or update the census"
+                )
+            continue
+        reason, expected = entry
+        found = len(found_rows)
+        if found == expected:
+            continue
+        prefix = (
+            "prose register expectation failed"
+            if file_name in PROSE_REGISTER
+            else "prose expectation failed"
+        )
+        violations.append(
+            f"{prefix}: {file_name} expects {expected} sites, found {found} ({reason})"
+        )
+        for row in found_rows:
+            outside += 1
+            violations.append(
+                f"unregistered prose literal: {row['file']}:{row['line']} "
+                f"[{row['pattern']}] {row['text']} — derive it, register it "
+                "with reason and expected_sites, or update the census"
+            )
+    return violations, outside
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--json", action="store_true", help="print per-site rows")
@@ -537,6 +775,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         _pin_standard_ids()
         sites, scanned = count_sites()
+        prose_sites, prose_files_scanned = count_prose_sites()
+        prose_expectations = _prose_expectations()
     except StandardSetDrift as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -579,6 +819,20 @@ def main(argv: list[str] | None = None) -> int:
         if entry is not None:
             row["reason"] = entry[0]
 
+    prose_violations, prose_outside = _check_prose_register(
+        prose_sites, prose_files_scanned, prose_expectations
+    )
+    violations.extend(prose_violations)
+    prose_by_file: dict[str, list[dict[str, Any]]] = {}
+    for row in prose_sites:
+        prose_by_file.setdefault(row["file"], []).append(row)
+    for row in prose_sites:
+        entry = prose_expectations.get(row["file"])
+        held = entry is not None and len(prose_by_file.get(row["file"], [])) == entry[1]
+        row["exempt"] = held
+        if held:
+            row["reason"] = entry[0]
+
     if arguments.json:
         print(
             json.dumps(
@@ -591,6 +845,12 @@ def main(argv: list[str] | None = None) -> int:
                     "outside": len(outside),
                     "violations": violations,
                     "sites": sites,
+                    "prose": {
+                        "scanned": len(prose_files_scanned),
+                        "count": len(prose_sites),
+                        "outside": prose_outside,
+                        "sites": prose_sites,
+                    },
                 },
                 indent=2,
             )
@@ -602,6 +862,11 @@ def main(argv: list[str] | None = None) -> int:
     print(
         f"sdk executable version literals: {len(outside)} outside register "
         f"({len(sites)} sites, {scanned} files scanned across {roots}, {verdict})"
+    )
+    print(
+        f"sdk prose version literals: {prose_outside} outside register "
+        f"({len(prose_sites)} sites, {len(prose_files_scanned)} files scanned "
+        f"across website/ + README.md + index.qmd + user_guide/, {verdict})"
     )
     for violation in violations:
         print(f"  {violation}")
