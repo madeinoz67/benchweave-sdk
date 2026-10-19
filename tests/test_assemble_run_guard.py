@@ -34,11 +34,13 @@ POSIX_ONLY = pytest.mark.skipif(
 
 # The literal great-docs 0.17.0 banner shape (design §2.3's local 2m20s run).
 # Counts and the output path are synthetic; the marker strings the runner
-# matches on are the tool's own fixed text.
+# matches on are the tool's own fixed text. The FAIL literal is the tool's
+# real non-tty shape (great_docs/_build_log.py:802: "[FAIL] Build failed at
+# Step {n} - {title}") — synthetic step/title, real shape.
 BANNER_OK_HEAD = "[OK] Build complete — 21/19 steps (9 skipped, 1 warning)"
 BANNER_TOTAL_TIME = "Total time: 2m 20.1s"
 BANNER_SITE_READY = "Site ready (1 warning) → /scratch/sdk-worktree/great-docs/_site"
-BANNER_FAIL = "[FAIL] Build failed — 2/19 steps failed"
+BANNER_FAIL = "[FAIL] Build failed at Step 7 - reference rendering"
 
 GRANDCHILD = "import time; time.sleep(3600)"
 
@@ -374,11 +376,49 @@ def test_reclaim_refuses_loudly_on_a_non_posix_platform(
 
 
 def test_marker_regexes_pin_the_literal_0170_banner() -> None:
-    """Acceptance §8 / risk R1 tripwire: the marker regexes match the literal
-    0.17.0 banner text captured in the design (§2.3). If a great-docs pin bump
-    changes the banner, this arm reddens first — the workflow's pin comment
-    and the design §8 reopen trigger own the re-derivation."""
+    """WIRING check (re-scoped by F4): the synthetic literals the fake
+    children print actually trigger the module's marker regexes — a fake
+    child whose banner text missed the markers would silently turn every
+    hang arm into an E4 timeout arm. This is NOT the pin-drift tripwire;
+    that is the byte-capture fixture arm below (both sides of this check
+    live in this repo, so a pin bump moves neither)."""
     mod = _load()
     assert mod.OK_BANNER_HEAD_RE.search(BANNER_OK_HEAD)
     assert mod.SITE_READY_RE.search(BANNER_SITE_READY)
     assert mod.FAIL_BANNER_RE.search(BANNER_FAIL)
+    assert mod.SITE_BUILT_RE.search(SITE_BUILT_LINE)
+
+
+def test_marker_regexes_pin_the_captured_0170_output() -> None:
+    """F4 (fold wave): the pin drift tripwire, against REAL captured 0.17.0
+    output (byte-capture fixtures, machine paths sanitized) instead of
+    in-repo constants — the earlier tripwire was tautological: both sides
+    lived in this repo, so a pin bump would have moved neither and the arm
+    could never red. The fixtures prove the SHAPE the tool emitted at
+    0.17.0, not the live tool: a pin bump re-derives the regexes AND
+    re-captures the fixtures (the design §8 reopen trigger; the docs.yml pin
+    comment names both)."""
+    mod = _load()
+    inproc = (ROOT / "tests" / "fixtures" / "great_docs_0.17.0_inproc_banner.txt").read_text(
+        encoding="utf-8"
+    )
+    isolated = (
+        ROOT / "tests" / "fixtures" / "great_docs_0.17.0_isolated_tail.txt"
+    ).read_text(encoding="utf-8")
+    inproc_lines = inproc.splitlines()
+    assert any(mod.OK_BANNER_HEAD_RE.search(line) for line in inproc_lines)
+    assert any(mod.SITE_READY_RE.search(line) for line in inproc_lines)
+    assert not any(
+        mod.SITE_BUILT_RE.search(line) for line in inproc_lines
+    ), "the in-process capture must not contain the isolated wrapper's line"
+    i_ok = next(i for i, ln in enumerate(inproc_lines) if mod.OK_BANNER_HEAD_RE.search(ln))
+    i_site = next(i for i, ln in enumerate(inproc_lines) if mod.SITE_READY_RE.search(ln))
+    assert i_ok < i_site, "inside the box the OK head precedes the Site ready line"
+    iso_lines = isolated.splitlines()
+    i_banner = next(i for i, ln in enumerate(iso_lines) if mod.OK_BANNER_HEAD_RE.search(ln))
+    i_copy = next(i for i, ln in enumerate(iso_lines) if "Copying built site" in ln)
+    i_done = next(i for i, ln in enumerate(iso_lines) if mod.SITE_BUILT_RE.search(ln))
+    assert i_banner < i_copy < i_done, (
+        "the real --from-repo tail is inner banner, then the copy, then the "
+        "outer completion line — the ordering F1's per-call-site markers lean on"
+    )
