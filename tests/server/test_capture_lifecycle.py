@@ -310,14 +310,14 @@ def test_capture_series_decimates_preserving_extrema(tmp_path: Path) -> None:
     )
     assert series["decimated"] is True
     assert len(series["points"]) <= 50
-    ys = [point[1] for point in series["points"]]
+    ys = [point["y"] for point in series["points"]]
     assert min(ys) == -9.5 and max(ys) == 9.5
     raw = asyncio.run(
         host.call("capture_series", {"capture_id": capture_id, "max_points": 0})
     )
     assert raw["decimated"] is False
     assert len(raw["points"]) == 400
-    assert raw["points"][0] == [0.0, -9.5]
+    assert raw["points"][0] == {"x": 0.0, "y": -9.5}
 
 
 def test_raw_series_above_the_sample_ceiling_refuses(

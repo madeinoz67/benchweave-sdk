@@ -2200,7 +2200,8 @@ class StandaloneSeam:
             "format": fmt,
             "decimated": decimated,
             "max_points": max_points,
-            "points": [[x, y] for x, y in served],
+            # Issue #450 rider: the named wire form — internal tuples unchanged.
+            "points": [{"x": x, "y": y} for x, y in served],
         }
 
     def _stale_row_refusal(
