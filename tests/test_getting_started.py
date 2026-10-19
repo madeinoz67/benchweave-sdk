@@ -873,6 +873,17 @@ def _active_otdp_version() -> str:
     return str(rows[0]["version"])
 
 
+def _active_plugin_ui_version() -> str:
+    """The active plugin-ui row of the vendored standards lock — the
+    version the README's guide citation points at (the AR-4 wording
+    decision, 2026-10-19: the link targets the ACTIVE version's doc
+    path)."""
+    lock = json.loads((REPO / "standards-lock.json").read_text(encoding="utf-8"))
+    rows = [s for s in lock["standards"] if s.get("id") == "plugin-ui" and s.get("active")]
+    assert len(rows) == 1, f"expected exactly one active plugin-ui row, got {rows!r}"
+    return str(rows[0]["version"])
+
+
 def test_the_readme_delta_carries_no_version_literals() -> None:
     proc = subprocess.run(
         ["git", "diff", "origin/main...HEAD", "--", "README.md"],
@@ -895,13 +906,18 @@ def test_the_readme_delta_carries_no_version_literals() -> None:
     # Machine-sourced allowance (first exercised by the 0.7.0 release): the
     # README baseline line states the package version and the active OTDP
     # version — both owned by machine sources (pyproject via the installed
-    # distribution; standards-lock.json's active row). Those two values may
+    # distribution; standards-lock.json's active row). Those values may
     # appear on added lines; every other bare semver still reddens. This is
     # the register-row pattern in miniature: an exemption whose value is
-    # derived, never hand-listed.
+    # derived, never hand-listed. The active plugin-ui row joined the set
+    # 2026-10-19 (issue #412, AR-4 wording decision 2): the guide citation
+    # now targets the active version's doc path. The backstop against a
+    # new hand-typed claim carrying an allowed VALUE is the twin's prose
+    # register — README's site pin (4) reds on any added literal site.
     allowed = {
         _installed_sdk_version(),
         _active_otdp_version(),
+        _active_plugin_ui_version(),
     }
     hits = [
         line
