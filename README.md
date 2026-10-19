@@ -206,7 +206,7 @@ After you edit resources, keep the descriptor, manifest and asset byte hashes cu
 
 Add `--with-ui` to `benchweave-sdk new` to generate a declarative readings page, presentation envelope and binding catalogue. The default scaffold stays unchanged. Keep presentation assets under the import package's `ui/` directory so that wheels carry them. Store complete configuration presets next to their settings schema. Plugins can declare configuration, readings, dataset and registered panel pages, with plots only when appropriate.
 
-Use `benchweave-sdk check-ui` and `benchweave-sdk check-preset` for offline validation before packaging. Validation does not admit a plugin. Validation is not approval to apply settings. The [plugin presentation guide](https://github.com/madeinoz67/benchweave/blob/main/standards/plugin-ui/0.3.0/README.md) (main repository) covers the directory structure, preconfigured settings, optional graphs, data bindings, per-channel display hints and CLI examples.
+Use `benchweave-sdk check-ui` and `benchweave-sdk check-preset` for offline validation before packaging. Validation does not admit a plugin. Validation is not approval to apply settings. The [plugin presentation guide](https://github.com/madeinoz67/benchweave/blob/main/standards/plugin-ui/0.4.0/README.md) (main repository) covers the directory structure, preconfigured settings, optional graphs, data bindings, per-channel display hints and CLI examples.
 
 ## The server extra
 

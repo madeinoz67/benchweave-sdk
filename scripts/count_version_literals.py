@@ -579,16 +579,19 @@ PATTERN_DOCS = re.compile(r"(?<![\w.])(?:[vV])?\d+\.\d+\.\d+(?:-(?:dev|rc|alpha|
 PROSE_REGISTER: dict[str, tuple[str, int]] = {
     "README.md": (
         "release-cut occurrence-validated substitution moves the baseline "
-        "stamp; the --firmware example and the plugin-ui/0.3.0 guide "
-        "citation are authored data (the citation resolves against the "
-        "gateway's copy-never-move corpus tree)",
+        "stamp; the --firmware example is authored data and the plugin-ui "
+        "guide citation points at the ACTIVE version's doc path (the AR-4 "
+        "wording decision, 2026-10-19) — resolving in the gateway's "
+        "copy-never-move corpus tree",
         4,
     ),
     "index.qmd": (
-        "baseline claim naming the lock's ACTIVE otdp row; motion = the "
-        "standards-bump arc's editorial pass (value drift at unchanged "
-        "cardinality is deferral V1 — this gate pins counts, not values)",
-        1,
+        "versionless by the AR-4 wording decision (2026-10-19): the "
+        "baseline sentence asserts the current OTDP and no mechanism moves "
+        "a hand-stamped number — the page claims no version (the 0.2.2 rot "
+        "the decision's goes-stale-by-construction clause names); pin is 0, "
+        "so any future three-component literal here reds",
+        0,
     ),
     "user_guide/plugin-sdk.qmd": (
         "pinned-descriptor pedagogy (the per-pin examples name retained "
