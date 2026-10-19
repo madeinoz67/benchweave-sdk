@@ -2,6 +2,61 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.16.0] - 2026-10-19
+
+### Bug Fixes
+
+- The upgrade walk and LF rewrite stay inside the content boundary (#461)
+- Fold the #461 refute — untracked-files=all, non-vacuous AR-4 (#461)
+- Make check-preset --firmware optional (#463 row 7)
+- Harden regen-fixtures against the five refute findings
+
+### Documentation
+
+- L6 issue #460 — the migrate-ui re-stamp command, design record
+- L7 gateway #461 — the upgrade walk and LF rewrite leave the project content boundary
+- L8 — issue #463 row 3, custom-styleguide discoverability design record
+- Name the preview.css override where authors read (#463)
+- Fold the #463 row 3 refute — name the override file location (F1), fix the stale module docstring (F2)
+- L9 — issue #463 row 7, check-preset --firmware optional design record
+- L10 — issue #463 row 8, fixture-generation command design record
+- L10 addendum — the two §8 premises the build corrected
+
+### Features
+
+- Migrate-ui — re-stamp plugin-ui artifacts to the active version (#460)
+- Expose regen-fixtures for the example preview fixtures (#463 row 8)
+- Interface 0.1.1 sync + the capture_series named-points rider (0.16.0) (#179)
+
+### Miscellaneous
+
+- Bump actions/upload-artifact from 7.0.1 to 7.0.2
+- Bump actions/download-artifact from 8.0.1 to 8.0.2
+- Bump astral-sh/setup-uv from 10.2.0 to 10.3.0
+- Bump actions/create-github-app-token from 3.2.0 to 3.3.0
+- Move codeql-action init+analyze together to v4.38.3, group the pair in dependabot
+- Bump fastmcp from 4.0.11 to 4.1.0
+- Regenerate uv.lock for the fastmcp 4.1.0 pin
+- Move the Python updater from pip to uv so uv.lock moves with pyproject.toml
+- Bump ruff from 0.16.8 to 0.17.0
+- Bump mypy from 2.3.1 to 2.4.0
+- Bump fastapi from 0.142.2 to 0.143.0
+- Bump playwright from 1.63.0 to 1.64.0
+- Bump copier from 9.18.2 to 9.19.1
+- Pin reviewer to sonnet and doc writer to haiku (#496)
+- Restore the pre-cut version so the cut transaction owns the 0.16.0 bump (#450)
+- Stamp and register v0.16.0 — the interface 0.1.1 + rider release (gateway #450)
+- The v0.16.0 phase-2 registration — versions list + selector, at the tag commit
+
+### Testing
+
+- Fold the two census/address pins over regen-fixtures (#463 row 8)
+
+
+### Contributors
+
+- Stephen Eaton (23 commits)
+- Dependabot[bot] (10 commits)
 ## [0.15.0] - 2026-10-16
 
 ### Bug Fixes
