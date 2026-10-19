@@ -27,6 +27,55 @@ FIXTURE_SCHEMA_TEMPLATE = (
 )
 
 
+def _copy_prose_surfaces(scratch: Path) -> None:
+    """The bare gate's second scope (issue #412): the prose surfaces must
+    ride every scratch tree the battery runs the widened bare command
+    over — a scratch tree without them refuses on the missing surface,
+    which is the counter's fail-closed posture working, not a defect."""
+    shutil.copytree(REPO / "website", scratch / "website")
+    shutil.copytree(REPO / "user_guide", scratch / "user_guide")
+    shutil.copy(REPO / "README.md", scratch / "README.md")
+    shutil.copy(REPO / "index.qmd", scratch / "index.qmd")
+    shutil.copy(REPO / "great-docs.yml", scratch / "great-docs.yml")
+
+
+def _prose_scratch(tmp_path: Path) -> Path:
+    """A scratch repo carrying the FULL file set the bare gate needs (the
+    #412 INCONCLUSIVE branch's requirement): both source roots, the lock,
+    the counter, the prose surfaces and the derivation source."""
+    scratch = tmp_path / "scratch-prose-repo"
+    shutil.copytree(REPO / "src/benchweave_sdk", scratch / "src/benchweave_sdk")
+    shutil.copytree(
+        REPO / "src/benchweave_sdk_server", scratch / "src/benchweave_sdk_server"
+    )
+    (scratch / "scripts").mkdir(parents=True)
+    shutil.copy(COUNTER, scratch / "scripts/count_version_literals.py")
+    shutil.copy(REPO / "standards-lock.json", scratch / "standards-lock.json")
+    _copy_prose_surfaces(scratch)
+    return scratch
+
+
+def _prose_counter_at(scratch: Path):
+    """Load the counter COPY inside the scratch repo — its REPO_ROOT
+    (and therefore both scan scopes) resolves to the scratch tree."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "prose_counter_under_test", scratch / "scripts/count_version_literals.py"
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _prose_run(scratch: Path, capsys, argv: list[str] | None = None):
+    counter = _prose_counter_at(scratch)
+    code = counter.main(argv or [])
+    captured = capsys.readouterr()
+    return code, captured.out + captured.err
+
+
 class TestScaffoldDerivation:
     """The example descriptor's pin is derived (§1.4). Since WS2 the
     descriptor is template output, so the derivation is pinned through the
@@ -216,6 +265,7 @@ class TestTwinCounter:
         shutil.copytree(
             REPO / "src/benchweave_sdk_server", scratch / "src/benchweave_sdk_server"
         )
+        _copy_prose_surfaces(scratch)
         planted = scratch / "src/benchweave_sdk_server/session.py"
         planted.write_text('_PLANT = "9.9.9"\n', encoding="utf-8")
         result = subprocess.run(
@@ -257,6 +307,7 @@ class TestTwinCounter:
         shutil.copytree(
             REPO / "src/benchweave_sdk_server", scratch / "src/benchweave_sdk_server"
         )
+        _copy_prose_surfaces(scratch)
         planted = scratch / "src/benchweave_sdk/packaging.py"
         planted.write_text('_PLANT = "9.9.9"\n', encoding="utf-8")
         result = subprocess.run(
@@ -281,6 +332,7 @@ class TestTwinCounter:
         shutil.copytree(
             REPO / "src/benchweave_sdk_server", scratch / "src/benchweave_sdk_server"
         )
+        _copy_prose_surfaces(scratch)
         planted = scratch / "src/benchweave_sdk/packaging.py"
         planted.write_text('_PLANT = "9." + "9.9"\n', encoding="utf-8")
         result = subprocess.run(
@@ -307,6 +359,7 @@ class TestTwinCounter:
         shutil.copytree(
             REPO / "src/benchweave_sdk_server", scratch / "src/benchweave_sdk_server"
         )
+        _copy_prose_surfaces(scratch)
         registered = scratch / "src/benchweave_sdk/publishing.py"
         registered.write_bytes(
             registered.read_bytes() + b'\n_PLANT = "9.9.9"\n',  # noqa: E501
@@ -356,6 +409,7 @@ class TestFoldHardening:
         (scratch / "scripts").mkdir(exist_ok=True)
         shutil.copy(COUNTER, scratch / "scripts/count_version_literals.py")
         shutil.copy(REPO / "standards-lock.json", scratch / "standards-lock.json")
+        _copy_prose_surfaces(scratch)
         return scratch
 
     def test_standard_id_set_is_pinned_to_the_lock(self) -> None:
@@ -635,3 +689,235 @@ class TestUnreadableRootRefuses:
         captured = capsys.readouterr()
         assert code == 1
         assert "source tree unreadable" in captured.err
+
+
+class TestProseScope:
+    """The prose scan class over the release-managed prose surfaces (issue
+    #412, design record 2026-10-19 in ``.claude/deep-review/``): every file
+    under ``website/``, ``README.md``, ``index.qmd`` and every ``*.qmd``
+    under ``user_guide/``, gated by per-file site pins, a pinned
+    scanned-file census, and a DERIVED ``website/index.html`` expectation
+    (``2 x releases + static`` from ``great-docs.yml``'s versions map).
+
+    The arms load the SCRATCH copy of the counter and call ``main``
+    directly (the in-file precedent of TestUnreadableRootRefuses) — the
+    CLI exit contract IS ``main``'s return value (``raise SystemExit(
+    main())``), so the exit statuses asserted here are the bare
+    command's, without a fresh OS process per arm.
+    """
+
+    PROSE_SURFACES = ("website", "user_guide", "README.md", "index.qmd", "great-docs.yml")
+
+    def _scratch_prose_repo(self, tmp_path: Path) -> Path:
+        return _prose_scratch(tmp_path)
+
+    def _counter_at(self, scratch: Path):
+        return _prose_counter_at(scratch)
+
+    def _run(self, scratch: Path, capsys, argv: list[str] | None = None):
+        return _prose_run(scratch, capsys, argv)
+
+    def test_a_planted_new_prose_file_refuses(self, tmp_path: Path, capsys) -> None:
+        """The issue's shape 1: a version claim on a NEW file under
+        website/ — caught by the unregistered-literal row AND the file
+        census (a new file reds even before it carries a literal)."""
+        scratch = self._scratch_prose_repo(tmp_path)
+        (scratch / "website/upgrade-guide.html").write_text(
+            "Requires SDK 0.7.1 or later.\n", encoding="utf-8"
+        )
+        code, out = self._run(scratch, capsys)
+        assert code == 1, out
+        assert "unregistered prose literal: website/upgrade-guide.html:1" in out
+        assert "prose census failed" in out
+
+    def test_a_planted_sentence_inside_the_index_hero_refuses(
+        self, tmp_path: Path, capsys
+    ) -> None:
+        """The issue's shape 2: an unpatterned sentence added inside a
+        REGISTERED-DERIVED file — the derived expectation moves and every
+        site of the mismatched file is listed unregistered (the gate
+        cannot know WHICH site is new; naming all of them is the
+        non-fabricating report)."""
+        scratch = self._scratch_prose_repo(tmp_path)
+        index = scratch / "website/index.html"
+        lines = index.read_text(encoding="utf-8").splitlines()
+        marker = next(i for i, line in enumerate(lines) if "Python 3.13+" in line)
+        lines.insert(marker + 1, '<div class="status-line">Works with SDK 0.7.1 gateways.</div>')
+        index.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        code, out = self._run(scratch, capsys)
+        assert code == 1, out
+        assert f"website/index.html:{marker + 2}" in out
+        assert "unregistered prose literal" in out
+
+    def test_clean_head_holds(self, tmp_path: Path, capsys) -> None:
+        """The clean tree passes BOTH legs — the register pins, the
+        census and the derivation all hold on the committed state."""
+        scratch = self._scratch_prose_repo(tmp_path)
+        code, out = self._run(scratch, capsys)
+        assert code == 0, out
+        assert "sdk prose version literals: 0 outside register" in out
+
+    def test_a_removed_registered_site_reds(self, tmp_path: Path, capsys) -> None:
+        """Shrinkage has teeth too: the pins are exact, so REMOVING a
+        registered site (the getting-started firmware example) fails the
+        expectation exactly as growth does."""
+        scratch = self._scratch_prose_repo(tmp_path)
+        guide = scratch / "user_guide/getting-started.qmd"
+        text = guide.read_text(encoding="utf-8")
+        assert "  --firmware 1.0.0\n" in text
+        guide.write_text(text.replace("  --firmware 1.0.0\n", ""), encoding="utf-8")
+        code, out = self._run(scratch, capsys)
+        assert code == 1, out
+        assert "prose register expectation failed: user_guide/getting-started.qmd" in out
+        assert "expects 1 sites, found 0" in out
+
+    def test_the_derivation_tracks_the_versions_map(self, tmp_path: Path, capsys) -> None:
+        """A clean release train never reddens: registering a release
+        (one versions-map row + its selector occurrences) moves the
+        derived expectation in lockstep — hold. The map row WITHOUT its
+        selector occurrences is the loud red (the derivation moved, the
+        HTML did not)."""
+        scratch = self._scratch_prose_repo(tmp_path)
+        yml = scratch / "great-docs.yml"
+        yml_text = yml.read_text(encoding="utf-8")
+        anchor = "    git_ref: v0.16.0\n"
+        assert anchor in yml_text
+        fake_row = "  - tag: v9.9.9\n    label: v9.9.9\n    git_ref: v9.9.9\n"
+        yml.write_text(yml_text.replace(anchor, anchor + fake_row), encoding="utf-8")
+        index = scratch / "website/index.html"
+        html_text = index.read_text(encoding="utf-8")
+        option_anchor = '<option value="docs/">v0.16.0 (latest)</option>\n'
+        assert option_anchor in html_text
+        fake_option = '          <option value="docs/v/v9.9.9/">v9.9.9</option>\n'
+        index.write_text(
+            html_text.replace(option_anchor, option_anchor + fake_option), encoding="utf-8"
+        )
+        code, out = self._run(scratch, capsys)
+        assert code == 0, out
+        # The same map row without the selector occurrences reds by the
+        # derived number (2 x 23 + 11 = 57).
+        index.write_text(html_text, encoding="utf-8")
+        code, out = self._run(scratch, capsys)
+        assert code == 1, out
+        assert "website/index.html expects 57 sites" in out
+
+    def test_the_prose_matcher_is_pinned_to_the_authority_literal(self) -> None:
+        """The twin's PATTERN_DOCS is the gateway docs scope's committed
+        prose definition, copied VERBATIM — pinned here against the
+        literal so a semantic regex change in this copy alone is a
+        visible suite diff (the cross-repo drift residual until H1)."""
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("prose_counter_pinned", COUNTER)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        assert module.PATTERN_DOCS.pattern == (
+            r"(?<![\w.])(?:[vV])?\d+\.\d+\.\d+(?:-(?:dev|rc|alpha|beta)\d*)?(?!\.\d)"
+        )
+        # The two boundary behaviors the gateway battery pins on its own
+        # copy (IP fragments out, sentence-final period in).
+        assert module.PATTERN_DOCS.search("server at 192.168.1.1:8080") is None
+        assert module.PATTERN_DOCS.search("active is 0.2.2.") is not None
+
+    def test_the_scanned_file_census_is_pinned(self, tmp_path: Path, capsys) -> None:
+        """The denominator is pinned: the file-set census reds on any new
+        or removed prose file EVEN WHEN IT CARRIES ZERO LITERALS (the
+        issue's shape 1 caught before the plant writes a version), and
+        the clean tree scans exactly 11 files."""
+        scratch = self._scratch_prose_repo(tmp_path)
+        code, out = self._run(scratch, capsys, ["--json"])
+        assert code == 0, out
+        payload = json.loads(out)
+        assert payload["prose"]["scanned"] == 11
+        (scratch / "website/empty-page.html").write_text(
+            "<html><body>No versions here.</body></html>\n", encoding="utf-8"
+        )
+        code, out = self._run(scratch, capsys)
+        assert code == 1, out
+        assert "prose census failed" in out
+        assert "website/empty-page.html" in out
+
+
+class TestProseFoldHardening:
+    """The 2026-10-19 fold-wave arms (the adversary lanes' F1-F4; the
+    governor's F5 is a records correction, not an arm). Each row landed
+    RED-first with its fix in one commit, per the fold instruction — the
+    class is separate so TestProseScope stays the design's exactly-7."""
+
+    def test_a_symlinked_directory_under_website_refuses(
+        self, tmp_path: Path, capsys
+    ) -> None:
+        """F1: a directory symlink under website/ escapes BOTH legs — rglob
+        never descends it and the link itself fails is_file — so the whole
+        subtree is invisible (the adversary's repro: the real directory
+        OUTSIDE the scan set, only the link inside). The policy is
+        fail-closed: refuse, naming the symlink. POSIX-only arm: symlink
+        creation needs privileges on Windows (the #476 F2 lane's skipif
+        precedent); the refusal path itself is platform-neutral code."""
+        import os
+
+        if os.name == "nt":
+            pytest.skip("symlink creation needs privileges on Windows")
+        scratch = _prose_scratch(tmp_path)
+        site = scratch / "dirsite"  # outside every scanned surface
+        site.mkdir()
+        (site / "claim.html").write_text("Needs 0.7.1 today.\n", encoding="utf-8")
+        (scratch / "website/legacy-docs").symlink_to(site, target_is_directory=True)
+        code, out = _prose_run(scratch, capsys)
+        assert code == 1, out
+        assert "version_literal_count_failed" in out
+        assert "website/legacy-docs" in out
+
+    def test_a_markdown_file_under_user_guide_refuses(self, tmp_path: Path, capsys) -> None:
+        """F2: user_guide/ coverage was extension-gated (*.qmd), so a
+        renamed page escapes the scan and the census with one edit —
+        user_guide/notes.md carrying a stale claim exits 0."""
+        scratch = _prose_scratch(tmp_path)
+        (scratch / "user_guide/notes.md").write_text(
+            "Requires SDK 0.7.1 or later.\n", encoding="utf-8"
+        )
+        code, out = _prose_run(scratch, capsys)
+        assert code == 1, out
+        assert "user_guide/notes.md:1" in out
+        assert "prose census failed" in out
+
+    def test_an_uppercase_extension_under_user_guide_refuses(
+        self, tmp_path: Path, capsys
+    ) -> None:
+        """F2: the extension gate was also CASE-sensitive on POSIX —
+        NOTES.QMD is invisible to rglob('*.qmd') on the very platform
+        CI runs it. The directory walk has no case to be wrong about."""
+        scratch = _prose_scratch(tmp_path)
+        (scratch / "user_guide/NOTES.QMD").write_text(
+            "Requires SDK 0.7.1 or later.\n", encoding="utf-8"
+        )
+        code, out = _prose_run(scratch, capsys)
+        assert code == 1, out
+        assert "user_guide/NOTES.QMD:1" in out
+        assert "prose census failed" in out
+
+    def test_non_utf8_bytes_refuse_with_the_documented_shape(
+        self, tmp_path: Path, capsys
+    ) -> None:
+        """F3: unreadable bytes are a REFUSAL in the documented shape —
+        version_literal_count_failed naming the failure — not a raw
+        UnicodeDecodeError traceback. The exit code was already 1
+        (fail-closed held) but the reader saw the wrong thing."""
+        scratch = _prose_scratch(tmp_path)
+        (scratch / "website/assets/bad.css").write_bytes(b"/* caf\xe9 */\n")
+        code, out = _prose_run(scratch, capsys)
+        assert code == 1, out
+        assert "version_literal_count_failed" in out
+
+    def test_os_junk_never_reddens_the_census(self, tmp_path: Path, capsys) -> None:
+        """F4: local OS noise (.DS_Store, Thumbs.db) is excluded BY NAME
+        ONLY — never committed — so it cannot redden the census with an
+        unsanctioned file. This is not a general ignore mechanism: a
+        file is prose-scanned unless it carries one of these two names."""
+        scratch = _prose_scratch(tmp_path)
+        (scratch / "website/.DS_Store").touch()
+        (scratch / "user_guide/Thumbs.db").touch()
+        code, out = _prose_run(scratch, capsys)
+        assert code == 0, out
+        assert "67 sites, 11 files scanned" in out

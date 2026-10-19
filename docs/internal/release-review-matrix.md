@@ -282,6 +282,7 @@ Test surfaces: T1/T2 — the fixtures were regenerated in-arc by the sync PR (re
 | 3 | Docs selector | PHASE-2 — patch staged at `.release/phase2-v0.16.0.patch`; the tag commit applies it (registration precedes the tag) |
 | 4 | Compatibility tagline | updated — SDK 0.16.0 against the main-repository floor by release-cut (occurrence-validated) |
 | 5 | Standards badges | walk confirms — enumerate all six against the lock's ACTIVE rows |
+| 5-corr | Standards badges | CORRECTION (2026-10-19, append-only — the row above is untouched; issue #412): at the pin this walk certified (`9e0449e`) four of the seven badges were stale against the lock's ACTIVE rows — registry 0.1.2 vs 0.1.3, interface 0.1.0 vs 0.1.1, plugin-ui 0.3.1 vs 0.4.0, plugin-ui-class-reference 0.1.0 vs 0.2.0 — and "six" understates the set: seven families since v0.13.0. The #412 R1 riders brought the badge row to the actives; the prose gate (`scripts/count_version_literals.py`) pins the surface's site counts thereafter. |
 | 6 | great-docs.yml versions | PHASE-2 — the tag commit applies the staged patch (the ordering constraint) |
 | 7 | Contributor window `v0.15.0..HEAD` | 50 commits in the window — human authors other than the operator/bots: none; the walk acknowledges new human contributors and records an empty window as a result |
 | 8 | Gateway uv.lock SDK pin | recorded note — moves at the gateway's next lock run / pointer advance |
