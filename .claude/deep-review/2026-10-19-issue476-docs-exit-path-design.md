@@ -258,3 +258,60 @@ post-banner tail — R1/R2) exactly as the markup workarounds move with that pin
 - **#475**: its already-landed bound is demoted to backstop (E4) with the group-reclaim
   improvement; closable with this increment, reopen trigger as §8.
 - **Gateway twin**: follow-up issue (deferral 1) — exposure quantified in §5.
+
+---
+
+## Addendum 2026-10-19 (fold wave) — the refute lanes' corrections, folded
+
+The body above is the frozen design record; this addendum carries what the two refute
+lanes established against the increment as first built, and what changed. The §8
+acceptance rule's field rule and reopen trigger are unchanged.
+
+- **F1 (HIGH, lane A) — the single-marker premise was wrong for `--from-repo`.** §3's
+  "the completion banner is the tool's own last act" is true only for the in-process
+  site. In a `--from-repo` run the watched banner is the INNER build's, and the outer
+  process still has the copytree into `--output-dir`, its own "Site built successfully"
+  line, and the temp-clone rmtree ahead of it (great_docs/core.py:16717/16734/16736/
+  16739-16742). A grace-sized reclaim there kills a healthy build mid-copy and returns
+  success over truncated output (lane A reproduced at 1337/3000 files with index.html
+  present — `bucket_source()` passes, `verify_tree()` is existence-only). Fixed with
+  per-call-site markers: `done_marker="inproc"` keeps the banner-box conjunction;
+  `done_marker="isolated"` watches only the outer "Site built successfully" line. The
+  inner banner AND the inner FAIL line are ignored on the isolated kind (an inner
+  failure exits non-zero → E1, or hangs → E4 — both loud).
+- **F2 (HIGH, lane A) — the suite reds windows-latest deterministically.** CPython on
+  Windows ignores `start_new_session`, `os.getpgrp` does not exist, and 4 of 6 arms
+  red on every run. Fixed: `@POSIX_ONLY` skipif (the repo's test_lifecycle convention)
+  on the process-group arms; `_reclaim_group` refuses loudly on win32 with the
+  platform named. Production exposure nil (docs.yml is ubuntu-only).
+- **F3 (MED, lane A) — "FAIL outranks OK" was false as implemented.** Both deadlines
+  were sight-time + grace, so the earlier-sighted marker won; lane A captured OK at
+  +0.05s, FAIL at +2.5s, grace 6.0 → success with the FAIL never gated. Fixed: a
+  sighted FAIL prohibits E2 outright; the loop waits out the fail grace and ends E3.
+- **F4 (MED, lane B) — the tripwire was tautological and the FAIL literal wrong.**
+  Both sides of the §5.2(d) check were in-repo constants, so a pin bump moved neither
+  (demonstrated: both sides doctored together → the old arm stays green); the FAIL
+  literal `[FAIL] Build failed — …` is a shape the tool never emits (real non-tty
+  form, `_build_log.py:802`: `[FAIL] Build failed at Step {n} - {title}`). Fixed:
+  byte-capture fixtures of two real 0.17.0 runs (in-process banner; the --from-repo
+  tail) under `tests/fixtures/`, a fixture-driven arm, the real FAIL shape, and the
+  docs.yml pin comment now names the markers and fixtures as pin-coupled.
+- **F5 (LOW/NIT, lane B).** (a) `RECLAIM_PROBE_DRAIN_S=2.0` now documents lane B's
+  measurement (macOS zombie window 1–4ms over 8 trials) and the ~500x margin; the
+  test drains with the same constant. (b) `_reclaim_group` reaps the leader at both
+  bail-outs — on macOS a zombie leader answers `os.getpgid` with ESRCH, so the entry
+  guard used to return silently, stranding our own zombie (whose group then probes
+  EPERM), and the sibling race (leader dying between getpgid and killpg) logged a
+  false survivor warning. Committed arm pins the strand; the micro-race itself is not
+  deterministically constructible and rides lane B's capture.
+- **Out of fold (accepted residuals, noted):** a head-only hang rides E4 to the 900s
+  bound (scope boundary, unchanged); the banner conjunction is defeatable by any
+  stream carrying both substrings in order — no 0.17.0 producer exists beyond F1's
+  inner banner, which the per-call-site kinds now ignore; `run(done_marker=…,
+  timeout=None)` can never end — both call sites pass `GREAT_DOCS_TIMEOUT`, and the
+  docstring says so.
+- **Verification gotchas this wave:** on macOS a signal-0 probe over freshly orphaned
+  zombies answers EPERM, not ESRCH (already folded pre-wave), `os.getpgid` on a zombie
+  raises ESRCH, and a same-length sabotage restored within the same wall-clock second
+  keeps a stale `.pyc` (second-resolution mtime + size validation) — clear `__pycache__`
+  after any RED-neutralization that rewrites source in place.

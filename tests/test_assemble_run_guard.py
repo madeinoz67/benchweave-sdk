@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -158,12 +159,16 @@ def _load() -> Any:
     return module
 
 
-def _group_is_empty(pgid_file: Path, *, drain_s: float = 5.0) -> bool:
+def _group_is_empty(pgid_file: Path, *, drain_s: float | None = None) -> bool:
     """True when no member remains in the child's process group. killpg(0)
     answers ProcessLookupError for an empty group — but a group holding only
     freshly orphaned zombies can answer PermissionError on macOS until
     re-adoption reaps them (observed under pytest-xdist load), so drain that
-    window (bounded) before concluding members survive."""
+    window (bounded) before concluding members survive. The default bound is
+    the runner's own RECLAIM_PROBE_DRAIN_S (F5a): one measured number, not
+    two."""
+    if drain_s is None:
+        drain_s = _load().RECLAIM_PROBE_DRAIN_S
     pgid = int(pgid_file.read_text(encoding="utf-8"))
     deadline = time.monotonic() + drain_s
     while True:
@@ -351,6 +356,44 @@ def test_isolated_marker_waits_for_the_outer_completion_line(
         "reclaimed after"
     ), "the reclaim must follow the outer completion line, not the inner banner"
     assert _group_is_empty(pgid_file)
+
+
+@POSIX_ONLY
+def test_reclaim_reaps_a_zombie_leader_instead_of_stranding_it(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """F5b: on macOS a zombie leader answers os.getpgid with ESRCH, so
+    _reclaim_group's entry guard used to return without reaping — stranding
+    OUR OWN unreaped zombie, whose group then probes EPERM forever, and (the
+    sibling race lane B captured, leader dying between getpgid and killpg)
+    logging a false "still has member processes" survivor warning. The fix
+    reaps the leader at both bail-outs; this arm constructs the zombie
+    WITHOUT reaping (a live leader answers killpg(0) with success on macOS,
+    a zombie-only group answers EPERM) and asserts the group is truly EMPTY
+    afterwards. On Linux a zombie answers kill probes with success, so the
+    construction cannot zombify detectably there — the arm pins the macOS
+    class only (disclosed)."""
+    mod = _load()
+    proc = subprocess.Popen(
+        [sys.executable, "-c", "import sys; sys.stdout.write('exited\\n')"],
+        stdout=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    pgid = os.getpgid(proc.pid)
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        try:
+            os.killpg(pgid, 0)
+        except PermissionError:
+            break  # zombie-only group: the F5b shape is constructed
+        except ProcessLookupError:
+            break  # reaped out from under the arm; the assert below still holds
+        time.sleep(0.02)
+    mod._reclaim_group(proc)
+    out = capsys.readouterr().out
+    assert "still has member processes" not in out
+    with pytest.raises(ProcessLookupError):
+        os.killpg(pgid, 0)  # pre-fix: EPERM — the stranded zombie remains
 
 
 def test_reclaim_refuses_loudly_on_a_non_posix_platform(

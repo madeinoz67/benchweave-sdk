@@ -64,6 +64,7 @@ root with ``great-docs`` on PATH (see .github/workflows/docs.yml).
 from __future__ import annotations
 
 import argparse
+import contextlib
 import os
 import re
 import shutil
@@ -119,6 +120,11 @@ SITE_READY_RE = re.compile(r"Site ready")
 FAIL_BANNER_RE = re.compile(r"\[FAIL\] Build failed")
 SITE_BUILT_RE = re.compile(r"Site built successfully")
 RECLAIM_TERM_TO_KILL_S = 10.0
+# The zombie-reap drain bound (F5a): lane B measured the macOS window —
+# freshly orphaned grandchildren answering a killpg(0) probe with EPERM
+# until launchd re-adopts and reaps them — at 1-4ms across 8 trials. 2.0s
+# is ~500x that window: generous against CI load spikes, still noise-level
+# latency on an ending that already waited out a full grace period.
 RECLAIM_PROBE_DRAIN_S = 2.0
 
 # Reference-section order markup as great-docs 0.17.0 emits it: the sidebar
@@ -242,6 +248,12 @@ def _reclaim_group(proc: subprocess.Popen[str]) -> None:
     try:
         pgid = os.getpgid(proc.pid)
     except ProcessLookupError:
+        # F5b: on macOS a zombie leader answers getpgid with ESRCH already —
+        # the leader is OUR unreaped child, so reap it rather than strand it
+        # (a stranded zombie keeps the group probe-EPERM for whoever looks
+        # next). Reaping a zombie is instant.
+        with contextlib.suppress(subprocess.TimeoutExpired):
+            proc.wait(timeout=1.0)
         return
     for sig in (signal.SIGTERM, signal.SIGKILL):
         try:
@@ -261,6 +273,12 @@ def _reclaim_group(proc: subprocess.Popen[str]) -> None:
                     f"WARNING: child pid {proc.pid} unreapable "
                     f"{RECLAIM_TERM_TO_KILL_S:.0f}s after SIGKILL"
                 )
+    # F5b: reap the leader before probing — if the PermissionError breaks
+    # above skipped every wait, a zombie leader alone would make the probe
+    # below report false survivors. Reaping a zombie is instant; a live
+    # leader at this point already logged unreapable in the loop.
+    with contextlib.suppress(subprocess.TimeoutExpired):
+        proc.wait(timeout=1.0)
     # R6: members that persist once the signals have landed are reported
     # loudly, never waited on. The zombie-reap window (EPERM, macOS) drains
     # first so it is not misreported as survivors.
