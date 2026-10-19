@@ -161,6 +161,7 @@ def _group_is_empty(pgid_file: Path, *, drain_s: float = 5.0) -> bool:
             time.sleep(0.05)
 
 
+@POSIX_ONLY
 def test_ok_banner_hang_ends_at_the_banner_and_reclaims_the_group(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -219,6 +220,7 @@ def test_clean_exit_child_pays_no_grace_and_honors_the_real_code(
         )
 
 
+@POSIX_ONLY
 def test_fail_banner_hang_fails_loudly_naming_the_command(tmp_path: Path) -> None:
     """Acceptance §8 item 3: the FAIL banner outranks everything (checked
     first) — the run reclaims the group, then raises SystemExit naming the
@@ -238,6 +240,7 @@ def test_fail_banner_hang_fails_loudly_naming_the_command(tmp_path: Path) -> Non
     assert _group_is_empty(pgid_file), "E3 must reclaim the group too"
 
 
+@POSIX_ONLY
 def test_no_marker_timeout_now_reclaims_the_group_too(tmp_path: Path) -> None:
     """E4 backstop: a mid-build wedge with NO banner rides the outer timeout —
     which today (issue #475's shape) kills only the direct child and leaks the
@@ -256,6 +259,7 @@ def test_no_marker_timeout_now_reclaims_the_group_too(tmp_path: Path) -> None:
     assert _group_is_empty(pgid_file), "E4 must reclaim the group, not just the child"
 
 
+@POSIX_ONLY
 def test_a_lone_site_ready_line_does_not_complete_the_marker(tmp_path: Path) -> None:
     """R3: the OK marker is a CONJUNCTION — "[OK] Build complete" and a
     following "Site ready" line. A child emitting only the second half (any
@@ -310,6 +314,28 @@ def test_isolated_marker_waits_for_the_outer_completion_line(
         "reclaimed after"
     ), "the reclaim must follow the outer completion line, not the inner banner"
     assert _group_is_empty(pgid_file)
+
+
+def test_reclaim_refuses_loudly_on_a_non_posix_platform(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F2 (fold wave): CPython on Windows silently ignores start_new_session
+    and has no process groups to reclaim, so the guard cannot do its work
+    there — _reclaim_group must refuse loudly with the platform named, never
+    silently run unprotected. The suite's process-group arms skip on win32;
+    this arm runs everywhere, pinning the refusal itself (Build Docs is
+    ubuntu-only — .github/workflows/docs.yml)."""
+    mod = _load()
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    class _Stub:
+        pid = -1
+
+        def wait(self, timeout: float | None = None) -> int:  # noqa: ARG002
+            raise AssertionError("the guard must refuse before touching the process")
+
+    with pytest.raises(SystemExit, match=r"unsupported on win32"):
+        mod._reclaim_group(_Stub())
 
 
 def test_marker_regexes_pin_the_literal_0170_banner() -> None:

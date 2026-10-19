@@ -228,6 +228,17 @@ def _reclaim_group(proc: subprocess.Popen[str]) -> None:
     after RECLAIM_TERM_TO_KILL_S. ``start_new_session=True`` made the child
     its own group leader, so the group kill cannot reach this script — that
     pairing (setsid first, group-kill second) is what makes it safe."""
+    if sys.platform == "win32":
+        # Loud by construction, never silently unprotected: CPython on
+        # Windows ignores start_new_session and there are no process groups
+        # to reclaim. Production exposure is nil — Build Docs runs on
+        # ubuntu-latest only (.github/workflows/docs.yml) — and the suite's
+        # process-group arms skip on win32; this refusal makes any other
+        # non-POSIX use fail loudly instead of no-op-ing.
+        raise SystemExit(
+            f"done_marker reclamation is unsupported on {sys.platform}: "
+            "the session/process-group mechanism is POSIX-only"
+        )
     try:
         pgid = os.getpgid(proc.pid)
     except ProcessLookupError:
