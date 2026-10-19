@@ -44,6 +44,9 @@ BANNER_SITE_READY = "Site ready (1 warning) → /scratch/sdk-worktree/great-docs
 BANNER_FAIL = "[FAIL] Build failed at Step 7 - reference rendering"
 
 GRANDCHILD = "import time; time.sleep(3600)"
+GRANDCHILD_TERM_IGNORER = (
+    "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(3600)"
+)
 
 # The synthetic CI shape: banner first, then never exit, holding two sleeping
 # grandchildren (the run-38758274375 orphan tree). argv[1] receives a path the
@@ -153,6 +156,20 @@ sys.stdout.flush()
 time.sleep(3600)
 """
 
+# The load-shape extreme of the CI failure (run 39209775675): a grandchild
+# that IGNORES SIGTERM. Polite members die at SIGTERM; this one must be
+# SIGKILLed through the group, which the reclaim's escalation has to reach
+# on its own (the leader is not the group).
+_CHILD_SIGTERM_IGNORE = f"""
+import os, subprocess, sys, time
+sys.stdout.reconfigure(encoding="utf-8")
+subprocess.Popen([sys.executable, "-c", {GRANDCHILD_TERM_IGNORER!r}])
+sys.stdout.write({BANNER_FAIL!r} + "\\n")
+sys.stdout.flush()
+open(sys.argv[1], "w").write(str(os.getpgrp()))
+time.sleep(3600)
+"""
+
 
 def _load() -> Any:
     """Load the script once per session (tests/test_release_cut.py's pattern)."""
@@ -167,28 +184,29 @@ def _load() -> Any:
     return module
 
 
-def _group_is_empty(pgid_file: Path, *, drain_s: float | None = None) -> bool:
-    """True when no member remains in the child's process group. killpg(0)
-    answers ProcessLookupError for an empty group — but a group holding only
-    freshly orphaned zombies can answer PermissionError on macOS until
-    re-adoption reaps them (observed under pytest-xdist load), so drain that
-    window (bounded) before concluding members survive. The default bound is
-    the runner's own RECLAIM_PROBE_DRAIN_S (F5a): one measured number, not
-    two."""
-    if drain_s is None:
-        drain_s = _load().RECLAIM_PROBE_DRAIN_S
+def _group_is_empty(pgid_file: Path, *, deadline_s: float | None = None) -> bool:
+    """The arms' claim is a PROPERTY: the child's process group is empty
+    AFTERWARDS — no members at all, not even reap-pending zombies. So this
+    polls to a bounded deadline instead of sampling one instant: killpg(0)
+    success and EPERM both mean members-may-remain (a zombie answers success
+    on Linux and EPERM on macOS — a single sample of the Linux shape is what
+    reddened CI run 39209775675), and only ProcessLookupError settles the
+    question. The default deadline is the runner's RECLAIM_GROUP_DEADLINE_S
+    — one disclosure ceiling, not a second number. True = empty within it."""
+    if deadline_s is None:
+        deadline_s = _load().RECLAIM_GROUP_DEADLINE_S
     pgid = int(pgid_file.read_text(encoding="utf-8"))
-    deadline = time.monotonic() + drain_s
+    end = time.monotonic() + deadline_s
     while True:
         try:
             os.killpg(pgid, 0)
-            return False  # signalable members: alive
         except ProcessLookupError:
-            return True
+            return True  # empty
         except PermissionError:
-            if time.monotonic() >= deadline:
-                return False
-            time.sleep(0.05)
+            pass  # macOS zombie window — keep polling
+        if time.monotonic() >= end:
+            return False
+        time.sleep(0.05)
 
 
 @POSIX_ONLY
@@ -370,17 +388,17 @@ def test_isolated_marker_waits_for_the_outer_completion_line(
 def test_reclaim_reaps_a_zombie_leader_instead_of_stranding_it(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """F5b: on macOS a zombie leader answers os.getpgid with ESRCH, so
-    _reclaim_group's entry guard used to return without reaping — stranding
-    OUR OWN unreaped zombie, whose group then probes EPERM forever, and (the
-    sibling race lane B captured, leader dying between getpgid and killpg)
-    logging a false "still has member processes" survivor warning. The fix
-    reaps the leader at both bail-outs; this arm constructs the zombie
-    WITHOUT reaping (a live leader answers killpg(0) with success on macOS,
-    a zombie-only group answers EPERM) and asserts the group is truly EMPTY
-    afterwards. On Linux a zombie answers kill probes with success, so the
-    construction cannot zombify detectably there — the arm pins the macOS
-    class only (disclosed)."""
+    """F5b (revised by the 2026-10-19 second round): a group whose only
+    member is the unreaped leader zombie must drain to EMPTY — the leader is
+    reaped inside the reclamation (proc.poll in the wait loop) and the
+    group is now addressed by construction (pgid = proc.pid, since
+    start_new_session makes the child its own leader), so a zombie leader
+    can neither strand itself nor hide its grandchildren. The arm
+    constructs the zombie WITHOUT reaping (a live leader answers killpg(0)
+    with success on macOS, a zombie-only group answers EPERM) and asserts
+    the group ends empty with no survivor warning. On Linux a zombie answers
+    kill probes with success, so the construction cannot zombify detectably
+    there — the arm pins the macOS class only (disclosed)."""
     mod = _load()
     proc = subprocess.Popen(
         [
@@ -407,6 +425,33 @@ def test_reclaim_reaps_a_zombie_leader_instead_of_stranding_it(
     assert "still has member processes" not in out
     with pytest.raises(ProcessLookupError):
         os.killpg(pgid, 0)  # pre-fix: EPERM — the stranded zombie remains
+
+
+@POSIX_ONLY
+def test_reclaim_kills_a_sigterm_ignoring_grandchild(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The load-shape extreme of CI run 39209775675 (ubuntu, -n auto): a
+    grandchild that IGNORES SIGTERM. Two sibling defects let it survive:
+    the reclaim's SIGTERM→SIGKILL escalation was keyed to the LEADER's exit
+    (proc.wait) rather than the GROUP's, so a surviving member was never
+    SIGKILLed; and the emptiness probe treated killpg(0) success as "alive,
+    done" — on Linux a reap-pending zombie answers exactly the same way, so
+    a merely-draining group also read as survivors. The arm's contract is
+    the property: the group is empty AFTERWARDS (polled to a deadline), and
+    no false survivor warning is logged on the way there."""
+    mod = _load()
+    pgid_file = tmp_path / "term-ignore-pgid"
+    with pytest.raises(SystemExit, match=r"command failed \(banner\)"):
+        mod.run(
+            [sys.executable, "-c", _CHILD_SIGTERM_IGNORE, str(pgid_file)],
+            cwd=tmp_path,
+            done_marker=True,
+            grace=1.0,
+            timeout=60.0,
+        )
+    assert _group_is_empty(pgid_file), "a SIGTERM-ignoring grandchild survived reclamation"
+    assert "still has member processes" not in capsys.readouterr().out
 
 
 def test_reclaim_refuses_loudly_on_a_non_posix_platform(

@@ -315,3 +315,47 @@ acceptance rule's field rule and reopen trigger are unchanged.
   raises ESRCH, and a same-length sabotage restored within the same wall-clock second
   keeps a stale `.pyc` (second-resolution mtime + size validation) — clear `__pycache__`
   after any RED-neutralization that rewrites source in place.
+
+---
+
+## Addendum 2026-10-19 (second) — the reclaim bound is a property, not a number
+
+PR #181's ubuntu leg (run 39209775675) reddened `test_fail_banner_hang_…` at its
+"group empty" assertion under `-n auto` load, while the same arm passed on macOS,
+Windows and locally. The lead's diagnosis (the drain constant is an idle-machine
+measurement used as a wall-clock bound) is correct — and the probe found three
+sibling defects under it, so the fix is the contract, not the number:
+
+1. **The emptiness probe guessed from one sample.** `killpg(0)` success was read as
+   "alive, done" — but on Linux a reap-pending zombie answers success exactly like a
+   live member (on macOS it answers EPERM). The EPERM drain only ever covered the
+   macOS shape. Now both outcomes mean members-may-remain: reclamation WAITS FOR THE
+   PROPERTY (group empty — no members, not even zombies) and returns the moment it
+   holds.
+2. **Escalation was keyed to the leader, not the group.** The SIGTERM→SIGKILL ladder
+   broke on `proc.wait()` — the leader's exit — so a SIGTERM-ignoring member was
+   never SIGKILLed at all. The RED captured a WARNING claiming "still has member
+   processes after SIGKILL" when no SIGKILL had been sent — the log named a
+   mechanism event that did not happen. Now SIGTERM gets `RECLAIM_TERM_TO_KILL_S` of
+   politeness, then the whole group gets SIGKILL, then the wait.
+3. **The arm asserted an instant, not a property.** `_group_is_empty` sampled once
+   (draining only the macOS window); its contract is "the group is empty AFTERWARDS".
+   It now polls to a bounded deadline — the same wait-for-ESRCH semantics as the
+   mechanism.
+4. **pgid by construction.** `start_new_session=True` makes the child its own group
+   leader, so the group is its pid; the `getpgid` probe is gone (on macOS it answers
+   ESRCH for a zombie leader and would strand the grandchildren), and the leader is
+   reaped inside the wait loop (`proc.poll()`).
+5. **The constant is a disclosure ceiling.** `RECLAIM_PROBE_DRAIN_S = 2.0` (lane B's
+   1–4ms idle-macOS measurement) is retired; `RECLAIM_GROUP_DEADLINE_S = 30.0` bounds
+   how long a group may outlive the reclaim signals before the R6 warning names what
+   remains. SIGKILL delivery is immediate; the residual is orphan reap latency
+   (init/launchd scheduling — unbounded in principle), so no finite number can be an
+   accuracy bound — only a ceiling on waiting, and the wait returns as soon as the
+   property holds. The warning text now names "the reclaim signals" and the ceiling,
+   matching the mechanism exactly.
+
+RED: `test_reclaim_kills_a_sigterm_ignoring_grandchild` (a grandchild with
+`SIGTERM` ignored — the deterministic extreme of the CI load shape) against the
+pre-fix code: `AssertionError: a SIGTERM-ignoring grandchild survived reclamation`,
+with the captured output showing the false "after SIGKILL" warning. GREEN: 12/12.

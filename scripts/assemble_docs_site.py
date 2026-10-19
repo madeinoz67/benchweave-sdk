@@ -64,7 +64,6 @@ root with ``great-docs`` on PATH (see .github/workflows/docs.yml).
 from __future__ import annotations
 
 import argparse
-import contextlib
 import os
 import re
 import shutil
@@ -119,13 +118,19 @@ OK_BANNER_HEAD_RE = re.compile(r"\[OK\] Build complete")
 SITE_READY_RE = re.compile(r"Site ready")
 FAIL_BANNER_RE = re.compile(r"\[FAIL\] Build failed")
 SITE_BUILT_RE = re.compile(r"Site built successfully")
+# Reclaim timing, mechanism-shaped (the F5a idle-machine drain bound is
+# retired — see the 2026-10-19 second addendum to the design record):
+# SIGKILL delivery is immediate; what remains after the signals is reap
+# latency of orphans (init/launchd scheduling — unbounded in principle,
+# short in practice). So the reclamation WAITS FOR THE PROPERTY (the group
+# is empty — no members, not even zombies) and returns the moment it holds;
+# these bounds are disclosure ceilings on that wait, never accuracy knobs:
+# SIGTERM gets RECLAIM_TERM_TO_KILL_S of politeness before SIGKILL, and
+# RECLAIM_GROUP_DEADLINE_S is how long a group may outlive the reclaim
+# signals before the R6 warning names what remains. Both sit inside the
+# guarded run's own timeout frame.
 RECLAIM_TERM_TO_KILL_S = 10.0
-# The zombie-reap drain bound (F5a): lane B measured the macOS window —
-# freshly orphaned grandchildren answering a killpg(0) probe with EPERM
-# until launchd re-adopts and reaps them — at 1-4ms across 8 trials. 2.0s
-# is ~500x that window: generous against CI load spikes, still noise-level
-# latency on an ending that already waited out a full grace period.
-RECLAIM_PROBE_DRAIN_S = 2.0
+RECLAIM_GROUP_DEADLINE_S = 30.0
 
 # Reference-section order markup as great-docs 0.17.0 emits it: the sidebar
 # switcher reads data-gd-ref-sections (inline DOMContentLoaded script; a plain
@@ -229,11 +234,43 @@ def _forward_and_mark(
             marked["ok"] = time.monotonic()
 
 
+def _wait_group_empty(pgid: int, proc: subprocess.Popen[str], timeout: float) -> bool:
+    """Poll until the group is genuinely EMPTY — no members, not even
+    reap-pending zombies — or the deadline passes. killpg(0) success and
+    EPERM both mean members-may-remain (a zombie answers success on Linux
+    and EPERM on macOS), so this waits FOR the property instead of sampling
+    one instant and guessing. The leader is our own child: poll() reaps it
+    the moment it exits, which is what lets an orphaned-group zombie drain
+    to ESRCH at all. Returns True when empty."""
+    deadline = time.monotonic() + timeout
+    while True:
+        proc.poll()  # reap the leader the instant it exits
+        try:
+            os.killpg(pgid, 0)
+        except ProcessLookupError:
+            return True  # empty
+        except PermissionError:
+            pass  # members exist but are unsignalable (macOS zombie window)
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.05)
+
+
 def _reclaim_group(proc: subprocess.Popen[str]) -> None:
-    """Reclaim the child's whole process group: SIGTERM, escalating to SIGKILL
-    after RECLAIM_TERM_TO_KILL_S. ``start_new_session=True`` made the child
-    its own group leader, so the group kill cannot reach this script — that
-    pairing (setsid first, group-kill second) is what makes it safe."""
+    """Reclaim the child's whole process group and wait for the property the
+    reclamation claims: when this returns, the group is empty — or the R6
+    disclosure names what remains.
+
+    ``start_new_session=True`` made the child its own session and group
+    leader, so the group is its pid BY CONSTRUCTION (no getpgid probe — on
+    macOS that answers ESRCH for a zombie leader and would strand the
+    grandchildren), and the group kill cannot reach this script — setsid
+    first, group-kill second. Escalation is keyed to the GROUP, not the
+    leader: SIGTERM gets RECLAIM_TERM_TO_KILL_S of politeness; a member that
+    survives it (SIGTERM is ignorable) is SIGKILLed with the rest of the
+    group; SIGKILL delivery is immediate and what remains after it is reap
+    latency of orphans — so the final wait is wait-for-empty up to
+    RECLAIM_GROUP_DEADLINE_S, a disclosure ceiling, not an accuracy knob."""
     if sys.platform == "win32":
         # Loud by construction, never silently unprotected: CPython on
         # Windows ignores start_new_session and there are no process groups
@@ -245,59 +282,27 @@ def _reclaim_group(proc: subprocess.Popen[str]) -> None:
             f"done_marker reclamation is unsupported on {sys.platform}: "
             "the session/process-group mechanism is POSIX-only"
         )
+    pgid = proc.pid  # start_new_session: the child leads its own group
     try:
-        pgid = os.getpgid(proc.pid)
+        os.killpg(pgid, signal.SIGTERM)
     except ProcessLookupError:
-        # F5b: on macOS a zombie leader answers getpgid with ESRCH already —
-        # the leader is OUR unreaped child, so reap it rather than strand it
-        # (a stranded zombie keeps the group probe-EPERM for whoever looks
-        # next). Reaping a zombie is instant.
-        with contextlib.suppress(subprocess.TimeoutExpired):
-            proc.wait(timeout=1.0)
+        return  # already empty
+    except PermissionError:
+        pass  # unsignalable now (zombie window) — SIGKILL decides
+    if _wait_group_empty(pgid, proc, RECLAIM_TERM_TO_KILL_S):
+        return  # polite shutdown emptied the group
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except ProcessLookupError:
         return
-    for sig in (signal.SIGTERM, signal.SIGKILL):
-        try:
-            os.killpg(pgid, sig)
-        except ProcessLookupError:
-            return  # group already empty (reaped members do not count)
-        except PermissionError:
-            if sig is signal.SIGTERM:
-                continue  # unsignalable now (zombie window) — SIGKILL, probe decides
-            break  # even SIGKILL was refused — the probe below reports it
-        try:
-            proc.wait(timeout=RECLAIM_TERM_TO_KILL_S)
-            break
-        except subprocess.TimeoutExpired:
-            if sig is signal.SIGKILL:
-                log(
-                    f"WARNING: child pid {proc.pid} unreapable "
-                    f"{RECLAIM_TERM_TO_KILL_S:.0f}s after SIGKILL"
-                )
-    # F5b: reap the leader before probing — if the PermissionError breaks
-    # above skipped every wait, a zombie leader alone would make the probe
-    # below report false survivors. Reaping a zombie is instant; a live
-    # leader at this point already logged unreapable in the loop.
-    with contextlib.suppress(subprocess.TimeoutExpired):
-        proc.wait(timeout=1.0)
-    # R6: members that persist once the signals have landed are reported
-    # loudly, never waited on. The zombie-reap window (EPERM, macOS) drains
-    # first so it is not misreported as survivors.
-    deadline = time.monotonic() + RECLAIM_PROBE_DRAIN_S
-    while True:
-        try:
-            os.killpg(pgid, 0)
-        except ProcessLookupError:
-            return  # group drained to empty — reclamation complete
-        except PermissionError:
-            if time.monotonic() >= deadline:
-                break  # persistently unsignalable — report below
-            time.sleep(0.05)
-        else:
-            break  # signalable members: alive after SIGKILL — report below
-    log(
-        f"WARNING: process group {pgid} still has member processes after SIGKILL "
-        "— orphaned or unreapable work may outlive this step"
-    )
+    except PermissionError:
+        pass  # refused — the final wait reports whatever remains
+    if not _wait_group_empty(pgid, proc, RECLAIM_GROUP_DEADLINE_S):
+        log(
+            f"WARNING: process group {pgid} still has member processes "
+            f"{RECLAIM_GROUP_DEADLINE_S:.0f}s after the reclaim signals — "
+            "survivors or unreapable orphans may outlive this step"
+        )
 
 
 def _join_reader(reader: threading.Thread) -> None:
