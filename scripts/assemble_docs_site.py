@@ -64,10 +64,14 @@ root with ``great-docs`` on PATH (see .github/workflows/docs.yml).
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -85,6 +89,24 @@ ALIASES = ("latest", "stable")
 # (tag/cat-file/rev-parse/ls-files), which are single-object lookups.
 GIT_TIMEOUT = 60
 GREAT_DOCS_TIMEOUT = 900
+
+# Issue #476 marker contract, pinned to great-docs 0.17.0 (like the markup
+# workarounds in .github/workflows/docs.yml — any pin bump re-derives these):
+# on CI the tool can print its completion banner and then never exit
+# (interpreter shutdown wedges with the work already done; local 0.17.0 runs
+# exit cleanly — root cause named upstream, evidence in the design record).
+# The two great-docs call sites run with done_marker=True, so the step ends
+# at the tool's own banner instead of waiting for a process exit that never
+# comes: the OK marker is the conjunction of "[OK] Build complete" and a
+# following "Site ready" line inside the one banner box (a lone quoted string
+# cannot complete it), "[FAIL] Build failed" outranks both, and the child's
+# whole process group is reclaimed after a grace period — the masked exit
+# code is disclosed in the log and the artifacts are still gated downstream
+# by bucket_source()/verify_tree().
+OK_BANNER_HEAD_RE = re.compile(r"\[OK\] Build complete")
+SITE_READY_RE = re.compile(r"Site ready")
+FAIL_BANNER_RE = re.compile(r"\[FAIL\] Build failed")
+RECLAIM_TERM_TO_KILL_S = 10.0
 
 # Reference-section order markup as great-docs 0.17.0 emits it: the sidebar
 # switcher reads data-gd-ref-sections (inline DOMContentLoaded script; a plain
@@ -116,7 +138,13 @@ def log(msg: str) -> None:
 
 
 def run(
-    cmd: list[str], *, cwd: Path | None = None, timeout: float | None = None, stream: bool = False
+    cmd: list[str],
+    *,
+    cwd: Path | None = None,
+    timeout: float | None = None,
+    stream: bool = False,
+    done_marker: bool = False,
+    grace: float = 30.0,
 ) -> str:
     """Run a subprocess loudly (issue #475: no silent phases, no unbounded children).
 
@@ -124,7 +152,15 @@ def run(
     reaches the CI log as it happens — for callers that ignore stdout. The
     default captures, for callers that parse it (git helpers). A timeout aborts
     with the command named; a non-zero exit prints the captured output first.
+
+    ``done_marker=True`` (the two great-docs call sites only) ends the run at
+    the tool's own completion banner — the marker contract above — reclaiming
+    the child's process group when the tool hangs past its last word. ``stream``
+    is superseded there: the guarded path forwards output through a reader
+    thread instead of inheriting the fds.
     """
+    if done_marker:
+        return _run_marker_guarded(cmd, cwd=cwd, timeout=timeout, grace=grace)
     try:
         proc = subprocess.run(
             cmd, cwd=cwd, capture_output=not stream, text=True, timeout=timeout
@@ -136,6 +172,131 @@ def run(
             sys.stderr.write(proc.stdout + proc.stderr)
         raise SystemExit(f"command failed ({proc.returncode}): {' '.join(cmd)}")
     return proc.stdout or ""
+
+
+def _forward_and_mark(proc: subprocess.Popen[str], marked: dict[str, float]) -> None:
+    """Daemon reader: forward every child line to stdout, flushed (the live
+    build output issue #475 fought for), and time-stamp the first sight of
+    each completion marker. The FAIL banner is checked first — a failure
+    banner outranks any earlier success text; the OK marker is completed only
+    by a "Site ready" line that follows the "[OK] Build complete" head."""
+    out = proc.stdout
+    assert out is not None
+    for line in out:
+        sys.stdout.write(line)
+        sys.stdout.flush()
+        if FAIL_BANNER_RE.search(line):
+            if marked["fail"] == 0.0:
+                marked["fail"] = time.monotonic()
+        elif OK_BANNER_HEAD_RE.search(line):
+            marked["head"] = 1.0
+        elif marked["head"] and SITE_READY_RE.search(line) and marked["ok"] == 0.0:
+            marked["ok"] = time.monotonic()
+
+
+def _reclaim_group(proc: subprocess.Popen[str]) -> None:
+    """Reclaim the child's whole process group: SIGTERM, escalating to SIGKILL
+    after RECLAIM_TERM_TO_KILL_S. ``start_new_session=True`` made the child
+    its own group leader, so the group kill cannot reach this script — that
+    pairing (setsid first, group-kill second) is what makes it safe. A group
+    holding only zombies is already empty to a signal probe (zombies cannot
+    receive signals), so a ProcessLookupError from killpg is the all-dead
+    signal, not a guess."""
+    try:
+        pgid = os.getpgid(proc.pid)
+    except ProcessLookupError:
+        return
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(pgid, sig)
+        except ProcessLookupError:
+            return  # group already empty (zombies do not count)
+        try:
+            proc.wait(timeout=RECLAIM_TERM_TO_KILL_S)
+            break
+        except subprocess.TimeoutExpired:
+            if sig is signal.SIGKILL:
+                log(
+                    f"WARNING: child pid {proc.pid} unreapable "
+                    f"{RECLAIM_TERM_TO_KILL_S:.0f}s after SIGKILL"
+                )
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return
+    log(
+        f"WARNING: process group {pgid} still has live members after SIGKILL — "
+        "orphaned work may outlive this step"
+    )
+
+
+def _join_reader(reader: threading.Thread) -> None:
+    """Bounded join of the output reader. The pipe closes when its last write
+    end dies — the group kill closes them all — so this is normally instant;
+    daemon plus a loud note if not, never a hang."""
+    reader.join(timeout=RECLAIM_TERM_TO_KILL_S)
+    if reader.is_alive():
+        log("WARNING: output reader still open — a pipe writer outside the child's group?")
+
+
+def _run_marker_guarded(
+    cmd: list[str], *, cwd: Path | None, timeout: float | None, grace: float
+) -> str:
+    """run() under the #476 marker contract — four endings, all loud:
+
+    E1 the child exits on its own (the normal case, and the only case seen
+       locally): its real exit code honored exactly as the unguarded path.
+    E2 the OK banner was seen and the child keeps running past the grace
+       period (the observed CI shape): the group is reclaimed and "" is
+       returned, the masked exit code disclosed in the log.
+    E3 the FAIL banner was seen and the child keeps running: reclaimed, then
+       a loud SystemExit — no code exists to report, and none is invented.
+    E4 no banner and no exit (a mid-build wedge): the outer timeout fires,
+       now reclaiming the group before the named-timeout SystemExit.
+    """
+    proc = subprocess.Popen(
+        cmd,
+        cwd=cwd,
+        # setsid first: the child leads its own process group, so the group
+        # kill in _reclaim_group reaches the lingering grandchildren and
+        # cannot signal this script.
+        start_new_session=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+    marked: dict[str, float] = {"ok": 0.0, "fail": 0.0, "head": 0.0}
+    reader = threading.Thread(target=_forward_and_mark, args=(proc, marked), daemon=True)
+    reader.start()
+    started = time.monotonic()
+    while True:
+        try:
+            code: int | None = proc.wait(timeout=0.5)
+        except subprocess.TimeoutExpired:
+            code = None
+        now = time.monotonic()
+        if code is not None:  # E1 — output was forwarded live; nothing to reprint
+            _join_reader(reader)
+            if code != 0:
+                raise SystemExit(f"command failed ({code}): {' '.join(cmd)}")
+            return ""
+        if marked["fail"] and now - marked["fail"] >= grace:  # E3, checked first
+            _reclaim_group(proc)
+            _join_reader(reader)
+            raise SystemExit(f"command failed (banner): {' '.join(cmd)}")
+        if marked["ok"] and now - marked["ok"] >= grace:  # E2 — the work is done
+            _reclaim_group(proc)
+            _join_reader(reader)
+            log(
+                "great-docs banner seen; process reclaimed after "
+                f"{time.monotonic() - marked['ok']:.0f}s — exit code masked by reclamation"
+            )
+            return ""
+        if timeout is not None and now - started >= timeout:  # E4 backstop
+            _reclaim_group(proc)
+            _join_reader(reader)
+            raise SystemExit(f"command timed out after {timeout:g}s: {' '.join(cmd)}")
 
 
 def release_tags() -> list[str]:
@@ -247,6 +408,7 @@ def isolated_build(great_docs: str, repo_url: str, ref: str, version: str, out_d
         cwd=REPO,
         timeout=GREAT_DOCS_TIMEOUT,
         stream=True,  # issue #475: --from-repo output must stream, never sit captured
+        done_marker=True,  # issue #476: end at the tool's banner (the wedged-CI child never exits)
     )
 
 
@@ -660,6 +822,7 @@ def main() -> None:
             cwd=REPO,
             timeout=GREAT_DOCS_TIMEOUT,
             stream=True,  # issue #475: in-process build output streams, bounded at 900s
+            done_marker=True,  # issue #476: end at the banner, not at a bound
         )
         replace_dir(REPO / "great-docs" / "_site", docs_root)
     else:
