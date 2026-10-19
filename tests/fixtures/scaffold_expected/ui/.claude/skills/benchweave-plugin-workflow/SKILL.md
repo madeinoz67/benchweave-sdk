@@ -54,5 +54,5 @@ generate your project" and section "5. Prepare the release, then approve
 publication".
 
 ---
-Maintained by benchweave-sdk 0.15.0; `benchweave-sdk upgrade`
+Maintained by benchweave-sdk 0.16.0; `benchweave-sdk upgrade`
 refreshes this skill.

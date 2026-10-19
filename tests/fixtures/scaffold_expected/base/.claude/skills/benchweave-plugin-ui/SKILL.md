@@ -82,5 +82,5 @@ scenarios at their own ids.
 The plugin SDK guide covers this in section "Local UI preview (simulated)".
 
 ---
-Maintained by benchweave-sdk 0.15.0; `benchweave-sdk upgrade`
+Maintained by benchweave-sdk 0.16.0; `benchweave-sdk upgrade`
 refreshes this skill.

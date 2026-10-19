@@ -12,6 +12,15 @@ The error vocabulary and its HTTP statuses live in :mod:`.errors`, pinned
 against the vendored interface catalog by test. Nothing in this module is
 inferred from a Python signature: input and result schemas are explicit data,
 and the MCP registration pins them verbatim onto the served tools.
+
+``capture_series`` points SUPERSEDE the positional wire form (issue #450's
+rider): the served shape is the named object ``{"x": <number>, "y":
+<number>}``, both keys required, closed — the superseded form was the
+2-element ``[x, y]`` array, which the revised schema refuses. The old→new
+mapping is mechanical: ``points[i][0]`` -> ``points[i]["x"]`` and
+``points[i][1]`` -> ``points[i]["y"]``. The SDK release notes carry the
+BREAKING footer (the #444 preview-exit footer is the precedent); internal
+tuples (plots/analysis/report) are unchanged.
 """
 
 from __future__ import annotations
@@ -415,13 +424,19 @@ _CAPTURE_SERIES_RESULT = _object(
         "max_points": {"type": "integer"},
         "points": {
             "type": "array",
+            # Issue #450's rider (design §3.5): the NAMED point shape —
+            # both keys required, closed. Supersedes the positional form
+            # (2-element [x, y] arrays), which this schema now refuses.
             "items": {
-                "type": "array",
-                "items": {"type": "number"},
-                "minItems": 2,
-                "maxItems": 2,
+                "type": "object",
+                "properties": {
+                    "x": {"type": "number"},
+                    "y": {"type": "number"},
+                },
+                "required": ["x", "y"],
+                "additionalProperties": False,
             },
-            "description": "[x, y] pairs in acquisition order",
+            "description": "Named x/y points in acquisition order",
         },
     },
     ["capture_id", "format", "decimated", "max_points", "points"],

@@ -131,6 +131,30 @@ def test_capture_stop_get_series_annotate_pin_unpin_delete_inputs() -> None:
         assert "capture_id" in row.input_schema.get("properties", {}), name
 
 
+def test_capture_series_refuses_positional_pairs() -> None:
+    """Issue #450's rider (design §3.5): the wire point shape is the NAMED
+    form — {"x": ..., "y": ...}, both required, closed. The superseded
+    positional form (2-element arrays) must FAIL the revised items schema:
+    a 2-element array is not an object. RED at the branch base: the
+    positional form validated clean against the old items schema."""
+    schema = catalogue.spec("capture_series").result_schema
+    positional = {
+        "capture_id": "cap-rider",
+        "format": "volt",
+        "decimated": False,
+        "max_points": 10,
+        "points": [[0.0, 1.0], [0.1, 2.0]],
+    }
+    assert validate(positional, schema), (
+        "the positional pair must fail the revised schema"
+    )
+    named = dict(positional, points=[{"x": 0.0, "y": 1.0}, {"x": 0.1, "y": 2.0}])
+    assert validate(named, schema) == []
+    # the closed shape: one key alone, and any third key, both refuse
+    assert validate(dict(named, points=[{"x": 0.0}]), schema)
+    assert validate(dict(named, points=[{"x": 0.0, "y": 1.0, "z": 0.0}]), schema)
+
+
 def test_capture_series_decimation_defaults() -> None:
     """SW-33: decimate by default (max_points 2000), 0 serves raw points."""
     schema = catalogue.spec("capture_series").input_schema
