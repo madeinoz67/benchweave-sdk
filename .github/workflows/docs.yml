@@ -61,9 +61,14 @@ jobs:
           # [svg] is great-docs' supported cairosvg extra — without it raster
           # favicons silently skip (SVG-only). CI runners have no
           # UV_PROJECT_ENVIRONMENT convention; the default .venv is correct here.
-          # Pinned: scripts/assemble_docs_site.py's markup workarounds are
-          # written against great-docs 0.17.0 — bump the pin and the
-          # workarounds together.
+          # Pinned: scripts/assemble_docs_site.py's markup workarounds AND its
+          # completion-marker strings are written against great-docs 0.17.0 —
+          # the in-process banner box ("[OK] Build complete" + a following
+          # "Site ready" line) and the --from-repo wrapper's "Site built
+          # successfully" line, pinned in tests/test_assemble_run_guard.py
+          # against byte-capture fixtures (tests/fixtures/great_docs_0.17.0_*,
+          # which prove the captured shape, not the live tool). Bump the pin
+          # and the workarounds, the marker regexes and the fixtures together.
           uv pip install "great-docs[svg]==0.17.0"
 
       - name: Set up Quarto
