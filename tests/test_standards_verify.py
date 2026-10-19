@@ -159,12 +159,12 @@ def test_train_sync_family_is_a_pure_addition() -> None:
     lock = _train_lock()
     standards = lock.get("standards")
     assert isinstance(standards, list)
-    assert len(standards) == 16, f"expected 16 rows, found {len(standards)}"
+    assert len(standards) == 17, f"expected 17 rows, found {len(standards)}"
     prior_actives = {
         "otdp": "0.2.3",
         "registry": "0.1.3",
         "execution": "0.2.0",
-        "interface": "0.1.0",
+        "interface": "0.1.1",
         "plugin-ui": "0.4.0",
         "plugin-ui-preview": "0.2.0",
     }
@@ -186,8 +186,8 @@ def test_train_sync_family_is_a_pure_addition() -> None:
         "the digest-frozen bytes, not this lock)"
     )
     retained = [row for row in standards if row.get("active") is False]
-    assert len(retained) == 9, (
-        f"expected 9 retained rows (the post-train posture), found {len(retained)}"
+    assert len(retained) == 10, (
+        f"expected 10 retained rows (the post-train posture), found {len(retained)}"
     )
 
 
