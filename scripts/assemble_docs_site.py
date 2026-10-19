@@ -107,6 +107,7 @@ OK_BANNER_HEAD_RE = re.compile(r"\[OK\] Build complete")
 SITE_READY_RE = re.compile(r"Site ready")
 FAIL_BANNER_RE = re.compile(r"\[FAIL\] Build failed")
 RECLAIM_TERM_TO_KILL_S = 10.0
+RECLAIM_PROBE_DRAIN_S = 2.0
 
 # Reference-section order markup as great-docs 0.17.0 emits it: the sidebar
 # switcher reads data-gd-ref-sections (inline DOMContentLoaded script; a plain
@@ -198,10 +199,7 @@ def _reclaim_group(proc: subprocess.Popen[str]) -> None:
     """Reclaim the child's whole process group: SIGTERM, escalating to SIGKILL
     after RECLAIM_TERM_TO_KILL_S. ``start_new_session=True`` made the child
     its own group leader, so the group kill cannot reach this script — that
-    pairing (setsid first, group-kill second) is what makes it safe. A group
-    holding only zombies is already empty to a signal probe (zombies cannot
-    receive signals), so a ProcessLookupError from killpg is the all-dead
-    signal, not a guess."""
+    pairing (setsid first, group-kill second) is what makes it safe."""
     try:
         pgid = os.getpgid(proc.pid)
     except ProcessLookupError:
@@ -210,7 +208,11 @@ def _reclaim_group(proc: subprocess.Popen[str]) -> None:
         try:
             os.killpg(pgid, sig)
         except ProcessLookupError:
-            return  # group already empty (zombies do not count)
+            return  # group already empty (reaped members do not count)
+        except PermissionError:
+            if sig is signal.SIGTERM:
+                continue  # unsignalable now (zombie window) — SIGKILL, probe decides
+            break  # even SIGKILL was refused — the probe below reports it
         try:
             proc.wait(timeout=RECLAIM_TERM_TO_KILL_S)
             break
@@ -220,13 +222,24 @@ def _reclaim_group(proc: subprocess.Popen[str]) -> None:
                     f"WARNING: child pid {proc.pid} unreapable "
                     f"{RECLAIM_TERM_TO_KILL_S:.0f}s after SIGKILL"
                 )
-    try:
-        os.killpg(pgid, 0)
-    except ProcessLookupError:
-        return
+    # R6: members that persist once the signals have landed are reported
+    # loudly, never waited on. The zombie-reap window (EPERM, macOS) drains
+    # first so it is not misreported as survivors.
+    deadline = time.monotonic() + RECLAIM_PROBE_DRAIN_S
+    while True:
+        try:
+            os.killpg(pgid, 0)
+        except ProcessLookupError:
+            return  # group drained to empty — reclamation complete
+        except PermissionError:
+            if time.monotonic() >= deadline:
+                break  # persistently unsignalable — report below
+            time.sleep(0.05)
+        else:
+            break  # signalable members: alive after SIGKILL — report below
     log(
-        f"WARNING: process group {pgid} still has live members after SIGKILL — "
-        "orphaned work may outlive this step"
+        f"WARNING: process group {pgid} still has member processes after SIGKILL "
+        "— orphaned or unreapable work may outlive this step"
     )
 
 

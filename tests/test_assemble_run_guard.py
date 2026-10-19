@@ -104,16 +104,24 @@ def _load() -> Any:
     return module
 
 
-def _group_is_empty(pgid_file: Path) -> bool:
-    """True when no living process remains in the child's process group
-    (killpg(0) raises ProcessLookupError; zombies cannot receive signals and
-    do not count)."""
+def _group_is_empty(pgid_file: Path, *, drain_s: float = 5.0) -> bool:
+    """True when no member remains in the child's process group. killpg(0)
+    answers ProcessLookupError for an empty group — but a group holding only
+    freshly orphaned zombies can answer PermissionError on macOS until
+    re-adoption reaps them (observed under pytest-xdist load), so drain that
+    window (bounded) before concluding members survive."""
     pgid = int(pgid_file.read_text(encoding="utf-8"))
-    try:
-        os.killpg(pgid, 0)
-    except ProcessLookupError:
-        return True
-    return False
+    deadline = time.monotonic() + drain_s
+    while True:
+        try:
+            os.killpg(pgid, 0)
+            return False  # signalable members: alive
+        except ProcessLookupError:
+            return True
+        except PermissionError:
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.05)
 
 
 def test_ok_banner_hang_ends_at_the_banner_and_reclaims_the_group(
