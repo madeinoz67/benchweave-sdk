@@ -39,6 +39,43 @@ def _copy_prose_surfaces(scratch: Path) -> None:
     shutil.copy(REPO / "great-docs.yml", scratch / "great-docs.yml")
 
 
+def _prose_scratch(tmp_path: Path) -> Path:
+    """A scratch repo carrying the FULL file set the bare gate needs (the
+    #412 INCONCLUSIVE branch's requirement): both source roots, the lock,
+    the counter, the prose surfaces and the derivation source."""
+    scratch = tmp_path / "scratch-prose-repo"
+    shutil.copytree(REPO / "src/benchweave_sdk", scratch / "src/benchweave_sdk")
+    shutil.copytree(
+        REPO / "src/benchweave_sdk_server", scratch / "src/benchweave_sdk_server"
+    )
+    (scratch / "scripts").mkdir(parents=True)
+    shutil.copy(COUNTER, scratch / "scripts/count_version_literals.py")
+    shutil.copy(REPO / "standards-lock.json", scratch / "standards-lock.json")
+    _copy_prose_surfaces(scratch)
+    return scratch
+
+
+def _prose_counter_at(scratch: Path):
+    """Load the counter COPY inside the scratch repo — its REPO_ROOT
+    (and therefore both scan scopes) resolves to the scratch tree."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "prose_counter_under_test", scratch / "scripts/count_version_literals.py"
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _prose_run(scratch: Path, capsys, argv: list[str] | None = None):
+    counter = _prose_counter_at(scratch)
+    code = counter.main(argv or [])
+    captured = capsys.readouterr()
+    return code, captured.out + captured.err
+
+
 class TestScaffoldDerivation:
     """The example descriptor's pin is derived (§1.4). Since WS2 the
     descriptor is template output, so the derivation is pinned through the
@@ -672,35 +709,13 @@ class TestProseScope:
     PROSE_SURFACES = ("website", "user_guide", "README.md", "index.qmd", "great-docs.yml")
 
     def _scratch_prose_repo(self, tmp_path: Path) -> Path:
-        scratch = tmp_path / "scratch-prose-repo"
-        shutil.copytree(REPO / "src/benchweave_sdk", scratch / "src/benchweave_sdk")
-        shutil.copytree(
-            REPO / "src/benchweave_sdk_server", scratch / "src/benchweave_sdk_server"
-        )
-        (scratch / "scripts").mkdir(parents=True)
-        shutil.copy(COUNTER, scratch / "scripts/count_version_literals.py")
-        shutil.copy(REPO / "standards-lock.json", scratch / "standards-lock.json")
-        _copy_prose_surfaces(scratch)
-        return scratch
+        return _prose_scratch(tmp_path)
 
     def _counter_at(self, scratch: Path):
-        """Load the counter COPY inside the scratch repo — its REPO_ROOT
-        (and therefore both scan scopes) resolves to the scratch tree."""
-        import importlib.util
-
-        spec = importlib.util.spec_from_file_location(
-            "prose_counter_under_test", scratch / "scripts/count_version_literals.py"
-        )
-        assert spec is not None and spec.loader is not None
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        return module
+        return _prose_counter_at(scratch)
 
     def _run(self, scratch: Path, capsys, argv: list[str] | None = None):
-        counter = self._counter_at(scratch)
-        code = counter.main(argv or [])
-        captured = capsys.readouterr()
-        return code, captured.out + captured.err
+        return _prose_run(scratch, capsys, argv)
 
     def test_a_planted_new_prose_file_refuses(self, tmp_path: Path, capsys) -> None:
         """The issue's shape 1: a version claim on a NEW file under
@@ -822,3 +837,34 @@ class TestProseScope:
         assert code == 1, out
         assert "prose census failed" in out
         assert "website/empty-page.html" in out
+
+
+class TestProseFoldHardening:
+    """The 2026-10-19 fold-wave arms (the adversary lanes' F1-F4; the
+    governor's F5 is a records correction, not an arm). Each row landed
+    RED-first with its fix in one commit, per the fold instruction — the
+    class is separate so TestProseScope stays the design's exactly-7."""
+
+    def test_a_symlinked_directory_under_website_refuses(
+        self, tmp_path: Path, capsys
+    ) -> None:
+        """F1: a directory symlink under website/ escapes BOTH legs — rglob
+        never descends it and the link itself fails is_file — so the whole
+        subtree is invisible (the adversary's repro: the real directory
+        OUTSIDE the scan set, only the link inside). The policy is
+        fail-closed: refuse, naming the symlink. POSIX-only arm: symlink
+        creation needs privileges on Windows (the #476 F2 lane's skipif
+        precedent); the refusal path itself is platform-neutral code."""
+        import os
+
+        if os.name == "nt":
+            pytest.skip("symlink creation needs privileges on Windows")
+        scratch = _prose_scratch(tmp_path)
+        site = scratch / "dirsite"  # outside every scanned surface
+        site.mkdir()
+        (site / "claim.html").write_text("Needs 0.7.1 today.\n", encoding="utf-8")
+        (scratch / "website/legacy-docs").symlink_to(site, target_is_directory=True)
+        code, out = _prose_run(scratch, capsys)
+        assert code == 1, out
+        assert "version_literal_count_failed" in out
+        assert "website/legacy-docs" in out

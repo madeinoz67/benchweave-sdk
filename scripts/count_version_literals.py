@@ -82,7 +82,14 @@ below), ``pyproject.toml``/``uv.lock``/``standards-lock.json`` (machine
 authorities), ``template/``, ``.github/`` and ``scripts/`` are outside
 the denominator by construction; any future widening onto ``docs/`` must
 add named-exclusion constants (the gateway ``DOCS_EXCLUDED_DIRS``
-precedent). ``website/index.html``'s expectation is DERIVED from the
+precedent). A SYMLINK anywhere under a scanned surface is a refusal,
+path named (F1 fold wave: ``rglob`` never descends directory symlinks —
+the subtree would escape both the scan and the census). Root-level
+``*.md`` files other than ``README.md`` are a named boundary (F2 fold
+wave: widening is NOT free — the root carries ``CHANGELOG.md``'s
+generated history and the ``AGENTS.md``/``CLAUDE.md`` convention files;
+deferral F2a in the 2026-10-19 addendum).
+``website/index.html``'s expectation is DERIVED from the
 ``great-docs.yml`` versions map (``2 x release_count +
 PROSE_INDEX_STATIC``), so a clean release train never reddens: a cut
 moves hero/tagline values in place (count-neutral) and the phase-2
@@ -664,6 +671,19 @@ def _prose_expectations() -> dict[str, tuple[str, int]]:
     return {**PROSE_REGISTER, "website/index.html": derived}
 
 
+def _refuse_symlinks(paths: list[Path]) -> None:
+    """F1 (fold wave 2026-10-19): a symlink anywhere under a scanned
+    surface is a REFUSAL — ``rglob`` never descends a directory symlink and
+    the link entry itself fails ``is_file``, so the whole subtree would
+    escape both the scan and the census silently. Fail-closed with the
+    path named, the same direction as the missing-surface rule."""
+    for path in paths:
+        if path.is_symlink():
+            raise OSError(
+                f"prose surface is a symlink: {path.relative_to(REPO_ROOT).as_posix()}"
+            )
+
+
 def _prose_files() -> list[Path]:
     """The enumerated prose surface set (issue #412): every FILE under
     ``website/`` (assets included), ``README.md``, ``index.qmd`` and every
@@ -679,10 +699,19 @@ def _prose_files() -> list[Path]:
     for surface in (website, user_guide, readme, index_qmd):
         if not surface.exists():
             raise OSError(f"prose surface missing: {surface.name}")
-    files = [path for path in sorted(website.rglob("*")) if path.is_file()]
+        if surface.is_symlink():
+            raise OSError(f"prose surface is a symlink: {surface.name}")
+    website_entries = sorted(website.rglob("*"))
+    guide_entries = sorted(user_guide.rglob("*.qmd"))
+    # Every WALK entry is symlink-checked, not only the kept files: a
+    # directory symlink fails is_file and would otherwise skip the check
+    # that exists to catch exactly it.
+    _refuse_symlinks(website_entries + guide_entries + [readme, index_qmd])
+    website_files = [path for path in website_entries if path.is_file()]
+    files = website_files
     files.append(readme)
     files.append(index_qmd)
-    files.extend(sorted(user_guide.rglob("*.qmd")))
+    files.extend(guide_entries)
     return sorted(files)
 
 
