@@ -909,3 +909,15 @@ class TestProseFoldHardening:
         code, out = _prose_run(scratch, capsys)
         assert code == 1, out
         assert "version_literal_count_failed" in out
+
+    def test_os_junk_never_reddens_the_census(self, tmp_path: Path, capsys) -> None:
+        """F4: local OS noise (.DS_Store, Thumbs.db) is excluded BY NAME
+        ONLY — never committed — so it cannot redden the census with an
+        unsanctioned file. This is not a general ignore mechanism: a
+        file is prose-scanned unless it carries one of these two names."""
+        scratch = _prose_scratch(tmp_path)
+        (scratch / "website/.DS_Store").touch()
+        (scratch / "user_guide/Thumbs.db").touch()
+        code, out = _prose_run(scratch, capsys)
+        assert code == 0, out
+        assert "67 sites, 11 files scanned" in out

@@ -624,6 +624,12 @@ PROSE_REGISTER: dict[str, tuple[str, int]] = {
 PROSE_INDEX_STATIC = 11
 VERSIONS_MAP_ROW = re.compile(r"^\s*- tag: v\d+\.\d+\.\d+\s*$")
 
+# F4 (fold wave 2026-10-19): local OS noise, never committed — excluded
+# BY NAME ONLY. This is deliberately NOT a general ignore mechanism: a
+# file is prose-scanned and census-counted unless it carries one of
+# these two names.
+PROSE_JUNK_NAMES: frozenset[str] = frozenset({".DS_Store", "Thumbs.db"})
+
 # The scanned-file census (the gateway snapshot's file_count discipline,
 # named): the enumerated prose surface set, pinned — a new or removed file
 # reds even when it carries zero literals.
@@ -703,13 +709,17 @@ def _prose_files() -> list[Path]:
             raise OSError(f"prose surface missing: {surface.name}")
         if surface.is_symlink():
             raise OSError(f"prose surface is a symlink: {surface.name}")
-    website_entries = sorted(website.rglob("*"))
+    website_entries = [
+        path for path in sorted(website.rglob("*")) if path.name not in PROSE_JUNK_NAMES
+    ]
     # F2 (fold wave 2026-10-19): user_guide/ is DIRECTORY-gated, not
     # extension-gated — every file under it counts. The extension gate
     # (rglob('*.qmd')) missed a renamed page in one edit and was
     # case-sensitive on POSIX besides; the directory has no case to be
     # wrong about.
-    guide_entries = sorted(user_guide.rglob("*"))
+    guide_entries = [
+        path for path in sorted(user_guide.rglob("*")) if path.name not in PROSE_JUNK_NAMES
+    ]
     # Every WALK entry is symlink-checked, not only the kept files: a
     # directory symlink fails is_file and would otherwise skip the check
     # that exists to catch exactly it.
