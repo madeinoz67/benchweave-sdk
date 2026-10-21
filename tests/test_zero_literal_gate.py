@@ -786,7 +786,7 @@ class TestProseScope:
         yml.write_text(yml_text.replace(anchor, anchor + fake_row), encoding="utf-8")
         index = scratch / "website/index.html"
         html_text = index.read_text(encoding="utf-8")
-        option_anchor = '<option value="docs/">v0.16.0 (latest)</option>\n'
+        option_anchor = '<option value="docs/">v0.17.0 (latest)</option>\n'
         assert option_anchor in html_text
         fake_option = '          <option value="docs/v/v9.9.9/">v9.9.9</option>\n'
         index.write_text(
@@ -795,11 +795,11 @@ class TestProseScope:
         code, out = self._run(scratch, capsys)
         assert code == 0, out
         # The same map row without the selector occurrences reds by the
-        # derived number (2 x 23 + 11 = 57).
+        # derived number (2 x 24 + 11 = 59).
         index.write_text(html_text, encoding="utf-8")
         code, out = self._run(scratch, capsys)
         assert code == 1, out
-        assert "website/index.html expects 57 sites" in out
+        assert "website/index.html expects 59 sites" in out
 
     def test_the_prose_matcher_is_pinned_to_the_authority_literal(self) -> None:
         """The twin's PATTERN_DOCS is the gateway docs scope's committed
@@ -920,4 +920,4 @@ class TestProseFoldHardening:
         (scratch / "user_guide/Thumbs.db").touch()
         code, out = _prose_run(scratch, capsys)
         assert code == 0, out
-        assert "67 sites, 11 files scanned" in out
+        assert "69 sites, 11 files scanned" in out
