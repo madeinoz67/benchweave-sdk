@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.18.0] - 2026-10-21
+
+### Features
+
+- Widen the expander and render gate to the 0.3.0 family
+
+### Miscellaneous
+
+- Cut v0.18.0 — the class-reference render coverage widening
+- The v0.18.0 phase-2 registration — versions list + selector, at the tag commit
+- Re-run the docs gate now that v0.18.0 exists
+
+### Testing
+
+- Move the three anchors the 0.18.0 bump moved
+
+
+### Contributors
+
+- Stephen Eaton (5 commits)
 ## [0.17.0] - 2026-10-21
 
 ### Bug Fixes
