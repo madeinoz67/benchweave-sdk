@@ -221,7 +221,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "benchweave-ui-html", marker = "extra == 'server'", specifier = "==0.3.0" },
+    { name = "benchweave-ui-html", marker = "extra == 'server'", specifier = "==0.3.1" },
     { name = "click", specifier = ">=8.3,<9" },
     { name = "copier", marker = "extra == 'scaffold'", specifier = ">=9.18,<10" },
     { name = "copier", marker = "extra == 'server'", specifier = ">=9.18,<10" },
@@ -255,15 +255,15 @@ dev = [
 
 [[package]]
 name = "benchweave-ui-html"
-version = "0.3.0"
+version = "0.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jinja2" },
     { name = "markupsafe" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e8/ac/f15603b081ffed8ffefdb27b13971c61cd2effb89f7f132d02d001d64d2c/benchweave_ui_html-0.3.0.tar.gz", hash = "sha256:08f8d2f1a53fb1a89fe77e3bd6918a0eb887414bf852dc32380e679a878b3e36", size = 113867, upload-time = "2026-10-16T00:21:33.184Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/35/5e/26c61a9e7d6fab5acd97a21c3936a18723188d23b4437678cdbb116d211d/benchweave_ui_html-0.3.1.tar.gz", hash = "sha256:0c9ecb103b8084789ed6553dcf8392d657d25471a35ca4172e7af69501df8e89", size = 123520, upload-time = "2026-10-21T01:45:04.364Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/34/3f/98c077ac1cb1e74072b4b90cc63612897fce537bfdc416f8471562844aad/benchweave_ui_html-0.3.0-py3-none-any.whl", hash = "sha256:253ac207b1f8d4a072112ef3bc642e1a3f41aefaf595134ab765e6613a8317bf", size = 137117, upload-time = "2026-10-16T00:21:31.512Z" },
+    { url = "https://files.pythonhosted.org/packages/22/b4/51cedaa7950546d1ddefae790c66cdbf142a5f8c61b7b93253d5c7ba653d/benchweave_ui_html-0.3.1-py3-none-any.whl", hash = "sha256:216594e003cfbd8cf3a9952e2e6cef3a2ae5ac4984802900f12e4b50f942a742", size = 146913, upload-time = "2026-10-21T01:45:02.64Z" },
 ]
 
 [[package]]
