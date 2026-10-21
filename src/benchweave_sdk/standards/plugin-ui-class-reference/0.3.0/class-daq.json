@@ -1,0 +1,200 @@
+{
+  "contract_version": "0.3.0",
+  "profile_id": "otdp.daq/1.0.0",
+  "title": "Data acquisition and digitiser",
+  "targets": {
+    "plugin_ui": ">=0.4.0"
+  },
+  "slots": {
+    "channels": {
+      "kind": "channels",
+      "where_role": "analogue_input",
+      "key": "id",
+      "label": "label"
+    },
+    "capture": {
+      "kind": "dataset",
+      "action": "otdp.daq.fetch/1.0.0",
+      "schema_source": "output_measurement",
+      "host_supplied": [
+        "acquisition_id"
+      ]
+    },
+    "configure": {
+      "kind": "configuration",
+      "action": "otdp.daq.configure/1.0.0",
+      "schema_source": "input_schema"
+    },
+    "arm": {
+      "kind": "procedure",
+      "action": "otdp.daq.arm/1.0.0",
+      "host_supplied": [
+        "configuration_id",
+        "acquisition_id"
+      ]
+    },
+    "abort": {
+      "kind": "procedure",
+      "action": "otdp.daq.abort/1.0.0",
+      "host_supplied": [
+        "acquisition_id"
+      ]
+    },
+    "trigger": {
+      "kind": "procedure",
+      "action": "otdp.daq.trigger/1.0.0",
+      "when_declared": true,
+      "host_supplied": [
+        "acquisition_id"
+      ]
+    },
+    "vendor_actions": {
+      "kind": "vendor_actions"
+    }
+  },
+  "pages": [
+    {
+      "id": "capture",
+      "title": "Capture",
+      "kind": "dataset",
+      "binding_slots": [
+        "capture",
+        "arm",
+        "abort",
+        "trigger"
+      ],
+      "plot": {
+        "kind": "waveform",
+        "over_slot": "capture",
+        "series": "numeric_variables"
+      }
+    },
+    {
+      "id": "configuration",
+      "title": "Configuration",
+      "kind": "configuration",
+      "binding_slots": [
+        "configure"
+      ]
+    },
+    {
+      "id": "device-features",
+      "title": "Device features",
+      "kind": "configuration",
+      "binding_slots": [
+        "vendor_actions"
+      ],
+      "vendor_features": true
+    }
+  ],
+  "layouts": [
+    {
+      "page_id": "capture",
+      "sections": [
+        {
+          "id": "traces",
+          "title": "Traces",
+          "surface": "recessed",
+          "span": 12,
+          "children": [
+            {
+              "plot_index": 0
+            }
+          ]
+        },
+        {
+          "id": "run",
+          "title": "Run",
+          "surface": "raised",
+          "span": 12,
+          "children": [
+            {
+              "binding_id": "arm",
+              "kind": "button"
+            },
+            {
+              "binding_id": "abort",
+              "kind": "button"
+            },
+            {
+              "binding_id": "trigger",
+              "kind": "button"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "expect": {
+    "components": {
+      "engineering-plot": {
+        "count": "1",
+        "per_page": "capture"
+      },
+      "button": {
+        "count": "{n_run_actions}",
+        "per_page": "capture"
+      },
+      "data-table": {
+        "count": "1"
+      },
+      "panel": {
+        "count": "{n_pages}"
+      },
+      "mode-banner": {
+        "count": "1",
+        "per_page": "*"
+      }
+    },
+    "controls": {
+      "otdp.daq.configure/1.0.0": "preset",
+      "otdp.daq.arm/1.0.0": "staging",
+      "otdp.daq.abort/1.0.0": "button",
+      "otdp.daq.trigger/1.0.0": "button"
+    },
+    "forbid": [
+      "confirm-wrapped-run-action",
+      "color-role-hint-on-lane",
+      "untraceable-lane-label",
+      "intermediated-energy-removing-action"
+    ]
+  },
+  "cannot_derive": [
+    {
+      "id": "acquisition-settings",
+      "aspect": "the per-channel quantity/unit/range, sample rate/count, sampling mode and trigger selection surface",
+      "reason": "configure's per-channel quantity/unit/range objects, the sampling enum and the conditional trigger object are inexpressible at L2; configure is preset-mediated at birth; presets are commissioned evidence (A02)",
+      "author_action": "author ui/presets/*.json via check-preset; the expander emits the scaffold"
+    },
+    {
+      "id": "trigger-marker",
+      "aspect": "the trigger marker and its readout on the capture canvas",
+      "reason": "the dataset carries trigger structurally, but the preview wire has no trigger field — host-knowledge seam (E.2.6's precedent)",
+      "author_action": "host composition where a trigger time is known; the E.2 marker sub-row when the owner calls the bump"
+    },
+    {
+      "id": "cursor-readout",
+      "aspect": "the cursor pair and delta readout",
+      "reason": "cursors are operator runtime state; never on the wire, never derived",
+      "author_action": "host composition at real benches"
+    },
+    {
+      "id": "partial-capture-alert",
+      "aspect": "the truncated-acquisition alert",
+      "reason": "the condition is the dataset's runtime status partial + status_reason — observation state, data not structure",
+      "author_action": "bench observation; the alert-bubble renders from host-observed conditions"
+    },
+    {
+      "id": "calibration-context",
+      "aspect": "the raw-counts and calibration-state context line",
+      "reason": "the dataset's unit and calibration state are runtime data (a digitiser may stream raw counts with calibration not applied); the class presents the unit the dataset carries, never a nicer one",
+      "author_action": "host composition from the dataset's unit and calibration fields"
+    },
+    {
+      "id": "channel-names",
+      "aspect": "channel names beyond descriptor labels",
+      "reason": "the descriptor owns channel identity",
+      "author_action": "label channels in the descriptor"
+    }
+  ]
+}
