@@ -1,0 +1,33 @@
+{
+  "evidence": "synthetic",
+  "exchanges": [
+    {
+      "request": "ID?\n",
+      "response": "Veridian Instruments,PSU-01,SIM001,1.0\n"
+    },
+    {
+      "request": "ch1_voltage?\n",
+      "response": "10.0\n"
+    },
+    {
+      "request": "ch1_current?\n",
+      "response": "11.0\n"
+    },
+    {
+      "request": "ch1_power?\n",
+      "response": "12.0\n"
+    },
+    {
+      "request": "ch2_voltage?\n",
+      "response": "13.0\n"
+    },
+    {
+      "request": "ch2_current?\n",
+      "response": "14.0\n"
+    },
+    {
+      "request": "ch2_power?\n",
+      "response": "15.0\n"
+    }
+  ]
+}

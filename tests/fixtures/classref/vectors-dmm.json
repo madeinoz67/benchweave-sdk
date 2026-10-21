@@ -1,0 +1,17 @@
+{
+  "evidence": "synthetic",
+  "exchanges": [
+    {
+      "request": "ID?\n",
+      "response": "Veridian Instruments,DMM-01,SIM001,1.0\n"
+    },
+    {
+      "request": "ch1_voltage?\n",
+      "response": "10.0\n"
+    },
+    {
+      "request": "ch2_voltage?\n",
+      "response": "11.0\n"
+    }
+  ]
+}
