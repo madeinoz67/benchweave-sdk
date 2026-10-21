@@ -287,3 +287,18 @@ Test surfaces: T1/T2 — the fixtures were regenerated in-arc by the sync PR (re
 | 7 | Contributor window `v0.15.0..HEAD` | 50 commits in the window — human authors other than the operator/bots: none; the walk acknowledges new human contributors and records an empty window as a result |
 | 8 | Gateway uv.lock SDK pin | recorded note — moves at the gateway's next lock run / pointer advance |
 | 9 | Served-set bump class | SERVED-SET MOTION in the window — the class is asserted by the sync machinery (sdk_bump_class_invalid:); the walk records it; release-cut refuses to guess a class (D7) |
+
+## Result record — v0.17.0 (2026-10-21)
+
+| # | Surface | Result |
+|---|---------|--------|
+| 1 | README stamp | updated → SDK 0.17.0 by release-cut (occurrence-validated) |
+| 1b | User-guide "current SDK" sentence | walk confirms — n-a or updated; the wheel filename is a glob since #102 |
+| 2 | Website hero status | updated — SDK 0.17.0 by release-cut (occurrence-validated); OTDP / adapter-API stamps the walk confirms against the lock's active rows |
+| 3 | Docs selector | PHASE-2 — patch staged at `.release/phase2-v0.17.0.patch`; the tag commit applies it (registration precedes the tag) |
+| 4 | Compatibility tagline | updated — SDK 0.17.0 against the main-repository floor by release-cut (occurrence-validated) |
+| 5 | Standards badges | walk confirms — enumerate all six against the lock's ACTIVE rows |
+| 6 | great-docs.yml versions | PHASE-2 — the tag commit applies the staged patch (the ordering constraint) |
+| 7 | Contributor window `v0.16.0..HEAD` | 30 commits in the window — human authors other than the operator/bots: none; the walk acknowledges new human contributors and records an empty window as a result |
+| 8 | Gateway uv.lock SDK pin | recorded note — moves at the gateway's next lock run / pointer advance |
+| 9 | Served-set bump class | SERVED-SET MOTION in the window — the class is asserted by the sync machinery (sdk_bump_class_invalid:); the walk records it; release-cut refuses to guess a class (D7) |
