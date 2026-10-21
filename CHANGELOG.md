@@ -2,6 +2,53 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.17.0] - 2026-10-21
+
+### Bug Fixes
+
+- #476 Build Docs ends at the great-docs banner, not at a bound (gateway #476)
+- Drain the macOS zombie-reap window in the reclaim probe (gateway #476)
+- F1 — per-call-site markers; the --from-repo site ends at the OUTER completion line (gateway #476)
+- F2 — Windows posture: POSIX-only arms skip, non-POSIX reclaim refuses loudly (gateway #476)
+- F3 — a sighted FAIL banner prohibits E2; FAIL outranks OK for real (gateway #476)
+- F4 — the pin tripwire is a byte-capture fixture, not an in-repo tautology (gateway #476)
+- F5 — measured drain bound, leader reaped at both bail-outs; fold addendum (gateway #476)
+- Every fake child emits UTF-8 — windows-latest cp1252 crash on the banner glyphs (gateway #476)
+- Reclaim waits for the property, not the wall clock — group-keyed escalation, wait-for-empty, property-contract arm (gateway #476)
+- R1 riders — bring six stale prose claims to their machine authorities
+- AR-4 wording amendments per the maintainer decisions (2026-10-19)
+- F1 — refuse symlinks under scanned prose surfaces
+- F2 — user_guide/ is directory-gated, not extension-gated
+- F3 — non-UTF-8 bytes refuse in the documented shape
+- F4 — OS junk names excluded from the prose surface set
+
+### Documentation
+
+- Carry the #476 docs exit-path design record into this branch (gateway #476)
+- The SDK prose version-literal census design record
+- R2 rider — the prose-surface obligation row
+- F5 — append-only correction to the v0.16.0 badge walk + fold addendum
+
+### Features
+
+- The prose scan class — scope-and-register widening of the twin
+- Classref 0.3.0 train sync — 8-class corpus, SDK 0.16.0->0.17.0 (gateway #463/#499)
+
+### Miscellaneous
+
+- 0.16.0 -> 0.17.0 — the classref-0.3.0 train's SDK MINOR
+- Pin benchweave-ui-html 0.3.0 -> 0.3.1 (gateway #499)
+- Cut v0.17.0 — the classref 0.3.0 train (#184)
+
+### Testing
+
+- RED — the TestProseScope battery lands before the mechanism
+- The README delta gate derives the active plugin-ui value
+
+
+### Contributors
+
+- Stephen Eaton (26 commits)
 ## [0.16.0] - 2026-10-19
 
 ### Bug Fixes
