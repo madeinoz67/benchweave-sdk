@@ -146,7 +146,7 @@ def test_field_ladder_keeps_object_fields_at_l0() -> None:
 def test_f5_layout_emits_exactly_three_trio_nodes() -> None:
     derived = _derive("descriptor-f5-trio.json")
     block = derived.manifest["extensions"][LAYOUT_EXTENSION_KEY]
-    assert block["contract_version"] == "0.2.0"
+    assert block["contract_version"] == "0.3.0"
     page = next(p for p in block["pages"] if p["page_id"] == "device-features")
     children = page["sections"][0]["children"]
     assert [(n.get("kind"), n.get("field")) for n in children] == [
