@@ -13,10 +13,20 @@ from benchweave_sdk.scaffold import create_project
 
 
 def build_classref_project(
-    destination: Path, descriptor_fixture: str = "descriptor-f1.json"
+    destination: Path,
+    descriptor_fixture: str = "descriptor-f1.json",
+    *,
+    profile_id: str = "otdp.logic_analyser/1.0.0",
 ) -> tuple[Path, Any]:
     """Scaffold a synthetic plugin, swap in the class descriptor and the
-    derived documents, return (project, derived)."""
+    derived documents, return (project, derived).
+
+    The per-class arms pass the class fixture pair: ``descriptor-<slug>``
+    names the OTDP example shape under invented identity, and a descriptor
+    that declares read-only parameters (the readings classes) additionally
+    installs the readings adapter module and its own vectors script so the
+    connected render reads every declared parameter. The founding pair
+    stays the default so the existing arms' behaviour is byte-identical."""
     create_project(destination, "veridian_classref_plugin", with_ui=False)
     package = destination / "src" / "veridian_classref_plugin"
     fixture_dir = Path(__file__).parent / "fixtures" / "classref"
@@ -32,7 +42,27 @@ def build_classref_project(
         source = fixture_dir / pinned
         if source.is_file():
             (package / pinned).write_bytes(source.read_bytes())
-    reference = find_reference("otdp.logic_analyser/1.0.0")
+    descriptor = json.loads(descriptor_raw)
+    slug = descriptor_fixture.removeprefix("descriptor-").removesuffix(".json")
+    if any(
+        row.get("access") in ("ro", "rw")
+        for row in descriptor.get("parameters", [])
+    ):
+        # The readings classes: the connected render reads every declared
+        # parameter, so the project carries the readings adapter and its
+        # own scripted vectors (identify + one exchange per parameter, in
+        # binding order). Every other fixture keeps the scaffold's own
+        # vectors.json untouched.
+        class_vectors = fixture_dir / f"vectors-{slug}.json"
+        if not class_vectors.is_file():
+            raise AssertionError(f"no vectors fixture for readings class {slug}")
+        (package / "vectors.json").write_bytes(class_vectors.read_bytes())
+        (package / "readings_adapter.py").write_bytes(
+            (fixture_dir / "readings_adapter.py").read_bytes()
+        )
+    reference = find_reference(profile_id)
+    if reference is None:
+        raise AssertionError(f"no vendored reference for {profile_id}")
     derived = derive_ui(
         descriptor_raw, reference, descriptor_path=fixture_dir / descriptor_fixture
     )

@@ -72,6 +72,8 @@ class _CensusParser(HTMLParser):
         self.lane_kinds: dict[str, int] = {}
         self.confirms = 0
         self.data_tables = 0
+        self.readings = 0
+        self.plots = 0
         self._button_depth = 0
         # The rendered staging controls' own `id`s — one per input
         # element, carrying the host render's `action-<binding>-<field>`
@@ -107,6 +109,10 @@ class _CensusParser(HTMLParser):
             self.booleans += 1
         if "bw-data-table" in classes:
             self.data_tables += 1
+        if "bw-reading" in classes:
+            self.readings += 1
+        if "bw-plot" in classes:
+            self.plots += 1
         if "bw-confirm" in classes:
             self.confirms = 1
         if "bw-button" in classes and tag == "button":
@@ -142,6 +148,8 @@ def census(html: str) -> dict[str, Any]:
         "lane_kinds": dict(parser.lane_kinds),
         "confirms": parser.confirms,
         "data_tables": parser.data_tables,
+        "readings": parser.readings,
+        "plots": parser.plots,
         "lane_labels": [
             label.strip().removesuffix(" hidden").strip()
             for label in parser.lane_labels
@@ -200,6 +208,10 @@ def _assert_expect(
         "panel": "panels",
         "mode-banner": "mode_banners",
         "data-table": "data_tables",
+        # The 0.3.0 widening: the readings/capture surfaces the corpus's
+        # expect blocks name (§E.1 roots render_reading / render_plot).
+        "reading-tile": "readings",
+        "engineering-plot": "plots",
     }
     for name, row in expectation["components"].items():
         key = census_map.get(name)
@@ -443,7 +455,13 @@ def _coverage_findings(
             # L3 layout derives — never any button that happens to render.
             covered = seen.get("data_tables", 0) >= 1
         elif level == "L4":
-            covered = seen.get("lanes_figures", 0) >= 1
+            # The dataset surface: a lanes figure OR the engineering plot
+            # the widened plot kinds render (the 0.3.0 vocabulary — a
+            # waveform/time_series dataset's coverage is its plot, never
+            # a lanes figure it does not render).
+            covered = (
+                seen.get("lanes_figures", 0) >= 1 or seen.get("plots", 0) >= 1
+            )
         divergence = bool(row.get("divergence"))
         # A6's mechanism: the AUTHOR's ledger downgrades — the expander's
         # auto-deviation marks are informational only, or an emptied

@@ -54,6 +54,15 @@ def render_pages(project: Path, page_ids: list[str]) -> dict[str, str]:
     )
     html_by_page: dict[str, str] = {}
     with TestClient(build_app(seam, policy=policy), base_url="http://127.0.0.1:8477") as client:
+        # The connected serve posture (the host's own tests' shape): a
+        # readings page reads its observations only when the session is
+        # connected, so the harness connects before rendering. A degraded
+        # load (no adapter factory) refuses honestly and the pages render
+        # their disclosures alone — exactly the unconnected face.
+        client.post(
+            f"/devices/{plugin.device_id}/connect",
+            headers={"x-csrf-token": policy.csrf_token},
+        )
         for page_id in page_ids:
             response = client.get(f"/pages/{page_id}")
             html_by_page[page_id] = response.text
