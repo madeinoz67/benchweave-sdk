@@ -207,3 +207,29 @@ only at release, so the same commands run on every OS in the pull-request matrix
 release-time arm has a PR-time twin." This change preserves that shape: the release's
 locked sync is the same `--locked` posture every pull-request lane already runs, so the
 release-time arm is a twin of the PR-time one, not a new release-only mechanism.
+
+---
+
+## Addendum 2026-10-22 (second) — freshness vs lock integrity
+
+The refute pass separated two refusals that are easy to conflate, and only one of them
+is the hole this slice closes:
+
+- **Freshness — is the project metadata consistent with the lock?** `uv sync --locked`
+  answers it, and fails when the answer is no. A bare `uv sync` instead re-resolves and
+  rewrites the lock — but only **on drift that still resolves**. Drift that cannot
+  resolve (a distribution no index serves, a version constraint nothing satisfies) makes
+  the bare sync exit non-zero and leaves the lock untouched, so that class is visible
+  without any flag. The unqualified "bare sync exits 0 and rewrites the lock" sentence
+  was true for the resolvable case only; §1.5 and the workflow comment now carry the
+  scope.
+- **Integrity — are the lock's own contents well formed?** That is uv's separate
+  parse-time refusal, and it fires identically under `uv sync` and `uv sync --locked`:
+  the audit's edited-pin repro makes both modes exit 2 with a wheel-filename consistency
+  error and leaves the lock unchanged. `--locked` adds nothing there, because the check
+  runs before the mode matters.
+
+So this slice closes freshness, and integrity was never open: a tampered lock body is
+refused in both modes, while a metadata drift that still resolves is silent only in the
+bare mode. That decomposition — `--locked` is the freshness check, the parse refusal is
+the integrity check — is the reusable result of this slice.
