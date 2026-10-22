@@ -155,15 +155,16 @@ def test_train_sync_family_is_a_pure_addition() -> None:
     family CONSUMES its predecessor row (0.3.1 leaves the lock; its
     digest-frozen bytes stay in the gateway corpus — the lock carries the
     served set, not the corpus archive). The six untouched actives stay
-    active+stable; eleven retained rows survive. The #450 train added
+    active+stable; twelve retained rows survive. The #450 train added
     interface 0.1.1 as a second ACTIVE interface row (multi-serving
-    beside 0.1.0) — 17 -> 18."""
+    beside 0.1.0) — 17 -> 18; #525's OTDP train adds the otdp 0.2.4 row
+    beside the retained 0.2.3 — 18 -> 19."""
     lock = _train_lock()
     standards = lock.get("standards")
     assert isinstance(standards, list)
-    assert len(standards) == 18, f"expected 18 rows, found {len(standards)}"
+    assert len(standards) == 19, f"expected 19 rows, found {len(standards)}"
     prior_actives = {
-        "otdp": "0.2.3",
+        "otdp": "0.2.4",
         "registry": "0.1.3",
         "execution": "0.2.0",
         "interface": "0.1.1",
@@ -206,8 +207,8 @@ def test_train_sync_family_is_a_pure_addition() -> None:
         "the digest-frozen bytes, not this lock)"
     )
     retained = [row for row in standards if row.get("active") is False]
-    assert len(retained) == 11, (
-        f"expected 11 retained rows (the post-train posture), found {len(retained)}"
+    assert len(retained) == 12, (
+        f"expected 12 retained rows (the post-train posture), found {len(retained)}"
     )
 
 

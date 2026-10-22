@@ -1,0 +1,75 @@
+{
+  "id": "onewire_link",
+  "version": "1.0.0",
+  "name": "1-Wire link layer",
+  "longname": "1-Wire serial communication bus (link layer)",
+  "desc": "Bidirectional, half-duplex, asynchronous serial bus.",
+  "tags": [
+    "Embedded/industrial"
+  ],
+  "channels": [
+    {
+      "id": "owr",
+      "name": "OWR",
+      "desc": "1-Wire signal line"
+    }
+  ],
+  "options": [
+    {
+      "id": "overdrive",
+      "desc": "Start in overdrive speed",
+      "default": "no",
+      "values": [
+        "yes",
+        "no"
+      ]
+    }
+  ],
+  "annotations": [
+    {
+      "id": "bit",
+      "label": "Bit"
+    },
+    {
+      "id": "warning",
+      "label": "Warning"
+    },
+    {
+      "id": "reset",
+      "label": "Reset"
+    },
+    {
+      "id": "presence",
+      "label": "Presence"
+    },
+    {
+      "id": "overdrive",
+      "label": "Overdrive speed notification"
+    }
+  ],
+  "annotation_rows": [
+    {
+      "id": "bits",
+      "label": "Bits",
+      "annotation_ids": [
+        "bit",
+        "reset",
+        "presence"
+      ]
+    },
+    {
+      "id": "info",
+      "label": "Info",
+      "annotation_ids": [
+        "overdrive"
+      ]
+    },
+    {
+      "id": "warnings",
+      "label": "Warnings",
+      "annotation_ids": [
+        "warning"
+      ]
+    }
+  ]
+}

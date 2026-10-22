@@ -68,20 +68,20 @@ def test_scaffold_descriptor_agrees_with_public_constants(tmp_path: Path) -> Non
 
 
 def _lock_with_an_unservable_row() -> dict[str, Any]:
-    """The committed lock plus one fake otdp@0.2.4 row whose files point at a
+    """The committed lock plus one fake otdp@0.2.5 row whose files point at a
     directory the vendored tree does not carry (the F3 plant)."""
     import copy
 
     lock = copy.deepcopy(LOCK)
     template = next(
-        s for s in lock["standards"] if s["id"] == "otdp" and s["version"] == "0.2.3"
+        s for s in lock["standards"] if s["id"] == "otdp" and s["version"] == "0.2.4"
     )
     fake = copy.deepcopy(template)
-    fake["version"] = "0.2.4"
+    fake["version"] = "0.2.5"
     fake["active"] = False
     fake["files"] = [
         {
-            "path": file["path"].replace("otdp/0.2.3/", "otdp/0.2.4/", 1),
+            "path": file["path"].replace("otdp/0.2.4/", "otdp/0.2.5/", 1),
             "sha256": file["sha256"],
         }
         for file in template["files"]
@@ -102,7 +102,7 @@ def test_a_lock_row_without_a_vendored_directory_is_a_typed_drift_error(
     served._lock_rows_cached.cache_clear()
     validation_module.contract_documents.cache_clear()
     try:
-        with pytest.raises(ValueError, match="^served_set_drift: otdp@0.2.4") as refusal:
+        with pytest.raises(ValueError, match="^served_set_drift: otdp@0.2.5") as refusal:
             validation_module.contract_documents()
         assert "no such directory" in str(refusal.value)
     finally:
@@ -151,7 +151,7 @@ def test_import_survives_a_lock_row_without_a_vendored_directory(
         cwd=tmp_path,
     )
     assert active.returncode == 0, active.stderr
-    assert active.stdout.strip() == "0.2.3"
+    assert active.stdout.strip() == "0.2.4"
     adapter = subprocess.run(
         [sys.executable, "-c", "import benchweave_sdk; benchweave_sdk.ADAPTER_API_VERSION"],
         capture_output=True,
@@ -161,4 +161,4 @@ def test_import_survives_a_lock_row_without_a_vendored_directory(
     )
     assert adapter.returncode != 0
     assert "FileNotFoundError" not in adapter.stderr
-    assert "served_set_drift: otdp@0.2.4" in adapter.stderr
+    assert "served_set_drift: otdp@0.2.5" in adapter.stderr

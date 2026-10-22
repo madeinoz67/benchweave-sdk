@@ -832,11 +832,11 @@ def test_active_repoint_without_an_sdk_bump_is_refused(tmp_path: Path) -> None:
     bundle = _export(tmp_path)
     _with_policy(bundle)
     sdk = _versioned_sdk(tmp_path, "0.3.1")
-    sync(bundle, sdk)  # anchors compatibility.sdk = 0.3.1; otdp active = 0.2.3
+    sync(bundle, sdk)  # anchors compatibility.sdk = 0.3.1; otdp active = 0.2.4
     document = _manifest(bundle)
     for row in document["standards"]:
         if row["id"] == "otdp":
-            if row["version"] == "0.2.3":
+            if row["version"] == "0.2.4":
                 row["active"] = False
             if row["version"] == "0.2.0":
                 row["active"] = True  # the re-point: rollback inside the range
@@ -844,7 +844,7 @@ def test_active_repoint_without_an_sdk_bump_is_refused(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="^sdk_bump_class_invalid: ") as refusal:
         sync(bundle, sdk)
     message = str(refusal.value)
-    assert "0.2.3" in message and "0.2.0" in message, "the refusal names both ends"
+    assert "0.2.4" in message and "0.2.0" in message, "the refusal names both ends"
 
 
 def test_active_repoint_is_named_in_the_report(tmp_path: Path) -> None:
@@ -863,7 +863,7 @@ def test_active_repoint_is_named_in_the_report(tmp_path: Path) -> None:
             # cross-check reads both sides — a marker-less row beside a
             # yank-bearing mirror is drift no real sync produces).
             row["yanked"] = row["version"] == "0.2.1"
-            if row["version"] == "0.2.3":
+            if row["version"] == "0.2.4":
                 row["active"] = False
             if row["version"] == "0.2.0":
                 row["active"] = True
@@ -872,7 +872,7 @@ def test_active_repoint_is_named_in_the_report(tmp_path: Path) -> None:
         '[project]\nname = "benchweave-sdk"\nversion = "0.3.2"\n', encoding="utf-8"
     )
     report = sync(bundle, sdk)
-    assert report.active_changes == ("otdp@0.2.3->0.2.0",)
+    assert report.active_changes == ("otdp@0.2.4->0.2.0",)
     assert report.added == () and report.removed == () and report.changed == ()
     assert sync(None, sdk, check_only=True) == SyncReport((), (), (), ())
 
@@ -887,12 +887,12 @@ def test_range_narrowing_that_drops_a_carried_version_reports_it_removed(
     drop out of the report as a bare ``changed``."""
     bundle = _export(tmp_path)
     document = _manifest(bundle)
-    # Mark the carried shape the real export carries: 0.2.1 yanked, 0.2.3 active.
+    # Mark the carried shape the real export carries: 0.2.1 yanked, 0.2.4 active.
     for row in document["standards"]:
         if row["id"] == "otdp":
             if row["version"] == "0.2.1":
                 row["yanked"] = True
-            if row["version"] == "0.2.3":
+            if row["version"] == "0.2.4":
                 row["active"] = True
     document["dependency_policy"] = _committed_policy()
     _rewrite_manifest(bundle, document)
@@ -902,10 +902,10 @@ def test_range_narrowing_that_drops_a_carried_version_reports_it_removed(
     prior_otdp = [
         str(row["version"]) for row in prior_lock["standards"] if row["id"] == "otdp"
     ]
-    assert prior_otdp == ["0.2.0", "0.2.1", "0.2.2", "0.2.3"]
+    assert prior_otdp == ["0.2.0", "0.2.1", "0.2.2", "0.2.3", "0.2.4"]
 
-    # The narrowing train: range >=0.2.1,<0.3.0; otdp@0.2.3 stays carried but
-    # no longer active; otdp@0.2.4 is the new active row (0.2.3's bytes,
+    # The narrowing train: range >=0.2.1,<0.3.0; otdp@0.2.4 stays carried but
+    # no longer active; otdp@0.2.5 is the new active row (0.2.4's bytes,
     # re-versioned paths); otdp@0.2.0 leaves the carried set.
     import shutil
 
@@ -914,17 +914,17 @@ def test_range_narrowing_that_drops_a_carried_version_reports_it_removed(
     rows = [r for r in narrowed["standards"] if r["id"] != "otdp"]
     active_row = next(r for r in narrowed["standards"] if r["id"] == "otdp" and r.get("active"))
     del active_row["active"]
-    new_row = {**active_row, "version": "0.2.4", "active": True}
+    new_row = {**active_row, "version": "0.2.5", "active": True}
     new_row["files"] = [
         {
-            "path": file["path"].replace("otdp/0.2.3/", "otdp/0.2.4/", 1),
+            "path": file["path"].replace("otdp/0.2.4/", "otdp/0.2.5/", 1),
             "sha256": file["sha256"],
         }
         for file in active_row["files"]
     ]
     for file in active_row["files"]:
         source = bundle / "files" / file["path"]
-        target = bundle / "files" / file["path"].replace("otdp/0.2.3/", "otdp/0.2.4/", 1)
+        target = bundle / "files" / file["path"].replace("otdp/0.2.4/", "otdp/0.2.5/", 1)
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, target)
     otdp_rows = [
@@ -935,7 +935,7 @@ def test_range_narrowing_that_drops_a_carried_version_reports_it_removed(
     report = sync(bundle, sdk)
     assert report.removed == ("otdp@0.2.0",)
     assert report.changed == ()
-    assert report.added == ("otdp@0.2.4",)
+    assert report.added == ("otdp@0.2.5",)
     # The narrowed tree is internally consistent (the drop really happened).
     assert sync(None, sdk, check_only=True) == SyncReport((), (), (), ())
 
