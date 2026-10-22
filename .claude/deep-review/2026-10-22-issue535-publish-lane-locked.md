@@ -221,8 +221,8 @@ is the hole this slice closes:
   resolve (a distribution no index serves, a version constraint nothing satisfies) makes
   the bare sync exit non-zero and leaves the lock untouched, so that class is visible
   without any flag. The unqualified "bare sync exits 0 and rewrites the lock" sentence
-  was true for the resolvable case only; §1.5 and the workflow comment now carry the
-  scope.
+  in §1.5 was true for the resolvable case only; this addendum scopes it, and the
+  workflow comment now carries the scope.
 - **Integrity — are the lock's own contents well formed?** That is uv's separate
   parse-time refusal, and it fires identically under `uv sync` and `uv sync --locked`:
   the audit's edited-pin repro makes both modes exit 2 with a wheel-filename consistency
