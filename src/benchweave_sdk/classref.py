@@ -195,8 +195,10 @@ def _catalog_documents(descriptor: dict[str, Any]) -> dict[str, Any]:
     row_key = f"otdp/{descriptor['otdp_version']}/device-profile-catalog.json"
     catalog = documents.get(row_key)
     if catalog is None:
+        # #541 record §1: a platform fault (incomplete installation), never
+        # the recoverable knowledge gap — its own code since the split.
         raise _refuse(
-            "classref_unknown_action",
+            "classref_profile_catalog_unserved",
             f"the descriptor's profile catalog {row_key} is not served",
         )
     served: dict[str, Any] = catalog
@@ -220,13 +222,17 @@ def _vendor_catalogs(
         try:
             raw = read_file(path)
         except (ValueError, OSError) as exc:
+            # #541 record §1: a platform or project fault, not a knowledge
+            # gap — the pinned file is unreadable, whatever the action set.
             raise _refuse(
-                "classref_unknown_action",
+                "classref_vendor_catalog_unreadable",
                 f"pinned vendor catalog {row.get('path')} unreadable ({exc})",
             ) from exc
         if hashlib.sha256(raw).hexdigest() != row.get("sha256"):
+            # #541 record §1: an integrity fault — tampering or corruption
+            # — refused under its own code since the split.
             raise _refuse(
-                "classref_unknown_action",
+                "classref_vendor_catalog_digest_mismatch",
                 f"pinned vendor catalog {row.get('path')} digest mismatch",
             )
         document = json.loads(raw)
@@ -739,8 +745,10 @@ def _profile_row(
     for item in references:
         profile_id = str(item["profile_id"])
         if profile_id not in rows:
+            # #541 record §1: a platform fault — the profile catalog is
+            # served but carries no row for this profile.
             raise _refuse(
-                "classref_unknown_action",
+                "classref_profile_absent",
                 f"profile {profile_id} absent from the served profile catalog",
             )
     first: dict[str, Any] = rows[references[0]["profile_id"]]
