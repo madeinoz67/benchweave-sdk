@@ -1,5 +1,5 @@
 {
-  "otdp_version": "0.2.3",
+  "otdp_version": "0.2.4",
   "descriptor_version": "0.1.0",
   "id": "dev.example.example-plugin",
   "display_name": "SDK synthetic example",
