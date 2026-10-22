@@ -28,8 +28,9 @@ gate runs after the bump commit exists and before the tag is cut.
    scaffolded rows. Every row records a result, including empty results.
 3. **Registration precedes the tag.** Row 6 is the staged phase-2 patch:
    at the tag commit, apply `.release/phase2-vX.Y.Z.patch` (it inserts the
-   new versions entry, demotes the old `latest` and updates the website
-   selector) and commit it WITH the tag — the docs assembly builds each
+   new versions entry, demotes the old `latest`, updates the website
+   selector and moves the zero-literal gate battery's three anchors, #524)
+   and commit it WITH the tag — the docs assembly builds each
    bucket from the version's own tag and reads that tag's own versions
    list, so a tag missing itself fails the build. If main moved between
    merge and tag, regenerate with `make release-cut`'s `--phase2-only`
