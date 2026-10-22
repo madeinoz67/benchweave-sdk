@@ -299,3 +299,103 @@ def test_residual_mode_refuses_empty_admittance() -> None:
             json.dumps(descriptor).encode(), REFERENCE,
             descriptor_path=FIXTURES / "descriptor-f1.json",
         )
+
+
+# ---------------------------------------------------------------------------
+# The custom section (record §4.2): residual members derive into their own
+# expander-minted section on their page, so a custom member is visibly
+# custom. Per-control badges need a layout-vocabulary widening (D3) — the
+# section is slice 1's visible label.
+# ---------------------------------------------------------------------------
+
+CUSTOM_SECTION_ID = "device-features-custom"
+
+
+def _layout_page(derived: Any, page_id: str) -> dict[str, Any]:
+    return next(
+        page for page in derived.layout_block["pages"]
+        if page["page_id"] == page_id
+    )
+
+
+def test_custom_section_holds_the_residual_controls() -> None:
+    """The residual member's controls derive into their own section on the
+    device-features page — an id and title the expander mints, the same
+    authority that mints {page_id}-section ids — while the catalogued
+    vendor action stays in the main derived section."""
+    descriptor = _acceptance_descriptor()
+    derived = derive_ui(
+        json.dumps(descriptor).encode(), REFERENCE,
+        descriptor_path=FIXTURES / "descriptor-f1.json",
+    )
+    page = _layout_page(derived, "device-features")
+    sections = {section["id"]: section for section in page["sections"]}
+    assert CUSTOM_SECTION_ID in sections, sorted(sections)
+    custom = sections[CUSTOM_SECTION_ID]
+    assert custom["title"] == "Custom device actions"
+    custom_nodes = {
+        (node.get("binding_id"), node.get("kind"), node.get("field"))
+        for node in custom["children"]
+    }
+    assert ("ghost", "numeric", "holdoff_ms") in custom_nodes
+    assert ("ghost", "text", "label") in custom_nodes
+    assert ("ghost", "button", None) in custom_nodes
+    # The catalogued vendor action stays in the main section, never in the
+    # custom one: resolution partitions the two.
+    assert all(node.get("binding_id") != "auto-threshold" for node in custom["children"])
+    main = sections["device-features-section"]
+    assert any(
+        node.get("binding_id") == "auto-threshold" for node in main["children"]
+    )
+    assert not any(
+        node.get("binding_id") == "ghost" for node in main["children"]
+    )
+
+
+def test_no_residuals_no_custom_section() -> None:
+    """A derivation with no residual members mints no custom section — the
+    section exists exactly when residual members do (nothing degrades
+    silently, nothing fabricates a label either)."""
+    derived = derive_ui(
+        (FIXTURES / "descriptor-f1.json").read_bytes(), REFERENCE,
+        descriptor_path=FIXTURES / "descriptor-f1.json",
+    )
+    page = _layout_page(derived, "device-features")
+    assert all(section["id"] != CUSTOM_SECTION_ID for section in page["sections"])
+
+
+def test_custom_section_never_appends_into_an_authored_page() -> None:
+    """Record §11 risk 4: a reference that authors its own device-features
+    layout keeps it authored — the derived custom section appends only
+    where the page has no authored layout block. The residual member is
+    still never silent (plan row, declaration inventory, gate report); it
+    just never welds itself onto a page whose layout the reference wrote."""
+    descriptor = _acceptance_descriptor()
+    authored = {
+        "page_id": "device-features",
+        "sections": [
+            {
+                "id": "vendor-features-authored",
+                "title": "Device features",
+                "surface": "raised",
+                "span": 12,
+                "children": [
+                    {"body": "Vendor features are authored by this reference."}
+                ],
+            }
+        ],
+    }
+    reference = {
+        **REFERENCE,
+        "layouts": [*REFERENCE["layouts"], authored],
+    }
+    derived = derive_ui(
+        json.dumps(descriptor).encode(), reference,
+        descriptor_path=FIXTURES / "descriptor-f1.json",
+    )
+    page = _layout_page(derived, "device-features")
+    assert [section["id"] for section in page["sections"]] == [
+        "vendor-features-authored"
+    ]
+    # The residual member still derives — into the plan, labelled custom.
+    assert derived.control_plan[GHOST_URN]["resolution"] == "custom"

@@ -1554,8 +1554,10 @@ def _build_layout(
     plan_is_placeholder: bool = False,
 ) -> dict[str, Any]:
     """The namespaced layout block: authored sections where the reference
-    carries them, derived single-section pages otherwise. Numeric staging
-    nodes derive from the ladder plan (L2 actions render their fields)."""
+    carries them, derived sections otherwise — the main derived section,
+    plus the expander-minted custom section when residual members render on
+    the page (#541). Numeric staging nodes derive from the ladder plan (L2
+    actions render their fields)."""
     by_page = {str(row.get("page_id")): row for row in authored}
     block_pages: list[dict[str, Any]] = []
     plot_done = False
@@ -1578,6 +1580,7 @@ def _build_layout(
                     sections.append({**section, "children": kept})
         else:
             children: list[dict[str, Any]] = []
+            custom_children: list[dict[str, Any]] = []
             if page.get("plots") and not plot_done and plots:
                 children.append({"plot_index": 0})
                 plot_done = True
@@ -1604,7 +1607,12 @@ def _build_layout(
                         {"binding_id": binding_id, "kind": "data-table"}
                     )
             # D14: actions whose bindings carry no page (vendor actions)
-            # still derive their controls on their plan page.
+            # still derive their controls on their plan page. #541: a
+            # residual member's controls derive into the page's CUSTOM
+            # section instead — the visible label for uncatalogued actions
+            # (record §4.2), minted the way the expander mints every other
+            # derived id. Catalogued vendor actions keep the main section,
+            # so resolution partitions the two, never mixes them.
             bound = {
                 str(row if isinstance(row, str) else row.get("id"))
                 for row in page.get("bindings", [])
@@ -1616,27 +1624,48 @@ def _build_layout(
                 if slug in bound or plan_row["level"] == "L4":
                     continue
                 if plan_row["level"] in ("L1", "L2", "L3"):
+                    target = (
+                        custom_children
+                        if plan_row.get("resolution") == "custom"
+                        else children
+                    )
                     if plan_row["level"] == "L3":
                         # L3 is preset-mediated; its numeric admittance
                         # renders beside the preset surface and data-table
                         # (the pinned family shape — no per-mode widening
                         # on this arm).
-                        children.extend(
+                        target.extend(
                             _numeric_nodes(slug, plan_row["fields"])
                         )
                     else:
-                        children.extend(
+                        target.extend(
                             _staging_nodes(slug, plan_row["fields"])
                         )
                     if plan_row["level"] in ("L1", "L2"):
-                        children.append({"binding_id": slug, "kind": "button"})
-            sections = [{
-                "id": f"{page_id}-section",
-                "title": str(page.get("title", page_id)),
-                "surface": "raised",
-                "span": 12,
-                "children": children,
-            }] if children else []
+                        target.append({"binding_id": slug, "kind": "button"})
+            sections = []
+            if children:
+                sections.append({
+                    "id": f"{page_id}-section",
+                    "title": str(page.get("title", page_id)),
+                    "surface": "raised",
+                    "span": 12,
+                    "children": children,
+                })
+            if custom_children:
+                # The custom section exists exactly when residual members
+                # rendered on this page. It never appends into an authored
+                # page: this whole branch is the no-authored-layout path
+                # (record §11 risk 4 — an authored device-features layout
+                # stands as authored, and the residual member surfaces
+                # through the plan, the declaration and the gate instead).
+                sections.append({
+                    "id": f"{page_id}-custom",
+                    "title": "Custom device actions",
+                    "surface": "raised",
+                    "span": 12,
+                    "children": custom_children,
+                })
         _insert_ladder_numerics(sections, plan)
         _complete_authored_buttons(sections, plan, page_id)
         if not sections:
