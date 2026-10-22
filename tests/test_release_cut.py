@@ -115,6 +115,83 @@ def _great_docs(version: str) -> str:
     )
 
 
+def _mini_counter() -> str:
+    """A synthetic twin counter carrying only the constants the phase-2
+    gate-anchor derivation reads (registered sites sum to 5, the census
+    carries 3 files — deliberately NOT the real 12/11, so the arms prove
+    the numbers come from the counter, not from memory of the real tree)."""
+    return (
+        "import re\n"
+        "VERSIONS_MAP_ROW = re.compile(r'^\\s*- tag: v\\d+\\.\\d+\\.\\d+\\s*$')\n"
+        "PROSE_INDEX_STATIC = 11\n"
+        "PROSE_REGISTER = {\n"
+        '    "README.md": ("synthetic", 2),\n'
+        '    "index.qmd": ("synthetic", 0),\n'
+        '    "user_guide/example.qmd": ("synthetic", 3),\n'
+        "}\n"
+        "PROSE_FILE_CENSUS = frozenset(\n"
+        '    {"README.md", "index.qmd", "website/index.html"}\n'
+        ")\n"
+    )
+
+
+def _gate_battery(
+    latest: str,
+    rows: int,
+    *,
+    static: int = 11,
+    registered: int = 5,
+    files: int = 3,
+) -> str:
+    """The zero-literal gate battery's three bump-driven anchors, shaped
+    like the committed module's needle lines (issue #524). The stable
+    great-docs insertion anchor rides along to prove the rewrite leaves it
+    byte-identical."""
+    derived = 2 * (rows + 1) + static
+    census = 2 * rows + static + registered
+    # `latest` may arrive v-prefixed (the historical arms pass map tags) or
+    # bare (the mini tree's OLD) — the selector label always carries one v
+    label = latest[1:] if latest.startswith("v") else latest
+    return (
+        "class TestProseScope:\n"
+        "    def test_the_derivation_tracks_the_versions_map(self) -> None:\n"
+        '        anchor = "    git_ref: v0.16.0\\n"\n'
+        f"        option_anchor = '<option value=\"docs/\">v{label} (latest)</option>\\n'\n"
+        "        assert option_anchor\n"
+        f"        # derived number (2 x {rows + 1} + {static} = {derived}).\n"
+        f'        assert "website/index.html expects {derived} sites" in out\n'
+        "    def test_os_junk_never_reddens_the_census(self) -> None:\n"
+        f'        assert "{census} sites, {files} files scanned" in out\n'
+    )
+
+
+def _versions_map(rows: int, latest: str) -> str:
+    """A synthetic versions map: `rows` release rows, exactly one
+    latest:true, at `latest` — great-docs.yml's block shape."""
+    entries = [
+        f"  - tag: v0.0.{index}\n    label: v0.0.{index}\n"
+        f"    latest: false\n    git_ref: v0.0.{index}\n"
+        for index in range(rows - 1)
+    ]
+    entries.append(
+        f"  - tag: {latest}\n    label: {latest}\n    latest: true\n    git_ref: {latest}\n"
+    )
+    return "versions:\n" + "".join(entries)
+
+
+def _real_counter() -> Any:
+    """The committed twin counter, loaded for the historical-shape arms: the
+    real constants (static 11, registered 12, census 11 files) are what the
+    two hand fixes moved — the arms must derive with the real numbers."""
+    spec = importlib.util.spec_from_file_location(
+        "release_cut_counter_real", ROOT / "scripts" / "count_version_literals.py"
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 MINI_TREE: dict[str, str] = {
     "pyproject.toml": _pyproject(OLD),
     "uv.lock": _uv_lock(OLD),
@@ -123,6 +200,8 @@ MINI_TREE: dict[str, str] = {
     "standards-lock.json": _lock(OLD),
     "great-docs.yml": _great_docs(OLD),
     "docs/internal/release-review-matrix.md": "# Release-review matrix\n\nrows\n",
+    "scripts/count_version_literals.py": _mini_counter(),
+    "tests/test_zero_literal_gate.py": _gate_battery(OLD, 2),
 }
 
 
@@ -147,6 +226,8 @@ def _tree_for(version: str) -> dict[str, str]:
         "standards-lock.json": _lock(version),
         "great-docs.yml": _great_docs(version),
         "docs/internal/release-review-matrix.md": "# Release-review matrix\n\nrows\n",
+        "scripts/count_version_literals.py": _mini_counter(),
+        "tests/test_zero_literal_gate.py": _gate_battery(version, 2),
     }
 
 
@@ -157,8 +238,10 @@ def _mini_repo(
     tag: bool = True,
     doctor: dict[str, str] | None = None,
 ) -> Path:
-    """A synthetic SDK repository: the seven declared files, one commit, the
-    release tag. Identity is repo-local so no ambient git config matters.
+    """A synthetic SDK repository: the nine declared files (the seven
+    substitution/registration surfaces plus the twin counter and the gate
+    battery the phase-2 anchors derive from), one commit, the release tag.
+    Identity is repo-local so no ambient git config matters.
     `doctor` overrides seeded content BEFORE the commit, so a test can plant
     a malformed surface without dirtying the tree."""
     repo = tmp_path / "sdk"
@@ -205,8 +288,9 @@ def cut_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def test_registry_names_exactly_the_declared_version_surfaces() -> None:
     """The declared-surface registry IS the census: six substitution
     patterns across five files (the website file carries the hero and the
-    tagline patterns in one row), one regen, one derived and two phase-2
-    rows — set-equal, so an unregistered bump-sensitive surface is visible
+    tagline patterns in one row), one regen, one derived and three phase-2
+    rows (the gate battery's anchors ride the tag-commit patch since #524)
+    — set-equal, so an unregistered bump-sensitive surface is visible
     as a registry diff."""
     drift = _load()
     pairs = sorted((s.path, s.kind) for s in drift.DECLARED_SURFACES)
@@ -217,6 +301,7 @@ def test_registry_names_exactly_the_declared_version_surfaces() -> None:
         ("pyproject.toml", "substitution"),
         ("standards-lock.json", "substitution"),
         ("tests/fixtures/scaffold_expected", "regen"),
+        ("tests/test_zero_literal_gate.py", "phase2"),
         ("uv.lock", "substitution"),
         ("website/index.html", "phase2"),
         ("website/index.html", "substitution"),
@@ -357,7 +442,11 @@ def test_cut_moves_the_tree_and_emits_plan_and_patch(cut_env: Path) -> None:
         for s in plan["surfaces"]
     )
     patch = (repo / ".release" / f"phase2-v{NEW}.patch").read_text(encoding="utf-8")
-    assert "a/great-docs.yml" in patch and "a/website/index.html" in patch
+    assert (
+        "a/great-docs.yml" in patch
+        and "a/website/index.html" in patch
+        and "a/tests/test_zero_literal_gate.py" in patch
+    )
     matrix = (repo / "docs/internal/release-review-matrix.md").read_text(encoding="utf-8")
     assert f"## Result record — v{NEW}" in matrix
     assert "occurrence-validated" in matrix
@@ -425,23 +514,37 @@ def test_phase2_refuses_double_registration_and_latest_ambiguity() -> None:
         drift.build_phase2(ambiguous, _website(OLD), NEW)
 
 
-def test_phase2_patch_is_exactly_two_files_and_applies_on_the_real_tree() -> None:
-    """Against THIS checkout's real great-docs.yml and selector: the emitted
-    patch names exactly the two registration surfaces and git apply --check
-    accepts it — the tag-commit rehearsal in miniature."""
+def test_phase2_patch_is_exactly_three_files_and_applies_on_the_real_tree() -> None:
+    """Against THIS checkout's real great-docs.yml, selector and gate
+    battery: the emitted patch names exactly the three phase-2 surfaces —
+    the two registration surfaces plus the gate anchors the registration
+    moves (issue #524) — and git apply --check accepts it on the real
+    bytes: the tag-commit rehearsal in miniature. The move_gate_anchors
+    call over the real tree is also the live drift guard: a hand-edited
+    anchor refuses here before any cut runs."""
     drift = _load()
     great_docs = (ROOT / "great-docs.yml").read_text(encoding="utf-8")
     selector = (ROOT / "website" / "index.html").read_text(encoding="utf-8")
+    gate = (ROOT / "tests" / "test_zero_literal_gate.py").read_text(encoding="utf-8")
     current = drift.current_version(ROOT)
     major, minor, micro = (int(part) for part in current.split("."))
     next_version = f"{major}.{minor}.{micro + 1}"
     new_yml, new_html = drift.build_phase2(great_docs, selector, next_version)
-    patch = drift.unified_patch("great-docs.yml", great_docs, new_yml) + drift.unified_patch(
-        "website/index.html", selector, new_html
+    new_gate = drift.move_gate_anchors(gate, great_docs, next_version, _real_counter())
+    patch = (
+        drift.unified_patch("great-docs.yml", great_docs, new_yml)
+        + drift.unified_patch("website/index.html", selector, new_html)
+        + drift.unified_patch("tests/test_zero_literal_gate.py", gate, new_gate)
     )
     paths = drift.patch_paths(patch)
-    assert paths == {"great-docs.yml", "website/index.html"}
-    with _scratch_copy_of_repo_files(ROOT, ["great-docs.yml", "website/index.html"]) as scratch:
+    assert paths == {
+        "great-docs.yml",
+        "tests/test_zero_literal_gate.py",
+        "website/index.html",
+    }
+    with _scratch_copy_of_repo_files(
+        ROOT, ["great-docs.yml", "website/index.html", "tests/test_zero_literal_gate.py"]
+    ) as scratch:
         # The patch travels as a FILE, never stdin: a text-mode pipe
         # newline-translates \n to os.linesep on Windows and the context
         # can never match (wave 5). File paths bypass pipe translation —
@@ -487,6 +590,177 @@ def _scratch_copy_of_repo_files(root: Path, files: list[str]):  # noqa: ANN201
     return _ctx()
 
 
+# --- the phase-2 gate anchors (issue #524) -----------------------------------------
+
+
+def test_move_gate_anchors_reproduces_the_v0_17_0_hand_fix() -> None:
+    """Issue #524's first historical shape: the tree the v0.17.0 cut ran
+    over (a 22-row map, v0.16.0 latest) and the battery as it stood (57 /
+    67) rewrite to EXACTLY the values the v0.17.0-era hand fix wrote —
+    v0.17.0, 2 x 24 + 11 = 59, expects 59 sites, 69 sites — with the real
+    counter's constants, because those are the numbers the real anchors
+    moved by."""
+    drift = _load()
+    battery = _gate_battery("v0.16.0", 22, registered=12, files=11)
+    moved = drift.move_gate_anchors(
+        battery, _versions_map(22, "v0.16.0"), "0.17.0", _real_counter()
+    )
+    assert (
+        "option_anchor = '<option value=\"docs/\">v0.17.0 (latest)</option>\\n'"
+        in moved
+    )
+    assert "# derived number (2 x 24 + 11 = 59)." in moved
+    assert '"website/index.html expects 59 sites"' in moved
+    assert '"69 sites, 11 files scanned"' in moved
+    assert "v0.16.0 (latest)" not in moved
+    assert "expects 57 sites" not in moved
+    # the stable great-docs insertion anchor never moves — its row is
+    # permanent map history, and both hand fixes left it byte-identical
+    assert 'anchor = "    git_ref: v0.16.0\\n"' in moved
+
+
+def test_move_gate_anchors_reproduces_the_v0_18_0_hand_fix() -> None:
+    """The second historical shape — the 2cca23f bytes: a 23-row map,
+    v0.17.0 latest, battery at 59 / 69 rewrites to v0.18.0,
+    2 x 25 + 11 = 61, expects 61 sites, 71 sites."""
+    drift = _load()
+    battery = _gate_battery("v0.17.0", 23, registered=12, files=11)
+    moved = drift.move_gate_anchors(
+        battery, _versions_map(23, "v0.17.0"), "0.18.0", _real_counter()
+    )
+    assert (
+        "option_anchor = '<option value=\"docs/\">v0.18.0 (latest)</option>\\n'"
+        in moved
+    )
+    assert "# derived number (2 x 25 + 11 = 61)." in moved
+    assert '"website/index.html expects 61 sites"' in moved
+    assert '"71 sites, 11 files scanned"' in moved
+    assert "expects 59 sites" not in moved
+    assert '"69 sites' not in moved
+
+
+def test_move_gate_anchors_refuses_a_drifted_census_anchor() -> None:
+    """The typed refusal: a census anchor that disagrees with the map (here
+    off by one — the shape a hand edit leaves) refuses naming the file and
+    both numbers, never rewrites over drift."""
+    drift = _load()
+    drifted = _gate_battery("v0.16.0", 22, registered=12, files=11).replace(
+        '"67 sites', '"68 sites'
+    )
+    with pytest.raises(drift.ReleaseCutError, match="gate_anchor_mismatch") as excinfo:
+        drift.move_gate_anchors(
+            drifted, _versions_map(22, "v0.16.0"), "0.17.0", _real_counter()
+        )
+    message = str(excinfo.value)
+    assert "tests/test_zero_literal_gate.py" in message
+    assert "67" in message and "69" in message
+
+
+def test_move_gate_anchors_refuses_a_counter_without_the_constants() -> None:
+    """A counter lacking the derivation constants (an older tree, a renamed
+    constant) is a typed refusal, not an AttributeError traceback."""
+    from types import SimpleNamespace
+
+    drift = _load()
+    with pytest.raises(drift.ReleaseCutError, match="gate_counter_constant_missing"):
+        drift.move_gate_anchors(
+            _gate_battery("v0.16.0", 22),
+            _versions_map(22, "v0.16.0"),
+            "0.17.0",
+            SimpleNamespace(),
+        )
+
+
+def test_cut_stages_the_gate_anchors_in_the_phase2_patch(cut_env: Path) -> None:
+    """Issue #524 end to end: the staged patch carries the gate battery's
+    anchor motion (mini map: 2 rows, so derived 17 -> 19, census 20 -> 22),
+    the file set is exactly the three phase-2 surfaces, and the patch
+    applies cleanly on the cut tree — the tag commit is one git apply, no
+    hand edits."""
+    drift = _load()
+    repo = cut_env
+    assert drift.main([NEW, "--repo", str(repo)]) == 0
+    patch_path = repo / ".release" / f"phase2-v{NEW}.patch"
+    patch = patch_path.read_text(encoding="utf-8")
+    assert drift.patch_paths(patch) == {
+        "great-docs.yml",
+        "tests/test_zero_literal_gate.py",
+        "website/index.html",
+    }
+    assert (
+        "-        option_anchor = '<option value=\"docs/\">v0.7.1 (latest)</option>\\n'"
+        in patch
+    )
+    assert (
+        f"+        option_anchor = '<option value=\"docs/\">v{NEW} (latest)</option>\\n'"
+        in patch
+    )
+    assert "-        # derived number (2 x 3 + 11 = 17)." in patch
+    assert "+        # derived number (2 x 4 + 11 = 19)." in patch
+    assert '-        assert "website/index.html expects 17 sites" in out' in patch
+    assert '+        assert "website/index.html expects 19 sites" in out' in patch
+    assert '-        assert "20 sites, 3 files scanned" in out' in patch
+    assert '+        assert "22 sites, 3 files scanned" in out' in patch
+    apply_check = subprocess.run(
+        ["git", "-C", str(repo), "apply", "--check", str(patch_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert apply_check.returncode == 0, apply_check.stderr
+
+
+def test_cut_refuses_when_the_gate_anchors_disagree_with_the_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The typed refusal end to end: a hand-drifted census anchor aborts the
+    whole cut with the tree byte-identical and no .release residue, and
+    stderr names the file — the operator is told at cut time, not by CI at
+    the tag."""
+    drift = _load()
+    drifted = _gate_battery(OLD, 2).replace('"20 sites', '"21 sites')
+    repo = _mini_repo(tmp_path, doctor={"tests/test_zero_literal_gate.py": drifted})
+    ok = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+    monkeypatch.setattr(drift, "run_command", lambda cmd, *, cwd: ok)
+    monkeypatch.setattr(drift, "regenerate_fixtures", lambda root, version: None)
+    before = {p: (repo / p).read_bytes() for p in MINI_TREE}
+    assert drift.main([NEW, "--repo", str(repo)]) == 1
+    captured = capsys.readouterr()
+    assert "gate_anchor_mismatch" in captured.err
+    assert "tests/test_zero_literal_gate.py" in captured.err
+    for path, content in before.items():
+        assert (repo / path).read_bytes() == content, path
+    assert not (repo / ".release").exists()
+
+
+def test_verify_red_when_the_patch_lacks_the_gate_hunk(cut_env: Path) -> None:
+    """The pre-#524 shape as a regression pin: a staged patch without the
+    gate-anchor hunk (exactly what the old cut emitted, the class that
+    shipped two hand fixes) fails --verify."""
+    drift = _load()
+    assert drift.main([NEW, "--repo", str(cut_env)]) == 0
+    patch = cut_env / ".release" / f"phase2-v{NEW}.patch"
+    raw = patch.read_text(encoding="utf-8")
+    gate_at = raw.find("--- a/tests/test_zero_literal_gate.py")
+    assert gate_at > 0, "the staged patch must carry the gate hunk for this arm"
+    patch.write_text(raw[:gate_at], encoding="utf-8")
+    assert drift.main(["--verify", "--repo", str(cut_env)]) == 1
+
+
+def test_phase2_only_regenerates_the_identical_three_file_patch(cut_env: Path) -> None:
+    """The between-merge-and-tag answer is the same composition:
+    --phase2-only regenerates a byte-identical patch over the cut tree
+    (difflib is deterministic — divergence means the recomputation is not
+    the cut's)."""
+    drift = _load()
+    assert drift.main([NEW, "--repo", str(cut_env)]) == 0
+    patch = cut_env / ".release" / f"phase2-v{NEW}.patch"
+    first = patch.read_text(encoding="utf-8")
+    assert "tests/test_zero_literal_gate.py" in first
+    assert drift.main(["--phase2-only", "--repo", str(cut_env)]) == 0
+    assert patch.read_text(encoding="utf-8") == first
+
+
 # --- --verify ------------------------------------------------------------------------
 
 
@@ -529,14 +803,14 @@ def test_verify_red_when_the_patch_is_missing(cut_env: Path) -> None:
     assert drift.main(["--verify", "--repo", str(cut_env)]) == 1
 
 
-def test_verify_red_when_the_patch_touches_a_third_file(cut_env: Path) -> None:
+def test_verify_red_when_the_patch_touches_an_undeclared_file(cut_env: Path) -> None:
     drift = _load()
     assert drift.main([NEW, "--repo", str(cut_env)]) == 0
     patch = cut_env / ".release" / f"phase2-v{NEW}.patch"
     readme = (cut_env / "README.md").read_text(encoding="utf-8")
     patch.write_text(
         patch.read_text(encoding="utf-8")
-        # a third hunk that applies cleanly to an existing file, so ONLY the
+        # a fourth hunk that applies cleanly to an existing file, so ONLY the
         # file-set assertion can fail — git apply --check stays green
         + drift.unified_patch("README.md", readme, readme + "<!-- extra -->\n"),
         encoding="utf-8",

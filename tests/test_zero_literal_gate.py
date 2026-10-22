@@ -786,6 +786,10 @@ class TestProseScope:
         yml.write_text(yml_text.replace(anchor, anchor + fake_row), encoding="utf-8")
         index = scratch / "website/index.html"
         html_text = index.read_text(encoding="utf-8")
+        # the three bump-driven anchors in this battery (the selector literal
+        # here, the derived number below, the census pin in the junk arm)
+        # move with the staged phase-2 patch — release-cut rewrites them at
+        # the tag commit (issue #524); never by hand
         option_anchor = '<option value="docs/">v0.18.0 (latest)</option>\n'
         assert option_anchor in html_text
         fake_option = '          <option value="docs/v/v9.9.9/">v9.9.9</option>\n'
@@ -920,4 +924,6 @@ class TestProseFoldHardening:
         (scratch / "user_guide/Thumbs.db").touch()
         code, out = _prose_run(scratch, capsys)
         assert code == 0, out
+        # the census pin is the third bump-driven anchor: moved by the staged
+        # phase-2 patch (issue #524), never by hand
         assert "71 sites, 11 files scanned" in out

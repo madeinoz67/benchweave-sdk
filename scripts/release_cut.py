@@ -17,7 +17,10 @@ read-only verbs (status, tag -l, log, rev-parse, show, diff); a
 non-increment VERSION; a dirty tree; any occurrence mismatch (two-pass:
 nothing is written before every pattern validates); a missing declared
 file; a re-cut over an already-cut tree without --force; a phase-2 patch
-that would touch a third file. The cut leaves the working tree
+that would touch a file outside the declared three; a gate battery whose
+bump-driven anchors disagree with the versions map (gate_anchor_mismatch —
+the numbers are derived from the map and the counter's constants, and
+drift is refused, issue #524). The cut leaves the working tree
 staged-for-review — the operator commits.
 
 Modes: cut (default, positional VERSION); --verify (read-only: (i) every
@@ -25,13 +28,16 @@ substitution pattern matches its expected count at the tree's current
 version, (ii) the anchor — standards-lock.json compatibility.sdk ==
 pyproject version, (iii) the staged phase-2 patch exists and git apply
 --check succeeds, (iv) the patch's file set is exactly {great-docs.yml,
-website/index.html}); --phase2-only (regenerate the staged patch + plan).
+website/index.html, tests/test_zero_literal_gate.py} — the registration
+pair plus the gate battery's anchors the registration moves (#524);
+--phase2-only (regenerate the staged patch + plan).
 """
 
 from __future__ import annotations
 
 import argparse
 import difflib
+import importlib.util
 import json
 import re
 import shutil
@@ -42,6 +48,7 @@ import tomllib
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 CANONICAL_TEMPLATE_URL = "https://github.com/madeinoz67/benchweave-sdk"
 PYPROJECT = "pyproject.toml"
@@ -51,9 +58,11 @@ WEBSITE = "website/index.html"
 LOCK = "standards-lock.json"
 MATRIX = "docs/internal/release-review-matrix.md"
 GREAT_DOCS = "great-docs.yml"
+GATE_TEST = "tests/test_zero_literal_gate.py"
+COUNTER = "scripts/count_version_literals.py"
 FIXTURES = "tests/fixtures/scaffold_expected"
 RELEASE_DIR = ".release"
-PHASE2_FILES = (GREAT_DOCS, WEBSITE)
+PHASE2_FILES = (GREAT_DOCS, WEBSITE, GATE_TEST)
 
 VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 RELEASE_REF_RE = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
@@ -137,6 +146,14 @@ DECLARED_SURFACES: tuple[DeclaredSurface, ...] = (
         WEBSITE,
         "phase2",
         "docs selector (matrix row 3): the tag commit applies the staged patch",
+    ),
+    DeclaredSurface(
+        GATE_TEST,
+        "phase2",
+        "the zero-literal battery's three bump-driven anchors (selector, "
+        "derived number, census), moved with the registration they pin — "
+        "issue #524: two releases running the cut reddened them and a hand "
+        "fix followed each cut",
     ),
 )
 
@@ -343,6 +360,12 @@ def patch_paths(patch_text: str) -> set[str]:
     }
 
 
+# The versions map block — shared by build_phase2 (the registration
+# rewrite) and move_gate_anchors (the latest-tag lookup that anchors the
+# gate battery's derivation): one authority, two users.
+VERSIONS_BLOCK_RE = re.compile(r"^versions:\n((?:[ \t]+.*\n?)+)", re.M)
+
+
 def build_phase2(
     great_docs: str, selector_html: str, version: str
 ) -> tuple[str, str]:
@@ -350,7 +373,7 @@ def build_phase2(
     versions block at the head of the list, flip the single existing
     latest:true to false (validated: exactly one exists), and give the
     selector a new (latest) first option plus the demoted prior option."""
-    block_at = re.search(r"^versions:\n((?:[ \t]+.*\n?)+)", great_docs, re.M)
+    block_at = VERSIONS_BLOCK_RE.search(great_docs)
     if block_at is None:
         raise ReleaseCutError(
             "phase2_no_versions_list: 'versions:' not found in great-docs.yml"
@@ -420,6 +443,139 @@ def _selector_flip(selector_html: str, version: str) -> str:
     start = select_at + old.start()
     end = select_at + old.end()
     return selector_html[:start] + new_lines.rstrip("\n") + selector_html[end:]
+
+
+def load_gate_counter(repo: Path) -> Any:
+    """The twin counter module, for the constants the gate-anchor derivation
+    reads (VERSIONS_MAP_ROW, PROSE_INDEX_STATIC, PROSE_REGISTER,
+    PROSE_FILE_CENSUS). The counter has no import-time side effects (main()
+    is __name__-guarded); loading it keeps every anchor number derived from
+    the tree's own authority instead of duplicated here — a register or
+    census change re-derives the anchors automatically."""
+    path = repo / COUNTER
+    if not path.is_file():
+        raise ReleaseCutError(
+            f"gate_counter_missing: {COUNTER} is not in the tree — the "
+            "phase-2 gate-anchor derivation reads the counter's constants"
+        )
+    spec = importlib.util.spec_from_file_location("release_cut_gate_counter", path)
+    if spec is None or spec.loader is None:
+        raise ReleaseCutError(f"gate_counter_unloadable: {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def move_gate_anchors(
+    gate_text: str, great_docs: str, version: str, counter: Any
+) -> str:
+    """Rewrite the zero-literal battery's three bump-driven anchors — the
+    #524 defect: the phase-2 registration moved the map and the selector
+    for two releases running while these anchors reddened until a hand fix
+    followed each cut.
+
+    Every number is derived from the tree the cut already owns — the
+    versions map and the counter's constants; nothing is guessed. At a tree
+    whose map carries `rows` committed releases and `latest` as its
+    latest:true row:
+
+      selector  option_anchor v{latest} -> v{version} — the label the
+                selector flip demotes at the same tag commit
+      derived   2 x {rows+1} + {static} -> 2 x {rows+2} + {static}: the
+                battery's fake row rides the POST-registration map
+      census    {2*rows + static + registered} -> {2*(rows+1) + ...} — the
+                derived index count plus every other registered site, over
+                the census file count
+
+    Two-pass, like validate_occurrences: every anchor must occur exactly
+    once at its map-derived old value before anything is replaced — any
+    other count is gate_anchor_mismatch below, so hand drift reds the cut
+    (or --verify) naming the file and both numbers instead of reddening CI
+    at the tag. The stable great-docs insertion anchor (``git_ref:``) is
+    NOT touched: its row is permanent map history, and both historical
+    hand fixes left it byte-identical.
+    """
+
+    def _constant(name: str) -> Any:
+        value = getattr(counter, name, None)
+        if value is None:
+            raise ReleaseCutError(
+                f"gate_counter_constant_missing: {COUNTER} lacks {name} — "
+                "the gate-anchor derivation cannot run"
+            )
+        return value
+
+    row_pattern = _constant("VERSIONS_MAP_ROW")
+    index_static = int(_constant("PROSE_INDEX_STATIC"))
+    registered_static = sum(
+        int(entry[1]) for entry in _constant("PROSE_REGISTER").values()
+    )
+    census_files = len(_constant("PROSE_FILE_CENSUS"))
+
+    # rows counted exactly as the counter's derivation counts them (its
+    # anchored pattern over the whole map text — the authority the derived
+    # expectation reads)
+    rows = sum(1 for line in great_docs.splitlines() if row_pattern.match(line))
+    block_at = VERSIONS_BLOCK_RE.search(great_docs)
+    if block_at is None:
+        raise ReleaseCutError(
+            "phase2_no_versions_list: 'versions:' not found in great-docs.yml"
+        )
+    # the latest-tag scan is bounded to the versions block: the file's other
+    # latest keys (the /v/latest/ alias block) are different features
+    latest_tags: list[str] = []
+    current: str | None = None
+    for line in block_at.group(1).splitlines():
+        tag_at = re.match(r"\s*- tag:\s*(v\d+\.\d+\.\d+)\s*$", line)
+        if tag_at is not None:
+            current = tag_at.group(1)
+        elif re.match(r"\s*latest:\s*true\b", line) and current is not None:
+            latest_tags.append(current)
+    if len(latest_tags) != 1:
+        raise ReleaseCutError(
+            "gate_anchor_latest_ambiguity: expected exactly one latest:true "
+            f"row in the versions map, found {len(latest_tags)} — build_phase2 "
+            "refuses the same shape"
+        )
+    latest = latest_tags[0]
+
+    old_derived = 2 * (rows + 1) + index_static
+    new_derived = 2 * (rows + 2) + index_static
+    old_census = 2 * rows + index_static + registered_static
+    new_census = 2 * (rows + 1) + index_static + registered_static
+    anchors = (
+        (
+            f"option_anchor = '<option value=\"docs/\">{latest} (latest)</option>\\n'",
+            f"option_anchor = '<option value=\"docs/\">v{version} (latest)</option>\\n'",
+        ),
+        (
+            f"# derived number (2 x {rows + 1} + {index_static} = {old_derived}).",
+            f"# derived number (2 x {rows + 2} + {index_static} = {new_derived}).",
+        ),
+        (
+            f'assert "website/index.html expects {old_derived} sites" in out',
+            f'assert "website/index.html expects {new_derived} sites" in out',
+        ),
+        (
+            f'assert "{old_census} sites, {census_files} files scanned" in out',
+            f'assert "{new_census} sites, {census_files} files scanned" in out',
+        ),
+    )
+    for old, _new in anchors:
+        found = gate_text.count(old)
+        if found != 1:
+            raise ReleaseCutError(
+                f"gate_anchor_mismatch: {GATE_TEST}: the bump-driven anchor "
+                f"{old!r} occurs {found} times (expected exactly 1) — the "
+                "battery's anchors disagree with the committed tree (map "
+                f"rows {rows}, latest {latest}; derived {old_derived} -> "
+                f"{new_derived}, census {old_census} -> {new_census}); "
+                "align the battery with the map before the cut"
+            )
+    moved = gate_text
+    for old, new in anchors:
+        moved = moved.replace(old, new)
+    return moved
 
 
 def canonical_pin_answers(project: Path, version: str) -> None:
@@ -540,7 +696,8 @@ def matrix_scaffold(
         "(occurrence-validated); OTDP / adapter-API stamps the walk confirms against "
         "the lock's active rows |\n"
         f"| 3 | Docs selector | PHASE-2 — patch staged at {patch_name}; the tag commit "
-        "applies it (registration precedes the tag) |\n"
+        "applies it (registration precedes the tag; the same patch moves the "
+        "zero-literal gate battery's three anchors, #524) |\n"
         f"| 4 | Compatibility tagline | updated — SDK {version} against the "
         "main-repository floor by release-cut (occurrence-validated) |\n"
         "| 5 | Standards badges | walk confirms — enumerate all six against the lock's "
@@ -576,6 +733,19 @@ def cmd_cut(repo: Path, version: str, *, force: bool) -> int:
             file=sys.stderr,
         )
         return EXIT_FAIL
+
+    # The gate battery's anchors are derived and validated BEFORE anything
+    # is written (the two-pass doctrine): a battery that disagrees with the
+    # map refuses the whole cut naming the file — the operator is told at
+    # cut time, not by CI at the tag commit (issue #524).
+    counter = load_gate_counter(repo)
+    gate_old = (repo / GATE_TEST).read_text(encoding="utf-8")
+    gate_new = move_gate_anchors(
+        gate_old,
+        (repo / GREAT_DOCS).read_text(encoding="utf-8"),
+        version,
+        counter,
+    )
 
     backup: dict[str, bytes] = {
         surface.path: (repo / surface.path).read_bytes()
@@ -647,8 +817,10 @@ def cmd_cut(repo: Path, version: str, *, force: bool) -> int:
         great_docs = (repo / GREAT_DOCS).read_text(encoding="utf-8")
         selector = (repo / WEBSITE).read_text(encoding="utf-8")
         new_docs, new_selector = build_phase2(great_docs, selector, version)
-        patch = unified_patch(GREAT_DOCS, great_docs, new_docs) + unified_patch(
-            WEBSITE, selector, new_selector
+        patch = (
+            unified_patch(GREAT_DOCS, great_docs, new_docs)
+            + unified_patch(WEBSITE, selector, new_selector)
+            + unified_patch(GATE_TEST, gate_old, gate_new)
         )
         touched = patch_paths(patch)
         if touched != set(PHASE2_FILES):
@@ -775,8 +947,19 @@ def cmd_verify(repo: Path) -> int:
         # deterministic, so byte-equality is the exact recomputation.
         try:
             new_docs, new_selector = build_phase2(great_docs_raw, selector_raw, version)
-            expected_patch = unified_patch(GREAT_DOCS, great_docs_raw, new_docs) + (
-                unified_patch(WEBSITE, selector_raw, new_selector)
+            gate_path = repo / GATE_TEST
+            if not gate_path.is_file():
+                raise ReleaseCutError(
+                    f"gate_battery_missing: {GATE_TEST} is not in the tree"
+                )
+            gate_raw = gate_path.read_text(encoding="utf-8")
+            new_gate = move_gate_anchors(
+                gate_raw, great_docs_raw, version, load_gate_counter(repo)
+            )
+            expected_patch = (
+                unified_patch(GREAT_DOCS, great_docs_raw, new_docs)
+                + unified_patch(WEBSITE, selector_raw, new_selector)
+                + unified_patch(GATE_TEST, gate_raw, new_gate)
             )
         except ReleaseCutError as exc:
             failures.append(f"patch_recompute_refused: {exc}")
@@ -805,9 +988,13 @@ def cmd_phase2_only(repo: Path, *, force: bool) -> int:
     prev_tag = previous_tag(repo, version)
     great_docs = (repo / GREAT_DOCS).read_text(encoding="utf-8")
     selector = (repo / WEBSITE).read_text(encoding="utf-8")
+    gate_old = (repo / GATE_TEST).read_text(encoding="utf-8")
+    gate_new = move_gate_anchors(gate_old, great_docs, version, load_gate_counter(repo))
     new_docs, new_selector = build_phase2(great_docs, selector, version)
-    patch = unified_patch(GREAT_DOCS, great_docs, new_docs) + unified_patch(
-        WEBSITE, selector, new_selector
+    patch = (
+        unified_patch(GREAT_DOCS, great_docs, new_docs)
+        + unified_patch(WEBSITE, selector, new_selector)
+        + unified_patch(GATE_TEST, gate_old, gate_new)
     )
     touched = patch_paths(patch)
     if touched != set(PHASE2_FILES):
@@ -869,7 +1056,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.verify:
         return cmd_verify(repo)
     if args.phase2_only:
-        return cmd_phase2_only(repo, force=args.force)
+        # phase2-only composes the same phase-2 content, so it takes the
+        # same typed-refusal path as the cut (gate_anchor_mismatch and its
+        # kin print, never traceback).
+        try:
+            return cmd_phase2_only(repo, force=args.force)
+        except ReleaseCutError as exc:
+            print(f"release-cut: {exc}", file=sys.stderr)
+            return EXIT_FAIL
     if args.version is None:
         parser.error("a VERSION argument is required without --verify/--phase2-only")
     try:
