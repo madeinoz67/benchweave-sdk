@@ -1,0 +1,272 @@
+{
+  "otdp_version": "0.2.4",
+  "descriptor_version": "1.0.0",
+  "id": "dev.local.class-electronic-load",
+  "display_name": "Structural reference: Electronic load",
+  "description": "Class-contract fixture, not a verified real device or implemented adapter.",
+  "identity": {
+    "strategy": "adapter",
+    "manufacturer": "OTDP Reference",
+    "model": "electronic_load",
+    "firmware_policy": "listed",
+    "supported_firmware": [
+      "1.0"
+    ]
+  },
+  "integration": {
+    "mode": "adapter",
+    "adapter": {
+      "entry_point": "reference_electronic_load:create_plugin",
+      "api_version": "1.1",
+      "version": "1.0.0",
+      "dependencies": [],
+      "permissions": [
+        "scoped_transport",
+        "artifact_writer"
+      ]
+    }
+  },
+  "transport": {
+    "type": "serial",
+    "connection_key": "capture_device",
+    "settings": {
+      "baud": 115200,
+      "data_bits": 8,
+      "parity": "none",
+      "stop_bits": 1,
+      "rtscts": false,
+      "max_frame_bytes": 65536
+    }
+  },
+  "capabilities": [
+    "identify",
+    "invoke",
+    "read"
+  ],
+  "operations": {
+    "identify": {
+      "timeout_ms": 2000,
+      "side_effect": "none",
+      "retry": "never",
+      "cancellable": false,
+      "completion": "acknowledged"
+    },
+    "invoke": {
+      "timeout_ms": 30000,
+      "side_effect": "state_change",
+      "retry": "never",
+      "cancellable": true,
+      "completion": "acknowledged"
+    },
+    "read": {
+      "timeout_ms": 2000,
+      "side_effect": "none",
+      "retry": "never",
+      "cancellable": false,
+      "completion": "acknowledged"
+    }
+  },
+  "parameters": [
+    {
+      "name": "ch1_voltage",
+      "description": "Synthetic voltage reading for ch1",
+      "type": "float",
+      "access": "ro",
+      "semantic": "measurement",
+      "unit": "V",
+      "binding": {
+        "kind": "adapter",
+        "key": "ch1_voltage"
+      },
+      "read_policy": {
+        "max_age_ms": 0,
+        "destructive": false
+      }
+    },
+    {
+      "name": "ch1_current",
+      "description": "Synthetic current reading for ch1",
+      "type": "float",
+      "access": "ro",
+      "semantic": "measurement",
+      "unit": "A",
+      "binding": {
+        "kind": "adapter",
+        "key": "ch1_current"
+      },
+      "read_policy": {
+        "max_age_ms": 0,
+        "destructive": false
+      }
+    },
+    {
+      "name": "ch1_power",
+      "description": "Synthetic power reading for ch1",
+      "type": "float",
+      "access": "ro",
+      "semantic": "measurement",
+      "unit": "W",
+      "binding": {
+        "kind": "adapter",
+        "key": "ch1_power"
+      },
+      "read_policy": {
+        "max_age_ms": 0,
+        "destructive": false
+      }
+    },
+    {
+      "name": "ch2_voltage",
+      "description": "Synthetic voltage reading for ch2",
+      "type": "float",
+      "access": "ro",
+      "semantic": "measurement",
+      "unit": "V",
+      "binding": {
+        "kind": "adapter",
+        "key": "ch2_voltage"
+      },
+      "read_policy": {
+        "max_age_ms": 0,
+        "destructive": false
+      }
+    },
+    {
+      "name": "ch2_current",
+      "description": "Synthetic current reading for ch2",
+      "type": "float",
+      "access": "ro",
+      "semantic": "measurement",
+      "unit": "A",
+      "binding": {
+        "kind": "adapter",
+        "key": "ch2_current"
+      },
+      "read_policy": {
+        "max_age_ms": 0,
+        "destructive": false
+      }
+    },
+    {
+      "name": "ch2_power",
+      "description": "Synthetic power reading for ch2",
+      "type": "float",
+      "access": "ro",
+      "semantic": "measurement",
+      "unit": "W",
+      "binding": {
+        "kind": "adapter",
+        "key": "ch2_power"
+      },
+      "read_policy": {
+        "max_age_ms": 0,
+        "destructive": false
+      }
+    }
+  ],
+  "required_features": [
+    "otdp.core/0.1.0",
+    "otdp.adapter/0.1.0",
+    "otdp.profile_actions/0.1.0",
+    "otdp.measurement/0.1.0",
+    "otdp.electronic_load/1.0.0"
+  ],
+  "provenance": {
+    "sources": [
+      {
+        "title": "OTDP class contracts (structural fixture only)",
+        "reference": "../device-classes.md",
+        "revision": "1.0.0"
+      }
+    ],
+    "test_vectors": [
+      {
+        "id": "electronic_load-actions",
+        "path": "class-action-vectors.json",
+        "purpose": "Input/output contract examples; not a device simulator"
+      }
+    ]
+  },
+  "channels": [
+    {
+      "id": "ch1",
+      "label": "Reference channel 1",
+      "role": "sink",
+      "quantities": [
+        "voltage",
+        "current",
+        "power"
+      ],
+      "parameter_names": [
+        "ch1_voltage",
+        "ch1_current",
+        "ch1_power"
+      ]
+    },
+    {
+      "id": "ch2",
+      "label": "Reference channel 2",
+      "role": "sink",
+      "quantities": [
+        "voltage",
+        "current",
+        "power"
+      ],
+      "parameter_names": [
+        "ch2_voltage",
+        "ch2_current",
+        "ch2_power"
+      ]
+    }
+  ],
+  "profiles": [
+    "otdp.electronic_load/1.0.0"
+  ],
+  "contracts": [
+    {
+      "id": "urn:otdp:profile-catalog:0.2.4",
+      "path": "device-profile-catalog.json",
+      "sha256": "89214042bee95b752ac252f088a703e43e86c202fc7146c222cf5091244d0d4c"
+    },
+    {
+      "id": "urn:otdp:measurement:0.2.4",
+      "path": "otdp-measurement.schema.json",
+      "sha256": "2f7da116b07db4ba06eb72c6d16a5a8d5b13c6a34fe1f6ab01c99fce6a146063"
+    }
+  ],
+  "actions": {
+    "otdp.electronic_load.configure/1.0.0": {
+      "binding": {
+        "kind": "adapter",
+        "key": "otdp.electronic_load.configure/1.0.0"
+      },
+      "input_constraints": {},
+      "timeout_ms": 30000,
+      "side_effect": "state_change",
+      "cancellable": true,
+      "retry": "never"
+    },
+    "otdp.electronic_load.output/1.0.0": {
+      "binding": {
+        "kind": "adapter",
+        "key": "otdp.electronic_load.output/1.0.0"
+      },
+      "input_constraints": {},
+      "timeout_ms": 30000,
+      "side_effect": "state_change",
+      "cancellable": true,
+      "retry": "never"
+    },
+    "otdp.electronic_load.measure/1.0.0": {
+      "binding": {
+        "kind": "adapter",
+        "key": "otdp.electronic_load.measure/1.0.0"
+      },
+      "input_constraints": {},
+      "timeout_ms": 30000,
+      "side_effect": "none",
+      "cancellable": true,
+      "retry": "never"
+    }
+  }
+}
