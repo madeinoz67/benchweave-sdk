@@ -1933,11 +1933,31 @@ def _build_declaration(
         if row["expectation_id"] not in seen:
             deviation_rows.append(row)
             seen.add(row["expectation_id"])
+    # #541 record §4.4: the custom inventory. Not deviations — a residual
+    # member is not a divergence from the reference; it is an action the
+    # reference never claimed. The declaration states what is uncatalogued
+    # from birth so the project's own conformance record (the file
+    # upgrade and migrate-ui watch) can never lose it. No schema governs
+    # this document's key set (only the deviation vocabulary is validated),
+    # so the inventory lands without a standards motion.
+    custom_rows = [
+        {
+            "action": urn,
+            "resolution": "custom",
+            "reason": (
+                "no served catalog describes this action; controls derive "
+                "from the descriptor's own input_constraints"
+            ),
+        }
+        for urn, row in sorted(plan.items())
+        if row.get("resolution") == "custom"
+    ]
     return {
         "contract_version": active_version(_FAMILY),
         "profile_ids": sorted({str(item["profile_id"]) for item in references}),
         "reference_version": active_version(_FAMILY),
         "deviations": deviation_rows,
+        "custom_actions": custom_rows,
     }
 
 

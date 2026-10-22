@@ -399,3 +399,87 @@ def test_custom_section_never_appends_into_an_authored_page() -> None:
     ]
     # The residual member still derives — into the plan, labelled custom.
     assert derived.control_plan[GHOST_URN]["resolution"] == "custom"
+
+
+# ---------------------------------------------------------------------------
+# M2 — nothing degrades silently (record §7.2). A custom member lands in
+# GateReport.reported_deviations labelled "custom" through the existing
+# REPORTED channel, every run, and the declaration records the custom
+# inventory — non-empty exactly when residuals exist. A custom member is
+# never a findings failure: it is a disclosure.
+# ---------------------------------------------------------------------------
+
+
+def test_m2_declaration_inventory_non_empty_exactly_when_residuals_exist() -> None:
+    """The birth declaration carries the custom inventory: the residual
+    member is named when it exists, and the inventory is empty when no
+    residual does — the project's own conformance record states what is
+    uncatalogued from birth (record §4.4)."""
+    descriptor = _acceptance_descriptor()
+    with_residuals = derive_ui(
+        json.dumps(descriptor).encode(), REFERENCE,
+        descriptor_path=FIXTURES / "descriptor-f1.json",
+    )
+    inventory = with_residuals.declaration.get("custom_actions")
+    assert inventory, "residual members must be inventoried"
+    assert [row["action"] for row in inventory] == [GHOST_URN]
+    assert all(row["resolution"] == "custom" for row in inventory)
+    without_residuals = derive_ui(
+        (FIXTURES / "descriptor-f1.json").read_bytes(), REFERENCE,
+        descriptor_path=FIXTURES / "descriptor-f1.json",
+    )
+    assert not without_residuals.declaration.get("custom_actions")
+
+
+def _scaffold_residual_project(destination: Path) -> Path:
+    """A real scaffolded plugin carrying the acceptance descriptor and its
+    pinned files, with the derived set written — the verify_ui input."""
+    from benchweave_sdk.classref import declaration_scaffold
+    from benchweave_sdk.scaffold import create_project
+
+    def raw(document: object) -> bytes:
+        return (json.dumps(document, indent=2) + "\n").encode()
+
+    descriptor = _acceptance_descriptor()
+    create_project(destination, "veridian_residual_plugin", with_ui=False)
+    package = destination / "src" / "veridian_residual_plugin"
+    descriptor_raw = raw(descriptor)
+    (package / "descriptor.json").write_bytes(descriptor_raw)
+    for pinned in ("vendor-catalog.json", "vectors-f1.json"):
+        (package / pinned).write_bytes((FIXTURES / pinned).read_bytes())
+    derived = derive_ui(
+        descriptor_raw, REFERENCE, descriptor_path=package / "descriptor.json"
+    )
+    ui = package / "ui"
+    ui.mkdir(exist_ok=True)
+    (ui / "manifest.json").write_bytes(raw(derived.manifest))
+    (package / "presentation.json").write_bytes(raw(derived.envelope))
+    (package / "binding-catalogue.json").write_bytes(raw(derived.catalogue))
+    settings = ui / "settings"
+    settings.mkdir(exist_ok=True)
+    (settings / "configure.schema.json").write_bytes(raw(derived.settings_schema))
+    presets = ui / "presets"
+    presets.mkdir(exist_ok=True)
+    for slug, scaffold in derived.preset_scaffolds.items():
+        (presets / f"{slug}.json").write_bytes(raw(scaffold))
+    (ui / "class-reference.json").write_bytes(raw(declaration_scaffold(derived)))
+    return destination
+
+
+def test_m2_gate_reports_custom_members_labelled(tmp_path: Path) -> None:
+    """Through the real gate (render, census, assert): every custom member
+    lands in reported_deviations labelled "custom" — never silent, and
+    never a findings failure. The custom controls render on the custom
+    section (KILL d: the rendered surface matches the declared
+    constraints), which keeps the gate clean."""
+    from benchweave_sdk.classref_gate import verify_ui
+
+    project = _scaffold_residual_project(tmp_path / "residual")
+    report = verify_ui(project)
+    assert f"custom: {GHOST_URN}" in report.reported_deviations, (
+        report.reported_deviations
+    )
+    assert not any(GHOST_URN in finding.detail for finding in report.findings), [
+        f"{f.code}: {f.detail}" for f in report.findings
+    ]
+    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]

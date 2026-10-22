@@ -421,7 +421,10 @@ def _coverage_findings(
 ) -> tuple[list[GateFinding], list[str]]:
     """The always-on D14 coverage arm (record §5.1): per action, a rendered
     control at its ladder level OR a declared deviation. Declared
-    divergences ride back as REPORTED rows; undeclared ones fail.
+    divergences ride back as REPORTED rows; undeclared ones fail. A
+    residual member (resolution "custom", #541) is a disclosure, not a
+    coverage question: it REPORTS labelled "custom" every run and cannot
+    fail the gate for being custom.
 
     The L2 test is PER ACTION (RC fold, gateway #463): an L2 action is
     covered when ITS OWN inputs render — the host render's
@@ -441,6 +444,15 @@ def _coverage_findings(
         seen = censused.get(page, {})
         buttons = seen.get("buttons", [])
         level = row["level"]
+        # #541 record §4.3: a custom member is a disclosure, never a
+        # defect and never silent — it lands in the REPORTED channel
+        # labelled "custom" EVERY run, ahead of any authored-ledger row
+        # for the same urn (the label is the point: a bare id would not
+        # say what the member is) and ahead of the coverage tests (a
+        # custom member cannot fail the gate for being custom).
+        if str(row.get("resolution", "catalog")) == "custom":
+            reported.append(f"custom: {urn}")
+            continue
         covered = False
         if level == "L1" and slug in buttons:
             covered = True
