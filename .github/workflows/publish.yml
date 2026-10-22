@@ -27,10 +27,10 @@ jobs:
         with:
           python-version: "3.13"
       # --locked, matching the continuous-integration lanes (ci.yml): the release
-      # must build the resolution a pull-request lane proved. A bare sync exits 0
-      # and silently rewrites the lock on project-metadata drift, so a release
-      # could be built and smoke-tested against a resolution nothing ran (gateway
-      # #535, design record 2026-10-22-issue535-publish-lane-locked.md).
+      # must build the resolution a pull-request lane proved. On metadata drift
+      # that still resolves, a bare sync exits 0 and silently rewrites the lock,
+      # so a release could be built and smoke-tested against a resolution nothing
+      # ran (gateway #535, design record 2026-10-22-issue535-publish-lane-locked.md).
       - run: uv sync --locked
       - name: Standards self-check
         run: uv run benchweave-sdk sync-standards --check
