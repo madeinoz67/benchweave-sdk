@@ -407,21 +407,33 @@ def _check_admittance(
 
 
 def _effective_action_schema(
-    action_urn: str, catalogue_action: dict[str, Any], constraints: dict[str, Any]
+    action_urn: str,
+    catalogue_action: dict[str, Any] | None,
+    constraints: dict[str, Any],
 ) -> dict[str, Any]:
     """The action's effective input schema: catalogue AND descriptor
     constraints, per property (D13). Validation lanes stay conjunctive and
-    untouched; this derives per-field admittance for control rendering."""
-    catalogue_input = catalogue_action.get("input_schema", {}) or {}
-    # Deep-copy: the served catalog is cached module state shared across
-    # runs; the intersection must never narrow the served bytes in place.
-    catalogue_input = json.loads(json.dumps(catalogue_input))
-    properties = {
-        name: dict(schema)
-        for name, schema in (catalogue_input.get("properties") or {}).items()
-        if isinstance(schema, dict)
-    }
-    required = set(catalogue_input.get("required") or ())
+    untouched; this derives per-field admittance for control rendering.
+
+    #541 layer 3: a None catalogue row is the residual mode — no served
+    catalog describes the action, so the effective schema is the
+    descriptor's own constraints, still gated by the same closed keyword
+    vocabulary and the same empty-admittance refusal. The SDK invents no
+    admittance a catalogue granted; it renders the plugin's own declared
+    constraints and the plan row carries resolution "custom"."""
+    properties: dict[str, Any] = {}
+    required: set[str] = set()
+    if catalogue_action is not None:
+        catalogue_input = catalogue_action.get("input_schema", {}) or {}
+        # Deep-copy: the served catalog is cached module state shared across
+        # runs; the intersection must never narrow the served bytes in place.
+        catalogue_input = json.loads(json.dumps(catalogue_input))
+        properties = {
+            name: dict(schema)
+            for name, schema in (catalogue_input.get("properties") or {}).items()
+            if isinstance(schema, dict)
+        }
+        required = set(catalogue_input.get("required") or ())
     constraint_properties = constraints.get("properties") or {}
     for keyword in constraints:
         if keyword in _CONSTRAINT_CONTROL_KEYWORDS or keyword in _CONSTRAINT_RIDER_KEYWORDS:
@@ -439,6 +451,25 @@ def _effective_action_schema(
                 "an object",
             )
         base = properties.get(name)
+        if base is None and catalogue_action is None:
+            # Residual: no catalogue side exists to intersect — the
+            # declared fragment IS the effective schema, verbatim, after
+            # the same closed-vocabulary and admittance gates.
+            for keyword in fragment:
+                if (
+                    keyword in _CONSTRAINT_CONTROL_KEYWORDS
+                    or keyword in _CONSTRAINT_RIDER_KEYWORDS
+                ):
+                    continue
+                raise _refuse(
+                    "classref_constraint_unsupported",
+                    f"action {action_urn} field {name}: keyword {keyword!r} "
+                    "is outside the closed intersection vocabulary",
+                )
+            effective_fragment = json.loads(json.dumps(fragment))
+            _check_admittance(action_urn, name, effective_fragment)
+            properties[name] = effective_fragment
+            continue
         if base is None:
             base = {"type": fragment.get("type", "object")}
             properties[name] = base
@@ -614,12 +645,25 @@ def _derive_controls(
             slot_kind = str(slot.get("kind"))
             if slot_kind != "vendor_actions":
                 host_supplied = frozenset(slot.get("host_supplied") or ())
-        effective = _effective_action_schema(urn, catalog_actions[urn], constraints)
+        # #541 three-layer resolution (record §3): a catalogue row (served
+        # OTDP or pinned vendor) resolves layer 1; no row at all resolves
+        # layer 3 — the residual member derives from the descriptor's own
+        # constraints, never refuses for being unknown. Slice 2 adds the
+        # composed layer between them; the value names the layer that
+        # produced the row (record §4.1 — provenance is data, not a log).
+        catalogue_row = catalog_actions.get(urn)
+        resolution = "catalog" if catalogue_row is not None else "custom"
+        effective = _effective_action_schema(urn, catalogue_row, constraints)
         level = _ladder_level(effective, host_supplied, slot_kind)
         fields = _field_rows(urn, "", effective)
         slot_key = _slot_name if slot else ""
         page = page_for_slot.get(slot_key, "device-features")
-        row: dict[str, Any] = {"level": level, "page": page, "fields": fields}
+        row: dict[str, Any] = {
+            "level": level,
+            "page": page,
+            "fields": fields,
+            "resolution": resolution,
+        }
         intended = intended_controls.get(urn)
         if intended is not None and _SLOT_LEVEL_MATCH.get(intended) != level:
             row["intended"] = intended
@@ -678,15 +722,11 @@ def derive_ui(
     catalog_actions: dict[str, Any] = dict(catalog.get("actions", {}))
     catalog_actions.update(_vendor_catalogs(descriptor, descriptor_path))
     actions = descriptor.get("actions") or {}
-    # F8b: a descriptor-declared action absent from every served catalog
-    # is a typed refusal — the ladder cannot derive what the catalogs do
-    # not describe, and a bare KeyError is not an SDK error face.
-    for urn in actions:
-        if urn not in catalog_actions:
-            raise _refuse(
-                "classref_unknown_action",
-                f"descriptor declares {urn}, absent from every served catalog",
-            )
+    # #541 layer 3: a descriptor action no served catalog describes is a
+    # residual member, not a refusal — it derives from the descriptor's own
+    # input_constraints and its plan row carries resolution "custom". The
+    # reference-slot site below keeps refusing (D4): a class's own slot
+    # naming an unserved URN is a corpus fault, not a vendor gap.
     for item in references:
         slot_keys = set(item.get("slots", {}))
         for page in item.get("pages", []):
@@ -864,6 +904,7 @@ def _assemble(
             continue
         if descriptor.get("decoders") and plot_page:
             plan[urn] = {
+                **plan[urn],
                 "level": "L4",
                 "page": plot_page,
                 "fields": [],
@@ -1432,16 +1473,16 @@ def effective_action_fields(
 ) -> list[dict[str, Any]]:
     """The effective field rows for one action, resolved from the served
     catalogs and the descriptor's constraints (the host composition's
-    admittance source; the same intersection the expander derives)."""
+    admittance source; the same intersection the expander derives). A
+    declared action no catalog describes resolves residual (#541): the
+    descriptor's own constraints, exactly as the plan row derives them."""
     catalog = _catalog_documents(descriptor)
     actions = dict(catalog.get("actions", {}))
     actions.update(_vendor_catalogs(descriptor, descriptor_path))
-    if urn not in actions:
-        return []
     constraints = (descriptor.get("actions") or {}).get(urn, {}).get(
         "input_constraints"
     ) or {}
-    effective = _effective_action_schema(urn, actions[urn], constraints)
+    effective = _effective_action_schema(urn, actions.get(urn), constraints)
     return _field_rows(urn, "", effective)
 
 
@@ -1458,14 +1499,10 @@ def coverage_plan_without_reference(
     actions_map: dict[str, Any] = dict(catalog.get("actions", {}))
     actions_map.update(_vendor_catalogs(descriptor, descriptor_path))
     actions = descriptor.get("actions") or {}
-    # F8b scalar arm: the reference-less path refuses typed exactly like
-    # derive_ui — never a bare KeyError from the ladder's lookup.
-    for urn in actions:
-        if urn not in actions_map:
-            raise _refuse(
-                "classref_unknown_action",
-                f"descriptor declares {urn}, absent from every served catalog",
-            )
+    # #541 layer 3, the same treatment as derive_ui: a catalog-absent
+    # declared action is a residual member that derives, resolution
+    # "custom" — the reference-less plan cannot disagree with the
+    # reference-carrying derivation.
     plan, _divergences = _derive_controls(
         actions, actions_map, {}, {}, {}
     )

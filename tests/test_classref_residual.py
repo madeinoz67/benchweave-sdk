@@ -55,7 +55,7 @@ def _acceptance_descriptor() -> dict[str, Any]:
         {
             "properties": {
                 "holdoff_ms": {"type": "integer", "minimum": 0, "maximum": 5000},
-                "label": {"type": "string", "maxLength": 32},
+                "label": {"type": "string"},
             },
             "required": ["holdoff_ms"],
         }
@@ -134,5 +134,168 @@ def test_m4_absent_profile_row_refuses() -> None:
     with pytest.raises(ValueError, match="^classref_profile_absent:"):
         derive_ui(
             json.dumps(descriptor).encode(), reference,
+            descriptor_path=FIXTURES / "descriptor-f1.json",
+        )
+
+
+# ---------------------------------------------------------------------------
+# M1 — the refusal is gone for the recoverable case (record §7.1).
+# ---------------------------------------------------------------------------
+
+
+def test_m1_residual_descriptor_derives_zero_refusals() -> None:
+    """The acceptance descriptor (mostly a class, plus one action no catalog
+    describes) derives with zero refusals, and 100% of the descriptor's
+    declared actions appear in the control plan with a non-null resolution.
+    The denominator is asserted from the descriptor, never a literal."""
+    descriptor = _acceptance_descriptor()
+    derived = derive_ui(
+        json.dumps(descriptor).encode(), REFERENCE,
+        descriptor_path=FIXTURES / "descriptor-f1.json",
+    )
+    declared = set(descriptor["actions"])
+    assert declared, "the acceptance descriptor declares actions"
+    planned = set(derived.control_plan)
+    assert planned == declared
+    missing = declared - planned
+    assert not missing, f"declared but unplanned: {sorted(missing)}"
+    unresolved = sorted(
+        urn for urn, row in derived.control_plan.items() if not row.get("resolution")
+    )
+    assert not unresolved, f"plan rows without resolution: {unresolved}"
+
+
+def test_m1_residual_row_is_honest_about_its_constraints() -> None:
+    """KILL (d) arm: the residual row's field rows match the descriptor's
+    declared input_constraints — the generic surface admits exactly what the
+    plugin declared, no more."""
+    descriptor = _acceptance_descriptor()
+    derived = derive_ui(
+        json.dumps(descriptor).encode(), REFERENCE,
+        descriptor_path=FIXTURES / "descriptor-f1.json",
+    )
+    ghost = derived.control_plan[GHOST_URN]
+    assert ghost["resolution"] == "custom"
+    by_field = {row["field"]: row for row in ghost["fields"]}
+    holdoff = by_field["holdoff_ms"]
+    assert holdoff["mode"] == "numeric"
+    assert holdoff["minimum"] == 0
+    assert holdoff["maximum"] == 5000
+    label = by_field["label"]
+    assert label["mode"] == "text"
+    # holdoff_ms is required and expressible: the action is L2 (staging).
+    assert ghost["level"] == "L2"
+
+
+# ---------------------------------------------------------------------------
+# M3 — the layers are distinguishable (record §7.3). Slice-1 legs: the same
+# URN derives "custom" with no catalog row and "catalog" when a served
+# catalog describes it. (The "composed" leg is slice 2.)
+# ---------------------------------------------------------------------------
+
+
+def test_m3_same_urn_custom_without_catalog_row(tmp_path: Path) -> None:
+    descriptor = _acceptance_descriptor()
+    derived = derive_ui(
+        json.dumps(descriptor).encode(), REFERENCE,
+        descriptor_path=FIXTURES / "descriptor-f1.json",
+    )
+    assert derived.control_plan[GHOST_URN]["resolution"] == "custom"
+
+
+def test_m3_same_urn_catalog_when_a_served_catalog_describes_it(
+    tmp_path: Path,
+) -> None:
+    """The same URN, described by a pinned vendor catalog this time, derives
+    resolution "catalog" — one URN, two distinct outcomes, the layer decided
+    by what describes the action, never by the URN's spelling."""
+    import hashlib
+
+    project = _copy_project_files(tmp_path / "pinned")
+    catalog = json.loads((project / "vendor-catalog.json").read_bytes())
+    catalog["actions"][GHOST_URN] = {
+        "description": "Pinned residual twin.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "holdoff_ms": {"type": "integer", "minimum": 0, "maximum": 5000},
+                "label": {"type": "string"},
+            },
+            "required": ["holdoff_ms"],
+        },
+        "side_effect": "none",
+    }
+    raw_catalog = (json.dumps(catalog, indent=2) + "\n").encode()
+    (project / "vendor-catalog.json").write_bytes(raw_catalog)
+    descriptor = json.loads((project / "descriptor-f1.json").read_bytes())
+    descriptor["actions"][GHOST_URN] = _ghost_action(
+        {
+            "properties": {
+                "holdoff_ms": {"type": "integer", "minimum": 0, "maximum": 5000},
+                "label": {"type": "string"},
+            },
+            "required": ["holdoff_ms"],
+        }
+    )
+    for row in descriptor["contracts"]:
+        if row["id"].startswith("urn:veridian:vendor-catalog"):
+            row["sha256"] = hashlib.sha256(raw_catalog).hexdigest()
+    derived = derive_ui(
+        json.dumps(descriptor).encode(), REFERENCE,
+        descriptor_path=project / "descriptor-f1.json",
+    )
+    assert derived.control_plan[GHOST_URN]["resolution"] == "catalog"
+
+
+def test_m3_reference_less_plan_matches_derive_ui() -> None:
+    """The same treatment on the reference-less path: coverage plans cannot
+    disagree with derive_ui — the residual member derives, resolution
+    "custom", where the old path refused."""
+    descriptor = _acceptance_descriptor()
+    plan, _actions = coverage_plan_without_reference(
+        descriptor, FIXTURES / "descriptor-f1.json"
+    )
+    assert set(plan) == set(descriptor["actions"])
+    assert plan[GHOST_URN]["resolution"] == "custom"
+
+
+# ---------------------------------------------------------------------------
+# The narrowing discipline survives in the no-catalogue-row mode: the closed
+# keyword vocabulary and the empty-admittance refusal keep refusing (record
+# §8 — unchanged for layer 3).
+# ---------------------------------------------------------------------------
+
+
+def test_residual_mode_refuses_outside_the_closed_vocabulary() -> None:
+    """A residual constraint fragment using a keyword outside the closed
+    intersection vocabulary refuses classref_constraint_unsupported — no
+    catalogue row does not mean no vocabulary."""
+    descriptor = json.loads((FIXTURES / "descriptor-f1.json").read_bytes())
+    descriptor["actions"][GHOST_URN] = _ghost_action(
+        {"properties": {"label": {"type": "string", "format": "email"}}}
+    )
+    with pytest.raises(ValueError, match="^classref_constraint_unsupported:"):
+        derive_ui(
+            json.dumps(descriptor).encode(), REFERENCE,
+            descriptor_path=FIXTURES / "descriptor-f1.json",
+        )
+
+
+def test_residual_mode_refuses_empty_admittance() -> None:
+    """A residual required field whose declared bounds admit nothing refuses
+    classref_effective_schema_empty — the generic surface never renders a
+    control that admits no value (record §8, unchanged)."""
+    descriptor = json.loads((FIXTURES / "descriptor-f1.json").read_bytes())
+    descriptor["actions"][GHOST_URN] = _ghost_action(
+        {
+            "properties": {
+                "holdoff_ms": {"type": "integer", "minimum": 10, "maximum": 5},
+            },
+            "required": ["holdoff_ms"],
+        }
+    )
+    with pytest.raises(ValueError, match="^classref_effective_schema_empty:"):
+        derive_ui(
+            json.dumps(descriptor).encode(), REFERENCE,
             descriptor_path=FIXTURES / "descriptor-f1.json",
         )
