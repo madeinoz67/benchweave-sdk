@@ -185,3 +185,25 @@ setup now refuses where it used to silently re-resolve.
 - **D1**: deferred as above (no issue; unscheduled carrier).
 - **D2**: deferred to a separate documentation fix; the stale row exists in this
   repository's copy as well as the gateway's.
+
+---
+
+## Addendum 2026-10-22 (post-measurement) — the smoke-lane decision and the PR-time twin
+
+Two points established after the record above was committed and measured. This addendum
+changes no mechanism and no acceptance rule; §6's rule and its results stand as written.
+
+**The smoke lane's fresh resolution is a decision, not an omission.** The wheel's declared
+dependencies ARE the user-facing contract, and its load-bearing pins are already exact
+(`benchweave-ui-html==0.3.1` and `fastmcp==4.1.0` in the `[server]` extra). A user installs
+the published wheel from an index and receives the resolution of that metadata — not this
+repository's lock. Locking the smoke install would therefore test an install no user gets,
+and it would mask upper-bound breakage that the published metadata permits and the lock
+happens to hide. §2's "left alone" is this decision.
+
+**The in-tree philosophy this follows.** `ci.yml`'s installed-wheel smoke step is titled
+"(the publish workflow's block, at PR time)" and its comment says the publish smoke runs
+only at release, so the same commands run on every OS in the pull-request matrix — "every
+release-time arm has a PR-time twin." This change preserves that shape: the release's
+locked sync is the same `--locked` posture every pull-request lane already runs, so the
+release-time arm is a twin of the PR-time one, not a new release-only mechanism.
