@@ -262,6 +262,12 @@ def _intersect_property(
             f"action {action_urn} field {property_name}: keyword {keyword!r} "
             "is outside the closed intersection vocabulary",
         )
+    # G4 fold: both SIDES of the intersection are value-typed before any
+    # comparison — an ill-typed catalogue or constraint bound used to
+    # crash the max()/min() intersection arithmetic, and an ill-typed
+    # length bound rode silently into the row.
+    _check_value_types(action_urn, property_name, constraint)
+    _check_value_types(action_urn, property_name, catalogue_schema)
     effective = dict(catalogue_schema)
     declared_type = (
         catalogue_schema.get("type") if isinstance(catalogue_schema, dict) else None
@@ -476,6 +482,64 @@ def _bounds_of(
     return _one("exclusiveMinimum", "minimum"), _one("exclusiveMaximum", "maximum")
 
 
+def _check_value_types(
+    action_urn: str, property_name: str, fragment: dict[str, Any]
+) -> None:
+    """A CONTROL keyword whose value is ill-typed refuses
+    ``classref_constraint_unsupported`` (#541 G4 fold, 2026-10-22): W9
+    admitted keywords to the closed vocabulary without validating their
+    values, and `enum` under `minLength: "3"` crashed derive_ui with a
+    bare TypeError (``len(value) < "3"`` in the narrowing). The rider
+    covers every control keyword's value type — on the constraint side,
+    the catalogue side and the row-descent side alike, wherever a
+    fragment enters. `const` admits any JSON value: nothing orders or
+    lens it before the row is minted."""
+    def _refuse_value(keyword: str, wanted: str, value: Any) -> ValueError:
+        return _refuse(
+            "classref_constraint_unsupported",
+            f"action {action_urn} field {property_name}: {keyword} "
+            f"must be {wanted}, got {value!r}",
+        )
+
+    for keyword in (
+        "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf",
+    ):
+        if keyword in fragment:
+            value = fragment[keyword]
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise _refuse_value(keyword, "a number", value)
+    for keyword in ("minLength", "maxLength"):
+        if keyword in fragment:
+            value = fragment[keyword]
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value < 0
+            ):
+                raise _refuse_value(keyword, "a non-negative integer", value)
+    if "pattern" in fragment and not isinstance(fragment["pattern"], str):
+        raise _refuse_value("pattern", "a string", fragment["pattern"])
+    if "enum" in fragment and not isinstance(fragment["enum"], list):
+        raise _refuse_value("enum", "a list", fragment["enum"])
+    if "type" in fragment:
+        # The committed corpus's own nullable spelling is a type ARRAY
+        # (JSON Schema's `type` array — `['number', 'null']` on the
+        # function-generator class's load_ohm): admitted, consumed
+        # inexpressible exactly as before this rider. A value that is
+        # neither a string nor a non-empty list of strings keys no
+        # consumer comparison anywhere in the module.
+        value = fragment["type"]
+        if not (
+            isinstance(value, str)
+            or (
+                isinstance(value, list)
+                and value
+                and all(isinstance(item, str) for item in value)
+            )
+        ):
+            raise _refuse_value("type", "a string or a list of strings", value)
+
+
 def _check_residual_fragment(
     action_urn: str, name: str, fragment: dict[str, Any]
 ) -> None:
@@ -496,6 +560,10 @@ def _check_residual_fragment(
             f"action {action_urn} field {name}: keyword {keyword!r} "
             "is outside the closed intersection vocabulary",
         )
+    # G4 fold: value-typed before the admittance and bound checks —
+    # _bounds_of floats and _check_admittance lens, and a string or
+    # boolean length bound crashed or skipped silently before this.
+    _check_value_types(action_urn, name, fragment)
     _check_admittance(action_urn, name, fragment)
     declared_type = fragment.get("type")
     value_typed = "enum" in fragment or "const" in fragment
@@ -632,6 +700,11 @@ def _effective_action_schema(
             if isinstance(schema, dict)
         }
         required = set(catalogue_input.get("required") or ())
+        # G4 fold: the catalogue side validates too — a served or
+        # vendor-pinned row with an ill-typed control value refuses typed
+        # where it enters, never at the row descent's crash.
+        for name, schema in properties.items():
+            _check_value_types(action_urn, name, schema)
     constraint_properties = constraints.get("properties") or {}
     for keyword in constraints:
         if keyword in _CONSTRAINT_CONTROL_KEYWORDS or keyword in _CONSTRAINT_RIDER_KEYWORDS:
@@ -746,7 +819,10 @@ def _field_rows(
         # #541 W3 fold: a declared value set under declared bounds narrows
         # here — one mechanism for every path a fragment arrives by
         # (catalogue row, intersection, residual), at every depth this
-        # descent visits.
+        # descent visits. The #541 G4 fold value-types the fragment first:
+        # a nested catalogue fragment reaches this descent too, and an
+        # ill-typed value refuses here rather than crashing the narrowing.
+        _check_value_types(action_urn, full, sub)
         _intersect_declared_values(action_urn, full, sub)
         mode = _row_mode(sub)
         if mode is not None:

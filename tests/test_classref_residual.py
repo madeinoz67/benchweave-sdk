@@ -452,12 +452,14 @@ def _scaffold_residual_project(
     *,
     reference: dict[str, Any] | None = None,
     ghost_constraints: dict[str, Any] | None = None,
+    extra_actions: dict[str, dict[str, Any]] | None = None,
 ) -> Path:
     """A real scaffolded plugin carrying the acceptance descriptor and its
     pinned files, with the derived set written — the verify_ui input. The
     fold arms pass a modified reference (an authored device-features
-    layout, a diverged expect.controls row) and ghost constraints; the
-    defaults keep the slice-1 acceptance shape."""
+    layout, a diverged expect.controls row), ghost constraints and extra
+    residual actions (the G1 sibling); the defaults keep the slice-1
+    acceptance shape."""
     from benchweave_sdk.classref import declaration_scaffold
     from benchweave_sdk.scaffold import create_project
 
@@ -467,6 +469,8 @@ def _scaffold_residual_project(
     descriptor = _acceptance_descriptor()
     if ghost_constraints is not None:
         descriptor["actions"][GHOST_URN]["input_constraints"] = ghost_constraints
+    if extra_actions:
+        descriptor["actions"].update(extra_actions)
     active_reference = REFERENCE if reference is None else reference
     create_project(destination, "veridian_residual_plugin", with_ui=False)
     package = destination / "src" / "veridian_residual_plugin"
@@ -1037,4 +1041,440 @@ def test_w10_reference_less_arm_reads_the_ledger_too(tmp_path: Path) -> None:
     assert any(
         row.startswith("custom mismatch: ") and "nope" in row
         for row in report.reported_deviations
+    ), report.reported_deviations
+
+
+# ---------------------------------------------------------------------------
+# The 2026-10-22 second fold wave (rows G1–G5, the refute lane's confirmed
+# defects on the first fold). Each arm names its row; the RED evidence for
+# every arm (and the neutralizations that produced it) is quoted in the
+# fold commit's message.
+# ---------------------------------------------------------------------------
+
+#: The G1 siblings, the refute lane's two L0 shapes: a residual action
+#: that derives L0 because NOTHING it declares is expressible (a
+#: pattern-narrowed required string), and one that derives L0 because it
+#: declares nothing at all (the W7 shape — no properties key). Both mint
+#: no control node BY DESIGN: the disclosure, never a render defect.
+SPECTRE_URN = "com.veridian-labs.spectre/1.0.0"
+WRAITH_URN = "com.veridian-labs.wraith/1.0.0"
+
+
+def _spectre_action() -> dict[str, Any]:
+    return _ghost_action(
+        {
+            "properties": {"tag": {"type": "string", "pattern": "^spectre"}},
+            "required": ["tag"],
+        }
+    )
+
+
+def _wraith_action() -> dict[str, Any]:
+    return _ghost_action({})
+
+
+# --- G1: the coverage discriminator is per ACTION, not per page ------------
+
+
+def test_g1_l0_residual_siblings_on_a_custom_page_stay_disclosures(
+    tmp_path: Path,
+) -> None:
+    """G1 (HIGH, a regression the first fold introduced): the W6 coverage
+    discriminator was per-PAGE — a page carrying one L2 residual action
+    mints the custom section, and every L0 residual sibling on that page
+    then reded "renders no control at L0" although the fold's own rule
+    says an L0 member renders nothing BY DESIGN (and the same fold kept
+    custom rows out of the deviation ledger, so no sanctioned pass
+    existed either — the trap). The discriminator is per ACTION now: a
+    custom member reds only when the DERIVATION minted control nodes for
+    THAT action — read from derived.layout_block, never the served
+    manifest — and the render lacks them.
+
+    The lane's exact fixture: an L2 custom action that renders, plus BOTH
+    L0 shapes — the declares-nothing member (W7) and the
+    pattern-narrowed member — on one page. One surface each: a
+    renders-nothing-by-design member appears in the REPORTED channel
+    only, never simultaneously as a finding and a "renders nothing"
+    disclosure (the two-channels-two-stories state W6 exists to remove).
+    A member whose MINTED controls are missing keeps its report row (M2:
+    never silent) and gains the finding — the channels agree there; the
+    eliminated state is the by-design member failing."""
+    from benchweave_sdk.classref_gate import verify_ui
+
+    project = _scaffold_residual_project(
+        tmp_path / "mixed-level",
+        extra_actions={
+            SPECTRE_URN: _spectre_action(),
+            WRAITH_URN: _wraith_action(),
+        },
+    )
+    report = verify_ui(project)
+    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
+    # The L2 member rendered its controls: covered, labelled plain custom.
+    assert f"custom: {GHOST_URN}" in report.reported_deviations, (
+        report.reported_deviations
+    )
+    # Both L0 siblings rendered nothing BY DESIGN: disclosures only —
+    # never findings, on the same page that mints the custom section.
+    for urn in (SPECTRE_URN, WRAITH_URN):
+        assert (
+            f"custom, renders nothing: {urn}" in report.reported_deviations
+        ), report.reported_deviations
+        assert not any(urn in finding.detail for finding in report.findings), [
+            f"{f.code}: {f.detail}" for f in report.findings
+        ]
+
+
+def _drop_custom_section(project: Path) -> None:
+    """The G2 overlay shape as a reusable probe: a compose_manifest
+    extensions overlay that drops the device-features custom section —
+    the derivation minted the controls, the served manifest omits them.
+    The envelope is re-pinned (the same motion the gate baseline test
+    performs) so the load reaches the GATE, never a digest refusal."""
+    import hashlib
+
+    from benchweave_sdk.classref import LAYOUT_EXTENSION_KEY, compose_manifest
+
+    package = next((project / "src").iterdir())
+    manifest = json.loads((package / "ui" / "manifest.json").read_bytes())
+    block = manifest["extensions"][LAYOUT_EXTENSION_KEY]
+    page = next(p for p in block["pages"] if p["page_id"] == "device-features")
+    page["sections"] = [
+        section for section in page["sections"] if section["id"] != CUSTOM_SECTION_ID
+    ]
+    composed = compose_manifest(
+        manifest, {"extensions": {LAYOUT_EXTENSION_KEY: block}}
+    )
+    composed_raw = (json.dumps(composed, indent=2) + "\n").encode()
+    (package / "ui" / "manifest.json").write_bytes(composed_raw)
+    envelope = json.loads((package / "presentation.json").read_bytes())
+    envelope["manifest"] = {
+        "path": "manifest.json",
+        "sha256": hashlib.sha256(composed_raw).hexdigest(),
+    }
+    (package / "presentation.json").write_bytes(
+        (json.dumps(envelope, indent=2) + "\n").encode()
+    )
+
+
+def test_g1_an_authored_deviation_is_the_sanctioned_pass_for_a_red_shape(
+    tmp_path: Path,
+) -> None:
+    """G1's suppression question, answered by arm: the fold kept custom
+    rows out of the BIRTH deviation ledger, so the only red shape left —
+    a member whose MINTED controls the render lacks — needs an authored
+    pass. It has one: a hand-authored deviation row naming the URN (plan
+    URNs are inside the declaration vocabulary) downgrades the failure
+    to REPORTED. No ledger restoration is needed for any shape."""
+    from benchweave_sdk.classref_gate import verify_ui
+
+    project = _scaffold_residual_project(tmp_path / "sanctioned")
+    _drop_custom_section(project)
+    package = next((project / "src").iterdir())
+
+    def mutate(declaration: dict[str, Any]) -> None:
+        declaration["deviations"].append(
+            {
+                "expectation_id": GHOST_URN,
+                "reason": (
+                    "overlay drops the custom section; the author renders "
+                    "these controls elsewhere by decision"
+                ),
+            }
+        )
+
+    _tamper_declaration(package, mutate)
+    report = verify_ui(project)
+    assert not any(
+        finding.code == "classref_gate_uncovered" and GHOST_URN in finding.detail
+        for finding in report.findings
+    ), [f"{f.code}: {f.detail}" for f in report.findings]
+    # The member stays on the report — M2's never-silent rule holds
+    # through the downgrade (the deviation row names it).
+    assert GHOST_URN in report.reported_deviations, report.reported_deviations
+
+
+# --- G2: the red criterion is the DERIVED block, never the served manifest --
+
+
+def test_g2_overlay_dropping_the_custom_section_reds(tmp_path: Path) -> None:
+    """G2 (MEDIUM, false-green direction): the discriminator read the
+    SERVED manifest's section ids, so a compose_manifest extensions
+    overlay that drops the custom section left the gate clean over a real
+    render miss. The derivation's own layout block is the statement of
+    what should have rendered: the minted controls are owed wherever the
+    served manifest drops them."""
+    from benchweave_sdk.classref import LAYOUT_EXTENSION_KEY, compose_manifest
+    from benchweave_sdk.classref_gate import verify_ui
+
+    project = _scaffold_residual_project(tmp_path / "dropped")
+    package = project / "src" / "veridian_residual_plugin"
+    manifest = json.loads((package / "ui" / "manifest.json").read_bytes())
+    block = manifest["extensions"][LAYOUT_EXTENSION_KEY]
+    page = next(p for p in block["pages"] if p["page_id"] == "device-features")
+    page["sections"] = [
+        section for section in page["sections"] if section["id"] != CUSTOM_SECTION_ID
+    ]
+    composed = compose_manifest(
+        manifest, {"extensions": {LAYOUT_EXTENSION_KEY: block}}
+    )
+    composed_raw = (json.dumps(composed, indent=2) + "\n").encode()
+    (package / "ui" / "manifest.json").write_bytes(composed_raw)
+    # The envelope pins the manifest bytes; an overlay edit re-pins it (the
+    # same motion the gate baseline test performs) so the load reaches the
+    # GATE, never a pin refusal.
+    import hashlib
+
+    envelope = json.loads((package / "presentation.json").read_bytes())
+    envelope["manifest"] = {
+        "path": "manifest.json",
+        "sha256": hashlib.sha256(composed_raw).hexdigest(),
+    }
+    (package / "presentation.json").write_bytes(
+        (json.dumps(envelope, indent=2) + "\n").encode()
+    )
+    report = verify_ui(project)
+    uncovered = [
+        finding
+        for finding in report.findings
+        if finding.code == "classref_gate_uncovered" and GHOST_URN in finding.detail
+    ]
+    assert uncovered, [f"{f.code}: {f.detail}" for f in report.findings]
+
+
+def test_g2_authored_section_carrying_the_custom_id_is_no_red(
+    tmp_path: Path,
+) -> None:
+    """G2 (MEDIUM, false-red direction): an authored section merely
+    CARRYING the `-custom` id with no controls reded the member — the
+    served manifest's id spelled like the minted section was enough. An
+    authored page stands as authored (record §11 risk 4): the member
+    renders nothing there by design and stays a disclosure."""
+    from benchweave_sdk.classref_gate import verify_ui
+
+    authored = {
+        "page_id": "device-features",
+        "sections": [
+            {
+                "id": CUSTOM_SECTION_ID,
+                "title": "Device features",
+                "surface": "raised",
+                "span": 12,
+                "children": [
+                    {"body": "Vendor features are authored by this reference."}
+                ],
+            }
+        ],
+    }
+    reference = {**REFERENCE, "layouts": [*REFERENCE["layouts"], authored]}
+    project = _scaffold_residual_project(
+        tmp_path / "authored-custom-id", reference=reference
+    )
+    report = verify_ui(project, reference=reference)
+    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
+    assert (
+        f"custom, renders nothing: {GHOST_URN}" in report.reported_deviations
+    ), report.reported_deviations
+
+
+# --- G3: declared values intersect their bounds on BOTH paths ---------------
+
+
+def _catalogued_ghost_derive(
+    tmp_path: Path, name: str, enum_values: list[int]
+) -> Any:
+    """A CATALOGUED vendor-catalog row for the ghost action whose own
+    input_schema declares an enum under a bound; the descriptor declares
+    `properties: {}` for the action, so any narrowing or refusal can come
+    only from the catalogue row the catalogued path consumes — never from
+    a residual fragment."""
+    import hashlib
+
+    project = _copy_project_files(tmp_path / name)
+    catalog = json.loads((project / "vendor-catalog.json").read_bytes())
+    catalog["actions"][GHOST_URN] = {
+        "description": "Catalogued enum-under-bounds twin.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "mode": {"type": "integer", "enum": enum_values, "minimum": 5},
+            },
+            "required": ["mode"],
+        },
+        "side_effect": "none",
+    }
+    raw_catalog = (json.dumps(catalog, indent=2) + "\n").encode()
+    (project / "vendor-catalog.json").write_bytes(raw_catalog)
+    descriptor = json.loads((project / "descriptor-f1.json").read_bytes())
+    descriptor["actions"][GHOST_URN] = _ghost_action({"properties": {}})
+    for row in descriptor["contracts"]:
+        if row["id"].startswith("urn:veridian:vendor-catalog"):
+            row["sha256"] = hashlib.sha256(raw_catalog).hexdigest()
+    return derive_ui(
+        json.dumps(descriptor).encode(), REFERENCE,
+        descriptor_path=project / "descriptor-f1.json",
+    )
+
+
+def test_g3_catalogued_vendor_row_narrows_enum_under_its_own_bounds(
+    tmp_path: Path,
+) -> None:
+    """G3: `_intersect_declared_values` runs where rows are minted, so the
+    CATALOGUED path narrows too — a vendor-catalog row whose enum sits
+    under its own bound offers exactly the values both admit. A select
+    offering a value the bounds exclude is the KILL (d) shape; the
+    behaviour is asserted here so the record's §9 claim can state it."""
+    derived = _catalogued_ghost_derive(tmp_path, "g3-narrows", [1, 10])
+    ghost = derived.control_plan[GHOST_URN]
+    assert ghost["resolution"] == "catalog"
+    mode = {row["field"]: row for row in ghost["fields"]}["mode"]
+    assert mode["mode"] == "enum"
+    assert mode["enum"] == [10]
+
+
+def test_g3_catalogued_vendor_row_enum_outside_bounds_refuses(
+    tmp_path: Path,
+) -> None:
+    """G3's refusal face on the catalogued path: a vendor-catalog row
+    whose every enum value falls outside its own bound is a contradictory
+    declaration and refuses under the §8 empty-admittance survivor."""
+    with pytest.raises(
+        ValueError, match=r"^classref_effective_schema_empty: action .* field mode"
+    ):
+        _catalogued_ghost_derive(tmp_path, "g3-refuses", [1, 2])
+
+
+# --- G4: ill-typed constraint VALUES refuse typed, never a bare crash --------
+
+
+@pytest.mark.parametrize(
+    ("fragment", "keyword"),
+    [
+        # The lane's reproduction: `enum` + `minLength: "3"` crashed with a
+        # bare TypeError from `len(value) < "3"`.
+        ({"type": "string", "enum": ["ab", "cdef"], "minLength": "3"}, "minLength"),
+        ({"type": "string", "minLength": -1}, "minLength"),
+        ({"type": "string", "maxLength": 2.5}, "maxLength"),
+        ({"type": "integer", "minimum": "5"}, "minimum"),
+        ({"type": "integer", "maximum": True}, "maximum"),
+        ({"type": "integer", "multipleOf": "2"}, "multipleOf"),
+        ({"type": "string", "pattern": 7}, "pattern"),
+        ({"type": "integer", "enum": "fast"}, "enum"),
+        ({"type": 5}, "type"),
+    ],
+)
+def test_g4_ill_typed_constraint_value_refuses_typed(
+    fragment: dict[str, Any], keyword: str
+) -> None:
+    """G4 (LOW-MEDIUM): W9 admitted keywords to the closed vocabulary
+    without validating that their VALUES are well-typed — the rider
+    value-type check refuses `classref_constraint_unsupported` (the code
+    the shape got before W9 admitted the keyword) for every CONTROL
+    keyword, not only the two W9 named."""
+    _refuse_ghost(
+        {"properties": {"mode": fragment}},
+        rf"^classref_constraint_unsupported: .* {keyword} must be",
+    )
+
+
+@pytest.mark.parametrize(
+    ("catalogue_property", "constraint_fragment", "keyword"),
+    [
+        # The silent class: an ill-typed length bound rode into the row.
+        ({"type": "string", "maxLength": 10}, {"type": "string", "minLength": "3"}, "minLength"),
+        # The crash class: an ill-typed numeric bound met the catalogue's
+        # bound in the max()/min() intersection arithmetic.
+        ({"type": "integer", "minimum": 0}, {"type": "integer", "minimum": "5"}, "minimum"),
+    ],
+)
+def test_g4_catalogued_ill_typed_constraint_value_refuses_typed(
+    tmp_path: Path,
+    catalogue_property: dict[str, Any],
+    constraint_fragment: dict[str, Any],
+    keyword: str,
+) -> None:
+    """G4's catalogued face: the same ill-typed value on a constraint
+    fragment intersecting a catalogue row — the intersection used to
+    carry the bad value into the row silently (the length class) or
+    crash the max()/min() arithmetic the moment the catalogue carried
+    the twin bound (the numeric class). The rider check guards both
+    sides of every intersection."""
+    import hashlib
+
+    project = _copy_project_files(tmp_path / "g4-catalogued")
+    catalog = json.loads((project / "vendor-catalog.json").read_bytes())
+    catalog["actions"][GHOST_URN] = {
+        "description": "Value-typed intersection twin.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"name": catalogue_property},
+            "required": ["name"],
+        },
+        "side_effect": "none",
+    }
+    raw_catalog = (json.dumps(catalog, indent=2) + "\n").encode()
+    (project / "vendor-catalog.json").write_bytes(raw_catalog)
+    descriptor = json.loads((project / "descriptor-f1.json").read_bytes())
+    descriptor["actions"][GHOST_URN] = _ghost_action(
+        {"properties": {"name": constraint_fragment}}
+    )
+    for row in descriptor["contracts"]:
+        if row["id"].startswith("urn:veridian:vendor-catalog"):
+            row["sha256"] = hashlib.sha256(raw_catalog).hexdigest()
+    with pytest.raises(
+        ValueError, match=rf"^classref_constraint_unsupported: .* {keyword} must be"
+    ):
+        derive_ui(
+            json.dumps(descriptor).encode(), REFERENCE,
+            descriptor_path=project / "descriptor-f1.json",
+        )
+
+
+# --- G5: a reference-less project has no declaration to read back ----------
+
+
+def test_g5_reference_less_without_declaration_reports_inventory_unavailable(
+    tmp_path: Path,
+) -> None:
+    """G5 (LOW): the reference-less arm reported custom-inventory
+    MISMATCHES against a file no tool writes — a project with no class
+    reference has no ui/class-reference.json at all (deferral D2: no
+    derive path exists to birth one). The report now says the inventory
+    is UNAVAILABLE because no declaration exists; a hand-authored
+    declaration (the W10 arm) still gets the real comparison."""
+    from benchweave_sdk.classref_gate import verify_ui
+    from benchweave_sdk.presentation import create_ui_resources
+    from benchweave_sdk.scaffold import create_project
+
+    project = tmp_path / "refless"
+    create_project(project, "veridian_refless_plugin", with_ui=False)
+    package = project / "src" / "veridian_refless_plugin"
+    descriptor = json.loads((package / "descriptor.json").read_bytes())
+    descriptor["actions"] = {
+        GHOST_URN: _ghost_action(
+            {
+                "properties": {
+                    "holdoff_ms": {"type": "integer", "minimum": 0, "maximum": 5000}
+                },
+                "required": ["holdoff_ms"],
+            }
+        )
+    }
+    (package / "descriptor.json").write_bytes(
+        (json.dumps(descriptor, indent=2) + "\n").encode()
+    )
+    create_ui_resources(project, "veridian_refless_plugin")
+    # D2, pinned: no tool writes the declaration on the reference-less path.
+    assert not (package / "ui" / "class-reference.json").exists()
+    report = verify_ui(project, reference=None)
+    assert any(
+        row.startswith("custom inventory unavailable") for row in report.reported_deviations
+    ), report.reported_deviations
+    # The honest state is UNAVAILABLE, never a mismatch blaming a ledger
+    # that does not exist.
+    assert not any(
+        row.startswith("custom mismatch: ") for row in report.reported_deviations
+    ), report.reported_deviations
+    assert (
+        f"custom, renders nothing: {GHOST_URN}" in report.reported_deviations
     ), report.reported_deviations

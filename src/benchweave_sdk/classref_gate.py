@@ -418,7 +418,7 @@ def _coverage_findings(
     plan: dict[str, dict[str, Any]],
     censused: dict[str, dict[str, Any]],
     declaration: dict[str, Any],
-    custom_section_pages: frozenset[str] = frozenset(),
+    custom_minted: frozenset[str] = frozenset(),
 ) -> tuple[list[GateFinding], list[str]]:
     """The always-on D14 coverage arm (record §5.1): per action, a rendered
     control at its ladder level OR a declared deviation. Declared
@@ -431,10 +431,16 @@ def _coverage_findings(
     whose controls are absent — and the divergence and coverage checks
     still run for custom rows (custom exempts a member from needing a
     catalogue, never from conformance). An uncovered custom member fails
-    exactly when the derivation MINTED its controls (a custom section on
-    the member's page) and the census missed them; an authored page that
-    stands as authored (record §11 risk 4) or an L0 row with nothing
-    derivable renders nothing BY DESIGN and stays a disclosure.
+    exactly when the DERIVATION minted control nodes for THAT action
+    (``custom_minted``, per action — the G1/G2 fold of 2026-10-22: the
+    discriminator used to be per page and read the SERVED manifest's
+    section ids, so an L0 sibling on a page that mints a custom section
+    reded for rendering nothing by design, an overlay that dropped the
+    section bought a clean gate, and an authored section merely carrying
+    the `-custom` id created a debt); an authored page that stands as
+    authored (record §11 risk 4) or an L0 row with nothing derivable
+    renders nothing BY DESIGN and stays a disclosure — no red, and no
+    deviation needed.
 
     The L2 test is PER ACTION (RC fold, gateway #463): an L2 action is
     covered when ITS OWN inputs render — the host render's
@@ -507,12 +513,11 @@ def _coverage_findings(
             )
             continue
         if not covered:
-            if is_custom and page not in custom_section_pages:
-                # Nothing was owed: the derivation minted no custom
-                # section on this page (an authored page standing as
-                # authored, or an L0 row with nothing derivable) — the
-                # REPORTED label above is the honest state, not a
-                # failure.
+            if is_custom and slug not in custom_minted:
+                # Nothing was owed: the derivation minted no control node
+                # for THIS action (an authored page standing as authored,
+                # or an L0 row with nothing derivable) — the REPORTED
+                # label above is the honest state, not a failure.
                 continue
             findings.append(
                 GateFinding("classref_gate_uncovered", f"{urn} renders no control at {level}")
@@ -520,21 +525,23 @@ def _coverage_findings(
     return findings, reported
 
 
-def _custom_section_pages(manifest: dict[str, Any]) -> frozenset[str]:
-    """The pages whose layout block carries the expander-minted custom
-    section — the pages where a residual member's controls were MINTED
-    (#541 W6 fold). On those pages an uncovered custom member is a render
-    defect (classref_gate_uncovered); a page without one owes nothing
-    (an authored page standing as authored, or an L0 member with nothing
-    derivable) and the member stays a REPORTED disclosure."""
-    block = (manifest.get("extensions") or {}).get(LAYOUT_EXTENSION_KEY) or {}
+def _custom_minted_slugs(layout_block: dict[str, Any] | None) -> frozenset[str]:
+    """The actions the DERIVATION minted control nodes for — every node
+    binding id the derived layout block carries (#541 W6 fold, corrected
+    by the G1/G2 fold of 2026-10-22). The discriminator is per ACTION and
+    reads the derivation's own output, which the gate already holds: the
+    served manifest's section ids answer a different question — what the
+    overlay chose to serve. An overlay that drops the custom section must
+    not clear the debt the derivation minted, and an authored section
+    merely carrying the `-custom` id must not create one."""
+    if not isinstance(layout_block, dict):
+        return frozenset()
     return frozenset(
-        str(page.get("page_id"))
-        for page in block.get("pages", [])
-        if any(
-            str(section.get("id")) == f"{str(page.get('page_id'))}-custom"
-            for section in page.get("sections", [])
-        )
+        str(node.get("binding_id"))
+        for page in layout_block.get("pages", [])
+        for section in page.get("sections", [])
+        for node in section.get("children", [])
+        if isinstance(node, dict) and node.get("binding_id") is not None
     )
 
 
@@ -615,20 +622,36 @@ def verify_ui(
 
         validate_declaration_vocabulary(set(plan), declaration)
         coverage, reported = _coverage_findings(
-            plan, censused, declaration, _custom_section_pages(manifest)
+            # The reference-less plan mints no layout (D2: no derive path
+            # exists to mint one), so no custom member owes rendered
+            # controls here — the derivation produced nothing, and the
+            # per-action discriminator says exactly that.
+            plan, censused, declaration, frozenset()
         )
         # W10: the read-back runs in this arm too — both arms read the
-        # same authored declaration file.
-        reported.extend(
-            _custom_inventory_findings(
-                declaration.get("custom_actions") or [],
-                {
-                    urn
-                    for urn, row in plan.items()
-                    if str(row.get("resolution", "catalog")) == "custom"
-                },
+        # same authored declaration file. G5 (2026-10-22 fold): a project
+        # with no class reference has no declaration to read back — no
+        # tool writes ui/class-reference.json on this path (D2) — so the
+        # honest report says the inventory is UNAVAILABLE, never a
+        # mismatch blaming a declaration that does not exist.
+        custom_urms = {
+            urn
+            for urn, row in plan.items()
+            if str(row.get("resolution", "catalog")) == "custom"
+        }
+        if declaration_path.is_file():
+            reported.extend(
+                _custom_inventory_findings(
+                    declaration.get("custom_actions") or [], custom_urms
+                )
             )
-        )
+        elif custom_urms:
+            reported.append(
+                f"custom inventory unavailable: {len(custom_urms)} residual "
+                "member(s) derive but no ui/class-reference.json exists "
+                "(no class reference matched; derive-ui writes the "
+                "declaration only with one)"
+            )
         return GateReport(findings=tuple(coverage), reported_deviations=tuple(reported))
     # The AUTHOR's ledger is the deviation record (A6's mechanism): when
     # the project carries ui/class-reference.json the gate reads THAT,
@@ -723,7 +746,11 @@ def verify_ui(
                 break
             cursor += 1
     coverage, reported = _coverage_findings(
-        derived.control_plan, censused, ledger, _custom_section_pages(manifest)
+        derived.control_plan, censused, ledger,
+        # G1/G2 fold: the RED criterion is the derivation's own layout
+        # block — the statement of what should have rendered — never the
+        # served manifest the overlay edits.
+        _custom_minted_slugs(derived.layout_block),
     )
     reported.extend(component_reported)
     # W10: the authored ledger's custom inventory is read back against
