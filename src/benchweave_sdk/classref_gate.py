@@ -418,13 +418,23 @@ def _coverage_findings(
     plan: dict[str, dict[str, Any]],
     censused: dict[str, dict[str, Any]],
     declaration: dict[str, Any],
+    custom_section_pages: frozenset[str] = frozenset(),
 ) -> tuple[list[GateFinding], list[str]]:
     """The always-on D14 coverage arm (record §5.1): per action, a rendered
     control at its ladder level OR a declared deviation. Declared
-    divergences ride back as REPORTED rows; undeclared ones fail. A
-    residual member (resolution "custom", #541) is a disclosure, not a
+    divergences ride back as REPORTED rows; undeclared ones fail.
+
+    A residual member (resolution "custom", #541) is a disclosure, not a
     coverage question: it REPORTS labelled "custom" every run and cannot
-    fail the gate for being custom.
+    fail the gate for being custom. The #541 W6 fold sharpens that: the
+    label says WHAT rendered — "custom, renders nothing" names the member
+    whose controls are absent — and the divergence and coverage checks
+    still run for custom rows (custom exempts a member from needing a
+    catalogue, never from conformance). An uncovered custom member fails
+    exactly when the derivation MINTED its controls (a custom section on
+    the member's page) and the census missed them; an authored page that
+    stands as authored (record §11 risk 4) or an L0 row with nothing
+    derivable renders nothing BY DESIGN and stays a disclosure.
 
     The L2 test is PER ACTION (RC fold, gateway #463): an L2 action is
     covered when ITS OWN inputs render — the host render's
@@ -444,15 +454,6 @@ def _coverage_findings(
         seen = censused.get(page, {})
         buttons = seen.get("buttons", [])
         level = row["level"]
-        # #541 record §4.3: a custom member is a disclosure, never a
-        # defect and never silent — it lands in the REPORTED channel
-        # labelled "custom" EVERY run, ahead of any authored-ledger row
-        # for the same urn (the label is the point: a bare id would not
-        # say what the member is) and ahead of the coverage tests (a
-        # custom member cannot fail the gate for being custom).
-        if str(row.get("resolution", "catalog")) == "custom":
-            reported.append(f"custom: {urn}")
-            continue
         covered = False
         if level == "L1" and slug in buttons:
             covered = True
@@ -474,6 +475,17 @@ def _coverage_findings(
             covered = (
                 seen.get("lanes_figures", 0) >= 1 or seen.get("plots", 0) >= 1
             )
+        is_custom = str(row.get("resolution", "catalog")) == "custom"
+        if is_custom:
+            # #541 record §4.3 + W6 fold: the disclosure lands in the
+            # REPORTED channel EVERY run, ahead of any authored-ledger row
+            # for the same urn (the label is the point: a bare id would
+            # not say what the member is), and the checks below still
+            # apply to the member.
+            reported.append(
+                f"custom: {urn}" if covered
+                else f"custom, renders nothing: {urn}"
+            )
         divergence = bool(row.get("divergence"))
         # A6's mechanism: the AUTHOR's ledger downgrades — the expander's
         # auto-deviation marks are informational only, or an emptied
@@ -485,7 +497,8 @@ def _coverage_findings(
             continue
         if divergence:
             # An undeclared intended-vs-derived divergence FAILS whether
-            # or not a control happens to render (record §3.9).
+            # or not a control happens to render (record §3.9) — for a
+            # custom member exactly as for a catalogued one.
             findings.append(
                 GateFinding(
                     "classref_gate_undeclared",
@@ -494,10 +507,69 @@ def _coverage_findings(
             )
             continue
         if not covered:
+            if is_custom and page not in custom_section_pages:
+                # Nothing was owed: the derivation minted no custom
+                # section on this page (an authored page standing as
+                # authored, or an L0 row with nothing derivable) — the
+                # REPORTED label above is the honest state, not a
+                # failure.
+                continue
             findings.append(
                 GateFinding("classref_gate_uncovered", f"{urn} renders no control at {level}")
             )
     return findings, reported
+
+
+def _custom_section_pages(manifest: dict[str, Any]) -> frozenset[str]:
+    """The pages whose layout block carries the expander-minted custom
+    section — the pages where a residual member's controls were MINTED
+    (#541 W6 fold). On those pages an uncovered custom member is a render
+    defect (classref_gate_uncovered); a page without one owes nothing
+    (an authored page standing as authored, or an L0 member with nothing
+    derivable) and the member stays a REPORTED disclosure."""
+    block = (manifest.get("extensions") or {}).get(LAYOUT_EXTENSION_KEY) or {}
+    return frozenset(
+        str(page.get("page_id"))
+        for page in block.get("pages", [])
+        if any(
+            str(section.get("id")) == f"{str(page.get('page_id'))}-custom"
+            for section in page.get("sections", [])
+        )
+    )
+
+
+def _custom_inventory_findings(
+    ledger_custom: list[Any], derived_custom: set[str]
+) -> list[str]:
+    """The declaration's custom inventory, read back (#541 W10 fold): the
+    authored ledger's ``custom_actions`` is compared against the derived
+    custom set of the control plan, both directions, and every mismatch
+    lands in the REPORTED channel — the inventory was write-only before
+    (an authored ledger could omit every uncatalogued member, and a
+    forged row naming a nonexistent URN passed). A mismatch is a
+    disclosure divergence, REPORTED rather than refused: no schema
+    governs this key set yet (deferral D8 records the standards motion)."""
+    reported: list[str] = []
+    ledger_actions: set[str] = set()
+    for row in ledger_custom:
+        action = row.get("action") if isinstance(row, dict) else None
+        if action is None:
+            reported.append(
+                f"custom mismatch: malformed custom_actions row {row!r}"
+            )
+            continue
+        ledger_actions.add(str(action))
+    for urn in sorted(derived_custom - ledger_actions):
+        reported.append(
+            f"custom mismatch: {urn} derives residual but the authored "
+            "declaration's custom_actions omits it"
+        )
+    for urn in sorted(ledger_actions - derived_custom):
+        reported.append(
+            f"custom mismatch: the authored declaration's custom_actions "
+            f"names {urn}, which derives no residual member"
+        )
+    return reported
 
 
 def verify_ui(
@@ -542,7 +614,21 @@ def verify_ui(
         from .classref import validate_declaration_vocabulary
 
         validate_declaration_vocabulary(set(plan), declaration)
-        coverage, reported = _coverage_findings(plan, censused, declaration)
+        coverage, reported = _coverage_findings(
+            plan, censused, declaration, _custom_section_pages(manifest)
+        )
+        # W10: the read-back runs in this arm too — both arms read the
+        # same authored declaration file.
+        reported.extend(
+            _custom_inventory_findings(
+                declaration.get("custom_actions") or [],
+                {
+                    urn
+                    for urn, row in plan.items()
+                    if str(row.get("resolution", "catalog")) == "custom"
+                },
+            )
+        )
         return GateReport(findings=tuple(coverage), reported_deviations=tuple(reported))
     # The AUTHOR's ledger is the deviation record (A6's mechanism): when
     # the project carries ui/class-reference.json the gate reads THAT,
@@ -636,8 +722,24 @@ def verify_ui(
                 )
                 break
             cursor += 1
-    coverage, reported = _coverage_findings(derived.control_plan, censused, ledger)
+    coverage, reported = _coverage_findings(
+        derived.control_plan, censused, ledger, _custom_section_pages(manifest)
+    )
     reported.extend(component_reported)
+    # W10: the authored ledger's custom inventory is read back against
+    # the derived custom set — a mismatch is REPORTED, never silent (the
+    # birth declaration compares equal by construction, so only an
+    # authored edit moves these rows).
+    reported.extend(
+        _custom_inventory_findings(
+            ledger.get("custom_actions") or [],
+            {
+                urn
+                for urn, row in derived.control_plan.items()
+                if str(row.get("resolution", "catalog")) == "custom"
+            },
+        )
+    )
     findings.extend(coverage)
     forbidden = [
         GateFinding("classref_gate_forbidden", f"bw-confirm rendered on {page}")

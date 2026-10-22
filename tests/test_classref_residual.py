@@ -194,7 +194,7 @@ def test_m1_residual_row_is_honest_about_its_constraints() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_m3_same_urn_custom_without_catalog_row(tmp_path: Path) -> None:
+def test_m3_same_urn_custom_without_catalog_row() -> None:
     descriptor = _acceptance_descriptor()
     derived = derive_ui(
         json.dumps(descriptor).encode(), REFERENCE,
@@ -333,20 +333,27 @@ def test_custom_section_holds_the_residual_controls() -> None:
     assert CUSTOM_SECTION_ID in sections, sorted(sections)
     custom = sections[CUSTOM_SECTION_ID]
     assert custom["title"] == "Custom device actions"
-    custom_nodes = {
-        (node.get("binding_id"), node.get("kind"), node.get("field"))
-        for node in custom["children"]
-    }
-    assert ("ghost", "numeric", "holdoff_ms") in custom_nodes
-    assert ("ghost", "text", "label") in custom_nodes
-    assert ("ghost", "button", None) in custom_nodes
+    # W8 fold tighten: exact ordered children — the set this arm used to
+    # assert cannot see the same node emitted twice, and the staging
+    # emission plus the ladder-numeric insert both emitted the numeric
+    # pair before the button (measured in a real host render:
+    # action-ghost-holdoff_ms twice).
+    assert custom["children"] == [
+        {"binding_id": "ghost", "kind": "numeric", "field": "holdoff_ms"},
+        {"binding_id": "ghost", "kind": "text", "field": "label"},
+        {"binding_id": "ghost", "kind": "button"},
+    ]
     # The catalogued vendor action stays in the main section, never in the
-    # custom one: resolution partitions the two.
+    # custom one: resolution partitions the two. The exact list carries
+    # the same partition (and the no-duplication reading) for the main
+    # section too.
     assert all(node.get("binding_id") != "auto-threshold" for node in custom["children"])
     main = sections["device-features-section"]
-    assert any(
-        node.get("binding_id") == "auto-threshold" for node in main["children"]
-    )
+    assert main["children"] == [
+        {"binding_id": "auto-threshold", "kind": "numeric", "field": "margin_ppm"},
+        {"binding_id": "auto-threshold", "kind": "numeric", "field": "hysteresis_mv"},
+        {"binding_id": "auto-threshold", "kind": "button"},
+    ]
     assert not any(
         node.get("binding_id") == "ghost" for node in main["children"]
     )
@@ -397,6 +404,15 @@ def test_custom_section_never_appends_into_an_authored_page() -> None:
     assert [section["id"] for section in page["sections"]] == [
         "vendor-features-authored"
     ]
+    # W1 fold tighten: not only the section ids — no authored section's
+    # CHILDREN carry a custom member's binding_id. The completion pass
+    # used to weld the residual button into the authored sections with
+    # its required fields rendered nowhere.
+    for section in page["sections"]:
+        assert all(
+            node.get("binding_id") != "ghost"
+            for node in section.get("children", [])
+        ), section
     # The residual member still derives — into the plan, labelled custom.
     assert derived.control_plan[GHOST_URN]["resolution"] == "custom"
 
@@ -431,9 +447,17 @@ def test_m2_declaration_inventory_non_empty_exactly_when_residuals_exist() -> No
     assert not without_residuals.declaration.get("custom_actions")
 
 
-def _scaffold_residual_project(destination: Path) -> Path:
+def _scaffold_residual_project(
+    destination: Path,
+    *,
+    reference: dict[str, Any] | None = None,
+    ghost_constraints: dict[str, Any] | None = None,
+) -> Path:
     """A real scaffolded plugin carrying the acceptance descriptor and its
-    pinned files, with the derived set written — the verify_ui input."""
+    pinned files, with the derived set written — the verify_ui input. The
+    fold arms pass a modified reference (an authored device-features
+    layout, a diverged expect.controls row) and ghost constraints; the
+    defaults keep the slice-1 acceptance shape."""
     from benchweave_sdk.classref import declaration_scaffold
     from benchweave_sdk.scaffold import create_project
 
@@ -441,6 +465,9 @@ def _scaffold_residual_project(destination: Path) -> Path:
         return (json.dumps(document, indent=2) + "\n").encode()
 
     descriptor = _acceptance_descriptor()
+    if ghost_constraints is not None:
+        descriptor["actions"][GHOST_URN]["input_constraints"] = ghost_constraints
+    active_reference = REFERENCE if reference is None else reference
     create_project(destination, "veridian_residual_plugin", with_ui=False)
     package = destination / "src" / "veridian_residual_plugin"
     descriptor_raw = raw(descriptor)
@@ -448,7 +475,7 @@ def _scaffold_residual_project(destination: Path) -> Path:
     for pinned in ("vendor-catalog.json", "vectors-f1.json"):
         (package / pinned).write_bytes((FIXTURES / pinned).read_bytes())
     derived = derive_ui(
-        descriptor_raw, REFERENCE, descriptor_path=package / "descriptor.json"
+        descriptor_raw, active_reference, descriptor_path=package / "descriptor.json"
     )
     ui = package / "ui"
     ui.mkdir(exist_ok=True)
@@ -483,3 +510,531 @@ def test_m2_gate_reports_custom_members_labelled(tmp_path: Path) -> None:
         f"{f.code}: {f.detail}" for f in report.findings
     ]
     assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
+
+
+# ---------------------------------------------------------------------------
+# The 2026-10-22 review fold (rows W1–W11). Each arm names its row and
+# was shown RED against the pre-fold mechanism before its fix landed.
+# ---------------------------------------------------------------------------
+
+
+def _derive_ghost(constraints: dict[str, Any]) -> Any:
+    """The f1 descriptor plus one residual action carrying the given
+    constraints, derived against the served reference."""
+    descriptor = json.loads((FIXTURES / "descriptor-f1.json").read_bytes())
+    descriptor["actions"][GHOST_URN] = _ghost_action(constraints)
+    return derive_ui(
+        json.dumps(descriptor).encode(), REFERENCE,
+        descriptor_path=FIXTURES / "descriptor-f1.json",
+    )
+
+
+def _refuse_ghost(constraints: dict[str, Any], pattern: str) -> None:
+    """The same shape, asserted to refuse with the given code prefix."""
+    descriptor = json.loads((FIXTURES / "descriptor-f1.json").read_bytes())
+    descriptor["actions"][GHOST_URN] = _ghost_action(constraints)
+    with pytest.raises(ValueError, match=pattern):
+        derive_ui(
+            json.dumps(descriptor).encode(), REFERENCE,
+            descriptor_path=FIXTURES / "descriptor-f1.json",
+        )
+
+
+# --- W1: the completion pass, its target, and its ordering -----------------
+
+
+def test_w1_authored_page_passes_the_real_gate(tmp_path: Path) -> None:
+    """W1's ordering defect, proven with a real gate run (refute-b's P14
+    control): on an authored device-features page the catalogued vendor
+    action's button arrives only through the completion pass, and it used
+    to arrive AFTER the ladder-numeric insert — no staging nodes, and the
+    action reds classref_gate_uncovered. Completion now runs first (the
+    staging pair order is restored), the residual member is skipped
+    (never welded into authored sections), and the gate is clean with the
+    member disclosed as rendering nothing."""
+    from benchweave_sdk.classref_gate import census, verify_ui
+    from benchweave_sdk.classref_gate_render import render_pages
+
+    authored = {
+        "page_id": "device-features",
+        "sections": [
+            {
+                "id": "vendor-features-authored",
+                "title": "Device features",
+                "surface": "raised",
+                "span": 12,
+                "children": [
+                    {"body": "Vendor features are authored by this reference."}
+                ],
+            }
+        ],
+    }
+    reference = {**REFERENCE, "layouts": [*REFERENCE["layouts"], authored]}
+    project = _scaffold_residual_project(tmp_path / "authored", reference=reference)
+    report = verify_ui(project, reference=reference)
+    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
+    assert f"custom, renders nothing: {GHOST_URN}" in report.reported_deviations, (
+        report.reported_deviations
+    )
+    html = render_pages(project, ["device-features"])["device-features"]
+    seen = census(html)
+    assert "ghost" not in seen["buttons"], seen["buttons"]
+    assert "action-auto-threshold-margin_ppm" in seen["staged_control_ids"], (
+        seen["staged_control_ids"]
+    )
+
+
+def test_w1_button_completion_targets_the_main_derived_section() -> None:
+    """W1's targeting defect: after slice 1 the LAST section of a derived
+    page may be the custom one, and a catalogued action's completion
+    button must never land in it — a catalogued action labelled custom by
+    placement. The completion targets the page's main section
+    ({page_id}-section) when one exists."""
+    from benchweave_sdk.classref import _complete_authored_buttons
+
+    sections = [
+        {
+            "id": "device-features-section",
+            "title": "Device features",
+            "surface": "raised",
+            "span": 12,
+            "children": [],
+        },
+        {
+            "id": "device-features-custom",
+            "title": "Custom device actions",
+            "surface": "raised",
+            "span": 12,
+            "children": [],
+        },
+    ]
+    plan = {
+        "com.veridian-labs.auto-threshold/1.0.0": {
+            "level": "L2",
+            "page": "device-features",
+            "fields": [],
+            "resolution": "catalog",
+        },
+    }
+    _complete_authored_buttons(sections, plan, "device-features")
+    assert sections[0]["children"] == [
+        {"binding_id": "auto-threshold", "kind": "button"}
+    ]
+    assert sections[1]["children"] == []
+
+
+# --- W2: the residual gates apply at every depth ----------------------------
+
+
+def test_w2_nested_fragment_outside_the_vocabulary_refuses() -> None:
+    """W2 (refute-a F1 HIGH, P3 shape): the residual mode's gates used to
+    run on the top-level fragment only — a nested fragment under
+    `properties` rode verbatim where its catalogued twin refuses the
+    keyword through the recursive intersection. The closed vocabulary now
+    applies at every depth, naming the nested path."""
+    _refuse_ghost(
+        {
+            "properties": {
+                "sweep": {
+                    "type": "object",
+                    "properties": {
+                        "contact": {"type": "string", "format": "email"},
+                    },
+                }
+            }
+        },
+        r"^classref_constraint_unsupported: action .* field sweep\.contact",
+    )
+
+
+def test_w2_nested_empty_bounds_refuse() -> None:
+    """W2 (refute-a F1, P4 shape): a nested fragment under `items` whose
+    bounds admit nothing derives no numeric control admitting no value —
+    the empty-admittance refusal applies at every depth too."""
+    _refuse_ghost(
+        {
+            "properties": {
+                "entries": {
+                    "type": "array",
+                    "items": {"type": "integer", "minimum": 10, "maximum": 5},
+                }
+            }
+        },
+        r"^classref_effective_schema_empty: action .* field entries\[\]",
+    )
+
+
+# --- W3: a declared value set under declared bounds -------------------------
+
+
+def test_w3_enum_narrows_through_the_declared_bounds() -> None:
+    """W3 (refute-a F2): a fragment declaring an enum under declared
+    bounds used to render every declared value — the select offered what
+    the declaration itself excludes (the acceptance rule's own KILL (d)
+    shape). The row now offers exactly the values both admit."""
+    derived = _derive_ghost(
+        {
+            "properties": {"mode": {"type": "integer", "enum": [1, 10], "minimum": 5}},
+            "required": ["mode"],
+        }
+    )
+    mode = {row["field"]: row for row in derived.control_plan[GHOST_URN]["fields"]}[
+        "mode"
+    ]
+    assert mode["mode"] == "enum"
+    assert mode["enum"] == [10]
+
+
+def test_w3_enum_entirely_outside_the_bounds_refuses() -> None:
+    """W3's emptied intersection: every declared value outside the bounds
+    refuses under the §8 empty-admittance survivor's code — a select that
+    admits nothing never derives."""
+    _refuse_ghost(
+        {
+            "properties": {"mode": {"type": "integer", "enum": [1, 2], "minimum": 5}},
+            "required": ["mode"],
+        },
+        r"^classref_effective_schema_empty: action .* field mode",
+    )
+
+
+def test_w3_const_outside_the_bounds_refuses() -> None:
+    """W3's const face: a const is one declared value — outside the
+    declared bounds it is a conflict, never a silently dropped bound."""
+    _refuse_ghost(
+        {"properties": {"mode": {"type": "integer", "const": 1, "minimum": 5}}},
+        r"^classref_effective_schema_conflict: action .* field mode",
+    )
+
+
+def test_w3_numeric_bound_on_a_boolean_refuses() -> None:
+    """W3's boolean face: numeric bounds on a declared boolean are a
+    self-contradiction — the catalogued twin refuses the same shape when
+    a constraint's bounds meet a non-numeric catalogue type."""
+    _refuse_ghost(
+        {"properties": {"invert": {"type": "boolean", "minimum": 5}}},
+        r"^classref_effective_schema_conflict: action .* field invert",
+    )
+
+
+# --- W4: a present-but-malformed catalog row is not "no catalog" -----------
+
+
+@pytest.mark.parametrize("bad_row", [None, "described-but-not-an-object"])
+def test_w4_present_non_object_catalog_row_refuses(
+    tmp_path: Path, bad_row: object
+) -> None:
+    """W4 (refute-a F4): `catalog_actions.get(urn)` returned None for a
+    present-but-null row, so a malformed catalog entry read as "no catalog
+    describes this" — a false `custom` provenance (the pre-split code
+    crashed on it with a bare AttributeError). A missing key is the
+    residual mode; a present non-object row is a catalog fault and
+    refuses typed."""
+    import hashlib
+
+    project = _copy_project_files(tmp_path / "malformed")
+    catalog = json.loads((project / "vendor-catalog.json").read_bytes())
+    catalog["actions"][GHOST_URN] = bad_row
+    raw_catalog = (json.dumps(catalog, indent=2) + "\n").encode()
+    (project / "vendor-catalog.json").write_bytes(raw_catalog)
+    descriptor = json.loads((project / "descriptor-f1.json").read_bytes())
+    descriptor["actions"][GHOST_URN] = _ghost_action(
+        {
+            "properties": {"holdoff_ms": {"type": "integer", "minimum": 0}},
+            "required": ["holdoff_ms"],
+        }
+    )
+    for row in descriptor["contracts"]:
+        if row["id"].startswith("urn:veridian:vendor-catalog"):
+            row["sha256"] = hashlib.sha256(raw_catalog).hexdigest()
+    with pytest.raises(ValueError, match="^classref_catalog_row_invalid:"):
+        derive_ui(
+            json.dumps(descriptor).encode(), REFERENCE,
+            descriptor_path=project / "descriptor-f1.json",
+        )
+
+
+# --- W5: an empty enum is an empty admittance -------------------------------
+
+
+def test_w5_empty_enum_refuses() -> None:
+    """W5 (critic 1): a declared `enum: []` used to derive an L2 select
+    admitting nothing with a green gate, while the catalogued twin refuses
+    the emptied intersection. The empty-admittance check covers enums
+    under the same code."""
+    _refuse_ghost(
+        {
+            "properties": {"mode": {"type": "integer", "enum": []}},
+            "required": ["mode"],
+        },
+        r"^classref_effective_schema_empty: action .* field mode",
+    )
+
+
+# --- W6: the disclosure says what rendered; conformance still runs ----------
+
+
+def test_w6_custom_reason_is_level_aware() -> None:
+    """W6 face 1: the declaration's custom_actions reason used to claim
+    controls derive from the descriptor's constraints even when the level
+    is L0 and nothing derives. The reason now names the state — and the
+    L0 member still mints no custom section (nothing renders, nothing is
+    labelled custom on the page; that part stays correct)."""
+    derived = _derive_ghost(
+        {
+            "properties": {"label": {"type": "string", "pattern": "^veridian"}},
+            "required": ["label"],
+        }
+    )
+    ghost = derived.control_plan[GHOST_URN]
+    assert ghost["level"] == "L0"
+    custom_rows = derived.declaration["custom_actions"]
+    assert [row["action"] for row in custom_rows] == [GHOST_URN]
+    assert "no staged control derives" in custom_rows[0]["reason"]
+    assert "(L0)" in custom_rows[0]["reason"]
+    page = _layout_page(derived, "device-features")
+    assert all(
+        section["id"] != CUSTOM_SECTION_ID for section in page["sections"]
+    )
+
+
+def test_w6_custom_divergence_reds_the_gate(tmp_path: Path) -> None:
+    """W6 face 2: the gate's custom branch used to `continue` ahead of
+    the divergence and coverage checks, so a residual member could never
+    fail for anything while a catalogued action with the same divergence
+    reds classref_gate_undeclared. An intended control the derivation
+    does not reach is an undeclared divergence and fails the gate —
+    custom exempts the member from needing a catalogue, never from
+    conformance."""
+    from benchweave_sdk.classref_gate import verify_ui
+
+    reference = {
+        **REFERENCE,
+        "expect": {
+            **REFERENCE["expect"],
+            "controls": {**REFERENCE["expect"]["controls"], GHOST_URN: "button"},
+        },
+    }
+    project = _scaffold_residual_project(
+        tmp_path / "diverged",
+        reference=reference,
+        ghost_constraints={
+            "properties": {"label": {"type": "string", "pattern": "^veridian"}},
+            "required": ["label"],
+        },
+    )
+    package = project / "src" / "veridian_residual_plugin"
+    declaration = json.loads((package / "ui" / "class-reference.json").read_bytes())
+    declaration["deviations"] = [
+        row
+        for row in declaration["deviations"]
+        if row["expectation_id"] != GHOST_URN
+    ]
+    (package / "ui" / "class-reference.json").write_bytes(
+        (json.dumps(declaration, indent=2) + "\n").encode()
+    )
+    report = verify_ui(project, reference=reference)
+    undeclared = [
+        finding
+        for finding in report.findings
+        if finding.code == "classref_gate_undeclared" and GHOST_URN in finding.detail
+    ]
+    assert undeclared, [f"{f.code}: {f.detail}" for f in report.findings]
+
+
+# --- W7: "declares nothing" vs "declares no inputs" ------------------------
+
+
+def test_w7_declares_nothing_derives_l0_with_disclosure() -> None:
+    """W7: a residual action whose input_constraints carries NO properties
+    key declared nothing — silence used to become a one-click dispatch
+    (L1). It derives L0 with a disclosure naming the absence."""
+    derived = _derive_ghost({})
+    ghost = derived.control_plan[GHOST_URN]
+    assert ghost["level"] == "L0"
+    custom_rows = derived.declaration["custom_actions"]
+    assert [row["action"] for row in custom_rows] == [GHOST_URN]
+    assert "declares no input schema" in custom_rows[0]["reason"]
+
+
+def test_w7_explicit_empty_properties_declares_no_inputs() -> None:
+    """W7's other side of the line: an explicit `properties: {}` declared
+    no INPUTS, and the ladder reads it as it did before — a bare button
+    (L1). The line is the properties key, never a refusal."""
+    derived = _derive_ghost({"properties": {}})
+    assert derived.control_plan[GHOST_URN]["level"] == "L1"
+
+
+# --- W9: string length bounds join the closed vocabulary -------------------
+
+
+def test_w9_residual_string_lengths_derive() -> None:
+    """W9: minLength/maxLength were outside the closed vocabulary, so a
+    vendor action declaring a string length bound refused — "never
+    refuses" was false for that input class. Both keywords are inside
+    the vocabulary now and ride the text row."""
+    derived = _derive_ghost(
+        {
+            "properties": {
+                "label": {"type": "string", "minLength": 1, "maxLength": 8},
+            },
+            "required": ["label"],
+        }
+    )
+    label = {
+        row["field"]: row for row in derived.control_plan[GHOST_URN]["fields"]
+    }["label"]
+    assert label["mode"] == "text"
+    assert label["minLength"] == 1
+    assert label["maxLength"] == 8
+
+
+def test_w9_catalogued_length_bounds_intersect(tmp_path: Path) -> None:
+    """W9's catalogued side: a constraint's length bounds INTERSECT the
+    catalogue's (the tighter end wins) — an accepted keyword the
+    intersection silently dropped would be a narrowing the rendered
+    control never sees. An inverted intersection admits nothing and
+    refuses under the empty-admittance code."""
+    import hashlib
+
+    def _project(name: str, min_length: int) -> Any:
+        project = _copy_project_files(tmp_path / name)
+        catalog = json.loads((project / "vendor-catalog.json").read_bytes())
+        catalog["actions"][GHOST_URN] = {
+            "description": "Length-bounded text twin.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "maxLength": 10},
+                },
+                "required": ["name"],
+            },
+            "side_effect": "none",
+        }
+        raw_catalog = (json.dumps(catalog, indent=2) + "\n").encode()
+        (project / "vendor-catalog.json").write_bytes(raw_catalog)
+        descriptor = json.loads((project / "descriptor-f1.json").read_bytes())
+        descriptor["actions"][GHOST_URN] = _ghost_action(
+            {"properties": {"name": {"type": "string", "minLength": min_length}}}
+        )
+        for row in descriptor["contracts"]:
+            if row["id"].startswith("urn:veridian:vendor-catalog"):
+                row["sha256"] = hashlib.sha256(raw_catalog).hexdigest()
+        return derive_ui(
+            json.dumps(descriptor).encode(), REFERENCE,
+            descriptor_path=project / "descriptor-f1.json",
+        )
+
+    derived = _project("tighter", 4)
+    name = {
+        row["field"]: row for row in derived.control_plan[GHOST_URN]["fields"]
+    }["name"]
+    assert name["mode"] == "text"
+    assert name["minLength"] == 4
+    assert name["maxLength"] == 10
+    with pytest.raises(
+        ValueError, match=r"^classref_effective_schema_empty: action .* field name"
+    ):
+        _project("inverted", 12)
+
+
+# --- W10: the declaration's custom inventory is read back ------------------
+
+
+def _tamper_declaration(package: Path, mutate: Any) -> None:
+    declaration = json.loads((package / "ui" / "class-reference.json").read_bytes())
+    mutate(declaration)
+    (package / "ui" / "class-reference.json").write_bytes(
+        (json.dumps(declaration, indent=2) + "\n").encode()
+    )
+
+
+def test_w10_ledger_that_omits_a_residual_member_is_reported(
+    tmp_path: Path,
+) -> None:
+    """W10: the declaration's custom inventory was write-only — an
+    authored ledger could omit every uncatalogued member and pass. The
+    read-back compares the authored custom_actions against the derived
+    custom set and REPORTS the mismatch (the REPORTED channel, never a
+    refusal)."""
+    from benchweave_sdk.classref_gate import verify_ui
+
+    project = _scaffold_residual_project(tmp_path / "omit")
+    package = project / "src" / "veridian_residual_plugin"
+
+    def mutate(declaration: dict[str, Any]) -> None:
+        declaration["custom_actions"] = []
+
+    _tamper_declaration(package, mutate)
+    report = verify_ui(project)
+    assert any(
+        row.startswith("custom mismatch: ") and GHOST_URN in row
+        for row in report.reported_deviations
+    ), report.reported_deviations
+    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
+
+
+def test_w10_ledger_forged_custom_row_is_reported(tmp_path: Path) -> None:
+    """W10's other direction: a forged row naming an URN no plan carries
+    as residual is reported too — the read-back runs both ways (the
+    forged row and the omitted member both surface)."""
+    from benchweave_sdk.classref_gate import verify_ui
+
+    project = _scaffold_residual_project(tmp_path / "forged")
+    package = project / "src" / "veridian_residual_plugin"
+
+    def mutate(declaration: dict[str, Any]) -> None:
+        declaration["custom_actions"] = [
+            {
+                "action": "com.veridian-labs.nope/1.0.0",
+                "resolution": "custom",
+                "reason": "forged",
+            }
+        ]
+
+    _tamper_declaration(package, mutate)
+    report = verify_ui(project)
+    assert any(
+        row.startswith("custom mismatch: ") and "nope" in row
+        for row in report.reported_deviations
+    ), report.reported_deviations
+    assert any(
+        row.startswith("custom mismatch: ") and GHOST_URN in row
+        for row in report.reported_deviations
+    ), report.reported_deviations
+
+
+def test_w10_reference_less_arm_reads_the_ledger_too(tmp_path: Path) -> None:
+    """W10's second arm: the read-back runs in the reference-less verify
+    arm as well — both arms read the same authored declaration file. A
+    scalar scaffold (no class reference, no residual members) carrying an
+    authored declaration whose custom_actions names an URN no plan holds
+    as residual gets the mismatch reported there too."""
+    from benchweave_sdk.classref_gate import verify_ui
+    from benchweave_sdk.presentation import create_ui_resources
+    from benchweave_sdk.scaffold import create_project
+    from benchweave_sdk.served import active_version
+
+    project = tmp_path / "scalar"
+    create_project(project, "veridian_scalar_plugin", with_ui=True)
+    create_ui_resources(project, "veridian_scalar_plugin")
+    package = project / "src" / "veridian_scalar_plugin"
+    declaration = {
+        "contract_version": active_version("plugin-ui-class-reference"),
+        "deviations": [],
+        "custom_actions": [
+            {
+                "action": "com.veridian-labs.nope/1.0.0",
+                "resolution": "custom",
+                "reason": "forged",
+            }
+        ],
+    }
+    (package / "ui" / "class-reference.json").write_bytes(
+        (json.dumps(declaration, indent=2) + "\n").encode()
+    )
+    report = verify_ui(project, reference=None)
+    assert any(
+        row.startswith("custom mismatch: ") and "nope" in row
+        for row in report.reported_deviations
+    ), report.reported_deviations

@@ -52,9 +52,15 @@ _MODE_KIND: dict[str, str] = {
 #: The closed constraint vocabulary (record §3.7): the first group narrows a
 #: rendered control; the riders (required/properties/items/min/max/unique)
 #: ride the conjunctive validation lanes untouched and derive no controls.
+#: #541 W9 fold (2026-10-22 review): minLength/maxLength join the control
+#: group — a vendor action declaring a string length bound used to refuse
+#: classref_constraint_unsupported, so "never refuses" was false for that
+#: input class. The corpus README's closed-vocabulary prose gains the two
+#: keywords at slice 2's 0.4.0 copy (deferral D8 records the obligation).
 _CONSTRAINT_CONTROL_KEYWORDS = frozenset(
     {"type", "enum", "const", "minimum", "maximum",
-     "exclusiveMinimum", "exclusiveMaximum", "multipleOf", "pattern"}
+     "exclusiveMinimum", "exclusiveMaximum", "multipleOf", "pattern",
+     "minLength", "maxLength"}
 )
 _CONSTRAINT_RIDER_KEYWORDS = frozenset(
     {"required", "properties", "items", "minItems", "maxItems", "uniqueItems"}
@@ -354,6 +360,33 @@ def _intersect_property(
             effective.pop(keyword, None)
     if "pattern" in constraint:
         effective["pattern"] = constraint["pattern"]
+    # #541 W9 fold: string length bounds are inside the closed vocabulary
+    # and INTERSECT like the numeric ones — the tighter end of each side
+    # wins. An accepted keyword the intersection silently dropped would be
+    # a narrowing the rendered control never sees; a length bound on a
+    # non-string catalogue type is the same conflict the numeric bounds
+    # raise.
+    if "minLength" in constraint or "maxLength" in constraint:
+        if declared_type != "string":
+            raise _refuse(
+                "classref_effective_schema_conflict",
+                f"action {action_urn} field {property_name}: length bound "
+                f"applied to catalogue type {declared_type!r}",
+            )
+        if "minLength" in constraint:
+            current = effective.get("minLength")
+            effective["minLength"] = (
+                max(current, constraint["minLength"])
+                if current is not None
+                else constraint["minLength"]
+            )
+        if "maxLength" in constraint:
+            current = effective.get("maxLength")
+            effective["maxLength"] = (
+                min(current, constraint["maxLength"])
+                if current is not None
+                else constraint["maxLength"]
+            )
     if "type" in constraint:
         declared = catalogue_schema.get("type")
         wanted = constraint["type"]
@@ -373,12 +406,35 @@ def _intersect_property(
 def _check_admittance(
     action_urn: str, property_name: str, effective: dict[str, Any]
 ) -> None:
-    """A required field narrowed to an empty admittance set refuses (D13).
+    """A field narrowed to an empty admittance set refuses (D13).
 
     M6: exclusivity is part of emptiness — a closed bound meeting an open
-    bound at the same value admits nothing, in both crossing directions."""
+    bound at the same value admits nothing, in both crossing directions.
+    #541 W5 fold: an empty declared enum is the same emptiness — a select
+    that admits no value never derives, residual or catalogued alike; and
+    inverted string length bounds (W9) admit no string either."""
     if effective.get("const") is not None:
         return
+    enum_values = effective.get("enum")
+    if isinstance(enum_values, list) and not enum_values:
+        raise _refuse(
+            "classref_effective_schema_empty",
+            f"action {action_urn} field {property_name}: enum admits no value",
+        )
+    min_length = effective.get("minLength")
+    max_length = effective.get("maxLength")
+    if (
+        isinstance(min_length, (int, float))
+        and not isinstance(min_length, bool)
+        and isinstance(max_length, (int, float))
+        and not isinstance(max_length, bool)
+        and min_length > max_length
+    ):
+        raise _refuse(
+            "classref_effective_schema_empty",
+            f"action {action_urn} field {property_name}: string length "
+            "bounds admit no value",
+        )
     if "minimum" in effective:
         low: tuple[float, bool] | None = (float(effective["minimum"]), False)
     elif "exclusiveMinimum" in effective:
@@ -404,6 +460,148 @@ def _check_admittance(
             "classref_effective_schema_empty",
             f"action {action_urn} field {property_name}: bounds admit no value",
         )
+
+
+def _bounds_of(
+    fragment: dict[str, Any],
+) -> tuple[tuple[float, bool] | None, tuple[float, bool] | None]:
+    """The fragment's declared numeric bounds as (value, exclusive) pairs,
+    the exclusive spelling winning when both appear."""
+    def _one(exclusive_key: str, plain_key: str) -> tuple[float, bool] | None:
+        if exclusive_key in fragment:
+            return float(fragment[exclusive_key]), True
+        if plain_key in fragment:
+            return float(fragment[plain_key]), False
+        return None
+    return _one("exclusiveMinimum", "minimum"), _one("exclusiveMaximum", "maximum")
+
+
+def _check_residual_fragment(
+    action_urn: str, name: str, fragment: dict[str, Any]
+) -> None:
+    """The residual mode's gates, applied at EVERY depth (#541 W2 fold):
+    the closed keyword vocabulary, the empty-admittance refusal, and the
+    bound/type conflicts the catalogued intersection raises — a fragment
+    under ``properties``/``items`` is as much a declared constraint as a
+    top-level one, and its catalogued twin refuses the same shape through
+    ``_merge_deep``'s recursion."""
+    for keyword in fragment:
+        if (
+            keyword in _CONSTRAINT_CONTROL_KEYWORDS
+            or keyword in _CONSTRAINT_RIDER_KEYWORDS
+        ):
+            continue
+        raise _refuse(
+            "classref_constraint_unsupported",
+            f"action {action_urn} field {name}: keyword {keyword!r} "
+            "is outside the closed intersection vocabulary",
+        )
+    _check_admittance(action_urn, name, fragment)
+    declared_type = fragment.get("type")
+    value_typed = "enum" in fragment or "const" in fragment
+    low, high = _bounds_of(fragment)
+    if (
+        (low is not None or high is not None)
+        and declared_type is not None
+        and declared_type not in _NUMERIC_TYPES
+        and not value_typed
+    ):
+        # #541 W3 fold: numeric bounds on a declared non-numeric type are a
+        # self-contradiction — the catalogued twin refuses the same shape
+        # when a constraint's bounds meet a non-numeric catalogue type. A
+        # fragment carrying enum/const is handled at row time, where the
+        # declared values intersect the bounds.
+        raise _refuse(
+            "classref_effective_schema_conflict",
+            f"action {action_urn} field {name}: numeric bound "
+            f"applied to declared type {declared_type!r}",
+        )
+    if (
+        ("minLength" in fragment or "maxLength" in fragment)
+        and declared_type is not None
+        and declared_type != "string"
+        and not value_typed
+    ):
+        raise _refuse(
+            "classref_effective_schema_conflict",
+            f"action {action_urn} field {name}: length bound "
+            f"applied to declared type {declared_type!r}",
+        )
+    for sub_name, sub in (fragment.get("properties") or {}).items():
+        if not isinstance(sub, dict):
+            raise _refuse(
+                "classref_constraint_unsupported",
+                f"action {action_urn} field {name}.{sub_name}: constraint "
+                "fragment must be an object",
+            )
+        _check_residual_fragment(action_urn, f"{name}.{sub_name}", sub)
+    items = fragment.get("items")
+    if isinstance(items, dict):
+        _check_residual_fragment(action_urn, f"{name}[]", items)
+
+
+def _intersect_declared_values(
+    action_urn: str, property_name: str, fragment: dict[str, Any]
+) -> None:
+    """A fragment declaring a value set (enum/const) under declared bounds
+    renders exactly the values both admit (#541 W3 fold — the acceptance
+    rule's own KILL (d) shape: the generic surface admits what the
+    declaration admits, no more). A non-empty enum NARROWS to the admitted
+    subset; an emptied one refuses under the §8 empty-admittance survivor;
+    a const outside the bounds is a conflict, never a silently dropped
+    bound. Applied where rows are minted, so every path (catalogue row,
+    intersection, residual) gets it at every depth; the conjunctive
+    validation schemas keep both keywords untouched."""
+    low, high = _bounds_of(fragment)
+    min_length = fragment.get("minLength")
+    max_length = fragment.get("maxLength")
+    if (
+        low is None and high is None
+        and min_length is None and max_length is None
+    ):
+        return
+
+    def _admitted(value: Any) -> bool:
+        numeric = isinstance(value, (int, float)) and not isinstance(value, bool)
+        if low is not None or high is not None:
+            if not numeric:
+                return False
+            if low is not None:
+                edge, exclusive = low
+                if value < edge or (exclusive and value == edge):
+                    return False
+            if high is not None:
+                edge, exclusive = high
+                if value > edge or (exclusive and value == edge):
+                    return False
+        if min_length is not None or max_length is not None:
+            if not isinstance(value, str):
+                return False
+            if min_length is not None and len(value) < min_length:
+                return False
+            if max_length is not None and len(value) > max_length:
+                return False
+        return True
+
+    if "const" in fragment:
+        if not _admitted(fragment["const"]):
+            raise _refuse(
+                "classref_effective_schema_conflict",
+                f"action {action_urn} field {property_name}: const "
+                f"{fragment['const']!r} outside the declared bounds",
+            )
+        return
+    enum_values = fragment.get("enum")
+    if isinstance(enum_values, list) and enum_values:
+        allowed = [value for value in enum_values if _admitted(value)]
+        if not allowed:
+            raise _refuse(
+                "classref_effective_schema_empty",
+                f"action {action_urn} field {property_name}: every declared "
+                "enum value falls outside the declared bounds",
+            )
+        if allowed != enum_values:
+            fragment["enum"] = allowed
 
 
 def _effective_action_schema(
@@ -454,21 +652,15 @@ def _effective_action_schema(
         if base is None and catalogue_action is None:
             # Residual: no catalogue side exists to intersect — the
             # declared fragment IS the effective schema, verbatim, after
-            # the same closed-vocabulary and admittance gates.
-            for keyword in fragment:
-                if (
-                    keyword in _CONSTRAINT_CONTROL_KEYWORDS
-                    or keyword in _CONSTRAINT_RIDER_KEYWORDS
-                ):
-                    continue
-                raise _refuse(
-                    "classref_constraint_unsupported",
-                    f"action {action_urn} field {name}: keyword {keyword!r} "
-                    "is outside the closed intersection vocabulary",
-                )
-            effective_fragment = json.loads(json.dumps(fragment))
-            _check_admittance(action_urn, name, effective_fragment)
-            properties[name] = effective_fragment
+            # the same closed-vocabulary and admittance gates — applied at
+            # EVERY depth (#541 W2 fold): a nested fragment under
+            # properties/items is as much a declared constraint as a
+            # top-level one, and its catalogued twin refuses the same
+            # shapes through the recursive intersection (_merge_deep).
+            # Slice 2's composed classes need the same recursion — their
+            # declared input_schema must not reopen the gap this closes.
+            _check_residual_fragment(action_urn, name, fragment)
+            properties[name] = json.loads(json.dumps(fragment))
             continue
         if base is None:
             base = {"type": fragment.get("type", "object")}
@@ -551,6 +743,11 @@ def _field_rows(
     seen = _seen if _seen is not None else set()
     for name, sub in (schema.get("properties") or {}).items():
         full = f"{prefix}{name}"
+        # #541 W3 fold: a declared value set under declared bounds narrows
+        # here — one mechanism for every path a fragment arrives by
+        # (catalogue row, intersection, residual), at every depth this
+        # descent visits.
+        _intersect_declared_values(action_urn, full, sub)
         mode = _row_mode(sub)
         if mode is not None:
             if full in seen:
@@ -621,6 +818,27 @@ def _ladder_level(
 _SLOT_LEVEL_MATCH = {"button": "L1", "staging": "L2", "preset": "L3"}
 
 
+def _catalogue_row(
+    action_urn: str, catalog_actions: dict[str, Any]
+) -> dict[str, Any] | None:
+    """One action's served catalogue row, or None (#541 W4 fold). A key
+    ABSENT from the map is the residual mode — no served catalog describes
+    the action. A key PRESENT with a non-object row is a malformed catalog
+    entry and refuses typed: reading it as "no catalog" would mint a false
+    ``custom`` provenance (and the pre-split code crashed on it with a bare
+    AttributeError downstream)."""
+    if action_urn not in catalog_actions:
+        return None
+    row = catalog_actions[action_urn]
+    if not isinstance(row, dict):
+        raise _refuse(
+            "classref_catalog_row_invalid",
+            f"the served catalog describes {action_urn} with a "
+            f"{type(row).__name__} row, not an object",
+        )
+    return row
+
+
 def _derive_controls(
     actions: dict[str, Any],
     catalog_actions: dict[str, Any],
@@ -637,7 +855,8 @@ def _derive_controls(
     plan: dict[str, dict[str, Any]] = {}
     divergences: list[dict[str, str]] = []
     for urn in sorted(actions):
-        constraints = actions[urn].get("input_constraints") or {}
+        raw_constraints = actions[urn].get("input_constraints")
+        constraints = raw_constraints or {}
         slot_kind = None
         host_supplied: frozenset[str] = frozenset(_HOST_SUPPLIED_UNIVERSAL)
         _slot_name, slot = slot_for_urn.get(urn, ("", {}))
@@ -651,10 +870,21 @@ def _derive_controls(
         # constraints, never refuses for being unknown. Slice 2 adds the
         # composed layer between them; the value names the layer that
         # produced the row (record §4.1 — provenance is data, not a log).
-        catalogue_row = catalog_actions.get(urn)
+        catalogue_row = _catalogue_row(urn, catalog_actions)
         resolution = "catalog" if catalogue_row is not None else "custom"
         effective = _effective_action_schema(urn, catalogue_row, constraints)
         level = _ladder_level(effective, host_supplied, slot_kind)
+        # #541 W7 fold: "declares nothing" and "declares no inputs" are
+        # different states. A residual action whose input_constraints
+        # carries no properties key at all declared NOTHING — silence must
+        # not become a one-click dispatch (an L1 button), so it derives L0
+        # with a disclosure naming the absence. An explicit properties
+        # (even {}) declared no inputs, and the ladder reads it as before.
+        declared_no_input = not (
+            isinstance(raw_constraints, dict) and "properties" in raw_constraints
+        )
+        if catalogue_row is None and declared_no_input:
+            level = "L0"
         fields = _field_rows(urn, "", effective)
         slot_key = _slot_name if slot else ""
         page = page_for_slot.get(slot_key, "device-features")
@@ -664,6 +894,8 @@ def _derive_controls(
             "fields": fields,
             "resolution": resolution,
         }
+        if catalogue_row is None and declared_no_input:
+            row["input_undeclared"] = True
         intended = intended_controls.get(urn)
         if intended is not None and _SLOT_LEVEL_MATCH.get(intended) != level:
             row["intended"] = intended
@@ -1202,10 +1434,11 @@ def _finish(
         urn = str(config_slot["action"])
         if urn not in actions:
             continue
+        slot_catalogue_row = _catalogue_row(urn, catalog_actions)
         effective = _effective_action_schema(
-            urn, catalog_actions[urn], actions[urn].get("input_constraints") or {}
+            urn, slot_catalogue_row, actions[urn].get("input_constraints") or {}
         )
-        catalogue_input = catalog_actions[urn].get("input_schema", {}) or {}
+        catalogue_input = (slot_catalogue_row or {}).get("input_schema", {}) or {}
         settings_schema = {
             **effective,
             "$id": catalogue_input.get("$id", f"urn:otdp:action:{urn}:input"),
@@ -1276,7 +1509,9 @@ def _finish(
                 "kind": "procedure",
                 "action_id": urn,
                 "profile_ids": profile_ids,
-                "input_schema_id": catalog_actions[urn].get("input_schema", {}).get("$id"),
+                "input_schema_id": (_catalogue_row(urn, catalog_actions) or {})
+                .get("input_schema", {})
+                .get("$id"),
             }
         )
         bindings.append({"id": proc_key, "kind": "procedure", "target_id": proc_key})
@@ -1482,7 +1717,7 @@ def effective_action_fields(
     constraints = (descriptor.get("actions") or {}).get(urn, {}).get(
         "input_constraints"
     ) or {}
-    effective = _effective_action_schema(urn, actions.get(urn), constraints)
+    effective = _effective_action_schema(urn, _catalogue_row(urn, actions), constraints)
     return _field_rows(urn, "", effective)
 
 
@@ -1666,8 +1901,14 @@ def _build_layout(
                     "span": 12,
                     "children": custom_children,
                 })
-        _insert_ladder_numerics(sections, plan)
         _complete_authored_buttons(sections, plan, page_id)
+        # #541 W1 fold: completion runs BEFORE the ladder-numeric insert —
+        # a button the completion pass appends (a when-declared action on
+        # an authored page, a catalogued vendor action on an authored
+        # device-features page) must arrive in time for the insert to give
+        # it its numeric staging pair, or the action reds
+        # classref_gate_uncovered with a button and no staged fields.
+        _insert_ladder_numerics(sections, plan)
         if not sections:
             # Every declared page renders as a panel (the expect row's
             # meaning): a page whose surface is fully placed — or whose
@@ -1721,23 +1962,41 @@ def _complete_authored_buttons(
     """A9's F3b arm: the reference's authored sections name only the
     always-present bindings — a when-declared action (trigger) that
     derives onto this page owes its button node too, or the census and
-    the coverage arm both miss it."""
+    the coverage arm both miss it.
+
+    #541 W1 fold, two scoping rules: a residual member never welds into
+    the reference's authored sections (an authored page stands as
+    authored — record §11 risk 4; the member surfaces through the plan,
+    the declaration and the gate), and the append targets the page's
+    MAIN derived section when one exists — after slice 1 the last section
+    may be the custom one, and a catalogued action's button must never
+    land there."""
+    if not sections:
+        return
     present: set[str] = set()
     for section in sections:
         for node in section.get("children", []):
             if node.get("kind") == "button":
                 present.add(str(node.get("binding_id", "")))
-    if not sections:
-        return
+    target = next(
+        (
+            section
+            for section in sections
+            if section.get("id") == f"{page_id}-section"
+        ),
+        sections[-1],
+    )
     for urn, row in sorted(plan.items()):
         if str(row.get("page", "")) != page_id:
             continue
         if row.get("level") not in ("L1", "L2"):
             continue
+        if row.get("resolution") == "custom":
+            continue
         slug = urn.split("/")[0].rsplit(".", 1)[-1]
         if slug in present:
             continue
-        sections[-1].setdefault("children", []).append(
+        target.setdefault("children", []).append(
             {"binding_id": slug, "kind": "button"}
         )
 
@@ -1753,9 +2012,19 @@ def _insert_ladder_numerics(
     sections: list[dict[str, Any]], plan: dict[str, dict[str, Any]]
 ) -> None:
     """Authored button nodes for an L2 action gain the action's numeric
-    field nodes immediately before the button (the staging pair order)."""
+    field nodes immediately before the button (the staging pair order).
+
+    #541 W8 fold: a numeric node the section already carries — a derived
+    page's staging emission, or a layout that authored its own numerics —
+    is not re-emitted: one field, one control (the pair used to render
+    twice on every derived page, catalogued pairs included)."""
     for section in sections:
         children = section.get("children", [])
+        present = {
+            (str(node.get("binding_id")), node.get("field"))
+            for node in children
+            if node.get("kind") == "numeric"
+        }
         out: list[dict[str, Any]] = []
         for node in children:
             if (
@@ -1765,11 +2034,16 @@ def _insert_ladder_numerics(
                 urn = _urn_for_binding(plan, str(node["binding_id"]))
                 row = plan.get(urn or "", {}) if urn else {}
                 for field_row in row.get("fields", []):
-                    if field_row["mode"] == "numeric":
-                        out.append(
-                            {"binding_id": node["binding_id"], "kind": "numeric",
-                             "field": field_row["field"]}
-                        )
+                    if field_row["mode"] != "numeric":
+                        continue
+                    key = (str(node["binding_id"]), field_row["field"])
+                    if key in present:
+                        continue
+                    present.add(key)
+                    out.append(
+                        {"binding_id": node["binding_id"], "kind": "numeric",
+                         "field": field_row["field"]}
+                    )
             out.append(node)
         section["children"] = out
 
@@ -1926,6 +2200,12 @@ def _build_declaration(
         for urn, row in sorted(plan.items())
         if row.get("level") == "L0"
         and row.get("divergence") is None
+        # #541 (W6 fold): a residual member is not a divergence from the
+        # reference — the reference never claimed it. Its disclosure
+        # channel is the custom inventory below, level-aware; keeping it
+        # out of the deviation ledger stops the same member reporting
+        # through two channels with two different stories.
+        and row.get("resolution") != "custom"
         and urn.split("/")[0].rsplit(".", 1)[-1] != "abort"
     ]
     seen = {row["expectation_id"] for row in deviation_rows}
@@ -1939,19 +2219,31 @@ def _build_declaration(
     # from birth so the project's own conformance record (the file
     # upgrade and migrate-ui watch) can never lose it. No schema governs
     # this document's key set (only the deviation vocabulary is validated),
-    # so the inventory lands without a standards motion.
-    custom_rows = [
-        {
-            "action": urn,
-            "resolution": "custom",
-            "reason": (
+    # so the inventory lands without a standards motion. The reason is
+    # LEVEL-AWARE (W6 fold): it names what actually derives — controls, or
+    # nothing — and for the W7 shape it names the absence itself (the
+    # descriptor declared no input schema), never a derivation that does
+    # not happen.
+    custom_rows: list[dict[str, Any]] = []
+    for urn, row in sorted(plan.items()):
+        if row.get("resolution") != "custom":
+            continue
+        if row.get("level") == "L0":
+            reason = (
+                "no served catalog describes this action and the descriptor "
+                "declares no input schema; nothing derives (L0)"
+                if row.get("input_undeclared")
+                else "no served catalog describes this action; no staged "
+                "control derives from the declared input_constraints (L0)"
+            )
+        else:
+            reason = (
                 "no served catalog describes this action; controls derive "
                 "from the descriptor's own input_constraints"
-            ),
-        }
-        for urn, row in sorted(plan.items())
-        if row.get("resolution") == "custom"
-    ]
+            )
+        custom_rows.append(
+            {"action": urn, "resolution": "custom", "reason": reason}
+        )
     return {
         "contract_version": active_version(_FAMILY),
         "profile_ids": sorted({str(item["profile_id"]) for item in references}),
