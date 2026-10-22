@@ -38,13 +38,14 @@ def _descriptor(name: str) -> dict[str, object]:
 
 
 def test_the_vendored_tree_carries_the_carried_otdp_set() -> None:
-    """otdp rows: 0.2.0, 0.2.1 (yank-marked), 0.2.2 (retained), 0.2.3 (active) —
+    """otdp rows: 0.2.0, 0.2.1 (yank-marked), 0.2.3 (retained), 0.2.4 (active) —
     the served set (¬yanked) is derived from the markers plus the mirrored
     policy block."""
-    assert _carried_otdp() >= {"0.2.0", "0.2.1", "0.2.2", "0.2.3"}
+    assert _carried_otdp() >= {"0.2.0", "0.2.1", "0.2.2", "0.2.3", "0.2.4"}
     row_021 = ROWS[("otdp", "0.2.1")]
     assert row_021.get("yanked") is True
-    assert ROWS[("otdp", "0.2.3")].get("active") is True
+    assert ROWS[("otdp", "0.2.4")].get("active") is True
+    assert ROWS[("otdp", "0.2.3")].get("active") is False
     assert ROWS[("otdp", "0.2.2")].get("active") is False
 
 
@@ -121,7 +122,7 @@ def test_a2_provider_bearing_descriptor_per_pin(tmp_path: Path) -> None:
     # version strings; this proves serving-by-pin, not serving-by-active).
     pinned_021 = dict(provider_descriptor)
     pinned_021["otdp_version"] = "0.2.1"
-    with pytest.warns(Warning, match="0.2.3") as yank:
+    with pytest.warns(Warning, match="0.2.4") as yank:
         validate_descriptor(pinned_021)
     assert any("0.2.1" in str(w.message) for w in yank), "the warning names the pin"
     with warnings.catch_warnings():
