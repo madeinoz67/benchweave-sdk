@@ -2,6 +2,44 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.19.0] - 2026-10-22
+
+### Bug Fixes
+
+- The cut moves the gate battery's three bump-driven anchors
+- Lock the publish lane's environment sync (gateway #535)
+- Qualify the bare-sync claim in the publish comment
+
+### Documentation
+
+- Issue #535 — the locked publish-lane design record
+- #535 addendum — smoke-lane decision and the PR-time twin
+- #535 — freshness vs lock integrity
+- #535 — the addendum scopes section 1.5 by reference
+- The baseline line names the active OTDP 0.2.4
+
+### Features
+
+- OTDP 0.2.4 — the readings-class examples declare their readable parameters
+
+### Miscellaneous
+
+- 0.18.0 -> 0.19.0 — the OTDP 0.2.4 train's SDK MINOR
+- Hold the lock stamp at the released value so the sync records the move
+- Regenerate the lock for 0.19.0
+- Restore the pre-cut version so release-cut owns the 0.19.0 bump
+- Cut v0.19.0 — the OTDP 0.2.4 train
+- The v0.19.0 phase-2 registration — versions list + selector, at the tag commit
+
+### Testing
+
+- Move the otdp serving pins to 0.2.4
+- Finish the 0.2.4/0.19.0 anchor motion the sync left behind
+
+
+### Contributors
+
+- Stephen Eaton (17 commits)
 ## [0.18.0] - 2026-10-21
 
 ### Features

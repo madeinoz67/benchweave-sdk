@@ -1,0 +1,299 @@
+{
+  "id": "uart",
+  "version": "1.0.0",
+  "name": "UART",
+  "longname": "Universal Asynchronous Receiver/Transmitter",
+  "desc": "Asynchronous, serial bus.",
+  "tags": [
+    "Embedded/industrial"
+  ],
+  "channels": [],
+  "optional_channels": [
+    {
+      "id": "rx",
+      "name": "RX",
+      "desc": "UART receive line"
+    },
+    {
+      "id": "tx",
+      "name": "TX",
+      "desc": "UART transmit line"
+    }
+  ],
+  "options": [
+    {
+      "id": "baudrate",
+      "desc": "Baud rate",
+      "default": 115200
+    },
+    {
+      "id": "data_bits",
+      "desc": "Data bits",
+      "default": 8,
+      "values": [
+        5,
+        6,
+        7,
+        8,
+        9
+      ]
+    },
+    {
+      "id": "parity",
+      "desc": "Parity",
+      "default": "none",
+      "values": [
+        "none",
+        "odd",
+        "even",
+        "zero",
+        "one",
+        "ignore"
+      ]
+    },
+    {
+      "id": "stop_bits",
+      "desc": "Stop bits",
+      "default": 1.0,
+      "values": [
+        0.0,
+        0.5,
+        1.0,
+        1.5,
+        2.0
+      ]
+    },
+    {
+      "id": "bit_order",
+      "desc": "Bit order",
+      "default": "lsb-first",
+      "values": [
+        "lsb-first",
+        "msb-first"
+      ]
+    },
+    {
+      "id": "format",
+      "desc": "Data format",
+      "default": "hex",
+      "values": [
+        "ascii",
+        "dec",
+        "hex",
+        "oct",
+        "bin"
+      ]
+    },
+    {
+      "id": "invert_rx",
+      "desc": "Invert RX",
+      "default": "no",
+      "values": [
+        "yes",
+        "no"
+      ]
+    },
+    {
+      "id": "invert_tx",
+      "desc": "Invert TX",
+      "default": "no",
+      "values": [
+        "yes",
+        "no"
+      ]
+    },
+    {
+      "id": "sample_point",
+      "desc": "Sample point (%)",
+      "default": 50
+    },
+    {
+      "id": "rx_packet_delim",
+      "desc": "RX packet delimiter (decimal)",
+      "default": -1
+    },
+    {
+      "id": "tx_packet_delim",
+      "desc": "TX packet delimiter (decimal)",
+      "default": -1
+    },
+    {
+      "id": "rx_packet_len",
+      "desc": "RX packet length",
+      "default": -1
+    },
+    {
+      "id": "tx_packet_len",
+      "desc": "TX packet length",
+      "default": -1
+    }
+  ],
+  "annotations": [
+    {
+      "id": "rx-data",
+      "label": "RX data"
+    },
+    {
+      "id": "tx-data",
+      "label": "TX data"
+    },
+    {
+      "id": "rx-start",
+      "label": "RX start bit"
+    },
+    {
+      "id": "tx-start",
+      "label": "TX start bit"
+    },
+    {
+      "id": "rx-parity-ok",
+      "label": "RX parity OK bit"
+    },
+    {
+      "id": "tx-parity-ok",
+      "label": "TX parity OK bit"
+    },
+    {
+      "id": "rx-parity-err",
+      "label": "RX parity error bit"
+    },
+    {
+      "id": "tx-parity-err",
+      "label": "TX parity error bit"
+    },
+    {
+      "id": "rx-stop",
+      "label": "RX stop bit"
+    },
+    {
+      "id": "tx-stop",
+      "label": "TX stop bit"
+    },
+    {
+      "id": "rx-warning",
+      "label": "RX warning"
+    },
+    {
+      "id": "tx-warning",
+      "label": "TX warning"
+    },
+    {
+      "id": "rx-data-bit",
+      "label": "RX data bit"
+    },
+    {
+      "id": "tx-data-bit",
+      "label": "TX data bit"
+    },
+    {
+      "id": "rx-break",
+      "label": "RX break"
+    },
+    {
+      "id": "tx-break",
+      "label": "TX break"
+    },
+    {
+      "id": "rx-packet",
+      "label": "RX packet"
+    },
+    {
+      "id": "tx-packet",
+      "label": "TX packet"
+    }
+  ],
+  "annotation_rows": [
+    {
+      "id": "rx-data-bits",
+      "label": "RX bits",
+      "annotation_ids": [
+        "rx-data-bit"
+      ]
+    },
+    {
+      "id": "rx-data-vals",
+      "label": "RX data",
+      "annotation_ids": [
+        "rx-data",
+        "rx-start",
+        "rx-parity-ok",
+        "rx-parity-err",
+        "rx-stop"
+      ]
+    },
+    {
+      "id": "rx-warnings",
+      "label": "RX warnings",
+      "annotation_ids": [
+        "rx-warning"
+      ]
+    },
+    {
+      "id": "rx-breaks",
+      "label": "RX breaks",
+      "annotation_ids": [
+        "rx-break"
+      ]
+    },
+    {
+      "id": "rx-packets",
+      "label": "RX packets",
+      "annotation_ids": [
+        "rx-packet"
+      ]
+    },
+    {
+      "id": "tx-data-bits",
+      "label": "TX bits",
+      "annotation_ids": [
+        "tx-data-bit"
+      ]
+    },
+    {
+      "id": "tx-data-vals",
+      "label": "TX data",
+      "annotation_ids": [
+        "tx-data",
+        "tx-start",
+        "tx-parity-ok",
+        "tx-parity-err",
+        "tx-stop"
+      ]
+    },
+    {
+      "id": "tx-warnings",
+      "label": "TX warnings",
+      "annotation_ids": [
+        "tx-warning"
+      ]
+    },
+    {
+      "id": "tx-breaks",
+      "label": "TX breaks",
+      "annotation_ids": [
+        "tx-break"
+      ]
+    },
+    {
+      "id": "tx-packets",
+      "label": "TX packets",
+      "annotation_ids": [
+        "tx-packet"
+      ]
+    }
+  ],
+  "binary": [
+    {
+      "id": "rx",
+      "label": "RX dump"
+    },
+    {
+      "id": "tx",
+      "label": "TX dump"
+    },
+    {
+      "id": "rxtx",
+      "label": "RX/TX dump"
+    }
+  ]
+}
