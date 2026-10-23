@@ -1,0 +1,178 @@
+{
+  "contract_version": "0.4.0",
+  "profile_id": "otdp.dc_psu/1.0.0",
+  "title": "DC power supply",
+  "targets": {
+    "plugin_ui": ">=0.4.0"
+  },
+  "slots": {
+    "outputs": {
+      "kind": "channels",
+      "where_role": "source",
+      "key": "id",
+      "label": "label"
+    },
+    "measure": {
+      "kind": "dataset",
+      "action": "otdp.dc_psu.measure/1.0.0",
+      "schema_source": "output_measurement"
+    },
+    "configure": {
+      "kind": "configuration",
+      "action": "otdp.dc_psu.configure/1.0.0",
+      "schema_source": "input_schema"
+    },
+    "output": {
+      "kind": "procedure",
+      "action": "otdp.dc_psu.output/1.0.0"
+    },
+    "vendor_actions": {
+      "kind": "vendor_actions"
+    }
+  },
+  "pages": [
+    {
+      "id": "output",
+      "title": "Output",
+      "kind": "readings",
+      "binding_slots": [
+        "measure"
+      ],
+      "plot": {
+        "kind": "time_series",
+        "over_slot": "measure",
+        "series": "numeric_variables"
+      }
+    },
+    {
+      "id": "configuration",
+      "title": "Configuration",
+      "kind": "configuration",
+      "binding_slots": [
+        "configure"
+      ]
+    },
+    {
+      "id": "device-features",
+      "title": "Device features",
+      "kind": "configuration",
+      "binding_slots": [
+        "vendor_actions"
+      ],
+      "vendor_features": true
+    }
+  ],
+  "layouts": [
+    {
+      "page_id": "output",
+      "sections": [
+        {
+          "id": "readings",
+          "title": "Readings",
+          "surface": "raised",
+          "span": 12,
+          "children": [
+            {
+              "binding_id": "measure",
+              "kind": "reading-tile"
+            }
+          ]
+        },
+        {
+          "id": "trend",
+          "title": "Trend",
+          "surface": "recessed",
+          "span": 7,
+          "children": [
+            {
+              "plot_index": 0
+            }
+          ]
+        },
+        {
+          "id": "table",
+          "title": "Table",
+          "surface": "raised",
+          "span": 5,
+          "children": [
+            {
+              "binding_id": "measure",
+              "kind": "data-table"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "expect": {
+    "components": {
+      "reading-tile": {
+        "count": "{n_reading_tiles}",
+        "per_page": "output"
+      },
+      "data-table": {
+        "count": "1",
+        "per_page": "output"
+      },
+      "engineering-plot": {
+        "count": "1",
+        "per_page": "output"
+      },
+      "panel": {
+        "count": "{n_pages}"
+      },
+      "mode-banner": {
+        "count": "1",
+        "per_page": "*"
+      }
+    },
+    "controls": {
+      "otdp.dc_psu.configure/1.0.0": "preset",
+      "otdp.dc_psu.output/1.0.0": "deviation"
+    },
+    "forbid": [
+      "confirm-wrapped-run-action",
+      "color-role-hint-on-lane",
+      "untraceable-lane-label",
+      "intermediated-energy-removing-action"
+    ]
+  },
+  "cannot_derive": [
+    {
+      "id": "output-control",
+      "aspect": "the output on/off control",
+      "reason": "the directional section C.1 presentation (energise stages then confirms naming effect, values and target; de-energise is one ungated action) is beyond the per-action control vocabulary; renderer enforcement belongs to the safety-behaviours slice",
+      "author_action": "none until that slice lands; the deviation is REPORTED, never silent"
+    },
+    {
+      "id": "setpoint-staging",
+      "aspect": "the staged knob/Apply setpoint idiom",
+      "reason": "configure is preset-mediated at birth; presets are commissioned evidence (A02)",
+      "author_action": "author ui/presets/*.json via check-preset; the expander emits the scaffold"
+    },
+    {
+      "id": "margin-alert",
+      "aspect": "the operating-margin alert",
+      "reason": "the alert condition (reading vs configured limit) is commissioned policy (A02)",
+      "author_action": "bench policy at commissioning; the alert-bubble renders from host-observed conditions"
+    },
+    {
+      "id": "limit-overlay",
+      "aspect": "the trend's dashed configured-limit line",
+      "reason": "the limit value is runtime configuration data; the overlay is a runtime join",
+      "author_action": "host composition where a configured limit is active"
+    },
+    {
+      "id": "presets",
+      "aspect": "preset settings values",
+      "reason": "presets are commissioned evidence, never derived (A02 unamended)",
+      "author_action": "author ui/presets/*.json via check-preset"
+    },
+    {
+      "id": "channel-names",
+      "aspect": "output names beyond descriptor labels",
+      "reason": "the descriptor owns channel identity",
+      "author_action": "label channels in the descriptor"
+    }
+  ]
+}

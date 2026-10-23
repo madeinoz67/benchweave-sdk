@@ -1,0 +1,27 @@
+{
+  "contract_version": "0.1.0",
+  "urn": "otdp.action.veridian_staging/1.0.0",
+  "title": "Veridian numeric staging",
+  "claims": [
+    "otdp.veridian_staging.ghost_stage/1.0.0"
+  ],
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "stage_level": {
+        "type": "number",
+        "minimum": 0.0,
+        "maximum": 10.0
+      },
+      "stage_label": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "stage_level"
+    ],
+    "additionalProperties": false,
+    "$id": "urn:veridian:action:staging:1.0.0:input"
+  },
+  "side_effect": "state_change"
+}

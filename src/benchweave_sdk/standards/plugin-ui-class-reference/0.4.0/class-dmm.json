@@ -1,0 +1,166 @@
+{
+  "contract_version": "0.4.0",
+  "profile_id": "otdp.dmm/1.0.0",
+  "title": "Digital multimeter",
+  "targets": {
+    "plugin_ui": ">=0.4.0"
+  },
+  "slots": {
+    "inputs": {
+      "kind": "channels",
+      "where_role": "measure",
+      "key": "id",
+      "label": "label"
+    },
+    "measure": {
+      "kind": "dataset",
+      "action": "otdp.dmm.measure/1.0.0",
+      "schema_source": "output_measurement"
+    },
+    "configure": {
+      "kind": "configuration",
+      "action": "otdp.dmm.configure/1.0.0",
+      "schema_source": "input_schema"
+    },
+    "vendor_actions": {
+      "kind": "vendor_actions"
+    }
+  },
+  "pages": [
+    {
+      "id": "readings",
+      "title": "Readings",
+      "kind": "readings",
+      "binding_slots": [
+        "measure"
+      ],
+      "plot": {
+        "kind": "time_series",
+        "over_slot": "measure",
+        "series": "numeric_variables"
+      }
+    },
+    {
+      "id": "configuration",
+      "title": "Configuration",
+      "kind": "configuration",
+      "binding_slots": [
+        "configure"
+      ]
+    },
+    {
+      "id": "device-features",
+      "title": "Device features",
+      "kind": "configuration",
+      "binding_slots": [
+        "vendor_actions"
+      ],
+      "vendor_features": true
+    }
+  ],
+  "layouts": [
+    {
+      "page_id": "readings",
+      "sections": [
+        {
+          "id": "readings",
+          "title": "Readings",
+          "surface": "raised",
+          "span": 12,
+          "children": [
+            {
+              "binding_id": "measure",
+              "kind": "reading-tile"
+            }
+          ]
+        },
+        {
+          "id": "trend",
+          "title": "Trend",
+          "surface": "recessed",
+          "span": 7,
+          "children": [
+            {
+              "plot_index": 0
+            }
+          ]
+        },
+        {
+          "id": "table",
+          "title": "Table",
+          "surface": "raised",
+          "span": 5,
+          "children": [
+            {
+              "binding_id": "measure",
+              "kind": "data-table"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "expect": {
+    "components": {
+      "reading-tile": {
+        "count": "{n_reading_tiles}",
+        "per_page": "readings"
+      },
+      "data-table": {
+        "count": "1",
+        "per_page": "readings"
+      },
+      "engineering-plot": {
+        "count": "1",
+        "per_page": "readings"
+      },
+      "panel": {
+        "count": "{n_pages}"
+      },
+      "mode-banner": {
+        "count": "1",
+        "per_page": "*"
+      }
+    },
+    "controls": {
+      "otdp.dmm.configure/1.0.0": "preset"
+    },
+    "forbid": [
+      "confirm-wrapped-run-action",
+      "color-role-hint-on-lane",
+      "untraceable-lane-label"
+    ]
+  },
+  "cannot_derive": [
+    {
+      "id": "function-selection",
+      "aspect": "the function/range/aperture/autozero selection surface",
+      "reason": "configure is preset-mediated at birth; presets are commissioned evidence (A02)",
+      "author_action": "author ui/presets/*.json via check-preset; the expander emits the scaffold"
+    },
+    {
+      "id": "range-margin-alert",
+      "aspect": "the range-margin alert",
+      "reason": "the alert condition (reading vs configured range) is commissioned policy (A02)",
+      "author_action": "bench policy at commissioning; the alert-bubble renders from host-observed conditions"
+    },
+    {
+      "id": "range-overlay",
+      "aspect": "the trend's dashed range-bound line",
+      "reason": "the range value is runtime configuration data; the overlay is a runtime join",
+      "author_action": "host composition where a fixed range is active"
+    },
+    {
+      "id": "presets",
+      "aspect": "preset settings values",
+      "reason": "presets are commissioned evidence, never derived (A02 unamended)",
+      "author_action": "author ui/presets/*.json via check-preset"
+    },
+    {
+      "id": "channel-names",
+      "aspect": "input names beyond descriptor labels",
+      "reason": "the descriptor owns channel identity",
+      "author_action": "label channels in the descriptor"
+    }
+  ]
+}

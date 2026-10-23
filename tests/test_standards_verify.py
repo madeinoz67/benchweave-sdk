@@ -80,7 +80,7 @@ def test_verify_installed_passes_on_an_installed_layout(
     verify_installed()
 
 
-# --- plugin-ui-class-reference 0.3.0 train sync (gateway issue #463) ----
+# --- plugin-ui-class-reference 0.4.0 train sync (gateway issue #541) ----
 # The train arms pin the lock's train state so the sync commit cannot land
 # without it: the new family rows active+stable with digest-verified vendored
 # bytes, the pure-addition posture (no prior row removed; the two superseded
@@ -91,8 +91,9 @@ def test_verify_installed_passes_on_an_installed_layout(
 #
 # The #458 train's arms (otdp 0.2.3 / registry 0.1.3, the retained-flip and
 # .bin arms) were retired at L2; the L5 arms (classref 0.2.0 active, the
-# 17-row posture) are retired here — per-train arms, replaced each train;
-# the states they pinned are superseded by this train's lock.
+# 17-row posture) and the #463 train's 0.3.0-active arm are retired here —
+# per-train arms, replaced each train; the states they pinned are
+# superseded by this train's lock.
 
 
 def _train_lock() -> dict[str, object]:
@@ -130,13 +131,16 @@ def _train_vendored_digests(row: dict[str, object]) -> None:
         )
 
 
-def test_train_sync_lock_carries_classref_0_3_0_active() -> None:
-    """The 0.3.0 row is active+stable; every file row matches the vendored
-    bytes byte-for-byte. The train keeps plugin-ui 0.4.0 active beside it —
-    the family's cross-constraint window requires the 0.4.0 schemas."""
-    row = _train_row(_train_lock(), "plugin-ui-class-reference", "0.3.0")
+def test_train_sync_lock_carries_classref_0_4_0_active() -> None:
+    """The 0.4.0 row is active+stable; every file row matches the vendored
+    bytes byte-for-byte — the 0.4.0 tree carries the composed-action-class
+    schema (#541 slice 2). The train keeps plugin-ui 0.4.0 active beside it
+    — the family's cross-constraint window requires the 0.4.0 schemas. The
+    superseded 0.3.0 row stays carried (retained, its bytes digest-frozen —
+    copy-never-move)."""
+    row = _train_row(_train_lock(), "plugin-ui-class-reference", "0.4.0")
     assert row is not None, (
-        "plugin-ui-class-reference@0.3.0 missing from standards-lock.json"
+        "plugin-ui-class-reference@0.4.0 missing from standards-lock.json"
     )
     assert row.get("active") is True
     assert row.get("status") == "stable"
@@ -150,19 +154,21 @@ def test_train_sync_lock_carries_classref_0_3_0_active() -> None:
 
 def test_train_sync_family_is_a_pure_addition() -> None:
     """The train's row posture at the LOCK: the multi-serving classref
-    family adds its 0.3.0 row (0.2.0 flips to retained, never deleted —
-    0.1.0 stays retained beside it), and the single-serving plugin-ui
-    family CONSUMES its predecessor row (0.3.1 leaves the lock; its
-    digest-frozen bytes stay in the gateway corpus — the lock carries the
-    served set, not the corpus archive). The six untouched actives stay
-    active+stable; twelve retained rows survive. The #450 train added
-    interface 0.1.1 as a second ACTIVE interface row (multi-serving
+    family adds its 0.4.0 row (0.3.0 flips to retained, never deleted —
+    0.2.0 and 0.1.0 stay retained beside it), and the single-serving
+    plugin-ui family CONSUMES its predecessor row (0.3.1 leaves the lock;
+    its digest-frozen bytes stay in the gateway corpus — the lock carries
+    the served set, not the corpus archive). The six untouched actives
+    stay active+stable; thirteen retained rows survive. The #450 train
+    added interface 0.1.1 as a second ACTIVE interface row (multi-serving
     beside 0.1.0) — 17 -> 18; #525's OTDP train adds the otdp 0.2.4 row
-    beside the retained 0.2.3 — 18 -> 19."""
+    beside the retained 0.2.3 — 18 -> 19; the composed-action-class train
+    (#541 s2) adds the classref 0.4.0 row beside the retained 0.3.0 —
+    19 -> 20."""
     lock = _train_lock()
     standards = lock.get("standards")
     assert isinstance(standards, list)
-    assert len(standards) == 19, f"expected 19 rows, found {len(standards)}"
+    assert len(standards) == 20, f"expected 20 rows, found {len(standards)}"
     prior_actives = {
         "otdp": "0.2.4",
         "registry": "0.1.3",
@@ -182,13 +188,13 @@ def test_train_sync_family_is_a_pure_addition() -> None:
         "classref 0.1.0 kept its active marker after the train"
     )
     assert retained_row.get("status") == "retained"
-    # This train's own multi-serving flip: classref 0.2.0 goes retained
-    # exactly the 0.1.0 way (one ACTIVE row per id; the prior version's
-    # bytes stay carried, its marker does not).
-    classref_prior = _train_row(lock, "plugin-ui-class-reference", "0.2.0")
-    assert classref_prior is not None, "classref 0.2.0 dropped from the lock"
+    # This train's own multi-serving flip: classref 0.3.0 goes retained
+    # exactly the 0.2.0/0.1.0 way (one ACTIVE row per id; the prior
+    # version's bytes stay carried, its marker does not).
+    classref_prior = _train_row(lock, "plugin-ui-class-reference", "0.3.0")
+    assert classref_prior is not None, "classref 0.3.0 dropped from the lock"
     assert classref_prior.get("active") is False, (
-        "classref 0.2.0 kept its active marker beside 0.3.0"
+        "classref 0.3.0 kept its active marker beside 0.4.0"
     )
     assert classref_prior.get("status") == "retained"
     # The #450 train's own multi-serving flip: interface 0.1.0 goes
@@ -207,8 +213,8 @@ def test_train_sync_family_is_a_pure_addition() -> None:
         "the digest-frozen bytes, not this lock)"
     )
     retained = [row for row in standards if row.get("active") is False]
-    assert len(retained) == 12, (
-        f"expected 12 retained rows (the post-train posture), found {len(retained)}"
+    assert len(retained) == 13, (
+        f"expected 13 retained rows (the post-train posture), found {len(retained)}"
     )
 
 
