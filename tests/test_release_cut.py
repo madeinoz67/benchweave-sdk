@@ -180,9 +180,11 @@ def _versions_map(rows: int, latest: str) -> str:
 
 
 def _real_counter() -> Any:
-    """The committed twin counter, loaded for the historical-shape arms: the
-    real constants (static 11, registered 12, census 11 files) are what the
-    two hand fixes moved — the arms must derive with the real numbers."""
+    """The committed twin counter, loaded for the arms that run against THIS
+    checkout's own constants (the real-tree phase-2 rehearsal and the drift
+    refusal). Its numbers move whenever the prose register or the census
+    legitimately moves, so the two historical reproduction arms below use
+    `_historical_counter` instead."""
     spec = importlib.util.spec_from_file_location(
         "release_cut_counter_real", ROOT / "scripts" / "count_version_literals.py"
     )
@@ -190,6 +192,32 @@ def _real_counter() -> Any:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def _historical_counter() -> Any:
+    """A stub counter carrying the constants of the v0.17.0 / v0.18.0 era the
+    two hand fixes ran against: PROSE_INDEX_STATIC 11, a PROSE_REGISTER total
+    of 12, an 11-file census.
+
+    The historical arms claim the mechanism reproduces numbers a hand fix
+    wrote at those tags. That claim is meaningful only against that era's
+    constants — today's register is not that era's, and a legitimate prose
+    addition to it moves the derivation. The keys are synthetic:
+    `move_gate_anchors` reads the register SUM and the census COUNT, never a
+    key."""
+    from types import SimpleNamespace
+
+    # the row pattern is a shape, not a historical number — the same anchored
+    # regex `_mini_counter` writes into the synthetic trees
+    row_pattern = re.compile(r"^\s*- tag: v\d+\.\d+\.\d+\s*$")
+    return SimpleNamespace(
+        VERSIONS_MAP_ROW=row_pattern,
+        PROSE_INDEX_STATIC=11,
+        PROSE_REGISTER={"historical-register": ("synthetic", 12)},
+        PROSE_FILE_CENSUS=frozenset(
+            f"historical-census-{index}.qmd" for index in range(11)
+        ),
+    )
 
 
 MINI_TREE: dict[str, str] = {
@@ -597,13 +625,17 @@ def test_move_gate_anchors_reproduces_the_v0_17_0_hand_fix() -> None:
     """Issue #524's first historical shape: the tree the v0.17.0 cut ran
     over (a 22-row map, v0.16.0 latest) and the battery as it stood (57 /
     67) rewrite to EXACTLY the values the v0.17.0-era hand fix wrote —
-    v0.17.0, 2 x 24 + 11 = 59, expects 59 sites, 69 sites — with the real
-    counter's constants, because those are the numbers the real anchors
-    moved by."""
+    v0.17.0, 2 x 24 + 11 = 59, expects 59 sites, 69 sites.
+
+    Uses `_historical_counter`, not the live counter: reproducing a hand fix
+    means deriving against the constants of ITS era (static 11, register 12,
+    an 11-file census). Reading today's counter would make this arm assert
+    that today's register reproduces yesterday's numbers — a legitimate
+    prose addition to the register falsifies that silently."""
     drift = _load()
     battery = _gate_battery("v0.16.0", 22, registered=12, files=11)
     moved = drift.move_gate_anchors(
-        battery, _versions_map(22, "v0.16.0"), "0.17.0", _real_counter()
+        battery, _versions_map(22, "v0.16.0"), "0.17.0", _historical_counter()
     )
     assert (
         "option_anchor = '<option value=\"docs/\">v0.17.0 (latest)</option>\\n'"
@@ -622,11 +654,14 @@ def test_move_gate_anchors_reproduces_the_v0_17_0_hand_fix() -> None:
 def test_move_gate_anchors_reproduces_the_v0_18_0_hand_fix() -> None:
     """The second historical shape — the 2cca23f bytes: a 23-row map,
     v0.17.0 latest, battery at 59 / 69 rewrites to v0.18.0,
-    2 x 25 + 11 = 61, expects 61 sites, 71 sites."""
+    2 x 25 + 11 = 61, expects 61 sites, 71 sites.
+
+    Uses `_historical_counter` for the same reason as the v0.17.0 arm: the
+    claim is about that era's constants, not the live register's."""
     drift = _load()
     battery = _gate_battery("v0.17.0", 23, registered=12, files=11)
     moved = drift.move_gate_anchors(
-        battery, _versions_map(23, "v0.17.0"), "0.18.0", _real_counter()
+        battery, _versions_map(23, "v0.17.0"), "0.18.0", _historical_counter()
     )
     assert (
         "option_anchor = '<option value=\"docs/\">v0.18.0 (latest)</option>\\n'"
@@ -642,18 +677,32 @@ def test_move_gate_anchors_reproduces_the_v0_18_0_hand_fix() -> None:
 def test_move_gate_anchors_refuses_a_drifted_census_anchor() -> None:
     """The typed refusal: a census anchor that disagrees with the map (here
     off by one — the shape a hand edit leaves) refuses naming the file and
-    both numbers, never rewrites over drift."""
+    both numbers, never rewrites over drift.
+
+    Uses the LIVE counter: the refusal must name the numbers today's
+    constants imply, or it would be as stale as the drift it reports. The
+    arithmetic is pinned by the two historical arms above, which carry fixed
+    expected values against a stub counter — so this arm reads the live
+    constants into the synthetic battery instead of restating the formula's
+    output."""
     drift = _load()
-    drifted = _gate_battery("v0.16.0", 22, registered=12, files=11).replace(
-        '"67 sites', '"68 sites'
+    counter = _real_counter()
+    static = int(counter.PROSE_INDEX_STATIC)
+    registered = sum(int(entry[1]) for entry in counter.PROSE_REGISTER.values())
+    files = len(counter.PROSE_FILE_CENSUS)
+    battery = _gate_battery(
+        "v0.16.0", 22, static=static, registered=registered, files=files
     )
+    # the census the live constants derive — then a one-off hand drift
+    census = 2 * 22 + static + registered
+    drifted = battery.replace(f'"{census} sites', f'"{census + 1} sites')
     with pytest.raises(drift.ReleaseCutError, match="gate_anchor_mismatch") as excinfo:
         drift.move_gate_anchors(
-            drifted, _versions_map(22, "v0.16.0"), "0.17.0", _real_counter()
+            drifted, _versions_map(22, "v0.16.0"), "0.17.0", counter
         )
     message = str(excinfo.value)
     assert "tests/test_zero_literal_gate.py" in message
-    assert "67" in message and "69" in message
+    assert str(census) in message and str(census + 2) in message
 
 
 def test_move_gate_anchors_refuses_a_counter_without_the_constants() -> None:

@@ -924,6 +924,9 @@ class TestProseFoldHardening:
         (scratch / "user_guide/Thumbs.db").touch()
         code, out = _prose_run(scratch, capsys)
         assert code == 0, out
-        # the census pin is the third bump-driven anchor: moved by the staged
-        # phase-2 patch (issue #524), never by hand
-        assert "73 sites, 11 files scanned" in out
+        # the census pin moves by two mechanisms and both must be stated:
+        # the release-cut phase-2 patch (issue #524) restamps it at a bump,
+        # and an in-arc content change that adds registered prose literals
+        # moves it too — gateway #541 slice 4 added seven (the composed
+        # action class example in user_guide/plugin-sdk.qmd), 73 -> 80.
+        assert "80 sites, 11 files scanned" in out
