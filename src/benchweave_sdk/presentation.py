@@ -11,8 +11,10 @@ validation ``check-ui`` runs; nothing is written). The class-reference ledger's
 motion (#541 slice 2) adds ``migrate_ui_composed_unresolved:`` (a ledger-named
 composed class whose pin cannot re-resolve or no longer validates under the
 target family) and ``migrate_ui_ledger_drift:`` (the ledger's custom/composed
-inventories disagree with set arithmetic over the current descriptor and pins —
-a derive-ui motion, never a version write).
+inventories disagree with arithmetic over the current descriptor and pins —
+keyed to the classes and members the derivation APPLIES, so a pin-declared
+class whose claims name no declared action is disclosed, never drift
+[R1, 2026-10-23 fold wave 3]; a derive-ui motion, never a version write).
 """
 
 from __future__ import annotations
@@ -761,7 +763,7 @@ def _migrate_classref_ledger(
                 f"{stamp} — migrate-ui never writes versions down"
             )
         _resolve_ledger_class(descriptor, descriptor_path, row["class"])
-    custom_set, composed_set, derived_classes = composed_ledger_inventory(
+    custom_set, composed_of, applied_classes = composed_ledger_inventory(
         descriptor, descriptor_path
     )
     drift: list[str] = []
@@ -783,7 +785,7 @@ def _migrate_classref_ledger(
             collected.add(row["action"])
     for label, ledger_set, derived_set in (
         ("custom", ledger_custom, custom_set),
-        ("composed", ledger_composed, composed_set),
+        ("composed", ledger_composed, set(composed_of)),
     ):
         for urn in sorted(ledger_set - derived_set):
             drift.append(
@@ -794,27 +796,53 @@ def _migrate_classref_ledger(
             drift.append(
                 f"{urn} derives {label} but the ledger omits it"
             )
-    # B6 (2026-10-23 fold, lane B F2): the CLASS set joins the drift
-    # arithmetic — the ledger's composed_classes must name exactly the
-    # class URNs the descriptor's pins declare (the design record §8's
-    # refute correction; the pre-fold walk discarded the derived class
-    # set, so deleting the rows left migrate-ui green and the next family
-    # bump re-stamped the family stamps without re-resolving the
-    # now-unnamed classes). The extra-class direction is normally refused
-    # earlier — a class no pin declares fails re-resolution as
-    # ``migrate_ui_composed_unresolved`` — so deletion and malformed rows
-    # are where this arithmetic bites; both directions run regardless.
+    # R6 (2026-10-23 fold, wave 3): the arithmetic carries the action ->
+    # class MAPPING, not just the two sets — a ledger whose
+    # ``composed_actions`` row named the WRONG class for a member
+    # (inconsistent with its own ``composed_classes``) re-stamped green
+    # with "nothing to do".
+    ledger_composed_of: dict[str, str] = {}
+    for row in ledger.get("composed_actions") or []:
+        if (
+            isinstance(row, dict)
+            and isinstance(row.get("action"), str)
+            and isinstance(row.get("class"), str)
+        ):
+            ledger_composed_of[row["action"]] = row["class"]
+    for action, wrong in sorted(ledger_composed_of.items()):
+        derives = composed_of.get(action)
+        if derives is not None and wrong != derives:
+            drift.append(
+                f"the ledger's composed_actions names class {wrong} for "
+                f"{action}, which derives composed of class {derives}"
+            )
+    # B6/R1 (2026-10-23 folds): the CLASS set joins the drift arithmetic,
+    # keyed to the APPLIED classes — the pin-declared classes at least
+    # one of whose claims the descriptor declares, exactly the set
+    # derive-ui writes (B6, lane B F2: the pre-fold walk discarded the
+    # derived class set entirely, so deleting the rows left migrate-ui
+    # green and the next family bump re-stamped the family stamps
+    # without re-resolving the now-unnamed classes; R1, fold wave 3:
+    # keying to the PIN-DECLARED set instead refused drift against a
+    # ledger derive-ui had just written for the sanctioned claims-
+    # nowhere shape, and the author's re-derive looped on byte-identical
+    # output — an unapplied class is the gate's disclosure, never
+    # drift). The extra-class direction is normally refused earlier — a
+    # class no pin declares fails re-resolution as
+    # ``migrate_ui_composed_unresolved`` — so deletion, unapplied
+    # hand-adds and malformed rows are where this arithmetic bites; both
+    # directions run regardless.
     ledger_class_urns = {str(row["class"]) for row in class_rows}
-    derived_class_urns = set(derived_classes)
+    derived_class_urns = set(applied_classes)
     for class_urn in sorted(ledger_class_urns - derived_class_urns):
         drift.append(
-            f"the ledger's composed_classes names {class_urn}, which the "
-            "descriptor's pins do not declare"
+            f"the ledger's composed_classes names {class_urn}, which "
+            "composes no action this descriptor declares"
         )
     for class_urn in sorted(derived_class_urns - ledger_class_urns):
         drift.append(
-            f"the pins declare composed class {class_urn} but the ledger's "
-            "composed_classes omits it"
+            f"the descriptor applies composed class {class_urn} but the "
+            "ledger's composed_classes omits it"
         )
     if drift:
         raise ValueError(

@@ -252,7 +252,7 @@ def test_m3_reference_less_plan_matches_derive_ui() -> None:
     disagree with derive_ui — the residual member derives, resolution
     "custom", where the old path refused."""
     descriptor = _acceptance_descriptor()
-    plan, _actions, _ignored = coverage_plan_without_reference(
+    plan, _actions, _ignored, _unapplied, _empty = coverage_plan_without_reference(
         descriptor, FIXTURES / "descriptor-f1.json"
     )
     assert set(plan) == set(descriptor["actions"])
@@ -1477,4 +1477,89 @@ def test_g5_reference_less_without_declaration_reports_inventory_unavailable(
     ), report.reported_deviations
     assert (
         f"custom, renders nothing: {GHOST_URN}" in report.reported_deviations
+    ), report.reported_deviations
+
+
+def test_r3_reference_less_composed_member_reports_inventory_unavailable(
+    tmp_path: Path,
+) -> None:
+    """R3 (2026-10-23 fold, wave 3, MEDIUM-LOW): the reference-less arm
+    reported the CUSTOM half's unavailable inventory and NOTHING for the
+    composed half — a composed member was invisible in the REPORTED
+    channel on the natural reference-less state (D2: no tool writes the
+    declaration there). The composed half gains the same explicit
+    unavailable disclosure.
+
+    The composed member also reds the always-on coverage arm here (it
+    derives a control the legacy manifest does not render, and no
+    declaration exists to declare the deviation) — that is D14's
+    by-design behavior, not this row's concern; this arm asserts the
+    REPORTED channel only."""
+    import hashlib
+
+    from benchweave_sdk.classref_gate import verify_ui
+    from benchweave_sdk.presentation import create_ui_resources
+    from benchweave_sdk.scaffold import create_project
+
+    document = {
+        "contract_version": "0.1.0",
+        "urn": "otdp.action.veridian_refless/1.0.0",
+        "title": "Refless composed staging",
+        "claims": [GHOST_URN],
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "holdoff_ms": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 5000,
+                }
+            },
+            "required": ["holdoff_ms"],
+        },
+        "side_effect": "state_change",
+    }
+    raw = (json.dumps(document, indent=2) + "\n").encode()
+    project = tmp_path / "refless-composed"
+    create_project(project, "veridian_refless_plugin", with_ui=False)
+    package = project / "src" / "veridian_refless_plugin"
+    descriptor = json.loads((package / "descriptor.json").read_bytes())
+    descriptor["actions"] = {
+        GHOST_URN: _ghost_action(
+            {
+                "properties": {
+                    "holdoff_ms": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 5000,
+                    }
+                },
+                "required": ["holdoff_ms"],
+            }
+        )
+    }
+    descriptor.setdefault("contracts", []).append(
+        {
+            "id": "urn:veridian:refless-composed:1.0.0",
+            "path": "refless-composed.json",
+            "sha256": hashlib.sha256(raw).hexdigest(),
+        }
+    )
+    (package / "refless-composed.json").write_bytes(raw)
+    (package / "descriptor.json").write_bytes(
+        (json.dumps(descriptor, indent=2) + "\n").encode()
+    )
+    create_ui_resources(project, "veridian_refless_plugin")
+    # D2, pinned: no tool writes the declaration on the reference-less path.
+    assert not (package / "ui" / "class-reference.json").exists()
+    report = verify_ui(project, reference=None)
+    assert any(
+        row.startswith("composed inventory unavailable")
+        for row in report.reported_deviations
+    ), report.reported_deviations
+    # The honest state is UNAVAILABLE, never a mismatch blaming a ledger
+    # that does not exist.
+    assert not any(
+        row.startswith("composed mismatch: ")
+        for row in report.reported_deviations
     ), report.reported_deviations

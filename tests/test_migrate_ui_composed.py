@@ -544,3 +544,138 @@ def test_n5_forged_custom_row_refuses_drift(
     assert "migrate_ui_ledger_drift:" in rendered
     assert "nope" in rendered
     assert _tree(package) == before
+
+
+# ---------------------------------------------------------------------------
+# The 2026-10-23 fold wave 3 (review rows R1/R6). Each arm names its row;
+# the RED evidence for every arm is quoted in the fold commit's message.
+# ---------------------------------------------------------------------------
+
+
+#: A claim naming an URN this descriptor does not declare (R1's fixture
+#: shape — the standards record §3 sanctions it).
+UNDECLARED_CLAIM = "otdp.veridian_staging.unrelated/1.0.0"
+
+
+def _unapplied_class_project(destination: Path) -> Path:
+    """A real scaffolded plugin whose pinned class claims only URNs the
+    descriptor does not declare — the class applies nowhere, so the birth
+    ledger carries empty composed inventories BY DESIGN (R1: the ledger
+    records what the derivation applied)."""
+    document = _composed_document()
+    document["claims"] = [UNDECLARED_CLAIM]
+    descriptor = json.loads((FIXTURES / "descriptor-f1.json").read_bytes())
+    descriptor["contracts"].append(
+        {
+            "id": "urn:veridian:composed-staging:1.0.0",
+            "path": "composed-staging.json",
+            "sha256": hashlib.sha256(_raw(document)).hexdigest(),
+        }
+    )
+    create_project(destination, PACKAGE, with_ui=False)
+    package = destination / "src" / PACKAGE
+    (package / "composed-staging.json").write_bytes(_raw(document))
+    for pinned in ("vendor-catalog.json", "vectors-f1.json"):
+        (package / pinned).write_bytes((FIXTURES / pinned).read_bytes())
+    descriptor_path = package / "descriptor.json"
+    descriptor_path.write_bytes(_raw(descriptor))
+    derived = derive_ui(
+        _raw(descriptor), REFERENCE, descriptor_path=descriptor_path
+    )
+    ui = package / "ui"
+    ui.mkdir(exist_ok=True)
+    (ui / "manifest.json").write_bytes(_raw(derived.manifest))
+    (package / "presentation.json").write_bytes(_raw(derived.envelope))
+    (package / "binding-catalogue.json").write_bytes(_raw(derived.catalogue))
+    settings = ui / "settings"
+    settings.mkdir(exist_ok=True)
+    (settings / "configure.schema.json").write_bytes(_raw(derived.settings_schema))
+    presets = ui / "presets"
+    presets.mkdir(exist_ok=True)
+    for slug, row in derived.preset_scaffolds.items():
+        (presets / f"{slug}.json").write_bytes(_raw(row))
+    (ui / "class-reference.json").write_bytes(_raw(declaration_scaffold(derived)))
+    return package
+
+
+def test_r1_unapplied_class_ledger_terminates_the_remediation_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """R1 (HIGH), the loop reproduction: for a pin whose claims name only
+    URNs the descriptor does not declare, derive-ui writes
+    ``composed_classes: []`` — and migrate-ui's drift arithmetic demanded
+    every PIN-DECLARED class, so it refused ``migrate_ui_ledger_drift``,
+    told the author to re-derive, and re-deriving wrote the byte-identical
+    ledger: the remediation looped, and hand-adding the row made
+    verify-ui report a false mismatch. The rule: both tools key to the
+    APPLIED classes — a pin-declared class that applies nowhere is
+    disclosed, never drift — so the sequence terminates consistent."""
+    package = _unapplied_class_project(tmp_path / "loop")
+    ledger_path = package / "ui" / "class-reference.json"
+    first = json.loads(ledger_path.read_bytes())
+    assert first["composed_classes"] == []  # the sanctioned shape, by design
+    before = _tree(package)
+    capsys.readouterr()
+    assert _migrate(monkeypatch, package) == 0  # NOT drift: nothing written
+    assert "migrate_ui_ledger_drift" not in capsys.readouterr().err
+    assert _tree(package) == before
+    # The author's re-derivation is identical on the composed rows — the
+    # instruction the pre-fold refusal gave could not converge.
+    descriptor_path = package / "descriptor.json"
+    rederived = derive_ui(
+        descriptor_path.read_bytes(), REFERENCE, descriptor_path=descriptor_path
+    )
+    assert (
+        declaration_scaffold(rederived)["composed_classes"]
+        == first["composed_classes"]
+    )
+    # And migrate still exits 0 after the re-derive: the loop terminated.
+    assert _migrate(monkeypatch, package) == 0
+
+
+def test_r1_ledger_naming_an_unapplied_class_stays_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """R1's opposite direction: a hand-added ``composed_classes`` row
+    naming the UNAPPLIED class is drift — the ledger records what the
+    derivation applied, and this class applied nothing here."""
+    package = _unapplied_class_project(tmp_path / "hand-added")
+    _downstamp_ledger(package)
+    ledger_path = package / "ui" / "class-reference.json"
+    ledger = json.loads(ledger_path.read_bytes())
+    ledger["composed_classes"] = [
+        {"class": CLASS_URN, "validated_against": OLD_FAMILY}
+    ]
+    ledger_path.write_bytes(_raw(ledger))
+    before = _tree(package)
+    capsys.readouterr()
+    assert _migrate(monkeypatch, package) == 1
+    rendered = capsys.readouterr().err
+    assert "migrate_ui_ledger_drift:" in rendered
+    assert CLASS_URN in rendered
+    assert _tree(package) == before
+
+
+def test_r6_wrong_class_in_composed_actions_refuses_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """R6's migrate side: the drift arithmetic carried two SETS — a
+    ledger whose ``composed_actions`` row names the wrong class for the
+    composed member (inconsistent with its own ``composed_classes``)
+    re-stamped green with "nothing to do". The arithmetic carries the
+    action -> class mapping."""
+    package = _composed_project(tmp_path / "wrong-class")
+    _downstamp_ledger(package)
+    ledger_path = package / "ui" / "class-reference.json"
+    ledger = json.loads(ledger_path.read_bytes())
+    ledger["composed_actions"][0]["class"] = (
+        "otdp.action.veridian_staging_alt/1.0.0"
+    )
+    ledger_path.write_bytes(_raw(ledger))
+    before = _tree(package)
+    capsys.readouterr()
+    assert _migrate(monkeypatch, package) == 1
+    rendered = capsys.readouterr().err
+    assert "migrate_ui_ledger_drift:" in rendered
+    assert "otdp.action.veridian_staging_alt/1.0.0" in rendered
+    assert _tree(package) == before

@@ -613,7 +613,7 @@ def test_f8b_reference_less_unknown_action_derives_residual(tmp_path: Path) -> N
         "cancellable": True,
         "retry": "never",
     }
-    plan, _actions, _ignored = coverage_plan_without_reference(
+    plan, _actions, _ignored, _unapplied, _empty = coverage_plan_without_reference(
         descriptor, FIXTURES / "descriptor-f1.json"
     )
     ghost = plan["com.veridian-labs.ghost/1.0.0"]
