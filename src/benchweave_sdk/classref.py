@@ -1609,12 +1609,20 @@ def deferred_members(
 
     Layer 3's promise is two-sided — never refuses AND never silent. A
     computed measurement (``derived_variables``, the measurement vocabulary
-    measurement-model.md §8 owns) and a decoder pin that produced no lane
+    measurement-model.md §8 owns) and a decoder no derived plot renders
     both declare cleanly and derive nothing; silence there is
     indistinguishable from "we rendered it and it looked fine". Each row
     names the member and the vocabulary whose derivation is deferred (D1),
     so the gate can disclose it on the same REPORTED channel that carries
     custom members.
+
+    The decoder condition is "declared and nothing rendered it" — never
+    "the decoder member exists". ``derived_decoder_ids`` is the set whose
+    lanes a derived PLOT carries, so a decoder that renders is never
+    reported as missing: the lane machinery can build lanes that no plot
+    hosts (a waveform or time-series plot has no ``decoder_lanes`` key —
+    they land in a digital-lanes plot alone), and building is not
+    rendering.
     """
     rows: list[tuple[str, str, str]] = []
     for row in descriptor.get("derived_variables") or []:
@@ -2203,7 +2211,13 @@ def _finish(
         empty_action_pins=empty_action_pins,
         deferred_members=deferred_members(
             descriptor,
-            {str(row.get("decoder", "")) for row in decoder_lanes},
+            # The rendered set, not the built set (R10's condition): lanes a
+            # derived PLOT carries. Building a lane is not rendering it.
+            {
+                str(lane.get("decoder", ""))
+                for plot in plots
+                for lane in (plot.get("decoder_lanes") or [])
+            },
         ),
     )
     return result

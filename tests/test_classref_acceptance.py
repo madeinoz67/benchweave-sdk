@@ -578,20 +578,12 @@ def test_scope_computed_measurement_declares_without_refusal_but_no_surface() ->
     assert "rms_v" not in catalogue_blob
 
 
-def test_scope_custom_decoder_declares_without_refusal_but_no_lane(
-    tmp_path: Path,
-) -> None:
-    """A custom decoder (a pinned decoder document plus its annotation
-    action) on a DAQ-class device derives with no refusal, and renders no
-    decoder lane: the DAQ reference has no decode slot, and the decoder-lane
-    derivation lands only in a digital-lanes plot.
-
-    The plan row no longer claims ``rendered_by: "decoder annotation lanes"``
-    (R9): the row stops advertising a rendering that does not occur, and the
-    gate stays green — the capture page renders a plot, which covers the L4
-    dataset surface the row points at. Named here and in the report (deferral
-    D1, "channels and decoders"): NOT proved.
-    """
+def _decoded_daq(tmp_path: Path) -> tuple[Path, Any, Any]:
+    """The Meridian project plus a pinned decoder and its annotation action —
+    the shape where decoder lanes are BUILT (the decode_annotated overlay
+    fires) but no derived plot carries them (the DAQ plot is a waveform, and
+    lanes land only in a digital-lanes plot). Returns (project, package,
+    derived)."""
     project = _m400_project(tmp_path / "m400", with_ui=False)
     package = project / "src" / PACKAGE
     decoder_raw = (FIXTURES / "decoder-uart.json").read_bytes()
@@ -617,6 +609,24 @@ def test_scope_custom_decoder_declares_without_refusal_but_no_lane(
     reference = find_reference(PROFILE)
     assert reference is not None
     derived = derive_ui(_raw(descriptor), reference, descriptor_path=descriptor_path)
+    return project, package, derived
+
+
+def test_scope_custom_decoder_declares_without_refusal_but_no_lane(
+    tmp_path: Path,
+) -> None:
+    """A custom decoder (a pinned decoder document plus its annotation
+    action) on a DAQ-class device derives with no refusal, and renders no
+    decoder lane: the DAQ reference has no decode slot, and the decoder-lane
+    derivation lands only in a digital-lanes plot.
+
+    The plan row no longer claims ``rendered_by: "decoder annotation lanes"``
+    (R9): the row stops advertising a rendering that does not occur, and the
+    gate stays green — the capture page renders a plot, which covers the L4
+    dataset surface the row points at. Named here and in the report (deferral
+    D1, "channels and decoders"): NOT proved.
+    """
+    project, package, derived = _decoded_daq(tmp_path)
     row = derived.control_plan["com.meridian.m400.decode_annotated/1.0.0"]
     assert row["resolution"] == "custom"
     # R9: no advertisement of a rendering that does not occur.
@@ -747,3 +757,45 @@ def test_scope_r10_the_reference_less_arm_reports_them_too(tmp_path: Path) -> No
     joined = " | ".join(report.reported_deviations)
     assert "custom measurement rms_v" in joined, report.reported_deviations
     assert "derivation deferred" in joined, report.reported_deviations
+
+
+def test_scope_r10_a_decoder_whose_lanes_never_land_is_still_disclosed(
+    tmp_path: Path,
+) -> None:
+    """R10's decoder condition, exactly: a member is disclosed when nothing
+    DERIVED renders it — not merely when no lane was built. The decode-
+    annotated overlay on a DAQ-class device BUILDS decoder lanes (the
+    overlay fires, so a "was it built?" test would wrongly call it served)
+    but no derived plot carries them: the plot is a waveform, and lanes land
+    only in a digital-lanes plot. Nothing rendered the decoder, so it is
+    disclosed."""
+    project, package, derived = _decoded_daq(tmp_path)
+    assert derived.deferred_members == (
+        ("custom decoder", "channels and decoders", "uart"),
+    ), derived.deferred_members
+    _write_derived(package, derived)
+    report = verify_ui(project)
+    assert "custom decoder uart" in " | ".join(report.reported_deviations), (
+        report.reported_deviations
+    )
+
+
+def test_scope_r10_a_decoder_that_renders_is_not_disclosed() -> None:
+    """The other direction: the logic-analyser fixture's pinned decoder DOES
+    render — its lanes land in the digital-lanes plot — so it must not be
+    reported as missing. A decoder that renders is not a deferred member."""
+    reference = find_reference("otdp.logic_analyser/1.0.0")
+    assert reference is not None
+    derived = derive_ui(
+        (FIXTURES / "descriptor-f1-da.json").read_bytes(),
+        reference,
+        descriptor_path=FIXTURES / "descriptor-f1-da.json",
+    )
+    assert derived.deferred_members == (), derived.deferred_members
+    landed = [
+        lane["decoder"]
+        for page in derived.manifest["pages"]
+        for plot in (page.get("plots") or [])
+        for lane in (plot.get("decoder_lanes") or [])
+    ]
+    assert "uart" in landed, "the decoder this arm says renders actually renders"
