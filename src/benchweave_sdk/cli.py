@@ -504,10 +504,12 @@ def derive_ui_command(project: Path, force: bool) -> None:
     Expands the project's descriptor through the vendored class reference
     for its profile and writes ui/manifest.json, presentation.json,
     binding-catalogue.json, the effective settings schema, the preset
-    scaffolds and the birth conformance declaration. A manifest that
-    differs from the expander's own last output refuses without --force
-    (the upgrade_dirty_tree posture); author edits belong in
-    ui/manifest.overrides.json."""
+    scaffolds and the birth conformance declaration. A ui/manifest.json
+    recorded for a DIFFERENT descriptor is stale and is overwritten; one
+    recorded for this descriptor that differs from the derivation is author
+    drift and refuses without --force (author edits belong in
+    ui/manifest.overrides.json), as does a file that records no descriptor
+    digest — there a descriptor change cannot be told from author edits."""
     import hashlib
     import json
 
@@ -538,14 +540,40 @@ def derive_ui_command(project: Path, force: bool) -> None:
     ui.mkdir(exist_ok=True)
     manifest_path = ui / "manifest.json"
     if manifest_path.exists() and not force:
-        current = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
-        last = derived.envelope["manifest"]["sha256"]
-        if current != last:
+        # #541 slice 3 fold (c): the discriminator is the descriptor digest
+        # the manifest RECORDS, not a byte comparison against the derivation.
+        # A manifest generated for a different descriptor is stale — its
+        # derivation cannot be this descriptor's output, and author edits
+        # belong in ui/manifest.overrides.json — so it is overwritten. A
+        # manifest recorded for THIS descriptor that still differs is author
+        # drift, and refuses. One that records no digest at all is not
+        # expander output, so a descriptor change cannot be told from author
+        # edits: it refuses rather than guess. The pre-fold guard compared
+        # bytes alone, so the starter's own output for the template
+        # descriptor read as author edits and refused the acceptance
+        # workflow's very first re-derivation.
+        raw_manifest = manifest_path.read_bytes()
+        try:
+            recorded = json.loads(raw_manifest).get("descriptor_sha256")
+        except (AttributeError, json.JSONDecodeError):
+            recorded = None
+        current_digest = derived.manifest["descriptor_sha256"]
+        if recorded is None:
             raise ValueError(
-                "derive_ui_dirty_tree: ui/manifest.json differs from the "
-                "expander's own output; pass --force or move author edits "
-                "into ui/manifest.overrides.json"
+                "derive_ui_dirty_tree: ui/manifest.json records no descriptor "
+                "digest, so a descriptor change cannot be told from author "
+                "edits; author edits belong in ui/manifest.overrides.json, "
+                "or pass --force to replace the file"
             )
+        if recorded == current_digest:
+            last = derived.envelope["manifest"]["sha256"]
+            if hashlib.sha256(raw_manifest).hexdigest() != last:
+                raise ValueError(
+                    "derive_ui_dirty_tree: ui/manifest.json was derived from "
+                    "this descriptor and has since been edited (author "
+                    "drift); author edits belong in ui/manifest.overrides."
+                    "json, or pass --force to discard them and re-derive"
+                )
     manifest_path.write_bytes(raw(derived.manifest))
     (package_dir / "presentation.json").write_bytes(raw(derived.envelope))
     (package_dir / "binding-catalogue.json").write_bytes(raw(derived.catalogue))

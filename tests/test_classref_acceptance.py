@@ -586,10 +586,11 @@ def test_scope_custom_decoder_declares_without_refusal_but_no_lane(
     decoder lane: the DAQ reference has no decode slot, and the decoder-lane
     derivation lands only in a digital-lanes plot.
 
-    The plan row nevertheless claims ``rendered_by: "decoder annotation
-    lanes"`` while the gate stays clean — a claim its mechanism does not
-    deliver on this class. Named here and in the report (deferral D1,
-    "channels and decoders"): NOT proved.
+    The plan row no longer claims ``rendered_by: "decoder annotation lanes"``
+    (R9): the row stops advertising a rendering that does not occur, and the
+    gate stays green — the capture page renders a plot, which covers the L4
+    dataset surface the row points at. Named here and in the report (deferral
+    D1, "channels and decoders"): NOT proved.
     """
     project = _m400_project(tmp_path / "m400", with_ui=False)
     package = project / "src" / PACKAGE
@@ -618,7 +619,8 @@ def test_scope_custom_decoder_declares_without_refusal_but_no_lane(
     derived = derive_ui(_raw(descriptor), reference, descriptor_path=descriptor_path)
     row = derived.control_plan["com.meridian.m400.decode_annotated/1.0.0"]
     assert row["resolution"] == "custom"
-    assert row.get("rendered_by") == "decoder annotation lanes"
+    # R9: no advertisement of a rendering that does not occur.
+    assert "rendered_by" not in row, row
 
     plot_lanes = [
         plot.get("decoder_lanes")
@@ -651,3 +653,97 @@ def test_scope_the_daq_class_covers_no_decoder_member() -> None:
     }
     assert set(dataset_slots) == {"capture"}
     assert "decode" not in reference["slots"]
+
+
+def test_scope_r9_the_claim_stands_when_the_lanes_land() -> None:
+    """R9's positive half: the row advertises a rendering exactly when that
+    rendering occurs. The logic-analyser fixture has a decode slot and a
+    digital-lanes plot, so its pinned decoder's lanes land — and there the
+    claim stands. Paired with the DAQ arm above (no advertisement when the
+    lanes do not land), this is the honesty rule in both directions.
+    """
+    reference = find_reference("otdp.logic_analyser/1.0.0")
+    assert reference is not None
+    derived = derive_ui(
+        (FIXTURES / "descriptor-f1-da.json").read_bytes(),
+        reference,
+        descriptor_path=FIXTURES / "descriptor-f1-da.json",
+    )
+    urn = "otdp.logic_analyser.decode_annotated/1.0.0"
+    row = derived.control_plan[urn]
+    assert row["rendered_by"] == "decoder annotation lanes", row
+    lanes = [
+        plot["decoder_lanes"]
+        for page in derived.manifest["pages"]
+        for plot in (page.get("plots") or [])
+        if plot.get("decoder_lanes")
+    ]
+    assert lanes, "the lanes the claim names actually derived"
+
+
+def test_scope_r10_declared_members_without_a_derivation_are_reported(
+    tmp_path: Path,
+) -> None:
+    """R10: layer 3's promise is two-sided — never refuses AND never silent.
+    A computed measurement and a custom decoder declare cleanly and derive no
+    surface, so they are disclosed on the gate's REPORTED channel every run,
+    naming the member and the vocabulary whose derivation is deferred (D1).
+    Silence here is indistinguishable from "we rendered it and it looked
+    fine"."""
+    project = _m400_project(tmp_path / "m400", with_ui=False)
+    package = project / "src" / PACKAGE
+    decoder_raw = (FIXTURES / "decoder-uart.json").read_bytes()
+    (package / "decoder-uart.json").write_bytes(decoder_raw)
+    descriptor = _fixture_descriptor()
+    descriptor["derived_variables"] = [
+        {
+            "id": "rms_v",
+            "quantity": "voltage",
+            "unit": "V",
+            "expression": "ch1_voltage * 0.707",
+        }
+    ]
+    descriptor["decoders"] = [
+        {
+            "id": "uart",
+            "path": "decoder-uart.json",
+            "sha256": hashlib.sha256(decoder_raw).hexdigest(),
+        }
+    ]
+    (package / "descriptor.json").write_bytes(_raw(descriptor))
+    runner = CliRunner()
+    derive = runner.invoke(cli, ["derive-ui", str(project)])
+    assert derive.exit_code == 0, derive.output
+    report = verify_ui(project)
+    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
+    joined = " | ".join(report.reported_deviations)
+    assert "custom measurement rms_v" in joined, report.reported_deviations
+    assert "custom decoder uart" in joined, report.reported_deviations
+    assert joined.count("derivation deferred") >= 2, report.reported_deviations
+
+
+def test_scope_r10_the_reference_less_arm_reports_them_too(tmp_path: Path) -> None:
+    """Both gate arms carry the disclosure (the B6/B7/R3 discipline): the
+    reference-less path derives no decoder lanes at all, so every declared
+    decoder and every computed measurement is deferred there too."""
+    from benchweave_sdk.presentation import create_ui_resources
+    from benchweave_sdk.scaffold import create_project
+
+    project = tmp_path / "refless"
+    create_project(project, "veridian_refless_plugin", with_ui=False)
+    package = project / "src" / "veridian_refless_plugin"
+    descriptor = json.loads((package / "descriptor.json").read_bytes())
+    descriptor["derived_variables"] = [
+        {
+            "id": "rms_v",
+            "quantity": "voltage",
+            "unit": "V",
+            "expression": "voltage * 0.707",
+        }
+    ]
+    (package / "descriptor.json").write_bytes(_raw(descriptor))
+    create_ui_resources(project, "veridian_refless_plugin")
+    report = verify_ui(project, reference=None)
+    joined = " | ".join(report.reported_deviations)
+    assert "custom measurement rms_v" in joined, report.reported_deviations
+    assert "derivation deferred" in joined, report.reported_deviations

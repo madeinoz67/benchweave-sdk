@@ -703,6 +703,7 @@ def verify_ui(
         from .classref import (
             coverage_plan_without_reference,
             declared_energy_removing,
+            deferred_members,
             validate_declaration_vocabulary,
         )
         from .classref_gate_render import render_pages
@@ -808,6 +809,16 @@ def verify_ui(
             f"pinned document {path} contributed nothing (its vendor-catalog "
             "actions map is empty)"
             for path in empty_pins
+        )
+        # R10 (2026-10-23 fold): declared members whose vocabulary has no
+        # derivation are disclosed on this arm too — the reference-less path
+        # derives no decoder lanes at all, so every declared decoder and
+        # every computed measurement is deferred here (the B6/B7/R3
+        # discipline: both arms carry every disclosure).
+        reported.extend(
+            f"{kind} {member}: derivation deferred (the {vocabulary} "
+            "vocabulary has no derivation in this increment; D1)"
+            for kind, vocabulary, member in deferred_members(descriptor, ())
         )
         return GateReport(findings=tuple(coverage), reported_deviations=tuple(reported))
     # The AUTHOR's ledger is the deviation record (A6's mechanism): when
@@ -963,6 +974,15 @@ def verify_ui(
         f"pinned document {path} contributed nothing (its vendor-catalog "
         "actions map is empty)"
         for path in derived.empty_action_pins
+    )
+    # R10 (2026-10-23 fold): a declared member whose vocabulary has no
+    # derivation is disclosed every run — never silent. Layer 3's promise is
+    # two-sided; silence here is indistinguishable from "we rendered it and
+    # it looked fine".
+    reported.extend(
+        f"{kind} {member}: derivation deferred (the {vocabulary} "
+        "vocabulary has no derivation in this increment; D1)"
+        for kind, vocabulary, member in derived.deferred_members
     )
     findings.extend(coverage)
     forbidden = [

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
@@ -113,6 +114,15 @@ class DerivedUI:
     #: (R5): shape-valid, contributed nothing — disclosed beside the
     #: unapplied classes, never silent.
     empty_action_pins: tuple[str, ...] = ()
+    #: Declared members whose vocabulary has no derivation in this run (R10,
+    #: 2026-10-23 fold), as ``(kind, vocabulary, member_id)`` rows: a
+    #: computed measurement (``derived_variables``) or a decoder pin that
+    #: produced no lane. Layer 3's promise is two-sided — never refuses AND
+    #: never silent — so these are disclosed through the gate's REPORTED
+    #: channel on every run, naming the member and the vocabulary whose
+    #: derivation is deferred (D1). Silence there is indistinguishable from
+    #: "we rendered it and it looked fine".
+    deferred_members: tuple[tuple[str, str, str], ...] = ()
 
 
 @cache
@@ -1578,7 +1588,9 @@ def _assemble(
                 "page": plot_page,
                 "fields": [],
                 "declared_deviation": False,
-                "rendered_by": "decoder annotation lanes",
+                # R9 (#541 slice 3 fold): the "rendered_by" advertisement is
+                # stamped in _finish, after the plots exist — a row claims a
+                # rendering only when that rendering occurs.
             }
     return _finish(
         descriptor, references, merged, lanes, actions, catalog_actions,
@@ -1587,6 +1599,36 @@ def _assemble(
         ignored_pins=ignored_pins, unapplied_classes=unapplied_classes,
         empty_action_pins=empty_action_pins,
     )
+
+
+def deferred_members(
+    descriptor: dict[str, Any], derived_decoder_ids: Iterable[str]
+) -> tuple[tuple[str, str, str], ...]:
+    """(#541 slice 3 fold R10) Declared members whose vocabulary has no
+    derivation in this run, as ``(kind, vocabulary, member_id)`` rows.
+
+    Layer 3's promise is two-sided — never refuses AND never silent. A
+    computed measurement (``derived_variables``, the measurement vocabulary
+    measurement-model.md §8 owns) and a decoder pin that produced no lane
+    both declare cleanly and derive nothing; silence there is
+    indistinguishable from "we rendered it and it looked fine". Each row
+    names the member and the vocabulary whose derivation is deferred (D1),
+    so the gate can disclose it on the same REPORTED channel that carries
+    custom members.
+    """
+    rows: list[tuple[str, str, str]] = []
+    for row in descriptor.get("derived_variables") or []:
+        member = str(row.get("id", "")) if isinstance(row, dict) else ""
+        if member:
+            rows.append(
+                ("custom measurement", "datasets and capture shapes", member)
+            )
+    derived_ids = {str(value) for value in derived_decoder_ids}
+    for pin in descriptor.get("decoders") or []:
+        member = str(pin.get("id", "")) if isinstance(pin, dict) else ""
+        if member and member not in derived_ids:
+            rows.append(("custom decoder", "channels and decoders", member))
+    return tuple(rows)
 
 
 def _finish(
@@ -2087,6 +2129,18 @@ def _finish(
             }
         )
         page["plots"] = [plots[-1]]
+    # R9 (#541 slice 3 fold): a plan row advertises a rendering only when that
+    # rendering occurs. The decode-annotated overlay points its row at the
+    # decoder annotation lanes; those lanes derive into a digital-lanes
+    # plot's ``decoder_lanes`` key alone, so a class whose plot is a waveform
+    # or time-series never renders them. Stamping the claim here — after the
+    # plots are built — is what keeps the advertisement true: when no plot
+    # carries the lanes, the row carries no claim, and the residual-member
+    # disclosure (and R10's deferred-decoder row) is what names the gap.
+    if any(plot.get("decoder_lanes") for plot in plots):
+        for urn, row in plan.items():
+            if urn.split("/")[0].rsplit(".", 1)[-1] == "decode_annotated":
+                row["rendered_by"] = "decoder annotation lanes"
     layout_block = _build_layout(
         pages_out, plots, merged["layouts"], plan, vendor_binding_ids,
         templates={str(row["id"]): row for row in merged["pages"]},
@@ -2147,6 +2201,10 @@ def _finish(
         ignored_pins=ignored_pins,
         unapplied_classes=unapplied_classes,
         empty_action_pins=empty_action_pins,
+        deferred_members=deferred_members(
+            descriptor,
+            {str(row.get("decoder", "")) for row in decoder_lanes},
+        ),
     )
     return result
 
