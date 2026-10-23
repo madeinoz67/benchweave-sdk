@@ -423,7 +423,11 @@ def test_a3_a_clean_environment_install_carries_the_declaration(
             "pip",
             "install",
             "--python",
-            str(venv / "bin" / "python"),
+            # `uv pip install --python` accepts a virtual-environment
+            # directory and resolves the interpreter itself, which keeps this
+            # arm portable: a POSIX venv puts the interpreter in bin/, a
+            # Windows venv in Scripts/.
+            str(venv),
             "--no-deps",
             str(wheel),
         ],
@@ -432,7 +436,12 @@ def test_a3_a_clean_environment_install_carries_the_declaration(
         check=False,
     )
     assert installed.returncode == 0, installed.stderr
-    site = next((venv / "lib").glob("python*/site-packages"))
+    # POSIX: lib/pythonX.Y/site-packages. Windows: Lib/site-packages.
+    site = next(
+        path
+        for pattern in ("lib/python*/site-packages", "Lib/site-packages")
+        for path in venv.glob(pattern)
+    )
     package = site / PACKAGE
     assert (package / "descriptor.json").is_file()
     assert (package / "composed-burst.json").is_file()
