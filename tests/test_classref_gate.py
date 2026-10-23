@@ -597,9 +597,11 @@ def test_f3b_gate_passes_end_to_end_a9(tmp_path: Path) -> None:
     assert seen["numerics"] >= 1
 
 
-def test_f8b_reference_less_unknown_action_is_typed(tmp_path: Path) -> None:
-    """F8b scalar arm: the coverage_plan_without_reference path refuses
-    classref_unknown_action for a catalog-absent URN — never KeyError."""
+def test_f8b_reference_less_unknown_action_derives_residual(tmp_path: Path) -> None:
+    """F8b scalar arm, superseded by #541 slice 1: the
+    coverage_plan_without_reference path derives a catalog-absent URN as a
+    residual member (resolution "custom") — never KeyError, and never in
+    disagreement with derive_ui."""
     from benchweave_sdk.classref import coverage_plan_without_reference
 
     descriptor = json.loads((FIXTURES / "descriptor-f1.json").read_bytes())
@@ -611,10 +613,11 @@ def test_f8b_reference_less_unknown_action_is_typed(tmp_path: Path) -> None:
         "cancellable": True,
         "retry": "never",
     }
-    with pytest.raises(ValueError, match="^classref_unknown_action:"):
-        coverage_plan_without_reference(
-            descriptor, FIXTURES / "descriptor-f1.json"
-        )
+    plan, _actions_map = coverage_plan_without_reference(
+        descriptor, FIXTURES / "descriptor-f1.json"
+    )
+    ghost = plan["com.veridian-labs.ghost/1.0.0"]
+    assert ghost["resolution"] == "custom"
 
 
 def test_l2_coverage_is_per_action_not_per_page(tmp_path: Path) -> None:

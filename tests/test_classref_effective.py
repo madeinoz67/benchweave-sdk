@@ -64,9 +64,17 @@ def test_f3b_bounds_equal_constraint_bytes_a9() -> None:
 
 
 def test_unsupported_constraint_keyword_refused() -> None:
+    """A constraint keyword outside the closed vocabulary refuses.
+
+    #541 W9 fold (2026-10-22 review): minLength/maxLength joined the
+    vocabulary, so this arm's example moves to `format` — minLength on
+    this integer field now refuses classref_effective_schema_conflict
+    (the length-bound-on-non-string-type conflict) instead, and derives
+    legally on string fields. The assertion is unchanged: a keyword
+    outside the closed set still refuses."""
     descriptor = json.loads((FIXTURES / "descriptor-f3b.json").read_bytes())
     descriptor["actions"]["otdp.logic_analyser.arm/1.0.0"]["input_constraints"] = {
-        "properties": {"max_duration_ms": {"minLength": 2}}
+        "properties": {"max_duration_ms": {"format": "uri"}}
     }
     with pytest.raises(ValueError, match="^classref_constraint_unsupported:"):
         derive_ui(
@@ -308,9 +316,12 @@ def test_m4_envelope_pin_uses_the_file_bytes(tmp_path: Path) -> None:
     ).hexdigest()
 
 
-def test_f8b_unknown_descriptor_action_is_typed() -> None:
-    """F8b: a descriptor-declared action absent from every served catalog
-    refuses classref_unknown_action — never a bare KeyError."""
+def test_f8b_unknown_descriptor_action_derives_residual() -> None:
+    """F8b, superseded by #541 slice 1: a descriptor-declared action absent
+    from every served catalog is a residual member — it derives, never a
+    bare KeyError and never a refusal, and its plan row carries resolution
+    "custom" (the former classref_unknown_action refusal on this site is
+    the recoverable knowledge gap; see tests/test_classref_residual.py)."""
     descriptor = json.loads((FIXTURES / "descriptor-f1.json").read_bytes())
     descriptor["actions"]["com.veridian-labs.ghost/1.0.0"] = {
         "binding": {"kind": "adapter", "key": "ghost"},
@@ -320,8 +331,10 @@ def test_f8b_unknown_descriptor_action_is_typed() -> None:
         "cancellable": True,
         "retry": "never",
     }
-    with pytest.raises(ValueError, match="^classref_unknown_action:"):
-        derive_ui(
-            json.dumps(descriptor).encode(), REFERENCE,
-            descriptor_path=FIXTURES / "descriptor-f1.json",
-        )
+    derived = derive_ui(
+        json.dumps(descriptor).encode(), REFERENCE,
+        descriptor_path=FIXTURES / "descriptor-f1.json",
+    )
+    ghost = derived.control_plan["com.veridian-labs.ghost/1.0.0"]
+    assert ghost["resolution"] == "custom"
+    assert ghost["page"] == "device-features"
