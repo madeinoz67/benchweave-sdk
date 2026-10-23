@@ -1,0 +1,23 @@
+{
+  "contract_version": "0.1.0",
+  "urn": "otdp.action.meridian_burst/1.0.0",
+  "title": "Meridian burst mode",
+  "claims": [
+    "com.meridian.m400.burst_mode/1.0.0"
+  ],
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "burst_count": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 1024
+      }
+    },
+    "required": [
+      "burst_count"
+    ],
+    "additionalProperties": false
+  },
+  "side_effect": "state_change"
+}

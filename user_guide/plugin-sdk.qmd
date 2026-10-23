@@ -162,6 +162,8 @@ Two surfaces point at the command. `check-ui` adds a remediation line when a fin
 
 Migration is not re-derivation. `migrate-ui` keeps your manifest content. It does not derive pages or plots from the descriptor. For that path, use `benchweave-sdk derive-ui`. A class-conformant project also carries `ui/class-reference.json`. The command re-stamps this file's `contract_version` and `reference_version` stamps to the active class-reference version. It also re-stamps each `composed_classes[].validated_against` record. It does this only after it resolves each named class from its pin and validates the document under the active version. The class urn keeps its own version. The command never writes content. Author overlays survive in `ui/manifest.overrides.json`.
 
+`derive-ui` writes `ui/manifest.json` from the descriptor. A `ui/manifest.json` that records another descriptor's digest is stale, and the command replaces it. It refuses without `--force` only when the file records this descriptor's digest and still differs (author drift), or when it records no digest at all — there a descriptor change cannot be told from author edits. Put author edits in `ui/manifest.overrides.json`.
+
 ### Refresh the example fixtures (`regen-fixtures`) {#regen-fixtures}
 
 The scaffold writes two example preview fixtures into `ui/fixtures/`. The files are `normal.json` and `warning.json`. The examples are generated synthetic content. They are a valid, copyable format model. They are also the input that makes the scaffolded project test exercise the fixture loader.
