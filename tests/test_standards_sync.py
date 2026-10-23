@@ -119,13 +119,12 @@ def test_versioned_change_reports_changed(tmp_path: Path) -> None:
     document = json.loads((bundle / "bundle-manifest.json").read_bytes())
     # Multi-version serving: the version-increment arm is the ACTIVE row's
     # succession (its prior row is consumed as the predecessor); mutating a
-    # non-active served version would be an add-plus-remove instead.
-    from benchweave_sdk.served import active_version
-
-    active = active_version("otdp")
-    target = next(
-        s for s in document["standards"] if s["id"] == "otdp" and s["version"] == active
-    )
+    # non-active served version would be an add-plus-remove instead. The
+    # active row comes from the bundle under test (#536) — a pin-derived
+    # pick would be window-fragile: during a corpus-first window the tree
+    # serves a version the pin does not carry yet, and the pin's pick is a
+    # non-active row of this bundle.
+    target = _active_row(document)
     asset = bundle / "files" / target["files"][0]["path"]
     asset.write_bytes(asset.read_bytes() + b"\n")
     target["files"][0]["sha256"] = hashlib.sha256(asset.read_bytes()).hexdigest()
@@ -135,6 +134,131 @@ def test_versioned_change_reports_changed(tmp_path: Path) -> None:
     )
     report = sync(bundle, sdk)
     assert report.changed == ("otdp@0.3.1",)
+
+
+# --- #536: the version-increment arm derives the active row from the bundle
+# under test, so a corpus-first window cannot redirect its mutation. ---
+
+
+def _active_row(document: dict[str, Any], standard: str = "otdp") -> dict[str, Any]:
+    """The bundle-under-test row the sync treats as ``standard``'s ACTIVE row.
+
+    Derived from the manifest being synced — never from the committed pin's
+    lock (``served.active_version``), which is window-fragile by
+    construction (#536): during a corpus-first window the tree serves a
+    version the pin does not carry yet, and a pin-derived pick lands the
+    arm's mutation on a non-active row, which classifies as an
+    add-plus-remove instead of a change. The rule mirrors the mechanism's
+    own (``standards_sync._prior_active_versions``): the newest of the
+    active-marked rows, else the newest same-id version — the synthetic
+    rebuild carries no markers. Does not catch: a manifest marking two
+    rows active — like the mechanism it mirrors, the newest marked row is
+    taken rather than refused; the served module owns that refusal
+    (``served.active_version``'s ``lock_invalid``).
+    """
+    rows = [s for s in document["standards"] if s["id"] == standard]
+    marked = [s for s in rows if s.get("active") is True]
+    pool = marked or rows
+    return max(pool, key=lambda row: tuple(int(p) for p in str(row["version"]).split(".")))
+
+
+def _corpus_first_window(bundle: Path) -> tuple[dict[str, Any], str, str]:
+    """Re-shape the bundle into a corpus-first window (#536).
+
+    The carried set keeps every row (a bump copies, never moves) while the
+    ACTIVE marker advances to a new successor version — the prior active
+    row's bytes, re-pathed — the shape of the gateway tree while a corpus
+    bump waits for its SDK pin: the tree serves a version the pin does not
+    carry yet. The successor carries the prior row's bytes where the real
+    corpus's successor has its own: this arm pins the window shape, not the
+    corpus motion. Returns the document plus the prior and successor active
+    versions the caller asserts on.
+    """
+    import shutil
+
+    document = _manifest(bundle)
+    prior = _active_row(document)
+    old = str(prior["version"])
+    parts = old.split(".")
+    successor = f"{parts[0]}.{parts[1]}.{int(parts[2]) + 1}"
+    prior["active"] = False
+    new_row = {**prior, "version": successor, "active": True}
+    new_row["files"] = [
+        {
+            "path": file["path"].replace(f"otdp/{old}/", f"otdp/{successor}/", 1),
+            "sha256": file["sha256"],
+        }
+        for file in prior["files"]
+    ]
+    for file in prior["files"]:
+        source = bundle / "files" / file["path"]
+        target = bundle / "files" / file["path"].replace(f"otdp/{old}/", f"otdp/{successor}/", 1)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+    document["standards"].append(new_row)
+    _rewrite_manifest(bundle, document)
+    return document, old, successor
+
+
+def test_corpus_first_window_is_a_typed_window_state(tmp_path: Path) -> None:
+    """A legitimate corpus-first window is a reported state, never a failure.
+
+    The tree serving a version the pin does not carry yet is a WINDOW
+    state, and the sync describes it precisely: the new active row under
+    ``added``, the marker move under ``active_changes``. Nothing refuses —
+    the window is a pin lag, not a sync defect."""
+    bundle = _export(tmp_path)
+    sdk = _synced_sdk(tmp_path, bundle)
+    document, old, successor = _corpus_first_window(bundle)
+    report = sync(bundle, sdk)
+    assert report == SyncReport(
+        (f"otdp@{successor}",), (), (), (), (f"otdp@{old}->{successor}",)
+    ), f"the window is a typed finding, not a generic failure: {report!r}"
+
+
+def test_versioned_change_reports_changed_under_a_corpus_first_window(
+    tmp_path: Path,
+) -> None:
+    """The version-increment arm must land its mutation on the BUNDLE's
+    active row, not the pin's (#536).
+
+    Under a corpus-first window (the bundle serves otdp@<successor> active
+    while the committed pin still marks the prior active row) a pin-derived
+    pick lands the mutation on a non-active row, and the sync classifies the
+    arm's own plant as an add-plus-remove instead of a change — a failure
+    that describes the test rather than the tree."""
+    bundle = _export(tmp_path)
+    document, _old, successor = _corpus_first_window(bundle)
+    sdk = _synced_sdk(tmp_path, bundle)
+    target = _active_row(document)
+    asset = bundle / "files" / target["files"][0]["path"]
+    asset.write_bytes(asset.read_bytes() + b"\n")
+    target["files"][0]["sha256"] = hashlib.sha256(asset.read_bytes()).hexdigest()
+    target["version"] = "0.3.1"
+    _rewrite_manifest(bundle, document)
+    report = sync(bundle, sdk)
+    assert report == SyncReport(
+        (), ("otdp@0.3.1",), (), (), (f"otdp@{successor}->0.3.1",)
+    ), f"the window must not turn the arm's own plant into an add-plus-remove: {report!r}"
+
+
+def test_a_genuine_sync_defect_in_a_window_still_refuses(tmp_path: Path) -> None:
+    """The window's typed reporting must not buy blindness (#536): a real
+    defect inside the window still refuses. The plant is the sync's own
+    oldest refusal — content changed without a standards version increment
+    — on the window's ACTIVE row."""
+    bundle = _export(tmp_path)
+    document, _old, _successor = _corpus_first_window(bundle)
+    sdk = _synced_sdk(tmp_path, bundle)
+    target = next(
+        s for s in document["standards"] if s["id"] == "otdp" and s.get("active") is True
+    )
+    asset = bundle / "files" / target["files"][0]["path"]
+    asset.write_bytes(asset.read_bytes() + b"\n")
+    target["files"][0]["sha256"] = hashlib.sha256(asset.read_bytes()).hexdigest()
+    _rewrite_manifest(bundle, document)
+    with pytest.raises(ValueError, match="standards_version_required"):
+        sync(bundle, sdk)
 
 
 def test_status_only_deprecation_is_reported(tmp_path: Path) -> None:
@@ -511,12 +635,9 @@ def test_resync_preserves_a_filled_compatibility_notes(tmp_path: Path, bump: boo
     _hand_edit_notes(sdk, PRESERVED_NOTE)
     if bump:
         document = _manifest(bundle)
-        from benchweave_sdk.served import active_version
-
-        active = active_version("otdp")
-        target = next(
-            s for s in document["standards"] if s["id"] == "otdp" and s["version"] == active
-        )
+        # Bundle-derived, not pin-derived (#536): the bumped row is the
+        # bundle's own active row, immune to a corpus-first window.
+        target = _active_row(document)
         target["version"] = "0.3.1"
         _rewrite_manifest(bundle, document)
     report = sync(bundle, sdk)
