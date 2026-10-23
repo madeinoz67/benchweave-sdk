@@ -102,19 +102,26 @@ class DerivedUI:
 
 @cache
 def _family_schemas() -> dict[str, Any]:
-    """The family's own machine schemas, from the vendored, lock-verified tree."""
+    """The family's own machine schemas, from the vendored, lock-verified tree.
+
+    #541 slice 2: the family triple — reference, layout, composed — loads
+    through one seam; the composed schema joined the family at 0.4.0 and
+    the lock moved in the same arc, so a tree that serves an older active
+    family refuses loudly here rather than resolving composed pins as
+    silently-empty vendor catalogs."""
     from .validation import contract_documents
 
     prefix = f"{_FAMILY}/{active_version(_FAMILY)}/"
     documents = contract_documents()
     reference = documents.get(f"{prefix}class-reference.schema.json")
     layout = documents.get(f"{prefix}layout.schema.json")
-    if reference is None or layout is None:
+    composed = documents.get(f"{prefix}composed-action-class.schema.json")
+    if reference is None or layout is None or composed is None:
         raise RuntimeError(
             "plugin-ui-class-reference schemas missing from the vendored tree; "
             "run sync-standards or reinstall the SDK"
         )
-    return {"reference": reference, "layout": layout}
+    return {"reference": reference, "layout": layout, "composed": composed}
 
 
 def layout_schema() -> dict[str, Any]:
@@ -211,13 +218,112 @@ def _catalog_documents(descriptor: dict[str, Any]) -> dict[str, Any]:
     return served
 
 
-def _vendor_catalogs(
-    descriptor: dict[str, Any], descriptor_path: Path | None
+@dataclass(frozen=True)
+class ComposedClass:
+    """One pinned, digest-verified composed action-class declaration
+    (#541 layer 2): the document that supplies the catalogue side of the
+    derivation for the URNs it claims."""
+
+    urn: str
+    side_effect: str
+    input_schema: dict[str, Any]
+    claims: tuple[str, ...]
+    pin_path: str
+
+
+def _validate_composed_class(
+    document: Any, pin_path: Any
 ) -> dict[str, Any]:
-    """Action schemas from the descriptor's pinned vendor catalogs."""
+    """One pinned document against the vendored composed-class schema.
+
+    The claims items $ref resolves through the family's reference schema,
+    so both documents ride one registry (the same cross-file $ref style
+    ``_validate_reference`` uses for the layout schema)."""
+    schemas = _family_schemas()
+    registry = Registry().with_resource(
+        str(schemas["reference"].get("$id")),
+        Resource.from_contents(schemas["reference"]),
+    )
+    findings = sorted(
+        Draft202012Validator(schemas["composed"], registry=registry).iter_errors(
+            document
+        ),
+        key=lambda error: list(error.path),
+    )
+    if findings:
+        first = findings[0]
+        where = "/".join(str(part) for part in first.path) or "(root)"
+        raise _refuse(
+            "classref_invalid_composed_class",
+            f"pinned document {pin_path}: {where}: {first.message}",
+        )
+    return document  # type: ignore[no-any-return]
+
+
+def validate_composed_class(document: Any, pin_path: Any) -> dict[str, Any]:
+    """The public name for ``_validate_composed_class`` (the presentation
+    layer's migrate-ui leg re-validates ledger-named classes against the
+    same vendored schema — #541 slice 2, standards record §8.3)."""
+    return _validate_composed_class(document, pin_path)
+
+
+def composed_ledger_inventory(
+    descriptor: dict[str, Any], descriptor_path: Path | None
+) -> tuple[set[str], set[str], dict[str, ComposedClass]]:
+    """The ledger's set arithmetic over the current descriptor and pins
+    (#541 slice 2, standards record §8.4): ``(custom, composed, classes)``
+    where custom = declared − (catalog ∪ composed-claimed) and composed =
+    composed-claimed ∩ declared. Raises the resolution's own refusals —
+    a project whose pins cannot resolve honestly cannot have its ledger
+    re-stamped; migrate-ui refuses, never silently upgrades."""
+    catalog = _catalog_documents(descriptor)
+    served = dict(catalog.get("actions", {}))
+    vendor_actions, classes = _vendor_documents(
+        descriptor, descriptor_path, served
+    )
+    covered = set(served) | set(vendor_actions)
+    declared = set(descriptor.get("actions") or {})
+    composed = {
+        urn
+        for urn in declared
+        if isinstance(vendor_actions.get(urn), dict)
+        and "composed_class" in vendor_actions[urn]
+    }
+    return declared - covered, composed, classes
+
+
+def _vendor_documents(
+    descriptor: dict[str, Any],
+    descriptor_path: Path | None,
+    served_actions: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, ComposedClass]]:
+    """Action rows and composed classes from the descriptor's pinned
+    documents (the proven vendor-catalog walk, #541 record §2).
+
+    #541 slice 2 (standards record §6): the same walk discriminates by
+    document shape — a document carrying ``urn`` plus ``claims`` is a
+    composed action class, validated against the vendored
+    ``composed-action-class.schema.json``; a document carrying BOTH
+    ``actions`` and the composed keys is an ambiguous pin and refuses the
+    same code; a document carrying neither keeps today's silently-empty
+    vendor-catalog behavior (tightening that is no slice's licence).
+    Integrity refusals (unreadable, digest mismatch) are unchanged and
+    fire before any discrimination — a pinned file's bytes are verified
+    whatever shape they turn out to carry.
+
+    Conflicts refuse, never merge (record §8): a claim against a served
+    or pinned catalogue row, a claim another class already holds, and a
+    second document carrying one class urn all refuse
+    ``classref_composed_claim_conflict``; a class ``side_effect`` of
+    ``none`` under a descriptor action declaring ``state_change``
+    under-classifies (the S20 direction at the class layer) and refuses
+    ``classref_composed_side_effect_under``. Survivors keep their codes:
+    the walk's own integrity refusals never change.
+    """
     import hashlib
 
     actions: dict[str, Any] = {}
+    classes: dict[str, ComposedClass] = {}
     for row in descriptor.get("contracts", []):
         identifier = str(row.get("id", ""))
         if identifier.startswith("urn:otdp:"):
@@ -242,8 +348,87 @@ def _vendor_catalogs(
                 f"pinned vendor catalog {row.get('path')} digest mismatch",
             )
         document = json.loads(raw)
-        actions.update(document.get("actions", {}))
-    return actions
+        # No isinstance guard here: a non-dict pin keeps today's crash
+        # (document.get on a list) rather than becoming a silently-empty
+        # catalog — tightening that to a typed refusal is no slice's
+        # licence and is named nowhere in the records.
+        composed_keys = "urn" in document or "claims" in document
+        if "actions" in document and composed_keys:
+            raise _refuse(
+                "classref_invalid_composed_class",
+                f"pinned document {row.get('path')} carries both 'actions' "
+                "and composed-class keys (urn/claims) — an ambiguous pin",
+            )
+        if composed_keys:
+            _validate_composed_class(document, row.get("path"))
+            cls = ComposedClass(
+                urn=str(document["urn"]),
+                side_effect=str(document["side_effect"]),
+                input_schema=document["input_schema"],
+                claims=tuple(str(claim) for claim in document["claims"]),
+                pin_path=str(row.get("path", "")),
+            )
+            existing = classes.get(cls.urn)
+            if existing is not None:
+                raise _refuse(
+                    "classref_composed_claim_conflict",
+                    f"class urn {cls.urn} is declared by two pinned "
+                    f"documents ({existing.pin_path} and {cls.pin_path})",
+                )
+            classes[cls.urn] = cls
+        else:
+            actions.update(document.get("actions", {}))
+    descriptor_actions = descriptor.get("actions") or {}
+    claimant: dict[str, str] = {}
+    for cls_urn in sorted(classes):
+        cls = classes[cls_urn]
+        for claim in cls.claims:
+            if claim in served_actions or claim in actions:
+                raise _refuse(
+                    "classref_composed_claim_conflict",
+                    f"class {cls_urn} claims {claim}, which a served or "
+                    "pinned catalog row already describes",
+                )
+            holder = claimant.get(claim)
+            if holder is not None:
+                raise _refuse(
+                    "classref_composed_claim_conflict",
+                    f"{claim} is claimed by both class {holder} and class "
+                    f"{cls_urn}",
+                )
+            claimant[claim] = cls_urn
+    for cls_urn in sorted(classes):
+        cls = classes[cls_urn]
+        for claim in sorted(cls.claims):
+            declared = descriptor_actions.get(claim)
+            if (
+                isinstance(declared, dict)
+                and declared.get("side_effect") == "state_change"
+                and cls.side_effect == "none"
+            ):
+                raise _refuse(
+                    "classref_composed_side_effect_under",
+                    f"class {cls_urn} declares side_effect 'none' for "
+                    f"{claim}, whose descriptor action declares "
+                    "'state_change' (the S20 direction at the class layer: "
+                    "over-classification is legal, under-classification "
+                    "refuses)",
+                )
+    # Claimed URNs join the catalogue side of the derivation (D13 runs
+    # unchanged on them), marked so the plan row can name the layer and
+    # the class. A claim the descriptor does not declare simply does not
+    # apply (a corpus-promoted class legitimately claims URNs across many
+    # plugins); carrying it here also lets a named reference slot bind a
+    # composed-claimed URN (DS3, admitted by design).
+    for cls_urn in sorted(classes):
+        cls = classes[cls_urn]
+        for claim in cls.claims:
+            actions[claim] = {
+                "input_schema": cls.input_schema,
+                "side_effect": cls.side_effect,
+                "composed_class": cls_urn,
+            }
+    return actions, classes
 
 
 def _intersect_property(
@@ -944,10 +1129,28 @@ def _derive_controls(
         # OTDP or pinned vendor) resolves layer 1; no row at all resolves
         # layer 3 — the residual member derives from the descriptor's own
         # constraints, never refuses for being unknown. Slice 2 adds the
-        # composed layer between them; the value names the layer that
-        # produced the row (record §4.1 — provenance is data, not a log).
+        # composed layer between them: a row the composed walk injected is
+        # layer 2 — the class document supplied the catalogue side, and
+        # the row names the class (its URN carries the class's version).
+        # The value names the layer that produced the row (record §4.1 —
+        # provenance is data, not a log).
         catalogue_row = _catalogue_row(urn, catalog_actions)
-        resolution = "catalog" if catalogue_row is not None else "custom"
+        composed_of = (
+            catalogue_row.get("composed_class")
+            if catalogue_row is not None
+            else None
+        )
+        composed_side_effect = (
+            catalogue_row.get("side_effect")
+            if catalogue_row is not None
+            else None
+        )
+        if composed_of is not None:
+            resolution = "composed"
+        elif catalogue_row is not None:
+            resolution = "catalog"
+        else:
+            resolution = "custom"
         effective = _effective_action_schema(urn, catalogue_row, constraints)
         level = _ladder_level(effective, host_supplied, slot_kind)
         # #541 W7 fold: "declares nothing" and "declares no inputs" are
@@ -970,6 +1173,14 @@ def _derive_controls(
             "fields": fields,
             "resolution": resolution,
         }
+        if composed_of is not None:
+            # The class's declared side_effect rides the plan row (record
+            # §6): it is evidence about the action, consumed by the gate's
+            # D7 arms — {abort-slug actions} ∪ {actions whose class
+            # declares energy_removing} — replacing the slug guess where
+            # a declaration is present.
+            row["class"] = composed_of
+            row["side_effect"] = composed_side_effect
         if catalogue_row is None and declared_no_input:
             row["input_undeclared"] = True
         intended = intended_controls.get(urn)
@@ -1028,7 +1239,10 @@ def derive_ui(
             )
     catalog = _catalog_documents(descriptor)
     catalog_actions: dict[str, Any] = dict(catalog.get("actions", {}))
-    catalog_actions.update(_vendor_catalogs(descriptor, descriptor_path))
+    vendor_actions, _composed = _vendor_documents(
+        descriptor, descriptor_path, catalog_actions
+    )
+    catalog_actions.update(vendor_actions)
     actions = descriptor.get("actions") or {}
     # #541 layer 3: a descriptor action no served catalog describes is a
     # residual member, not a refusal — it derives from the descriptor's own
@@ -1789,7 +2003,10 @@ def effective_action_fields(
     descriptor's own constraints, exactly as the plan row derives them."""
     catalog = _catalog_documents(descriptor)
     actions = dict(catalog.get("actions", {}))
-    actions.update(_vendor_catalogs(descriptor, descriptor_path))
+    vendor_actions, _composed = _vendor_documents(
+        descriptor, descriptor_path, actions
+    )
+    actions.update(vendor_actions)
     constraints = (descriptor.get("actions") or {}).get(urn, {}).get(
         "input_constraints"
     ) or {}
@@ -1808,7 +2025,10 @@ def coverage_plan_without_reference(
     reference, is what the always-on arm checks."""
     catalog = _catalog_documents(descriptor)
     actions_map: dict[str, Any] = dict(catalog.get("actions", {}))
-    actions_map.update(_vendor_catalogs(descriptor, descriptor_path))
+    vendor_actions, _composed = _vendor_documents(
+        descriptor, descriptor_path, actions_map
+    )
+    actions_map.update(vendor_actions)
     actions = descriptor.get("actions") or {}
     # #541 layer 3, the same treatment as derive_ui: a catalog-absent
     # declared action is a residual member that derives, resolution
@@ -2320,12 +2540,36 @@ def _build_declaration(
         custom_rows.append(
             {"action": urn, "resolution": "custom", "reason": reason}
         )
+    # #541 slice 2 (standards record §8.2): the composed inventory, beside
+    # slice 1's custom rows. composed_actions names every member a class
+    # claimed and the descriptor declared (the migrate-ui drift arithmetic
+    # reads this set); composed_classes names each consumed class urn and
+    # the family version it was validated against — the stamp migrate-ui
+    # re-resolves and re-stamps across a family bump. A class urn's own
+    # version is content and is never re-stamped by anything.
+    composed_rows: list[dict[str, Any]] = [
+        {"action": urn, "resolution": "composed", "class": row["class"]}
+        for urn, row in sorted(plan.items())
+        if row.get("resolution") == "composed"
+    ]
+    composed_classes: list[dict[str, Any]] = [
+        {"class": class_urn, "validated_against": active_version(_FAMILY)}
+        for class_urn in sorted(
+            {
+                row["class"]
+                for row in plan.values()
+                if row.get("resolution") == "composed"
+            }
+        )
+    ]
     return {
         "contract_version": active_version(_FAMILY),
         "profile_ids": sorted({str(item["profile_id"]) for item in references}),
         "reference_version": active_version(_FAMILY),
         "deviations": deviation_rows,
         "custom_actions": custom_rows,
+        "composed_actions": composed_rows,
+        "composed_classes": composed_classes,
     }
 
 
@@ -2338,14 +2582,19 @@ def declaration_scaffold(derived: DerivedUI) -> dict[str, Any]:
 #: rows plus the resolved control-plan rows (action URNs). An unknown id
 #: cannot launder a divergence (record §4).
 def validate_declaration_vocabulary(
-    vocabulary: set[str], document: dict[str, Any]
+    vocabulary: set[str],
+    document: dict[str, Any],
+    *,
+    energy_removing: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     """Validate one ledger (authored or birth) against an id vocabulary.
 
     H3: the D7 guard matches the URN's action slug — the abort class per
     the record §4 — so a versioned URN is what it sees, and it runs on
     EVERY ledger the gate consumes, authored or derived, in both gate
-    arms."""
+    arms. #541 slice 2: the D7 set widens by declaration — a class
+    declaring ``energy_removing`` puts its actions beside the abort class
+    (never downgraded), with no refusal-code change (record §6)."""
     for row in document.get("deviations", []):
         expectation_id = str(row.get("expectation_id", ""))
         if expectation_id not in vocabulary:
@@ -2354,7 +2603,7 @@ def validate_declaration_vocabulary(
                 f"{expectation_id} is outside the reference's expect vocabulary",
             )
         slug = expectation_id.split("/")[0].rsplit(".", 1)[-1]
-        if slug == "abort":
+        if slug == "abort" or expectation_id in energy_removing:
             raise _refuse(
                 "classref_deviation_forbidden",
                 f"{expectation_id} names an energy-removing action's reachability; "
@@ -2363,12 +2612,28 @@ def validate_declaration_vocabulary(
     return document
 
 
+def _declared_energy_removing(
+    plan: dict[str, dict[str, Any]],
+) -> frozenset[str]:
+    """The URNs whose composed class declares ``energy_removing`` — the
+    declared half of the widened D7 set (the abort-slug half stays
+    structural)."""
+    return frozenset(
+        urn
+        for urn, row in plan.items()
+        if str(row.get("side_effect", "")) == "energy_removing"
+    )
+
+
 def validate_declaration(
     derived: DerivedUI, document: dict[str, Any]
 ) -> dict[str, Any]:
     vocabulary = set(derived.expectation.get("components", {}))
     vocabulary.update(derived.control_plan)
-    return validate_declaration_vocabulary(vocabulary, document)
+    return validate_declaration_vocabulary(
+        vocabulary, document,
+        energy_removing=_declared_energy_removing(derived.control_plan),
+    )
 
 
 def compose_manifest(

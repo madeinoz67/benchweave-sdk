@@ -179,16 +179,21 @@ def _page_ids(derived: Any) -> list[str]:
     return [str(page["id"]) for page in derived.manifest["pages"]]
 
 
-def _not_d7(expectation_id: str) -> bool:
-    """The D7 carve-out: an id naming the abort class never downgrades."""
+def _not_d7(expectation_id: str, protected: frozenset[str] = frozenset()) -> bool:
+    """The D7 carve-out: an id naming the abort class never downgrades.
+
+    #541 slice 2: the protected set widens by declaration — an action
+    whose composed class declares ``energy_removing`` joins the abort
+    class here (record §6), with no refusal-code change."""
     slug = str(expectation_id).split("/")[0].rsplit(".", 1)[-1]
-    return slug != "abort"
+    return slug != "abort" and expectation_id not in protected
 
 
 def _assert_expect(
     expectation: dict[str, Any],
     censused: dict[str, dict[str, Any]],
     declared: frozenset[str] = frozenset(),
+    protected: frozenset[str] = frozenset(),
 ) -> tuple[list[GateFinding], list[str]]:
     """Census-vs-expect deltas, typed (record §5/5). M10/F7: an unknown
     component name and a per_page naming a non-served page both refuse —
@@ -238,7 +243,7 @@ def _assert_expect(
                 if isinstance(actual, list):
                     actual = len(actual)
                 if actual != row["count"]:
-                    if name in declared and _not_d7(name):
+                    if name in declared and _not_d7(name, protected):
                         reported.append(name)
                     else:
                         findings.append(
@@ -271,7 +276,7 @@ def _assert_expect(
                 value = seen.get(key)
                 total += len(value) if isinstance(value, list) else (value or 0)
             if total != row["count"]:
-                if name in declared and _not_d7(name):
+                if name in declared and _not_d7(name, protected):
                     reported.append(name)
                 else:
                     findings.append(
@@ -306,6 +311,16 @@ def _forbid_findings(
         for row in plan.values()
     }
     del abort_slugs
+    # #541 slice 2 (record §6): the intermediated arm's protected set
+    # widens by declaration — {abort-slug actions} ∪ {actions whose
+    # composed class declares energy_removing}. The abort half stays the
+    # structural slug guess; the declared half is the explicit evidence
+    # the plan row carries.
+    energy_slugs = {
+        urn.split("/")[0].rsplit(".", 1)[-1]
+        for urn, row in plan.items()
+        if str(row.get("side_effect", "")) == "energy_removing"
+    }
     for page in manifest.get("pages", []):
         for plot in page.get("plots", []):
             if plot.get("kind") != "digital_lanes":
@@ -340,7 +355,7 @@ def _forbid_findings(
                         )
                     )
                 elif (
-                    binding in _abort_action_slugs(descriptor)
+                    binding in (_abort_action_slugs(descriptor) | energy_slugs)
                     and node.get("kind") in ("numeric", "rotary")
                 ):
                     findings.append(
@@ -618,9 +633,12 @@ def verify_ui(
             if declaration_path.is_file()
             else {"deviations": []}
         )
-        from .classref import validate_declaration_vocabulary
+        from .classref import _declared_energy_removing, validate_declaration_vocabulary
 
-        validate_declaration_vocabulary(set(plan), declaration)
+        validate_declaration_vocabulary(
+            set(plan), declaration,
+            energy_removing=_declared_energy_removing(plan),
+        )
         coverage, reported = _coverage_findings(
             # The reference-less plan mints no layout (D2: no derive path
             # exists to mint one), so no custom member owes rendered
@@ -657,7 +675,7 @@ def verify_ui(
     # the project carries ui/class-reference.json the gate reads THAT,
     # validated, in this arm too — the birth declaration is only the
     # fallback. H3: validation runs in both arms.
-    from .classref import validate_declaration_vocabulary
+    from .classref import _declared_energy_removing, validate_declaration_vocabulary
 
     authored_path = package_dir / "ui" / "class-reference.json"
     ledger = (
@@ -667,7 +685,10 @@ def verify_ui(
     )
     vocabulary = set(derived.expectation.get("components", {}))
     vocabulary.update(derived.control_plan)
-    validate_declaration_vocabulary(vocabulary, ledger)
+    protected = _declared_energy_removing(derived.control_plan)
+    validate_declaration_vocabulary(
+        vocabulary, ledger, energy_removing=protected
+    )
     ledger_ids = {
         str(row.get("expectation_id")) for row in ledger.get("deviations", [])
     }
@@ -707,7 +728,8 @@ def verify_ui(
     rendered = render_pages(project, pages)
     censused = {page: census(html) for page, html in rendered.items()}
     component_findings, component_reported = _assert_expect(
-        derived.expectation, censused, frozenset(ledger_ids)
+        derived.expectation, censused, frozenset(ledger_ids),
+        protected=protected,
     )
     findings = list(component_findings)
     findings.extend(forbid_findings)

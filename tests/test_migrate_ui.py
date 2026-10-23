@@ -29,7 +29,7 @@ from typing import Any
 import pytest
 
 from benchweave_sdk import cli, presentation, scaffold
-from benchweave_sdk.served import active_version
+from benchweave_sdk.served import _tuple, active_version
 
 #: The plugin-ui version a project last touched by SDK v0.10.0 carried
 #: (design §2's release-tag table). Fixture INPUT, not a generated stamp.
@@ -343,36 +343,81 @@ def test_stamp_unlocatable_control_is_a_typed_refusal(
     assert _tree(project) == before
 
 
-# --- the classref-family advisory (design §3 step 8, detection only) ------------
+# --- the classref-family ledger (moved to the re-stamp set, #541 slice 2) --------
 
 
-def test_classref_advisory_points_at_derive_ui(
+def test_classref_ledger_restamps_with_the_plugin_ui_documents(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """The detection-only advisory is retired for the two family stamps
+    (standards record §8): a planted ledger one family behind re-stamps in
+    the same run as the plugin-ui documents — byte-in-place, version
+    strings only. The planted ledger carries no inventories, which is the
+    arithmetic-honest shape for the scaffold's descriptor (every declared
+    action served; no custom, no composed)."""
     project = tmp_path / "classref"
     package = _coherent_stale(project)
-    # A planted declaration: the advisory reads existence + version only
-    # (design §3 step 8); the re-stamp itself is deferred (D2).
+    family = active_version("plugin-ui-class-reference")
+    previous = "0.3.0"
+    assert _tuple(previous) < _tuple(family), "the fixture needs a real prior row"
     (package / "ui/class-reference.json").write_bytes(
-        (json.dumps({"contract_version": "0.1.0", "reference_id": "synthetic"}) + "\n").encode()
+        (
+            json.dumps(
+                {
+                    "contract_version": previous,
+                    "reference_version": previous,
+                    "reference_id": "synthetic",
+                },
+                indent=2,
+            )
+            + "\n"
+        ).encode()
     )
+    before = (package / "ui/class-reference.json").read_bytes()
     capsys.readouterr()
     assert migrate(monkeypatch, package) == 0
     rendered = capsys.readouterr().out
-    assert "derive-ui --force" in rendered
+    assert (
+        f"migrated ui/class-reference.json: plugin-ui-class-reference "
+        f"{previous} -> {family}" in rendered
+    )
+    after = json.loads((package / "ui/class-reference.json").read_bytes())
+    assert after["contract_version"] == family
+    assert after["reference_version"] == family
+    assert after["reference_id"] == "synthetic"
+    del before  # the parsed comparison above is the discipline assertion
 
-    # The negative arm: a current declaration prints no pointer.
+    # The negative arm: a current ledger adds no ledger line.
     current = tmp_path / "classref-current"
     package = _coherent_stale(current)
     (package / "ui/class-reference.json").write_bytes(
         (
             json.dumps(
-                {"contract_version": active_version("plugin-ui-class-reference"),
-                 "reference_id": "synthetic"}
+                {"contract_version": family, "reference_version": family,
+                 "reference_id": "synthetic"},
+                indent=2,
             )
             + "\n"
         ).encode()
     )
     capsys.readouterr()
     assert migrate(monkeypatch, package) == 0
-    assert "derive-ui" not in capsys.readouterr().out
+    assert "ui/class-reference.json" not in capsys.readouterr().out
+
+
+def test_classref_ledger_without_stamps_refuses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A ledger that cannot be re-stamped in place (a family stamp absent)
+    refuses with the sibling documents' malformed-input code — never a
+    silent skip, never a write."""
+    project = tmp_path / "classref-absent"
+    package = _coherent_stale(project)
+    (package / "ui/class-reference.json").write_bytes(
+        (json.dumps({"contract_version": "0.1.0", "reference_id": "synthetic"}) + "\n").encode()
+    )
+    before = _tree(project)
+    capsys.readouterr()
+    assert migrate(monkeypatch, package) == 1
+    assert "migrate_ui_version_absent:" in capsys.readouterr().err
+    assert _tree(project) == before

@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.20.0] - Unreleased
+
+### Features
+
+- Resolve residual actions from the descriptor's own `input_constraints` — an action URN no served catalog and no composed class describes no longer refuses `derive-ui` (gateway #541 slice 1): the row derives onto the device-features page inside an expander-minted custom section
+- Split the knowledge-gap refusal from the integrity faults: unreadable pinned catalog, digest mismatch, missing profile catalog and absent profile row each keep their own typed refusal code — only the recoverable knowledge gap resolves
+- `resolution` provenance on every control plan row (`catalog`, `composed`, `custom`)
+- The gate discloses custom members through its REPORTED channel — a custom member never passes silently and never becomes a findings failure — and the per-action coverage discriminator keys on the derived layout block
+- Vendor the plugin-ui-class-reference 0.4.0 family and resolve composed action classes (gateway #541 slice 2): a pinned document carrying `urn`/`claims` supplies the catalogue side of the derivation (resolution `composed`), conflicts and under-classified `side_effect` refuse typed, and a class's declared `side_effect` widens the gate's D7 set by declaration
+- `migrate-ui` re-stamps the class-reference ledger's family stamps and each `composed_classes[].validated_against` across a family bump, refusing `migrate_ui_composed_unresolved` / `migrate_ui_ledger_drift` with nothing written
+
+### Miscellaneous
+
+- 0.19.0 -> 0.20.0 — the composed-action-class train re-cut ahead of the released 0.19.0 (the OTDP 0.2.4 pairing); the sync absorbs both otdp 0.2.4 and classref 0.4.0 into the carried set (20 rows / 13 retained)
+
 ## [0.19.0] - 2026-10-22
 
 ### Bug Fixes
@@ -40,6 +55,7 @@ All notable changes to this project will be documented in this file.
 ### Contributors
 
 - Stephen Eaton (17 commits)
+
 ## [0.18.0] - 2026-10-21
 
 ### Features

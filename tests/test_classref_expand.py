@@ -73,7 +73,9 @@ def test_f1_expands_and_validates_a1() -> None:
     assert derived.envelope["contract_version"] == version
     assert derived.catalogue["contract_version"] == version
     block = derived.manifest["extensions"][LAYOUT_EXTENSION_KEY]
-    assert block["contract_version"] == "0.3.0"
+    assert block["contract_version"] == active_version(
+        "plugin-ui-class-reference"
+    )
     assert block["pages"][0]["page_id"] == "capture"
     run = block["pages"][0]["sections"][1]
     kinds = [

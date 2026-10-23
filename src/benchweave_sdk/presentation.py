@@ -7,7 +7,12 @@ that is unparseable or carries no version-shaped ``contract_version``),
 ``migrate_ui_stamp_unlocatable:`` (the version value parses but its byte pattern
 cannot be located for in-place re-stamping), and
 ``migrate_ui_invalid_after_stamp:`` (the re-stamped set fails the same vendored
-validation ``check-ui`` runs; nothing is written).
+validation ``check-ui`` runs; nothing is written). The class-reference ledger's
+motion (#541 slice 2) adds ``migrate_ui_composed_unresolved:`` (a ledger-named
+composed class whose pin cannot re-resolve or no longer validates under the
+target family) and ``migrate_ui_ledger_drift:`` (the ledger's custom/composed
+inventories disagree with set arithmetic over the current descriptor and pins —
+a derive-ui motion, never a version write).
 """
 
 from __future__ import annotations
@@ -548,9 +553,11 @@ def load_validated_preview_inputs(
 class MigrationOutcome:
     """What one ``migrate_ui`` run did, as report lines for the CLI to render.
 
-    ``noop`` marks the already-at-active case (no lines, nothing written);
-    ``notes`` carries advisory pointers that are not migration results (the
-    classref-family staleness detection, which points at ``derive-ui``).
+    ``noop`` marks the already-at-active case (no lines, nothing written —
+    the plugin-ui documents AND the class-reference ledger all current).
+    ``notes`` is reserved for advisory pointers that are not migration
+    results; the classref-family staleness detection it used to carry was
+    retired by the ledger's own re-stamp motion (#541 slice 2).
     """
 
     target: str
@@ -569,6 +576,239 @@ def _restamp(raw: bytes, *, key: str, old: str, new: str) -> tuple[bytes, int]:
     """
     pattern = re.compile(('("' + key + '"\\s*:\\s*")' + re.escape(old) + '(")').encode())
     return pattern.subn(b"\\g<1>" + new.encode() + b"\\g<2>", raw)
+
+
+def _ledger_class_unresolved(class_urn: str, reasons: list[str]) -> ValueError:
+    detail = "; ".join(reasons[:3]) if reasons else (
+        "no pinned document declares this class urn under the current "
+        "descriptor"
+    )
+    return ValueError(
+        f"migrate_ui_composed_unresolved: class {class_urn}: {detail}"
+    )
+
+
+def _resolve_ledger_class(
+    descriptor: dict[str, Any],
+    descriptor_path: Path | None,
+    class_urn: str,
+) -> None:
+    """Re-resolve one ledger-named composed class from its pin: path and
+    sha256 from ``descriptor.contracts[]``, the bytes validated under the
+    ACTIVE family's vendored composed schema (#541 slice 2, standards
+    record §8.3-8.4 — the validation stamp only rides bytes the target
+    schema admits).
+
+    Every failure the walk sees is recorded and surfaces under
+    ``migrate_ui_composed_unresolved`` when the class urn cannot be
+    produced — the ledger named this class, so from migrate-ui's
+    perspective a missing pin, a moved digest, an urn mismatch and a
+    schema-invalid document are all "cannot re-resolve". The resolution
+    walk's own integrity codes still govern the derive path; this walk
+    attributes, it does not re-classify."""
+    import hashlib
+
+    # Body import: classref imports this module (read_file) at module
+    # level, so the reverse import must be call-time — the same posture
+    # the classref imports inside migrate_ui's callers use.
+    from .classref import validate_composed_class
+
+    reasons: list[str] = []
+    for row in descriptor.get("contracts", []):
+        if str(row.get("id", "")).startswith("urn:otdp:"):
+            continue
+        if descriptor_path is None:
+            break
+        path = descriptor_path.parent / str(row.get("path", ""))
+        try:
+            raw = read_file(path)
+        except (ValueError, OSError) as exc:
+            reasons.append(
+                f"pinned document {row.get('path')} unreadable ({exc})"
+            )
+            continue
+        if hashlib.sha256(raw).hexdigest() != row.get("sha256"):
+            reasons.append(
+                f"pinned document {row.get('path')} digest moved under its pin"
+            )
+            continue
+        try:
+            document = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            reasons.append(f"pinned document {row.get('path')} not JSON ({exc})")
+            continue
+        if not isinstance(document, dict):
+            continue
+        if "actions" in document or not ("urn" in document or "claims" in document):
+            continue  # a vendor catalog pin, not this class's document
+        if document.get("urn") != class_urn:
+            continue  # a different composed class
+        try:
+            validate_composed_class(document, row.get("path"))
+        except ValueError as exc:
+            raise _ledger_class_unresolved(class_urn, [str(exc)]) from exc
+        return
+    raise _ledger_class_unresolved(class_urn, reasons)
+
+
+def _migrate_classref_ledger(
+    ledger_path: Path,
+    descriptor_raw: bytes,
+    descriptor_path: Path,
+) -> tuple[bytes | None, list[str]]:
+    """The class-reference ledger's family-bump motion (#541 slice 2,
+    standards record §8): re-stamp ``contract_version``,
+    ``reference_version`` and each ``composed_classes[].validated_against``
+    to the classref family's active version, byte-in-place — only after
+    every ledger-named class re-resolves and validates under the target,
+    and only when the ledger's inventories match set arithmetic over the
+    current descriptor and pins. A class urn's own version is content and
+    is never re-stamped. Returns the new bytes (or None when nothing
+    moves) plus one report line per moved surface; refuses
+    ``migrate_ui_ledger_drift`` / ``migrate_ui_composed_unresolved`` /
+    ``migrate_ui_version_absent`` / ``migrate_ui_ahead`` /
+    ``migrate_ui_stamp_unlocatable`` with NOTHING written (the caller
+    computes this before any write).
+    """
+    from .classref import composed_ledger_inventory
+
+    raw = read_file(ledger_path)
+    try:
+        ledger = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            f"migrate_ui_version_absent: ui/class-reference.json: not JSON: {exc}"
+        ) from exc
+    if not isinstance(ledger, dict):
+        raise ValueError(
+            "migrate_ui_version_absent: ui/class-reference.json: not an object"
+        )
+    target = active_version("plugin-ui-class-reference")
+
+    def _family_stamp(key: str) -> str:
+        value = ledger.get(key)
+        if not isinstance(value, str) or _tuple_or_none(value) is None:
+            raise ValueError(
+                f"migrate_ui_version_absent: ui/class-reference.json: no "
+                f"version-shaped {key} ({value!r})"
+            )
+        if _tuple(value) > _tuple(target):
+            raise ValueError(
+                f"migrate_ui_ahead: ui/class-reference.json is at "
+                f"plugin-ui-class-reference {value}, above this SDK's active "
+                f"{target}; install the newer SDK that serves {value} — "
+                "migrate-ui never writes versions down"
+            )
+        return value
+
+    cv = _family_stamp("contract_version")
+    rv = _family_stamp("reference_version")
+    class_rows = ledger.get("composed_classes")
+    if class_rows is None:
+        class_rows = []
+    if not isinstance(class_rows, list):
+        raise ValueError(
+            "migrate_ui_composed_unresolved: composed_classes must be a list"
+        )
+    descriptor = json.loads(descriptor_raw)
+    # The class re-resolution runs FIRST: a ledger-named class that cannot
+    # re-resolve refuses under its own code before the inventory walk can
+    # raise the resolution's integrity codes for the same broken pin.
+    for row in class_rows:
+        if (
+            not isinstance(row, dict)
+            or not isinstance(row.get("class"), str)
+            or not isinstance(row.get("validated_against"), str)
+        ):
+            raise ValueError(
+                f"migrate_ui_composed_unresolved: malformed composed_classes "
+                f"row {row!r}"
+            )
+        _resolve_ledger_class(descriptor, descriptor_path, row["class"])
+    custom_set, composed_set, _classes = composed_ledger_inventory(
+        descriptor, descriptor_path
+    )
+    drift: list[str] = []
+    ledger_custom: set[str] = set()
+    ledger_composed: set[str] = set()
+    for key, collected in (
+        ("custom_actions", ledger_custom),
+        ("composed_actions", ledger_composed),
+    ):
+        rows = ledger.get(key)
+        if rows is None:
+            rows = []
+        if not isinstance(rows, list):
+            raise ValueError(f"migrate_ui_ledger_drift: {key} must be a list")
+        for row in rows:
+            if not isinstance(row, dict) or not isinstance(row.get("action"), str):
+                drift.append(f"malformed {key} row {row!r}")
+                continue
+            collected.add(row["action"])
+    for label, ledger_set, derived_set in (
+        ("custom", ledger_custom, custom_set),
+        ("composed", ledger_composed, composed_set),
+    ):
+        for urn in sorted(ledger_set - derived_set):
+            drift.append(
+                f"the ledger's {label} inventory names {urn}, which the "
+                "current descriptor and pins do not derive"
+            )
+        for urn in sorted(derived_set - ledger_set):
+            drift.append(
+                f"{urn} derives {label} but the ledger omits it"
+            )
+    if drift:
+        raise ValueError(
+            "migrate_ui_ledger_drift: the class-reference ledger's "
+            "inventories disagree with the current descriptor and pins ("
+            + "; ".join(drift[:4])
+            + "); re-derive with 'benchweave-sdk derive-ui --force', do not "
+            "migrate — nothing was written"
+        )
+    new = raw
+    lines: list[str] = []
+    if cv != target or rv != target:
+        for key, value in (("contract_version", cv), ("reference_version", rv)):
+            if value == target:
+                continue
+            new, count = _restamp(new, key=key, old=value, new=target)
+            if count == 0:
+                raise ValueError(
+                    f"migrate_ui_stamp_unlocatable: ui/class-reference.json: "
+                    f"the {key} pattern for {value!r} is not present in the "
+                    "raw bytes; migrate-ui re-stamps bytes in place, it "
+                    "never re-serializes"
+                )
+        lines.append(
+            f"migrated ui/class-reference.json: plugin-ui-class-reference "
+            f"{cv} -> {target}"
+        )
+    stale_validations = [
+        row for row in class_rows if row["validated_against"] != target
+    ]
+    if stale_validations:
+        for value in sorted(
+            {row["validated_against"] for row in stale_validations}
+        ):
+            new, count = _restamp(
+                new, key="validated_against", old=value, new=target
+            )
+            if count == 0:
+                raise ValueError(
+                    f"migrate_ui_stamp_unlocatable: ui/class-reference.json: "
+                    f"the validated_against pattern for {value!r} is not "
+                    "present in the raw bytes; migrate-ui re-stamps bytes in "
+                    "place, it never re-serializes"
+                )
+        lines.append(
+            f"re-stamped {len(stale_validations)} "
+            "composed_classes[].validated_against to "
+            f"{target} (each re-resolved and validated under the target)"
+        )
+    if new == raw:
+        return None, []
+    return new, lines
 
 
 def migrate_ui(
@@ -698,7 +938,19 @@ def migrate_ui(
             f"active {target}; install the newer SDK that serves {version} — "
             "migrate-ui never writes versions down"
         )
-    if all(version == target for version in stamps.values()):
+    # #541 slice 2 (standards record §8): the class-reference ledger joins
+    # the re-stamp set. Computed and refused BEFORE any byte is written —
+    # drift and unresolved classes are derive-ui motions, not version
+    # writes — and the plugin-ui noop below no longer short-circuits a
+    # stale ledger.
+    ledger_file = base / "class-reference.json"
+    ledger_new: bytes | None = None
+    ledger_lines: list[str] = []
+    if ledger_file.is_file():
+        ledger_new, ledger_lines = _migrate_classref_ledger(
+            ledger_file, descriptor_raw, descriptor_path
+        )
+    if all(version == target for version in stamps.values()) and ledger_new is None:
         return MigrationOutcome(target=target, noop=True)
 
     new_by_label: dict[str, bytes] = {}
@@ -775,31 +1027,14 @@ def migrate_ui(
         if label == "presentation.json" and hash_only:
             line += ", manifest hash repaired"
         lines.append(line)
+    if ledger_new is not None:
+        # The ledger motion was computed and validated before any write;
+        # it lands after the plugin-ui documents, same run, same
+        # discipline (version strings only).
+        ledger_file.write_bytes(ledger_new)
+        lines.extend(ledger_lines)
 
-    notes: list[str] = []
-    declaration = base / "class-reference.json"
-    if declaration.is_file():
-        # Detection only (design §3 step 8): the classref re-stamp itself is
-        # deferred (D2) — re-derivation is the sanctioned path, and the
-        # author overlay mechanism is where author content survives it.
-        try:
-            declaration_version = contract.parse_document(read_file(declaration)).get(
-                "contract_version"
-            )
-            classref_active = active_version("plugin-ui-class-reference")
-            if (
-                isinstance(declaration_version, str)
-                and _tuple_or_none(declaration_version) is not None
-                and _tuple(declaration_version) < _tuple(classref_active)
-            ):
-                notes.append(
-                    f"class-reference at {declaration_version} is below the active "
-                    f"{classref_active}: re-derive with 'benchweave-sdk derive-ui "
-                    "--force' (author overlays survive in ui/manifest.overrides.json)"
-                )
-        except (ValueError, OSError, KeyError, TypeError):
-            pass  # advisory only; check-ui remains the authority
-    return MigrationOutcome(target=target, lines=tuple(lines), notes=tuple(notes))
+    return MigrationOutcome(target=target, lines=tuple(lines))
 
 
 def _write_preview_examples(
