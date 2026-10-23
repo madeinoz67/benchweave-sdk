@@ -713,7 +713,20 @@ def _migrate_classref_ledger(
         raise ValueError(
             "migrate_ui_composed_unresolved: composed_classes must be a list"
         )
-    descriptor = json.loads(descriptor_raw)
+    try:
+        descriptor = json.loads(descriptor_raw)
+    except json.JSONDecodeError as exc:
+        # N3 (2026-10-23 fold): a descriptor that does not parse is a
+        # typed refusal, never a bare exception from the ledger walk.
+        raise ValueError(
+            f"migrate_ui_version_absent: descriptor.json is not JSON ({exc})"
+        ) from exc
+    if not isinstance(descriptor, dict):
+        # N3: same class as B7 — a non-object descriptor with a ledger
+        # present refused nothing before, it crashed ``.get`` on a list.
+        raise ValueError(
+            "migrate_ui_version_absent: descriptor.json is not a JSON object"
+        )
     # The class re-resolution runs FIRST: a ledger-named class that cannot
     # re-resolve refuses under its own code before the inventory walk can
     # raise the resolution's integrity codes for the same broken pin.
@@ -825,9 +838,18 @@ def _migrate_classref_ledger(
                     "raw bytes; migrate-ui re-stamps bytes in place, it "
                     "never re-serializes"
                 )
+        moved = [
+            f"{key} {value} -> {target}"
+            for key, value in (("contract_version", cv), ("reference_version", rv))
+            if value != target
+        ]
+        # N4 (2026-10-23 fold): the line names exactly the stamps that
+        # moved, each with its own old value — a summary keyed on
+        # ``contract_version`` printed "0.4.0 -> 0.4.0" when only
+        # ``reference_version`` had moved.
         lines.append(
-            f"migrated ui/class-reference.json: plugin-ui-class-reference "
-            f"{cv} -> {target}"
+            "migrated ui/class-reference.json: plugin-ui-class-reference "
+            + ", ".join(moved)
         )
     stale_validations = [
         row for row in class_rows if row["validated_against"] != target

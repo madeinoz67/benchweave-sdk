@@ -376,9 +376,13 @@ def test_classref_ledger_restamps_with_the_plugin_ui_documents(
     before = (package / "ui/class-reference.json").read_bytes()
     capsys.readouterr()
     assert migrate(monkeypatch, package) == 0
-    rendered = capsys.readouterr().out
+    # Whitespace-normalized: the CLI wraps long lines, and the stamps-naming
+    # line (N4) is longer than the wrap width — the assertion reads the
+    # line's content, not its terminal wrapping.
+    rendered = " ".join(capsys.readouterr().out.split())
     assert (
         f"migrated ui/class-reference.json: plugin-ui-class-reference "
+        f"contract_version {previous} -> {family}, reference_version "
         f"{previous} -> {family}" in rendered
     )
     after = json.loads((package / "ui/class-reference.json").read_bytes())

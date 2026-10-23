@@ -401,9 +401,28 @@ def _vendor_documents(
                 # the gate can disclose it (B7: never silently).
                 ignored.append(str(row.get("path", "")))
             else:
-                for action_urn in document["actions"]:
+                for action_urn, action_row in document["actions"].items():
+                    if (
+                        isinstance(action_row, dict)
+                        and "composed_class" in action_row
+                    ):
+                        # N2 (2026-10-23 fold): composed provenance is
+                        # written only by the composed walk above — a
+                        # vendor-catalog row carrying a stray
+                        # ``composed_class`` key (with a ``side_effect``
+                        # riding it into the D7-feeding plan row) is not
+                        # composed and must not launder the label. The
+                        # review's disposition expected B1's AND to make
+                        # this true; it did not (the stray key rides
+                        # INSIDE an action row, which the AND never sees),
+                        # so the strip makes it structurally unreadable.
+                        action_row = {
+                            key: value
+                            for key, value in action_row.items()
+                            if key != "composed_class"
+                        }
+                    actions[action_urn] = action_row
                     pinned_sources[action_urn] = str(row.get("path", ""))
-                actions.update(document["actions"])
     descriptor_actions = descriptor.get("actions") or {}
     claimant: dict[str, str] = {}
     for cls_urn in sorted(classes):

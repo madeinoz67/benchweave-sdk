@@ -65,12 +65,18 @@ def _descriptor(document: dict[str, Any]) -> dict[str, Any]:
     return descriptor
 
 
-def _composed_project(destination: Path) -> Path:
+def _composed_project(
+    destination: Path, extra_actions: dict[str, Any] | None = None
+) -> Path:
     """A real scaffolded plugin carrying a composed class pin and the
     derived document set, with the birth ledger written at the active
-    family (the migrate-ui input)."""
+    family (the migrate-ui input). ``extra_actions`` declares additional
+    descriptor actions (the N5 arms add a residual member so the birth
+    ledger carries custom_actions beside the composed rows)."""
     document = _composed_document()
     descriptor = _descriptor(document)
+    if extra_actions:
+        descriptor["actions"].update(extra_actions)
     create_project(destination, PACKAGE, with_ui=False)
     package = destination / "src" / PACKAGE
     (package / "composed-staging.json").write_bytes(_raw(document))
@@ -95,6 +101,28 @@ def _composed_project(destination: Path) -> Path:
         (presets / f"{slug}.json").write_bytes(_raw(row))
     (ui / "class-reference.json").write_bytes(_raw(declaration_scaffold(derived)))
     return package
+
+
+#: A residual member for the N5 arms: declared by the descriptor,
+#: described by no catalog and claimed by no class — the birth ledger
+#: carries it in custom_actions.
+RESIDUAL_URN = "otdp.veridian_staging.uncovered/1.0.0"
+
+
+def _composed_and_residual_project(destination: Path) -> Path:
+    return _composed_project(
+        destination,
+        extra_actions={
+            RESIDUAL_URN: {
+                "binding": {"kind": "adapter", "key": "uncovered"},
+                "input_constraints": {},
+                "timeout_ms": 1000,
+                "side_effect": "none",
+                "cancellable": True,
+                "retry": "never",
+            }
+        },
+    )
 
 
 def _downstamp_ledger(package: Path) -> bytes:
@@ -415,4 +443,104 @@ def test_b6_forged_composed_classes_row_refuses(
     rendered = capsys.readouterr().err
     assert "migrate_ui_composed_unresolved:" in rendered
     assert "otdp.action.veridian_ghost/1.0.0" in rendered
+    assert _tree(package) == before
+
+
+# ---------------------------------------------------------------------------
+# The rider wave (NITs N3/N4/N5, 2026-10-23). Each arm names its row.
+# ---------------------------------------------------------------------------
+
+
+def test_n3_non_object_descriptor_refuses_typed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """N3: a non-object descriptor with a ledger present refuses typed
+    (``migrate_ui_version_absent``) — the pre-fold walk crashed on a bare
+    ``AttributeError`` (``.get`` on a list) inside the ledger motion. No
+    write occurs either way, but a bare exception is not an SDK error
+    face (the same class as B7's bare TypeError)."""
+    package = _composed_project(tmp_path / "non-object-descriptor")
+    _downstamp_ledger(package)
+    (package / "descriptor.json").write_bytes(b'["not", "an", "object"]\n')
+    before = _tree(package)
+    capsys.readouterr()
+    assert _migrate(monkeypatch, package) == 1
+    rendered = capsys.readouterr().err
+    assert "migrate_ui_version_absent:" in rendered
+    assert "not a JSON object" in rendered
+    assert _tree(package) == before
+
+
+def test_n4_progress_line_names_only_the_moved_stamps(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """N4: the migration line reports what moved — when only
+    ``reference_version`` is stale, the line names reference_version with
+    its own old value, never a misleading
+    ``plugin-ui-class-reference 0.4.0 -> 0.4.0`` summary."""
+    package = _composed_project(tmp_path / "line")
+    ledger_path = package / "ui" / "class-reference.json"
+    raw = ledger_path.read_bytes().replace(
+        f'"reference_version": "{_ACTIVE_FAMILY}"'.encode(),
+        b'"reference_version": "0.3.0"',
+    )
+    ledger_path.write_bytes(raw)
+    capsys.readouterr()
+    assert _migrate(monkeypatch, package) == 0
+    # The CLI wraps long lines; the assertion runs over whitespace-normalized
+    # output so it reads the line's content, not its terminal wrapping.
+    flat = " ".join(capsys.readouterr().out.split())
+    assert "reference_version 0.3.0 -> " in flat
+    assert f"{_ACTIVE_FAMILY} -> {_ACTIVE_FAMILY}" not in flat
+
+
+def test_n5_custom_inventory_drift_refuses_when_ledger_omits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """N5, the derived-but-omitted direction for the CUSTOM inventory: a
+    ledger whose ``custom_actions`` drops a derived residual member
+    refuses ``migrate_ui_ledger_drift``. (Coverage pin: the arithmetic is
+    slice 2's first cut; the review's gap was that no arm exercised this
+    direction — no RED claimed.)"""
+    package = _composed_and_residual_project(tmp_path / "custom-omit")
+    _downstamp_ledger(package)
+    ledger_path = package / "ui" / "class-reference.json"
+    ledger = json.loads(ledger_path.read_bytes())
+    assert ledger["custom_actions"], "the project must derive a residual member"
+    ledger["custom_actions"] = []
+    ledger_path.write_bytes(_raw(ledger))
+    before = _tree(package)
+    capsys.readouterr()
+    assert _migrate(monkeypatch, package) == 1
+    rendered = capsys.readouterr().err
+    assert "migrate_ui_ledger_drift:" in rendered
+    assert "custom" in rendered
+    assert _tree(package) == before
+
+
+def test_n5_forged_custom_row_refuses_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """N5, the ledger-extra direction for the custom inventory: a forged
+    ``custom_actions`` row naming an URN the derivation holds as neither
+    residual nor anything else refuses drift. (Coverage pin, no RED
+    claimed — the behavior is the first cut's.)"""
+    package = _composed_and_residual_project(tmp_path / "custom-forged")
+    _downstamp_ledger(package)
+    ledger_path = package / "ui" / "class-reference.json"
+    ledger = json.loads(ledger_path.read_bytes())
+    ledger["custom_actions"].append(
+        {
+            "action": "com.veridian-labs.nope/1.0.0",
+            "resolution": "custom",
+            "reason": "forged",
+        }
+    )
+    ledger_path.write_bytes(_raw(ledger))
+    before = _tree(package)
+    capsys.readouterr()
+    assert _migrate(monkeypatch, package) == 1
+    rendered = capsys.readouterr().err
+    assert "migrate_ui_ledger_drift:" in rendered
+    assert "nope" in rendered
     assert _tree(package) == before

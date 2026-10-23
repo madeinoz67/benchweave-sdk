@@ -180,6 +180,32 @@ def _scratch(
     return descriptor_path
 
 
+def _scratch_without_served_vendor(
+    destination: Path,
+    *,
+    documents: dict[str, dict[str, Any]],
+    descriptor: dict[str, Any],
+) -> Path:
+    """A scratch project whose pinned vendor catalog does NOT describe
+    SERVED_VENDOR_URN (the row removed, the pin digest recomputed) — the
+    fixture shape the widened-claims arms need: a real vendor-namespaced
+    URN no catalogue row describes, so a composed class may claim it
+    (claiming the fixture catalog's own row would be a claim conflict)."""
+    destination.mkdir(parents=True, exist_ok=True)
+    for name, document in documents.items():
+        (destination / name).write_bytes(_raw(document))
+    catalog = json.loads((FIXTURES / "vendor-catalog.json").read_bytes())
+    catalog["actions"].pop(SERVED_VENDOR_URN, None)
+    raw_catalog = _raw(catalog)
+    (destination / "vendor-catalog.json").write_bytes(raw_catalog)
+    for row in descriptor["contracts"]:
+        if row.get("path") == "vendor-catalog.json":
+            row["sha256"] = hashlib.sha256(raw_catalog).hexdigest()
+    descriptor_path = destination / "descriptor.json"
+    descriptor_path.write_bytes(_raw(descriptor))
+    return descriptor_path
+
+
 # ---------------------------------------------------------------------------
 # M3's composed leg closes: three distinct outcomes for one URN, all three
 # asserted on this branch (record §7.3's leg-ownership note).
@@ -815,29 +841,142 @@ def test_claims_only_pin_contributes_nothing(tmp_path: Path) -> None:
     assert derived.ignored_pins == ("composed-staging.json",)
 
 
-def test_widened_claims_admit_any_versioned_action_key(tmp_path: Path) -> None:
+def test_widened_claims_admit_slice1_vendor_urn(tmp_path: Path) -> None:
     """The owner's 2026-10-23 ruling (gateway 6d633db0): claims admit ANY
-    versioned action key, not only ``otdp.``-namespaced URNs — a class
-    claiming a hyphenated vendor namespace resolves composed exactly as
-    an ``otdp.``-shaped claim does. This arm pins the WIDENED vendored
-    schema bytes (the lock's row): against the first cut's
-    ``action_urn`` cross-ref these claims refused
-    ``classref_invalid_composed_class`` (refute lane A executed the
-    exclusion)."""
-    hyphenated = "com.veridian-labs.ghost-stage/1.0.0"
-    document = _composed_document(claims=[hyphenated])
+    versioned action key. SERVED_VENDOR_URN — slice 1's own fixture URN,
+    and the shape the first cut's ``action_urn`` cross-ref refused — now
+    claims: the class is the only catalogue side (this project's pinned
+    vendor catalog does not describe the URN), and the row derives
+    composed with the class and its declared side_effect recorded."""
+    document = _composed_document(claims=[SERVED_VENDOR_URN])
     descriptor = _pinned_descriptor(document=document)
-    descriptor["actions"][hyphenated] = _stage_action()
     descriptor["actions"].pop(STAGE_URN)
-    descriptor_path = _scratch(
-        tmp_path / "widened-claims",
+    descriptor["actions"][SERVED_VENDOR_URN] = _stage_action()
+    descriptor_path = _scratch_without_served_vendor(
+        tmp_path / "vendor-urn",
         documents={"composed-staging.json": document},
         descriptor=descriptor,
     )
     derived = _derive(descriptor, descriptor_path)
-    row = derived.control_plan[hyphenated]
+    row = derived.control_plan[SERVED_VENDOR_URN]
     assert row["resolution"] == "composed"
     assert row["class"] == CLASS_URN
+    assert row["side_effect"] == "state_change"
+
+
+def test_m3_three_outcomes_on_a_vendor_namespaced_urn(
+    tmp_path: Path,
+) -> None:
+    """M3 re-run on the shape that used to be impossible (the fold
+    instruction): SERVED_VENDOR_URN travels all three layers — custom
+    when nothing covers it, composed when the class claims it, catalog
+    when the pinned vendor catalog describes it. Three distinct
+    resolutions for one vendor-namespaced URN, each through the real
+    derivation."""
+    # custom: no composed pin, and the pinned catalog does not carry the row.
+    custom_descriptor = _pinned_descriptor()
+    del custom_descriptor["contracts"][-1]  # drop the composed pin
+    custom_descriptor["actions"].pop(STAGE_URN)
+    custom_descriptor["actions"][SERVED_VENDOR_URN] = _stage_action()
+    custom_path = _scratch_without_served_vendor(
+        tmp_path / "vendor-custom",
+        documents={},
+        descriptor=custom_descriptor,
+    )
+    custom = _derive(custom_descriptor, custom_path)
+    assert custom.control_plan[SERVED_VENDOR_URN]["resolution"] == "custom"
+    # composed: the class claims it (the arm above, restated for the triple).
+    composed_descriptor = _pinned_descriptor(
+        document=_composed_document(claims=[SERVED_VENDOR_URN])
+    )
+    composed_descriptor["actions"].pop(STAGE_URN)
+    composed_descriptor["actions"][SERVED_VENDOR_URN] = _stage_action()
+    composed_path = _scratch_without_served_vendor(
+        tmp_path / "vendor-composed",
+        documents={
+            "composed-staging.json": _composed_document(
+                claims=[SERVED_VENDOR_URN]
+            )
+        },
+        descriptor=composed_descriptor,
+    )
+    composed = _derive(composed_descriptor, composed_path)
+    assert composed.control_plan[SERVED_VENDOR_URN]["resolution"] == "composed"
+    # catalog: the UNMODIFIED fixture vendor catalog describes it.
+    catalog_descriptor = _pinned_descriptor()
+    del catalog_descriptor["contracts"][-1]  # drop the composed pin
+    catalog_descriptor["actions"].pop(STAGE_URN)
+    catalog_descriptor["actions"][SERVED_VENDOR_URN] = _stage_action()
+    catalog_leg = _derive(
+        catalog_descriptor, FIXTURES / "descriptor-f1.json"
+    )
+    assert catalog_leg.control_plan[SERVED_VENDOR_URN]["resolution"] == "catalog"
+    assert len(
+        {
+            custom.control_plan[SERVED_VENDOR_URN]["resolution"],
+            composed.control_plan[SERVED_VENDOR_URN]["resolution"],
+            catalog_leg.control_plan[SERVED_VENDOR_URN]["resolution"],
+        }
+    ) == 3
+
+
+def test_unversioned_claim_still_refuses(tmp_path: Path) -> None:
+    """The boundary the widening kept (N6's disposition keeps this arm
+    SDK-side): a claim with no version suffix is not a versioned action
+    key and refuses ``classref_invalid_composed_class`` — the permissive
+    side is pinned by the two arms above; the floor is pinned here."""
+    document = _composed_document(claims=["set_trigger_position"])
+    descriptor = _pinned_descriptor(document=document)
+    descriptor_path = _scratch(
+        tmp_path / "unversioned",
+        documents={"composed-staging.json": document},
+        descriptor=descriptor,
+    )
+    with pytest.raises(
+        ValueError, match="^classref_invalid_composed_class:"
+    ):
+        _derive(descriptor, descriptor_path)
+
+
+def test_vendor_catalog_row_cannot_smuggle_composed_provenance(
+    tmp_path: Path,
+) -> None:
+    """N2 (2026-10-23 fold): a pinned vendor-catalog action row carrying
+    a stray ``composed_class`` key is NOT composed — the composed walk is
+    the only writer of that provenance. Pre-fix, the row laundered
+    resolution "composed" (and its ``side_effect`` into the D7-feeding
+    plan row) with no class document ever being validated; the fold
+    strips the key at the vendor-catalog merge so the smuggled label is
+    structurally unreadable."""
+    catalog = json.loads((FIXTURES / "vendor-catalog.json").read_bytes())
+    catalog["actions"][STAGE_URN] = {
+        "description": "Smuggled provenance.",
+        "input_schema": json.loads(
+            (FIXTURES / "composed-staging.json").read_bytes()
+        )["input_schema"],
+        "side_effect": "energy_removing",
+        "composed_class": "otdp.action.veridian_smuggled/1.0.0",
+    }
+    descriptor = _pinned_descriptor()
+    del descriptor["contracts"][-1]  # no composed pin — the catalog is the only carrier
+    descriptor["contracts"].append(
+        {
+            "id": "urn:veridian:vendor-catalog:2.0.0",
+            "path": "vendor-catalog-2.json",
+            "sha256": hashlib.sha256(_raw(catalog)).hexdigest(),
+        }
+    )
+    descriptor_path = _scratch(
+        tmp_path / "smuggle",
+        documents={"vendor-catalog-2.json": catalog},
+        descriptor=descriptor,
+    )
+    derived = _derive(descriptor, descriptor_path)
+    row = derived.control_plan[STAGE_URN]
+    assert row["resolution"] == "catalog"
+    assert "class" not in row
+    # The smuggled side_effect did not ride the key into the D7-feeding row.
+    assert "side_effect" not in row
 
 
 def test_ignored_pin_is_disclosed_and_the_reason_names_it(
