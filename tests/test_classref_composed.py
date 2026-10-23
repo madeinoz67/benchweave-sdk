@@ -386,8 +386,11 @@ def test_claim_conflict_against_served_catalog_row(tmp_path: Path) -> None:
         documents={"composed-staging.json": document},
         descriptor=descriptor,
     )
-    with pytest.raises(ValueError, match="^classref_composed_claim_conflict:"):
+    with pytest.raises(ValueError, match="^classref_composed_claim_conflict:") as excinfo:
         _derive(descriptor, descriptor_path)
+    # B2 (2026-10-23 fold): the refusal names WHICH side collided — the
+    # served OTDP catalog, never a conflated "served or pinned" phrase.
+    assert "which the served OTDP catalog describes" in str(excinfo.value)
 
 
 def test_claim_conflict_against_pinned_vendor_catalog_row(
@@ -419,8 +422,13 @@ def test_claim_conflict_against_pinned_vendor_catalog_row(
         },
         descriptor=descriptor,
     )
-    with pytest.raises(ValueError, match="^classref_composed_claim_conflict:"):
+    with pytest.raises(ValueError, match="^classref_composed_claim_conflict:") as excinfo:
         _derive(descriptor, descriptor_path)
+    # B2: the pinned side names the DOCUMENT — which pinned catalog
+    # describes the claim is known to the walk, so the refusal says it.
+    assert "which pinned document vendor-catalog-2.json describes" in str(
+        excinfo.value
+    )
 
 
 def test_claim_conflict_two_classes_one_urn(tmp_path: Path) -> None:
@@ -702,18 +710,22 @@ def _vendored_composed_schema() -> tuple[Path, dict[str, Any]]:
 
 def test_vendored_composed_schema_dialect_decoupling() -> None:
     """Over the vendored schema bytes: the dialect version occurs exactly
-    twice (title, const) and the family version exactly twice ($id, the
-    claims $ref) — a family re-stamp touches only intra-family lines,
-    never the dialect bytes that validate a pinned document."""
+    twice (title, const) and the family version exactly once ($id) — a
+    family re-stamp touches only intra-family lines, never the dialect
+    bytes that validate a pinned document. The claims ``$ref`` went LOCAL
+    in the owner's 2026-10-23 widening (``#/$defs/claimed_action_urn``
+    replaces the family-schema ``action_urn`` cross-ref, gateway
+    6d633db0), so the family version's second intra-family occurrence
+    moved out of this file entirely."""
     path, schema = _vendored_composed_schema()
     raw = path.read_bytes()
     family = active_version("plugin-ui-class-reference")
     # Unquoted byte forms: the title and $id carry their versions inside
-    # JSON strings; the const and the $ref carry them as quoted literals.
+    # JSON strings; the const carries its own as a quoted literal.
     # Both spellings count — the property A4 protects is WHERE the bytes
     # sit (dialect-bearing vs intra-family), not their quoting.
     assert raw.count(b"0.1.0") == 2, raw.count(b"0.1.0")
-    assert raw.count(family.encode()) == 2, raw.count(family.encode())
+    assert raw.count(family.encode()) == 1, raw.count(family.encode())
     assert schema["properties"]["contract_version"] == {"const": "0.1.0"}
 
 
@@ -751,3 +763,331 @@ def test_composed_document_survives_a_family_bump_simulation() -> None:
     # And the dialect const is untouched by the family re-stamp.
     assert b"configuration_write" not in raw
     assert re.search(rb'"const":\s*"0\.1\.0"', bumped)
+
+
+# ---------------------------------------------------------------------------
+# The 2026-10-23 fold wave (review rows B1/B2/B6/B7). Each arm names its
+# row; the RED evidence for every arm is quoted in the fold commit's
+# message.
+# ---------------------------------------------------------------------------
+
+
+def test_urn_only_pin_contributes_nothing(tmp_path: Path) -> None:
+    """B1: a pinned document carrying only ``urn`` (no ``claims``) matches
+    neither shape discriminator — the pin contributes nothing and the
+    derivation stays clean, the staged action falling to the residual
+    layer. The discriminator is AND (the standards record §6 says ``urn``
+    PLUS ``claims``); the shipped OR refused this previously accepted pin
+    through the composed schema's required set."""
+    document = _composed_document()
+    del document["claims"]
+    descriptor = _pinned_descriptor(document=document)
+    descriptor_path = _scratch(
+        tmp_path / "urn-only",
+        documents={"composed-staging.json": document},
+        descriptor=descriptor,
+    )
+    derived = _derive(descriptor, descriptor_path)
+    row = derived.control_plan[STAGE_URN]
+    assert row["resolution"] == "custom"
+    assert "class" not in row
+    # The ignored pin is disclosed (B7), never dropped silently.
+    assert derived.ignored_pins == ("composed-staging.json",)
+
+
+def test_claims_only_pin_contributes_nothing(tmp_path: Path) -> None:
+    """B1's mirrored arm: ``claims`` without ``urn`` is not a composed
+    class either — same contribution-nothing outcome, same disclosure.
+    These two arms are the first to pin the AND semantics (switching
+    OR->AND left all 21 composed tests green, so nothing else did)."""
+    document = _composed_document()
+    del document["urn"]
+    descriptor = _pinned_descriptor(document=document)
+    descriptor_path = _scratch(
+        tmp_path / "claims-only",
+        documents={"composed-staging.json": document},
+        descriptor=descriptor,
+    )
+    derived = _derive(descriptor, descriptor_path)
+    row = derived.control_plan[STAGE_URN]
+    assert row["resolution"] == "custom"
+    assert "class" not in row
+    assert derived.ignored_pins == ("composed-staging.json",)
+
+
+def test_widened_claims_admit_any_versioned_action_key(tmp_path: Path) -> None:
+    """The owner's 2026-10-23 ruling (gateway 6d633db0): claims admit ANY
+    versioned action key, not only ``otdp.``-namespaced URNs — a class
+    claiming a hyphenated vendor namespace resolves composed exactly as
+    an ``otdp.``-shaped claim does. This arm pins the WIDENED vendored
+    schema bytes (the lock's row): against the first cut's
+    ``action_urn`` cross-ref these claims refused
+    ``classref_invalid_composed_class`` (refute lane A executed the
+    exclusion)."""
+    hyphenated = "com.veridian-labs.ghost-stage/1.0.0"
+    document = _composed_document(claims=[hyphenated])
+    descriptor = _pinned_descriptor(document=document)
+    descriptor["actions"][hyphenated] = _stage_action()
+    descriptor["actions"].pop(STAGE_URN)
+    descriptor_path = _scratch(
+        tmp_path / "widened-claims",
+        documents={"composed-staging.json": document},
+        descriptor=descriptor,
+    )
+    derived = _derive(descriptor, descriptor_path)
+    row = derived.control_plan[hyphenated]
+    assert row["resolution"] == "composed"
+    assert row["class"] == CLASS_URN
+
+
+def test_ignored_pin_is_disclosed_and_the_reason_names_it(
+    tmp_path: Path,
+) -> None:
+    """B7: a pinned document satisfying NEITHER shape discriminator is
+    digest-verified then contributes nothing — that drop is disclosed on
+    the derivation (``ignored_pins``), and the ledger's custom reason
+    names the pin instead of presenting the descriptor's emptiness as
+    the whole cause (the vendor's pinned, digest-verified document may
+    declare exactly the schema the reason says nobody did)."""
+    document = {
+        "title": "Veridian numeric staging (wrong shape)",
+        "input_schema": json.loads(
+            (FIXTURES / "composed-staging.json").read_bytes()
+        )["input_schema"],
+    }
+    descriptor = _pinned_descriptor(document=document, constraints=None)
+    descriptor["actions"][STAGE_URN]["input_constraints"] = {}
+    descriptor_path = _scratch(
+        tmp_path / "ignored",
+        documents={"composed-staging.json": document},
+        descriptor=descriptor,
+    )
+    derived = _derive(descriptor, descriptor_path)
+    assert derived.ignored_pins == ("composed-staging.json",)
+    row = derived.control_plan[STAGE_URN]
+    assert row["resolution"] == "custom"
+    reason = next(
+        item["reason"]
+        for item in derived.declaration["custom_actions"]
+        if item["action"] == STAGE_URN
+    )
+    assert "pinned document composed-staging.json contributed nothing" in reason
+
+
+def test_ignored_pin_reports_through_the_gate(tmp_path: Path) -> None:
+    """B7's gate surface: the ignored pin's disclosure reaches
+    ``GateReport.reported_deviations`` every run — REPORTED, never a
+    findings failure and never silent."""
+    from benchweave_sdk.classref import declaration_scaffold
+    from benchweave_sdk.classref_gate import verify_ui
+    from benchweave_sdk.scaffold import create_project
+
+    document = {
+        "title": "Veridian numeric staging (wrong shape)",
+        "input_schema": json.loads(
+            (FIXTURES / "composed-staging.json").read_bytes()
+        )["input_schema"],
+    }
+    descriptor = _pinned_descriptor(document=document)
+    descriptor["actions"][STAGE_URN]["input_constraints"] = {}
+    project = tmp_path / "ignored-gate"
+    create_project(project, "veridian_composed_plugin", with_ui=False)
+    package = project / "src" / "veridian_composed_plugin"
+    (package / "composed-staging.json").write_bytes(_raw(document))
+    for pinned in ("vendor-catalog.json", "vectors-f1.json"):
+        (package / pinned).write_bytes((FIXTURES / pinned).read_bytes())
+    descriptor_path = package / "descriptor.json"
+    descriptor_path.write_bytes(_raw(descriptor))
+    derived = _derive(descriptor, descriptor_path)
+    ui = package / "ui"
+    ui.mkdir(exist_ok=True)
+    (ui / "manifest.json").write_bytes(_raw(derived.manifest))
+    (package / "presentation.json").write_bytes(_raw(derived.envelope))
+    (package / "binding-catalogue.json").write_bytes(_raw(derived.catalogue))
+    settings = ui / "settings"
+    settings.mkdir(exist_ok=True)
+    (settings / "configure.schema.json").write_bytes(_raw(derived.settings_schema))
+    presets = ui / "presets"
+    presets.mkdir(exist_ok=True)
+    for slug, scaffold_row in derived.preset_scaffolds.items():
+        (presets / f"{slug}.json").write_bytes(_raw(scaffold_row))
+    (ui / "class-reference.json").write_bytes(_raw(declaration_scaffold(derived)))
+    report = verify_ui(project)
+    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
+    assert any(
+        row == "pinned document composed-staging.json contributed nothing"
+        for row in report.reported_deviations
+    ), report.reported_deviations
+
+
+def test_non_object_pin_refuses_typed(tmp_path: Path) -> None:
+    """B7: a pin whose bytes are not a JSON object refuses typed
+    (``classref_vendor_catalog_invalid``) — the pre-fold walk crashed on a
+    bare ``TypeError`` (``"urn" in 1.5``), which is not an SDK error face.
+    The refusal stays a refusal; the ignored-pin disclosure is for shape-
+    recognized objects only."""
+    project = tmp_path / "non-object"
+    project.mkdir(parents=True)
+    raw_list = b'["not", "an", "object"]\n'
+    (project / "composed-staging.json").write_bytes(raw_list)
+    (project / "vendor-catalog.json").write_bytes(
+        (FIXTURES / "vendor-catalog.json").read_bytes()
+    )
+    descriptor = _pinned_descriptor()
+    for row in descriptor["contracts"]:
+        if row["path"] == "composed-staging.json":
+            row["sha256"] = hashlib.sha256(raw_list).hexdigest()
+    descriptor_path = project / "descriptor.json"
+    descriptor_path.write_bytes(_raw(descriptor))
+    with pytest.raises(
+        ValueError, match="^classref_vendor_catalog_invalid:"
+    ):
+        _derive(descriptor, descriptor_path)
+
+
+# --- B6: the composed inventory is read back (the W10 mirror) -------------
+
+
+def _composed_gate_project(tmp_path: Path) -> Any:
+    """A real scaffolded project whose composed class resolves and whose
+    birth ledger carries the composed rows (the read-back input)."""
+    from benchweave_sdk.classref import declaration_scaffold
+    from benchweave_sdk.scaffold import create_project
+
+    descriptor = _pinned_descriptor()
+    project = tmp_path
+    create_project(project, "veridian_composed_plugin", with_ui=False)
+    package = project / "src" / "veridian_composed_plugin"
+    for pinned in ("composed-staging.json", "vendor-catalog.json", "vectors-f1.json"):
+        (package / pinned).write_bytes((FIXTURES / pinned).read_bytes())
+    descriptor_path = package / "descriptor.json"
+    descriptor_path.write_bytes(_raw(descriptor))
+    derived = _derive(descriptor, descriptor_path)
+    ui = package / "ui"
+    ui.mkdir(exist_ok=True)
+    (ui / "manifest.json").write_bytes(_raw(derived.manifest))
+    (package / "presentation.json").write_bytes(_raw(derived.envelope))
+    (package / "binding-catalogue.json").write_bytes(_raw(derived.catalogue))
+    settings = ui / "settings"
+    settings.mkdir(exist_ok=True)
+    (settings / "configure.schema.json").write_bytes(_raw(derived.settings_schema))
+    presets = ui / "presets"
+    presets.mkdir(exist_ok=True)
+    for slug, scaffold_row in derived.preset_scaffolds.items():
+        (presets / f"{slug}.json").write_bytes(_raw(scaffold_row))
+    (ui / "class-reference.json").write_bytes(_raw(declaration_scaffold(derived)))
+    return project, package
+
+
+def _tamper_ledger(package: Path, mutate: Any) -> None:
+    ledger_path = package / "ui" / "class-reference.json"
+    ledger = json.loads(ledger_path.read_bytes())
+    mutate(ledger)
+    ledger_path.write_bytes(_raw(ledger))
+
+
+def test_b6_ledger_that_omits_composed_classes_is_reported(
+    tmp_path: Path,
+) -> None:
+    """B6 (the s2 fold, lane B F2): the ledger's composed inventory was
+    write-only on the verify surface — deleting the ``composed_classes``
+    rows left verify-ui green. The read-back mirrors slice 1's
+    ``_custom_inventory_findings``: the authored class rows compare
+    against the derived class set, both directions, REPORTED and never a
+    findings failure."""
+    from benchweave_sdk.classref_gate import verify_ui
+
+    project, package = _composed_gate_project(tmp_path / "omit-classes")
+
+    def mutate(ledger: dict[str, Any]) -> None:
+        ledger["composed_classes"] = []
+
+    _tamper_ledger(package, mutate)
+    report = verify_ui(project)
+    assert any(
+        row.startswith("composed mismatch: ") and CLASS_URN in row
+        for row in report.reported_deviations
+    ), report.reported_deviations
+    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
+
+
+def test_b6_ledger_with_forged_composed_class_is_reported(
+    tmp_path: Path,
+) -> None:
+    """B6's other direction: a forged ``composed_classes`` row naming a
+    class no pin declares is reported too."""
+    from benchweave_sdk.classref_gate import verify_ui
+
+    project, package = _composed_gate_project(tmp_path / "forged-class")
+
+    def mutate(ledger: dict[str, Any]) -> None:
+        ledger["composed_classes"].append(
+            {
+                "class": "otdp.action.veridian_ghost/1.0.0",
+                "validated_against": active_version("plugin-ui-class-reference"),
+            }
+        )
+
+    _tamper_ledger(package, mutate)
+    report = verify_ui(project)
+    assert any(
+        row.startswith("composed mismatch: ")
+        and "otdp.action.veridian_ghost/1.0.0" in row
+        for row in report.reported_deviations
+    ), report.reported_deviations
+    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
+
+
+def test_b6_ledger_that_omits_composed_actions_is_reported(
+    tmp_path: Path,
+) -> None:
+    """B6, the actions set: an authored ledger that drops a derived
+    composed member from ``composed_actions`` gets the mismatch reported
+    — the same write-only hole, one key over."""
+    from benchweave_sdk.classref_gate import verify_ui
+
+    project, package = _composed_gate_project(tmp_path / "omit-actions")
+
+    def mutate(ledger: dict[str, Any]) -> None:
+        ledger["composed_actions"] = []
+
+    _tamper_ledger(package, mutate)
+    report = verify_ui(project)
+    assert any(
+        row.startswith("composed mismatch: ") and STAGE_URN in row
+        for row in report.reported_deviations
+    ), report.reported_deviations
+    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
+
+
+def test_b6_ledger_with_forged_composed_action_is_reported(
+    tmp_path: Path,
+) -> None:
+    """B6's forged direction for the actions set: a row naming an URN no
+    plan derives composed is reported."""
+    from benchweave_sdk.classref_gate import verify_ui
+
+    project, package = _composed_gate_project(tmp_path / "forged-action")
+
+    def mutate(ledger: dict[str, Any]) -> None:
+        ledger["composed_actions"] = [
+            {
+                "action": "otdp.veridian_staging.unclaimed/1.0.0",
+                "resolution": "composed",
+                "class": CLASS_URN,
+            }
+        ]
+
+    _tamper_ledger(package, mutate)
+    report = verify_ui(project)
+    assert any(
+        row.startswith("composed mismatch: ")
+        and "otdp.veridian_staging.unclaimed/1.0.0" in row
+        for row in report.reported_deviations
+    ), report.reported_deviations
+    # The omitted direction reports too (the derived member is missing).
+    assert any(
+        row.startswith("composed mismatch: ") and STAGE_URN in row
+        for row in report.reported_deviations
+    ), report.reported_deviations
+    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]

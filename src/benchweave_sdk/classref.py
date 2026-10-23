@@ -98,6 +98,10 @@ class DerivedUI:
     reference: dict[str, Any]
     cannot_derive: list[dict[str, str]]
     declaration: dict[str, Any]
+    #: Pins whose documents matched neither shape discriminator (B7):
+    #: digest-verified, contributed nothing, disclosed — never dropped
+    #: silently. Empty tuple on derivations with no such pins.
+    ignored_pins: tuple[str, ...] = ()
 
 
 @cache
@@ -278,7 +282,7 @@ def composed_ledger_inventory(
     re-stamped; migrate-ui refuses, never silently upgrades."""
     catalog = _catalog_documents(descriptor)
     served = dict(catalog.get("actions", {}))
-    vendor_actions, classes = _vendor_documents(
+    vendor_actions, classes, _ignored = _vendor_documents(
         descriptor, descriptor_path, served
     )
     covered = set(served) | set(vendor_actions)
@@ -296,27 +300,34 @@ def _vendor_documents(
     descriptor: dict[str, Any],
     descriptor_path: Path | None,
     served_actions: dict[str, Any],
-) -> tuple[dict[str, Any], dict[str, ComposedClass]]:
-    """Action rows and composed classes from the descriptor's pinned
-    documents (the proven vendor-catalog walk, #541 record §2).
+) -> tuple[dict[str, Any], dict[str, ComposedClass], tuple[str, ...]]:
+    """Action rows, composed classes and ignored pins from the
+    descriptor's pinned documents (the proven vendor-catalog walk, #541
+    record §2).
 
     #541 slice 2 (standards record §6): the same walk discriminates by
-    document shape — a document carrying ``urn`` plus ``claims`` is a
-    composed action class, validated against the vendored
-    ``composed-action-class.schema.json``; a document carrying BOTH
-    ``actions`` and the composed keys is an ambiguous pin and refuses the
-    same code; a document carrying neither keeps today's silently-empty
-    vendor-catalog behavior (tightening that is no slice's licence).
-    Integrity refusals (unreadable, digest mismatch) are unchanged and
-    fire before any discrimination — a pinned file's bytes are verified
+    document shape — a document carrying ``urn`` AND ``claims`` (the
+    fold's B1 row: the record's "plus" is conjunctive; the shipped OR
+    refused previously accepted single-key pins through the composed
+    schema's required set) is a composed action class, validated against
+    the vendored ``composed-action-class.schema.json``; a document
+    carrying BOTH ``actions`` and the composed keys is an ambiguous pin
+    and refuses the same code; a document carrying neither shape is
+    IGNORED — it contributes nothing, is returned in ``ignored`` (the
+    fold's B7 row: the drop is disclosed on the derivation and through
+    the gate's REPORTED channel, never silent). Integrity refusals
+    (unreadable, digest mismatch, non-object) are unchanged and fire
+    before any discrimination — a pinned file's bytes are verified
     whatever shape they turn out to carry.
 
     Conflicts refuse, never merge (record §8): a claim against a served
     or pinned catalogue row, a claim another class already holds, and a
     second document carrying one class urn all refuse
-    ``classref_composed_claim_conflict``; a class ``side_effect`` of
-    ``none`` under a descriptor action declaring ``state_change``
-    under-classifies (the S20 direction at the class layer) and refuses
+    ``classref_composed_claim_conflict`` — naming WHICH side the claim
+    collided with (the served OTDP catalog, or the pinned document's
+    path); a class ``side_effect`` of ``none`` under a descriptor action
+    declaring ``state_change`` under-classifies (the S20 direction at
+    the class layer) and refuses
     ``classref_composed_side_effect_under``. Survivors keep their codes:
     the walk's own integrity refusals never change.
     """
@@ -324,6 +335,8 @@ def _vendor_documents(
 
     actions: dict[str, Any] = {}
     classes: dict[str, ComposedClass] = {}
+    ignored: list[str] = []
+    pinned_sources: dict[str, str] = {}
     for row in descriptor.get("contracts", []):
         identifier = str(row.get("id", ""))
         if identifier.startswith("urn:otdp:"):
@@ -348,11 +361,16 @@ def _vendor_documents(
                 f"pinned vendor catalog {row.get('path')} digest mismatch",
             )
         document = json.loads(raw)
-        # No isinstance guard here: a non-dict pin keeps today's crash
-        # (document.get on a list) rather than becoming a silently-empty
-        # catalog — tightening that to a typed refusal is no slice's
-        # licence and is named nowhere in the records.
-        composed_keys = "urn" in document or "claims" in document
+        if not isinstance(document, dict):
+            # The fold's B7 row: a non-object pin refuses typed — the
+            # pre-fold walk crashed on a bare AttributeError/TypeError
+            # (``document.get`` on a list), which is not an SDK error face
+            # (STD-4). It stays a refusal, never an ignored pin.
+            raise _refuse(
+                "classref_vendor_catalog_invalid",
+                f"pinned vendor catalog {row.get('path')} is not a JSON object",
+            )
+        composed_keys = "urn" in document and "claims" in document
         if "actions" in document and composed_keys:
             raise _refuse(
                 "classref_invalid_composed_class",
@@ -377,17 +395,32 @@ def _vendor_documents(
                 )
             classes[cls.urn] = cls
         else:
-            actions.update(document.get("actions", {}))
+            if "actions" not in document:
+                # Neither shape discriminator: digest-verified, then
+                # dropped — returned in ``ignored`` so the derivation and
+                # the gate can disclose it (B7: never silently).
+                ignored.append(str(row.get("path", "")))
+            else:
+                for action_urn in document["actions"]:
+                    pinned_sources[action_urn] = str(row.get("path", ""))
+                actions.update(document["actions"])
     descriptor_actions = descriptor.get("actions") or {}
     claimant: dict[str, str] = {}
     for cls_urn in sorted(classes):
         cls = classes[cls_urn]
         for claim in cls.claims:
-            if claim in served_actions or claim in actions:
+            if claim in served_actions:
                 raise _refuse(
                     "classref_composed_claim_conflict",
-                    f"class {cls_urn} claims {claim}, which a served or "
-                    "pinned catalog row already describes",
+                    f"class {cls_urn} claims {claim}, which the served "
+                    "OTDP catalog describes",
+                )
+            if claim in actions:
+                raise _refuse(
+                    "classref_composed_claim_conflict",
+                    f"class {cls_urn} claims {claim}, which pinned "
+                    f"document {pinned_sources.get(claim, 'unknown')} "
+                    "describes",
                 )
             holder = claimant.get(claim)
             if holder is not None:
@@ -428,7 +461,7 @@ def _vendor_documents(
                 "side_effect": cls.side_effect,
                 "composed_class": cls_urn,
             }
-    return actions, classes
+    return actions, classes, tuple(ignored)
 
 
 def _intersect_property(
@@ -1239,7 +1272,7 @@ def derive_ui(
             )
     catalog = _catalog_documents(descriptor)
     catalog_actions: dict[str, Any] = dict(catalog.get("actions", {}))
-    vendor_actions, _composed = _vendor_documents(
+    vendor_actions, _composed, ignored_pins = _vendor_documents(
         descriptor, descriptor_path, catalog_actions
     )
     catalog_actions.update(vendor_actions)
@@ -1277,6 +1310,7 @@ def derive_ui(
     return _assemble(
         descriptor, references, actions, catalog_actions,
         descriptor_path=descriptor_path, descriptor_raw=descriptor_raw,
+        ignored_pins=ignored_pins,
     )
 
 
@@ -1396,6 +1430,7 @@ def _assemble(
     catalog_actions: dict[str, Any],
     descriptor_path: Path | None = None,
     descriptor_raw: bytes | None = None,
+    ignored_pins: tuple[str, ...] = (),
 ) -> DerivedUI:
     version = active_version("plugin-ui")
     merged = _merge_references(references)
@@ -1437,6 +1472,7 @@ def _assemble(
         descriptor, references, merged, lanes, actions, catalog_actions,
         plan, divergences, version, descriptor_path=descriptor_path,
         descriptor_file_raw=descriptor_raw,
+        ignored_pins=ignored_pins,
     )
 
 
@@ -1452,6 +1488,7 @@ def _finish(
     version: str,
     descriptor_path: Path | None = None,
     descriptor_file_raw: bytes | None = None,
+    ignored_pins: tuple[str, ...] = (),
 ) -> DerivedUI:
     """Assemble every emitted document from the resolved inventory."""
     import hashlib
@@ -1976,7 +2013,9 @@ def _finish(
         channel_count=len(lanes),
         variable_count=sum(len(row.get("quantities") or ()) for row in lanes),
     )
-    declaration = _build_declaration(references, divergences, plan)
+    declaration = _build_declaration(
+        references, divergences, plan, ignored_pins
+    )
     cannot = list(merged["cannot_derive"])
     result = DerivedUI(
         manifest=manifest,
@@ -1990,6 +2029,7 @@ def _finish(
         reference=references[0],
         cannot_derive=cannot,
         declaration=declaration,
+        ignored_pins=ignored_pins,
     )
     return result
 
@@ -2003,7 +2043,7 @@ def effective_action_fields(
     descriptor's own constraints, exactly as the plan row derives them."""
     catalog = _catalog_documents(descriptor)
     actions = dict(catalog.get("actions", {}))
-    vendor_actions, _composed = _vendor_documents(
+    vendor_actions, _composed, _ignored = _vendor_documents(
         descriptor, descriptor_path, actions
     )
     actions.update(vendor_actions)
@@ -2017,15 +2057,17 @@ def effective_action_fields(
 def coverage_plan_without_reference(
     descriptor: dict[str, Any],
     descriptor_path: Path | None = None,
-) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
+) -> tuple[dict[str, dict[str, Any]], dict[str, Any], tuple[str, ...]]:
     """The D14 coverage plan for a descriptor with NO class reference:
     every declared action through the ladder with no named slots (the
     acquisition-lifecycle names stay host-supplied; actions land on the
     project's first page). D14 binds every plugin — the plan, not a
-    reference, is what the always-on arm checks."""
+    reference, is what the always-on arm checks. The third element is the
+    ignored-pin set (B7: the reference-less gate arm discloses them too,
+    exactly as the reference-carrying arm does)."""
     catalog = _catalog_documents(descriptor)
     actions_map: dict[str, Any] = dict(catalog.get("actions", {}))
-    vendor_actions, _composed = _vendor_documents(
+    vendor_actions, _composed, ignored = _vendor_documents(
         descriptor, descriptor_path, actions_map
     )
     actions_map.update(vendor_actions)
@@ -2037,7 +2079,7 @@ def coverage_plan_without_reference(
     plan, _divergences = _derive_controls(
         actions, actions_map, {}, {}, {}
     )
-    return plan, actions_map
+    return plan, actions_map, ignored
 
 
 def _capture_page_id(pages: list[dict[str, Any]]) -> str:
@@ -2459,6 +2501,7 @@ def _build_declaration(
     references: list[dict[str, Any]],
     divergences: list[dict[str, str]],
     plan: dict[str, dict[str, Any]],
+    ignored_pins: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     """The birth conformance declaration (D12c): the reference the project
     follows plus the deviation ledger. Presets are commissioned evidence, so
@@ -2524,18 +2567,38 @@ def _build_declaration(
     for urn, row in sorted(plan.items()):
         if row.get("resolution") != "custom":
             continue
+        # B7 (2026-10-23 fold): when a pinned, digest-verified document
+        # was presented and contributed nothing, the reason says so —
+        # presenting the descriptor's emptiness as the whole cause
+        # misstates what happened (the vendor's pin may declare exactly
+        # the schema; the SDK dropped it for its shape, and discloses
+        # that drop on every surface).
+        ignored_clause = (
+            "; pinned document "
+            + ", ".join(ignored_pins)
+            + " contributed nothing (shape matched neither a vendor "
+            "catalog nor a composed class)"
+            if ignored_pins
+            else ""
+        )
         if row.get("level") == "L0":
             reason = (
                 "no served catalog describes this action and the descriptor "
-                "declares no input schema; nothing derives (L0)"
+                "declares no input schema"
+                + ignored_clause
+                + "; nothing derives (L0)"
                 if row.get("input_undeclared")
-                else "no served catalog describes this action; no staged "
-                "control derives from the declared input_constraints (L0)"
+                else "no served catalog describes this action"
+                + ignored_clause
+                + "; no staged control derives from the declared "
+                "input_constraints (L0)"
             )
         else:
             reason = (
-                "no served catalog describes this action; controls derive "
-                "from the descriptor's own input_constraints"
+                "no served catalog describes this action"
+                + ignored_clause
+                + "; controls derive from the descriptor's own "
+                "input_constraints"
             )
         custom_rows.append(
             {"action": urn, "resolution": "custom", "reason": reason}
@@ -2623,6 +2686,16 @@ def _declared_energy_removing(
         for urn, row in plan.items()
         if str(row.get("side_effect", "")) == "energy_removing"
     )
+
+
+def declared_energy_removing(
+    plan: dict[str, dict[str, Any]],
+) -> frozenset[str]:
+    """The public name for ``_declared_energy_removing`` — the gate
+    consumes the declared D7 half through the same vendored derivation
+    (the ``validate_composed_class`` precedent, #541 slice 2): a
+    cross-module private import is not an importable face."""
+    return _declared_energy_removing(plan)
 
 
 def validate_declaration(

@@ -154,6 +154,8 @@ The three presentation documents (`presentation.json`, `ui/manifest.json`, `bind
 - `migrate_ui_composed_unresolved:` means that a ledger-named composed action class cannot be resolved again. The pin is missing, the digest moved, the class urn does not match, or the document does not validate under the active class-reference version. Nothing is written.
 - `migrate_ui_ledger_drift:` means that the `ui/class-reference.json` inventories do not agree with the descriptor and its pins. Re-derive the project with `benchweave-sdk derive-ui --force`. A version write cannot repair this state.
 
+The list above names the prefixes of this command. The ledger motion reads the pinned documents again. A pin that is unreadable, a pin whose bytes are not a JSON object, or a pin whose digest does not verify, refuses with the derive lane's own code (`classref_vendor_catalog_unreadable:`, `classref_vendor_catalog_invalid:`, `classref_vendor_catalog_digest_mismatch:`). Nothing is written when this happens.
+
 When all three documents and the ledger already carry the active versions, the command is a no-op. It exits 0. This makes it safe in scripts and CI.
 
 Two surfaces point at the command. `check-ui` adds a remediation line when a finding has code `unsupported_version` on one of the three documents. `upgrade` prints a notice when the artifacts are behind the active version. The notice tells you to run `migrate-ui` after you commit the upgrade.

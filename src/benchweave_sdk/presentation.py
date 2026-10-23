@@ -639,7 +639,10 @@ def _resolve_ledger_class(
             continue
         if not isinstance(document, dict):
             continue
-        if "actions" in document or not ("urn" in document or "claims" in document):
+        if "actions" in document or not ("urn" in document and "claims" in document):
+            # B1's fold mirror: the discrimination is conjunctive — a
+            # document carrying only one of urn/claims is not this
+            # class's document (and never a composed class at all).
             continue  # a vendor catalog pin, not this class's document
         if document.get("urn") != class_urn:
             continue  # a different composed class
@@ -724,8 +727,28 @@ def _migrate_classref_ledger(
                 f"migrate_ui_composed_unresolved: malformed composed_classes "
                 f"row {row!r}"
             )
+        # B4 (2026-10-23 fold): the validation stamp gets the same guards
+        # its sibling family stamps get — a non-version-shaped value
+        # refuses ``migrate_ui_version_absent`` (the re-stamp never
+        # OVERWRITES a malformed stamp) and a value above the target
+        # refuses ``migrate_ui_ahead`` (the re-stamp never writes the
+        # validation record DOWN; the pre-fold walk silently wrote
+        # ``"not-a-version"`` and ``"9.0.0"`` down to the target).
+        stamp = row["validated_against"]
+        if _tuple_or_none(stamp) is None:
+            raise ValueError(
+                "migrate_ui_version_absent: ui/class-reference.json: no "
+                f"version-shaped validated_against ({stamp!r})"
+            )
+        if _tuple(stamp) > _tuple(target):
+            raise ValueError(
+                "migrate_ui_ahead: ui/class-reference.json carries a "
+                f"composed class validated against {stamp}, above this "
+                f"SDK's active {target}; install the newer SDK that serves "
+                f"{stamp} — migrate-ui never writes versions down"
+            )
         _resolve_ledger_class(descriptor, descriptor_path, row["class"])
-    custom_set, composed_set, _classes = composed_ledger_inventory(
+    custom_set, composed_set, derived_classes = composed_ledger_inventory(
         descriptor, descriptor_path
     )
     drift: list[str] = []
@@ -758,6 +781,28 @@ def _migrate_classref_ledger(
             drift.append(
                 f"{urn} derives {label} but the ledger omits it"
             )
+    # B6 (2026-10-23 fold, lane B F2): the CLASS set joins the drift
+    # arithmetic — the ledger's composed_classes must name exactly the
+    # class URNs the descriptor's pins declare (the design record §8's
+    # refute correction; the pre-fold walk discarded the derived class
+    # set, so deleting the rows left migrate-ui green and the next family
+    # bump re-stamped the family stamps without re-resolving the
+    # now-unnamed classes). The extra-class direction is normally refused
+    # earlier — a class no pin declares fails re-resolution as
+    # ``migrate_ui_composed_unresolved`` — so deletion and malformed rows
+    # are where this arithmetic bites; both directions run regardless.
+    ledger_class_urns = {str(row["class"]) for row in class_rows}
+    derived_class_urns = set(derived_classes)
+    for class_urn in sorted(ledger_class_urns - derived_class_urns):
+        drift.append(
+            f"the ledger's composed_classes names {class_urn}, which the "
+            "descriptor's pins do not declare"
+        )
+    for class_urn in sorted(derived_class_urns - ledger_class_urns):
+        drift.append(
+            f"the pins declare composed class {class_urn} but the ledger's "
+            "composed_classes omits it"
+        )
     if drift:
         raise ValueError(
             "migrate_ui_ledger_drift: the class-reference ledger's "
@@ -830,9 +875,10 @@ def migrate_ui(
     version string and nothing else. The re-stamped set is validated in
     memory through the same vendored validator ``check-ui`` runs (SRF-2's
     one gate) BEFORE any write; a set that does not validate is refused with
-    nothing written. The three sequential writes are not atomic — the
-    author's VCS is the recovery, the same disclosed posture as
-    ``derive-ui``.
+    nothing written. The four sequential writes (the three plugin-ui
+    documents and the class-reference ledger, #541 slice 2) are not
+    atomic — the author's VCS is the recovery, the same disclosed posture
+    as ``derive-ui``.
 
     Parameters
     ----------

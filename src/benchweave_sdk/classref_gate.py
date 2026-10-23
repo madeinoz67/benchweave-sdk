@@ -179,21 +179,24 @@ def _page_ids(derived: Any) -> list[str]:
     return [str(page["id"]) for page in derived.manifest["pages"]]
 
 
-def _not_d7(expectation_id: str, protected: frozenset[str] = frozenset()) -> bool:
+def _not_d7(expectation_id: str) -> bool:
     """The D7 carve-out: an id naming the abort class never downgrades.
 
-    #541 slice 2: the protected set widens by declaration — an action
-    whose composed class declares ``energy_removing`` joins the abort
-    class here (record §6), with no refusal-code change."""
+    The 2026-10-23 fold (B3) removed a ``protected`` parameter that was
+    structurally unreachable here: this predicate sees §E.1 COMPONENT
+    names (``button``, ``numeric-input``, …), which can never equal an
+    action URN — the declared D7 widening is consumed by
+    ``validate_declaration_vocabulary`` and the forbid arms, both of
+    which DO see action URNs; this function's own abort-slug half is
+    structural."""
     slug = str(expectation_id).split("/")[0].rsplit(".", 1)[-1]
-    return slug != "abort" and expectation_id not in protected
+    return slug != "abort"
 
 
 def _assert_expect(
     expectation: dict[str, Any],
     censused: dict[str, dict[str, Any]],
     declared: frozenset[str] = frozenset(),
-    protected: frozenset[str] = frozenset(),
 ) -> tuple[list[GateFinding], list[str]]:
     """Census-vs-expect deltas, typed (record §5/5). M10/F7: an unknown
     component name and a per_page naming a non-served page both refuse —
@@ -243,7 +246,7 @@ def _assert_expect(
                 if isinstance(actual, list):
                     actual = len(actual)
                 if actual != row["count"]:
-                    if name in declared and _not_d7(name, protected):
+                    if name in declared and _not_d7(name):
                         reported.append(name)
                     else:
                         findings.append(
@@ -276,7 +279,7 @@ def _assert_expect(
                 value = seen.get(key)
                 total += len(value) if isinstance(value, list) else (value or 0)
             if total != row["count"]:
-                if name in declared and _not_d7(name, protected):
+                if name in declared and _not_d7(name):
                     reported.append(name)
                 else:
                     findings.append(
@@ -594,6 +597,70 @@ def _custom_inventory_findings(
     return reported
 
 
+def _composed_inventory_findings(
+    ledger_composed: list[Any],
+    ledger_classes: list[Any],
+    derived_composed: dict[str, str],
+) -> list[str]:
+    """The declaration's composed inventory, read back (the B6 fold of
+    2026-10-23, mirroring ``_custom_inventory_findings`` after the design
+    record §8's refute correction): the authored ledger's
+    ``composed_actions`` and ``composed_classes`` compare against the
+    derived composed sets, both directions, and every mismatch lands in
+    the REPORTED channel — before this, a ledger whose composed rows
+    were deleted left both verify-ui and migrate-ui green, and the next
+    family bump re-stamped the family stamps without re-resolving the
+    now-unnamed classes. ``derived_composed`` maps each derived composed
+    action URN to its class URN; the class comparison runs over the
+    class URNs those values carry. REPORTED, never a ``findings``
+    failure — the same no-schema-yet posture as the custom read-back
+    (deferral D8)."""
+    reported: list[str] = []
+    ledger_actions: set[str] = set()
+    for row in ledger_composed:
+        action = row.get("action") if isinstance(row, dict) else None
+        if action is None:
+            reported.append(
+                f"composed mismatch: malformed composed_actions row {row!r}"
+            )
+            continue
+        ledger_actions.add(str(action))
+    ledger_class_urns: set[str] = set()
+    for row in ledger_classes:
+        class_urn = row.get("class") if isinstance(row, dict) else None
+        if class_urn is None:
+            reported.append(
+                f"composed mismatch: malformed composed_classes row {row!r}"
+            )
+            continue
+        ledger_class_urns.add(str(class_urn))
+    derived_class_urns = {
+        class_urn for class_urn in derived_composed.values() if class_urn
+    }
+    for urn in sorted(set(derived_composed) - ledger_actions):
+        reported.append(
+            f"composed mismatch: {urn} derives composed but the authored "
+            "declaration's composed_actions omits it"
+        )
+    for urn in sorted(ledger_actions - set(derived_composed)):
+        reported.append(
+            f"composed mismatch: the authored declaration's "
+            f"composed_actions names {urn}, which derives no composed member"
+        )
+    for class_urn in sorted(derived_class_urns - ledger_class_urns):
+        reported.append(
+            f"composed mismatch: class {class_urn} is composed here but "
+            "the authored declaration's composed_classes omits it"
+        )
+    for class_urn in sorted(ledger_class_urns - derived_class_urns):
+        reported.append(
+            f"composed mismatch: the authored declaration's "
+            f"composed_classes names {class_urn}, which no pinned "
+            "document declares"
+        )
+    return reported
+
+
 def verify_ui(
     project: Path,
     *,
@@ -615,11 +682,17 @@ def verify_ui(
         # expect assertions and no invented obligations — every declared
         # action still owes a rendered control or a declared deviation.
         
-        from .classref import coverage_plan_without_reference
+        from .classref import (
+            coverage_plan_without_reference,
+            declared_energy_removing,
+            validate_declaration_vocabulary,
+        )
         from .classref_gate_render import render_pages
 
         descriptor = json.loads(descriptor_raw)
-        plan, _actions_map = coverage_plan_without_reference(descriptor, descriptor_path)
+        plan, _actions_map, ignored_pins = coverage_plan_without_reference(
+            descriptor, descriptor_path
+        )
         manifest = json.loads((package_dir / "ui" / "manifest.json").read_bytes())
         pages = [str(page["id"]) for page in manifest.get("pages", [])]
         first = pages[0] if pages else ""
@@ -633,11 +706,9 @@ def verify_ui(
             if declaration_path.is_file()
             else {"deviations": []}
         )
-        from .classref import _declared_energy_removing, validate_declaration_vocabulary
-
         validate_declaration_vocabulary(
             set(plan), declaration,
-            energy_removing=_declared_energy_removing(plan),
+            energy_removing=declared_energy_removing(plan),
         )
         coverage, reported = _coverage_findings(
             # The reference-less plan mints no layout (D2: no derive path
@@ -663,6 +734,19 @@ def verify_ui(
                     declaration.get("custom_actions") or [], custom_urms
                 )
             )
+            # B6: the composed read-back runs in this arm too — both arms
+            # read the same authored declaration file.
+            reported.extend(
+                _composed_inventory_findings(
+                    declaration.get("composed_actions") or [],
+                    declaration.get("composed_classes") or [],
+                    {
+                        urn: str(row.get("class", ""))
+                        for urn, row in plan.items()
+                        if str(row.get("resolution", "catalog")) == "composed"
+                    },
+                )
+            )
         elif custom_urms:
             reported.append(
                 f"custom inventory unavailable: {len(custom_urms)} residual "
@@ -670,12 +754,18 @@ def verify_ui(
                 "(no class reference matched; derive-ui writes the "
                 "declaration only with one)"
             )
+        # B7: ignored pins disclose here too — the reference-less arm
+        # resolves the same pinned documents.
+        reported.extend(
+            f"pinned document {path} contributed nothing"
+            for path in ignored_pins
+        )
         return GateReport(findings=tuple(coverage), reported_deviations=tuple(reported))
     # The AUTHOR's ledger is the deviation record (A6's mechanism): when
     # the project carries ui/class-reference.json the gate reads THAT,
     # validated, in this arm too — the birth declaration is only the
     # fallback. H3: validation runs in both arms.
-    from .classref import _declared_energy_removing, validate_declaration_vocabulary
+    from .classref import declared_energy_removing, validate_declaration_vocabulary
 
     authored_path = package_dir / "ui" / "class-reference.json"
     ledger = (
@@ -685,7 +775,7 @@ def verify_ui(
     )
     vocabulary = set(derived.expectation.get("components", {}))
     vocabulary.update(derived.control_plan)
-    protected = _declared_energy_removing(derived.control_plan)
+    protected = declared_energy_removing(derived.control_plan)
     validate_declaration_vocabulary(
         vocabulary, ledger, energy_removing=protected
     )
@@ -729,7 +819,6 @@ def verify_ui(
     censused = {page: census(html) for page, html in rendered.items()}
     component_findings, component_reported = _assert_expect(
         derived.expectation, censused, frozenset(ledger_ids),
-        protected=protected,
     )
     findings = list(component_findings)
     findings.extend(forbid_findings)
@@ -788,6 +877,29 @@ def verify_ui(
                 if str(row.get("resolution", "catalog")) == "custom"
             },
         )
+    )
+    # B6 (2026-10-23 fold): the composed inventory is read back beside
+    # the custom one — the authored ledger's composed rows compare against
+    # the derived composed sets, both directions, REPORTED and never a
+    # findings failure (slice 1 learned this about custom_actions; the
+    # design record §8's refute correction makes it mandatory here too).
+    reported.extend(
+        _composed_inventory_findings(
+            ledger.get("composed_actions") or [],
+            ledger.get("composed_classes") or [],
+            {
+                urn: str(row.get("class", ""))
+                for urn, row in derived.control_plan.items()
+                if str(row.get("resolution", "catalog")) == "composed"
+            },
+        )
+    )
+    # B7: pins whose documents matched neither shape discriminator are
+    # disclosed on the REPORTED channel every run — never silent, never
+    # a failure.
+    reported.extend(
+        f"pinned document {path} contributed nothing"
+        for path in derived.ignored_pins
     )
     findings.extend(coverage)
     forbidden = [

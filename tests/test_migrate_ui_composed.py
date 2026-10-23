@@ -317,3 +317,102 @@ def test_ledger_above_active_refuses(
     assert _migrate(monkeypatch, package) == 1
     assert "migrate_ui_ahead:" in capsys.readouterr().err
     assert _tree(package) == before
+
+
+# ---------------------------------------------------------------------------
+# The 2026-10-23 fold wave (review rows B4/B6). Each arm names its row;
+# the RED evidence for every arm is quoted in the fold commit's message.
+# ---------------------------------------------------------------------------
+
+
+def test_b4_validated_against_not_version_shaped_refuses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """B4: a ``validated_against`` that is not version-shaped refuses
+    ``migrate_ui_version_absent`` — the re-stamp never OVERWRITES a
+    malformed stamp (mirroring the family stamps' guard; the pre-fold
+    walk silently wrote ``"not-a-version"`` down to the target)."""
+    package = _composed_project(tmp_path / "va-shape")
+    ledger_path = package / "ui" / "class-reference.json"
+    ledger = json.loads(ledger_path.read_bytes())
+    ledger["composed_classes"][0]["validated_against"] = "not-a-version"
+    ledger_path.write_bytes(_raw(ledger))
+    before = _tree(package)
+    capsys.readouterr()
+    assert _migrate(monkeypatch, package) == 1
+    rendered = capsys.readouterr().err
+    assert "migrate_ui_version_absent:" in rendered
+    assert "validated_against" in rendered
+    assert _tree(package) == before
+
+
+def test_b4_validated_against_above_target_refuses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """B4's ahead guard: a ``validated_against`` above the target family
+    refuses ``migrate_ui_ahead`` — migrate-ui never writes versions down,
+    the validation record included (the pre-fold walk wrote ``"9.0.0"``
+    DOWN to the target, exit 0). The existing ahead arm forged only the
+    family stamps; this one forges the record."""
+    package = _composed_project(tmp_path / "va-ahead")
+    ledger_path = package / "ui" / "class-reference.json"
+    ledger = json.loads(ledger_path.read_bytes())
+    ledger["composed_classes"][0]["validated_against"] = "9.0.0"
+    ledger_path.write_bytes(_raw(ledger))
+    before = _tree(package)
+    capsys.readouterr()
+    assert _migrate(monkeypatch, package) == 1
+    rendered = capsys.readouterr().err
+    assert "migrate_ui_ahead:" in rendered
+    assert "9.0.0" in rendered
+    assert _tree(package) == before
+
+
+def test_b6_deleted_composed_classes_rows_refuse_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """B6 (lane B F2): a ledger whose ``composed_classes`` rows were
+    deleted refuses ``migrate_ui_ledger_drift`` — the class set is part of
+    the drift arithmetic, so the next family bump cannot re-stamp family
+    stamps without re-resolving the now-unnamed classes (the pre-fold
+    walk discarded the derived class set and exited 0)."""
+    package = _composed_project(tmp_path / "drift-deleted")
+    _downstamp_ledger(package)
+    ledger_path = package / "ui" / "class-reference.json"
+    ledger = json.loads(ledger_path.read_bytes())
+    ledger["composed_classes"] = []
+    ledger_path.write_bytes(_raw(ledger))
+    before = _tree(package)
+    capsys.readouterr()
+    assert _migrate(monkeypatch, package) == 1
+    rendered = capsys.readouterr().err
+    assert "migrate_ui_ledger_drift:" in rendered
+    assert "composed_classes" in rendered
+    assert _tree(package) == before
+
+
+def test_b6_forged_composed_classes_row_refuses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """B6's forged direction refuses EARLIER in the pipeline: a class row
+    naming a class no pin declares fails the re-resolution walk first and
+    refuses ``migrate_ui_composed_unresolved`` (the design's §8.3 ordering
+    — re-resolution runs before the inventory walk), so the class-set
+    arithmetic's upper bound is reachable only through deletion and
+    malformed rows. This arm pins that precedence: a forged class row
+    can never pass silently, whichever code refuses it."""
+    package = _composed_project(tmp_path / "drift-forged")
+    _downstamp_ledger(package)
+    ledger_path = package / "ui" / "class-reference.json"
+    ledger = json.loads(ledger_path.read_bytes())
+    ledger["composed_classes"].append(
+        {"class": "otdp.action.veridian_ghost/1.0.0", "validated_against": OLD_FAMILY}
+    )
+    ledger_path.write_bytes(_raw(ledger))
+    before = _tree(package)
+    capsys.readouterr()
+    assert _migrate(monkeypatch, package) == 1
+    rendered = capsys.readouterr().err
+    assert "migrate_ui_composed_unresolved:" in rendered
+    assert "otdp.action.veridian_ghost/1.0.0" in rendered
+    assert _tree(package) == before

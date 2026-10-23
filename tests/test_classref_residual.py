@@ -252,7 +252,7 @@ def test_m3_reference_less_plan_matches_derive_ui() -> None:
     disagree with derive_ui — the residual member derives, resolution
     "custom", where the old path refused."""
     descriptor = _acceptance_descriptor()
-    plan, _actions = coverage_plan_without_reference(
+    plan, _actions, _ignored = coverage_plan_without_reference(
         descriptor, FIXTURES / "descriptor-f1.json"
     )
     assert set(plan) == set(descriptor["actions"])
