@@ -605,8 +605,12 @@ PROSE_REGISTER: dict[str, tuple[str, int]] = {
         "pinned-descriptor pedagogy (the per-pin examples name retained "
         "versions by intent) plus the versionless current-SDK claim (the "
         "R1 rider: no mechanism moves a hand-stamped SDK number, so the "
-        "guide claims none)",
-        7,
+        "guide claims none) plus the composed-action-class example added "
+        "with gateway #541 slice 4 (its dialect contract_version 0.1.0 and "
+        "its example action URNs are authored example data that the schema "
+        "itself fixes, never a claim about the current SDK — the schema's "
+        "dialect const is what pins them)",
+        14,
     ),
     "user_guide/getting-started.qmd": (
         "authored example inside the executed sh fence — cross-pinned by "

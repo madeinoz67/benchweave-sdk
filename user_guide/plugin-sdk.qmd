@@ -141,11 +141,129 @@ These checks prove the declaration **well-formed and self-consistent** only. Onl
 
 [`benchweave-sdk check-ui`](../reference/cli/check_ui.qmd) and [`check-preset`](../reference/cli/check_preset.qmd) validate presentation candidates offline. [`preview-ui`](../reference/cli/preview_ui.qmd) previews a plugin project. It serves the standalone host on the scripted mock transport, on loopback only. The command needs the `[server]` extra. On a default installation, it refuses with `benchweave_sdk_server_extras_missing:` and exit 2. `preview-ui` never leaves the mock transport. Every scenario, observation and control receipt is simulated and labelled as such. The preview path has no gateway, registry or hardware reach. The served document's shape is pinned by [plugin-ui-preview-v1](https://github.com/madeinoz67/benchweave/blob/main/standards/plugin-ui-preview-v1/preview-document.schema.json) (main repository). The emitter validates it. The `renderer_version` field of the served document reports the version of the SDK that emitted it. Previews render the manifest's declared plots and channel hints from per-scenario snapshot values. Each observed target gets one simulated value. Previews do not show observation history.
 
+### Three-layer resolution and `derive-ui` {#three-layer-resolution}
+
+`benchweave-sdk derive-ui <project>` builds the presentation set from your descriptor and the vendored class reference for the device's profile. The command writes `ui/manifest.json`, `presentation.json`, `binding-catalogue.json`, `ui/settings/configure.schema.json`, the preset scaffolds for configuration slots, and `ui/class-reference.json`. A manifest that differs from the command's own last output refuses with `derive_ui_dirty_tree:`. Move author edits into `ui/manifest.overrides.json`, or pass `--force`. A descriptor whose profiles match no vendored class reference refuses with `derive_ui_reference:`.
+
+Every declared action gets one control plan row during derivation. The row carries a `resolution` value, and the value names the layer that supplied the action's catalog side. The value takes one of three forms:
+
+- Layer 1, `catalog`: the served OTDP catalog or a pinned vendor catalog describes the action.
+- Layer 2, `composed`: a pinned composed action class claims the action. The row also carries the class URN and the class's declared `side_effect`.
+- Layer 3, `custom`: no catalog side exists. The row derives from the descriptor's own `input_constraints`.
+
+The workflow never refuses an action that no catalog describes, and every rendered action states where it came from. Integrity faults still refuse with their own codes. An unreadable pin, a digest that no longer matches, a schema-invalid document, or a claim conflict each refuses the derivation.
+
+A residual member renders into a section the expander mints, titled `Custom device actions`, on the device-features page. Catalogued vendor actions stay in the main section, so resolution partitions the two, and they never mix. A page whose layout the reference authors stands as authored. The custom member then surfaces in the plan, the ledger, and the gate report only.
+
+Three behaviors are deferred. Computed measurement variables and custom decoder documents are not resolved through a class or a catalog. Both declare cleanly and derive no surface. The gate discloses each member every run, and the verify-ui section below gives the exact rows. Decoder annotation lanes land in a digital-lanes plot only. The `decode_annotated` row names the lanes as its rendered surface exactly when they land.
+
+The gateway mirror of this resolution is also deferred. A gateway still refuses an action the SDK resolves.
+
+### Author a composed action class {#composed-action-classes}
+
+A composed action class is a versioned JSON document. It supplies the catalog side of the derivation for the action URNs it claims. One class can claim many actions. The class names every action URN it presents. It never guesses from names.
+
+The document has six keys:
+
+```json
+{
+  "contract_version": "0.1.0",
+  "urn": "otdp.action.numeric_staging/1.0.0",
+  "title": "Numeric staging action",
+  "claims": ["acme.set_trigger_position/1.0.0"],
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "stage_level": { "type": "number", "minimum": 0.0, "maximum": 10.0 }
+    },
+    "required": ["stage_level"]
+  },
+  "side_effect": "state_change"
+}
+```
+
+`contract_version` is the dialect version, and it stays `0.1.0`. It is not the family version, so a family bump does not repin the document. `urn` is the class's own identity, for example `otdp.action.numeric_staging/1.0.0`. `title` is a short display title.
+
+`claims` holds 1 to 64 unique action URNs. A claim is any versioned action key: a name, a slash, and a three-part version, such as `acme.set_trigger_position/1.0.0`. The descriptor puts no pattern on its action keys, and pinned catalogs serve any key shape. The claims pattern stays as permissive as the layers on both sides.
+
+`input_schema` is a JSON Schema object. It plays the catalog side of the narrowing, and the descriptor's `input_constraints` still narrow it. A keyword outside the closed intersection vocabulary refuses with `classref_constraint_unsupported:`.
+
+`side_effect` takes one of three values: `none`, `state_change`, `energy_removing`. Over-classification is legal. A class may declare a stronger side effect than the descriptor's action row. Under-classification refuses. A class that declares `none` for an action the descriptor declares `state_change` refuses with `classref_composed_side_effect_under:`.
+
+A class that declares `energy_removing` makes its actions energy-removing for the gate. A deviation row that names such an action refuses with `classref_deviation_forbidden:`.
+
+Conflicts refuse. They never merge. A claim against a served catalog row refuses with `classref_composed_claim_conflict:`. The same code fires for a claim against a pinned vendor catalog row. It also fires for a claim another class holds, and for one class URN in two pinned documents.
+
+A pinned document is one of three kinds. A document with `actions` is a vendor catalog. A document with both `urn` and `claims` is a composed class. A document with `actions` together with `urn` or `claims` is ambiguous and refuses with `classref_invalid_composed_class:`. A document with neither shape contributes nothing and discloses on every run.
+
+Integrity checks run before any shape discrimination. An unreadable file refuses with `classref_vendor_catalog_unreadable:`. Bytes that do not match the pin's sha256 refuse with `classref_vendor_catalog_digest_mismatch:`. A document that is not a JSON object, or whose `actions` is not an object, refuses with `classref_vendor_catalog_invalid:`.
+
+Put the document in the plugin package, beside the descriptor. Pin it in `descriptor.json` under `contracts[]` with a non-`urn:otdp:` id, a path relative to the descriptor, and the sha256 of the file bytes:
+
+```json
+{
+  "id": "urn:acme:composed-staging:1.0.0",
+  "path": "composed-staging.json",
+  "sha256": "3f8a2c91d47e5b06a1f8c3d7e2b94506c8d1f7a2b3c4d5e6f708192a3b4c5d6e"
+}
+```
+
+The derivation resolves the path relative to the descriptor. The file must be a regular file, and no path component may be a symlink. A claim that names no action the descriptor declares applies nowhere. The gate discloses such a class every run, and the ledger does not count it.
+
+### The conformance ledger (`ui/class-reference.json`) {#class-reference-ledger}
+
+`derive-ui` writes `ui/class-reference.json` when the project's profile has a vendored class reference. The file is the project's conformance record. You can edit its rows. The `upgrade` command and `migrate-ui` both read the file.
+
+The document carries these keys:
+
+| Key | What it records |
+|---|---|
+| `contract_version`, `reference_version` | The class-reference family version the derivation used. |
+| `profile_ids` | The profiles the derivation followed. |
+| `deviations` | One row per declared divergence: `expectation_id` and `reason`. |
+| `custom_actions` | One row per residual member: `action`, `resolution`, and `reason`. |
+| `composed_actions` | One row per composed member: `action`, `resolution`, and `class`. |
+| `composed_classes` | One row per applied class: `class` and `validated_against`. |
+
+At birth the derivation fills `deviations` with three kinds of row. An intended control that derives at a different level gets one row. A configuration surface with no commissioned presets gets one row. A catalogued member that derives no control gets one row.
+
+The deviation vocabulary refuses an unknown id with `classref_unknown_expectation:`. A deviation row that names an action in the abort class refuses with `classref_deviation_forbidden:`. The same refusal applies to an action whose class declares `energy_removing`.
+
+The ledger records the classes the derivation applied. A pinned class whose claims name no action the descriptor declares applies nowhere. It stays out of `composed_classes`, and the gate discloses it every run.
+
+No schema governs the whole key set. Only the deviation vocabulary is validated. The gate reports a row that disagrees with the derivation, and `migrate-ui` refuses a drifted ledger.
+
+### What `verify-ui` reports {#verify-ui}
+
+`benchweave-sdk verify-ui <project>` renders the project's pages through the standalone host, counts the served components, and asserts the expectation, the coverage arm, and the ledger. The command needs the `[server]` extra. On a default installation it refuses with `benchweave_sdk_server_extras_missing:` and exit 2.
+
+The report has two channels. Findings fail the run. The command prints `classref_gate_*` codes and exits non-zero. Reported rows are disclosures. The command prints one `reported deviation:` line per row, and a run with disclosures only stays clean.
+
+These rows are disclosures, not failures:
+
+| Row | Meaning |
+|---|---|
+| `custom: <urn>` | A residual member, and its controls rendered. |
+| `custom, renders nothing: <urn>` | A residual member with no rendered control. Nothing derives for it, or the page's layout stands as authored. |
+| a declared id | A declared deviation. The gate reports it instead of failing. |
+| `custom mismatch: ...` | The ledger's `custom_actions` disagrees with the derived set, in either direction. |
+| `composed mismatch: ...` | The ledger's `composed_actions` or `composed_classes` disagrees with the derived set, in either direction, or names the wrong class for an action. |
+| `pinned document <path> contributed nothing` | A pinned document matched neither a vendor catalog nor a composed class. |
+| `composed class <urn> is pinned (<path>) but its claims name no action this descriptor declares` | An unapplied class. |
+| `pinned document <path> contributed nothing (its vendor-catalog actions map is empty)` | A catalog pin that declares no actions. |
+| `custom inventory unavailable: ...` and `composed inventory unavailable: ...` | A project with no class reference has no ledger to read. |
+| `custom measurement <id>: derivation deferred (the datasets and capture shapes vocabulary has no derivation in this increment; D1)` | A computed measurement the descriptor declares. It derives no surface. |
+| `custom decoder <id>: derivation deferred (the channels and decoders vocabulary has no derivation in this increment; D1)` | A pinned decoder that no derived plot renders. A decoder whose lanes land is not disclosed. |
+
+A deferred-member row names one member and its vocabulary. A computed measurement discloses on every run. A decoder discloses only when no derived plot carries a lane for it. A built lane is not a rendered lane. Lanes land in a digital-lanes plot alone. In the reference-less arm every declared decoder discloses, because that path derives no lanes at all.
+
+A disclosure row never fails the run by itself. A residual member still fails the coverage arm when the derivation minted its controls and the render lacks them.
+
 ### Contract-version migration (`migrate-ui`) {#migrate-ui}
 
 The three presentation documents (`presentation.json`, `ui/manifest.json`, `binding-catalogue.json`) carry a `contract_version` stamp. The SDK writes this stamp when it generates the documents. The stamp comes from the lock's active plugin-ui version. A new SDK release can move the active version. The `upgrade` command refreshes the template only. It does not write into `src/`. The artifacts then keep the stamp of the SDK that made them. A project in this state fails `check-ui` and the generated preview test with `unsupported_version`.
 
-`benchweave-sdk migrate-ui` repairs this state. The command takes the same arguments as `check-ui`. It changes only the version stamp and the envelope's manifest hash. Your formatting and your content stay as bytes. The command validates the re-stamped set before it writes any file. A set that does not validate is refused. Nothing is written then. The command writes the files one at a time. It does not lock the project tree. Use your version control to review the change and to undo it. The command refuses with named prefixes:
+`benchweave-sdk migrate-ui` repairs this state. The command takes the same arguments as `check-ui`. It makes four writes: the three plugin-ui documents and the class-reference ledger `ui/class-reference.json`. For the three documents it changes only the version stamp and the envelope's manifest hash. For the ledger it changes only the three family stamps. Your formatting and your content stay as bytes. The command validates the re-stamped set before it writes any file. A set that does not validate is refused. Nothing is written then. The command writes the files one at a time. It does not lock the project tree. Use your version control to review the change and to undo it. The command refuses with two families of named prefixes. The `migrate_ui_*` family covers the version motion:
 
 - `migrate_ui_ahead:` means that a document carries a version above this SDK's active version. Install the newer SDK that serves that version. The command never writes a version down.
 - `migrate_ui_version_absent:` means that a document does not parse, or has no version-shaped `contract_version`.
@@ -154,7 +272,7 @@ The three presentation documents (`presentation.json`, `ui/manifest.json`, `bind
 - `migrate_ui_composed_unresolved:` means that a ledger-named composed action class cannot be resolved again. The pin is missing, the digest moved, the class urn does not match, or the document does not validate under the active class-reference version. Nothing is written.
 - `migrate_ui_ledger_drift:` means that the `ui/class-reference.json` inventories do not agree with the descriptor and its pins. Re-derive the project with `benchweave-sdk derive-ui --force`. A version write cannot repair this state.
 
-The list above names the prefixes of this command. The ledger motion reads the pinned documents again. A pin that is unreadable, a pin whose bytes are not a JSON object, a pin whose `actions` map is not a JSON object, or a pin whose digest does not verify, refuses with the derive lane's own code (`classref_vendor_catalog_unreadable:`, `classref_vendor_catalog_invalid:`, `classref_vendor_catalog_digest_mismatch:`). Nothing is written when this happens.
+The second family is `classref_*`, from the resolution walk. The ledger motion reads the pinned documents again. A pin that is unreadable, a pin whose bytes are not a JSON object, a pin whose `actions` map is not a JSON object, or a pin whose digest does not verify, refuses with a `classref_*` code (`classref_vendor_catalog_unreadable:`, `classref_vendor_catalog_invalid:`, `classref_vendor_catalog_digest_mismatch:`). Nothing is written when this happens.
 
 When all three documents and the ledger already carry the active versions, the command is a no-op. It exits 0. This makes it safe in scripts and CI.
 
