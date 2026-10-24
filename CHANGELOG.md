@@ -2,21 +2,49 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.20.0] - Unreleased
+## [0.21.0] - 2026-10-24
+
+### Bug Fixes
+
+- #541 s1 fold - the complete review wave (rows W1-W11)
+- #541 s1 fold two — per-action coverage discriminator, typed riders
+- #541 s2 fold — the review wave (B1-B10), the widened claims re-sync
+- #541 s2 rider — NIT dispositions N2-N7, widened-claims arms, M3 on a vendor URN
+- #541 s2 fold wave 3 — applied-classes rule (R1), ambiguity split (R2), pin disclosures (R3/R5), typed actions map (R4), mapping read-back (R6), stale prose (R7)
+- #541 s3 fold — R10's decoder condition keys on rendered, not built
+- The A3 install arm is portable across venv layouts
+
+### Documentation
+
+- The composition surfaces in the plugin SDK guide (closes D7)
 
 ### Features
 
-- Resolve residual actions from the descriptor's own `input_constraints` — an action URN no served catalog and no composed class describes no longer refuses `derive-ui` (gateway #541 slice 1): the row derives onto the device-features page inside an expander-minted custom section
-- Split the knowledge-gap refusal from the integrity faults: unreadable pinned catalog, digest mismatch, missing profile catalog and absent profile row each keep their own typed refusal code — only the recoverable knowledge gap resolves
-- `resolution` provenance on every control plan row (`catalog`, `composed`, `custom`)
-- The gate discloses custom members through its REPORTED channel — a custom member never passes silently and never becomes a findings failure — and the per-action coverage discriminator keys on the derived layout block
-- Vendor the plugin-ui-class-reference 0.4.0 family and resolve composed action classes (gateway #541 slice 2): a pinned document carrying `urn`/`claims` supplies the catalogue side of the derivation (resolution `composed`), conflicts and under-classified `side_effect` refuse typed, and a class's declared `side_effect` widens the gate's D7 set by declaration
-- `migrate-ui` re-stamps the class-reference ledger's family stamps and each `composed_classes[].validated_against` across a family bump, refusing `migrate_ui_composed_unresolved` / `migrate_ui_ledger_drift` with nothing written
+- #541 s1 — split the integrity refusals out of classref_unknown_action
+- #541 s1 — residual actions resolve, provenance-labelled, never refused
+- #541 s1 — residual members derive into an expander-minted custom section
+- #541 s1 — custom members disclose on the declaration and the gate's REPORTED channel
+- #541 s2 — composed action classes resolve, migrate-ui re-stamps the ledger
 
 ### Miscellaneous
 
-- 0.19.0 -> 0.20.0 — the composed-action-class train re-cut ahead of the released 0.19.0 (the OTDP 0.2.4 pairing); the sync absorbs both otdp 0.2.4 and classref 0.4.0 into the carried set (20 rows / 13 retained)
+- Bring the release-owned surfaces to 0.20.0
 
+### Testing
+
+- Derive the active row from the bundle under test, not the pin (#536)
+- #541 s3 — the Meridian M-400 acceptance fixture and its arms
+- Each anchor arm derives from the counter it actually claims
+
+### Release
+
+- V0.21.0
+- V0.21.0 phase-2 registration at the tag commit
+
+
+### Contributors
+
+- Stephen Eaton (19 commits)
 ## [0.19.0] - 2026-10-22
 
 ### Bug Fixes
@@ -55,7 +83,6 @@ All notable changes to this project will be documented in this file.
 ### Contributors
 
 - Stephen Eaton (17 commits)
-
 ## [0.18.0] - 2026-10-21
 
 ### Features
