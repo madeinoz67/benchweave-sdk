@@ -790,7 +790,7 @@ class TestProseScope:
         # here, the derived number below, the census pin in the junk arm)
         # move with the staged phase-2 patch — release-cut rewrites them at
         # the tag commit (issue #524); never by hand
-        option_anchor = '<option value="docs/">v0.19.0 (latest)</option>\n'
+        option_anchor = '<option value="docs/">v0.21.0 (latest)</option>\n'
         assert option_anchor in html_text
         fake_option = '          <option value="docs/v/v9.9.9/">v9.9.9</option>\n'
         index.write_text(
@@ -799,11 +799,11 @@ class TestProseScope:
         code, out = self._run(scratch, capsys)
         assert code == 0, out
         # The same map row without the selector occurrences reds by the
-        # derived number (2 x 26 + 11 = 63).
+        # derived number (2 x 27 + 11 = 65).
         index.write_text(html_text, encoding="utf-8")
         code, out = self._run(scratch, capsys)
         assert code == 1, out
-        assert "website/index.html expects 63 sites" in out
+        assert "website/index.html expects 65 sites" in out
 
     def test_the_prose_matcher_is_pinned_to_the_authority_literal(self) -> None:
         """The twin's PATTERN_DOCS is the gateway docs scope's committed
@@ -929,4 +929,4 @@ class TestProseFoldHardening:
         # and an in-arc content change that adds registered prose literals
         # moves it too — gateway #541 slice 4 added seven (the composed
         # action class example in user_guide/plugin-sdk.qmd), 73 -> 80.
-        assert "80 sites, 11 files scanned" in out
+        assert "82 sites, 11 files scanned" in out
