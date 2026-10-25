@@ -260,6 +260,7 @@ def test_m3_reference_less_plan_matches_derive_ui() -> None:
         _empty,
         _composed_members,
         _unapplied_member_pins,
+        _unapplied_members,
     ) = coverage_plan_without_reference(
         descriptor, FIXTURES / "descriptor-f1.json"
     )

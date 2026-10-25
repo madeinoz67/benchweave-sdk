@@ -621,6 +621,7 @@ def test_f8b_reference_less_unknown_action_derives_residual(tmp_path: Path) -> N
         _empty,
         _composed_members,
         _unapplied_member_pins,
+        _unapplied_members,
     ) = coverage_plan_without_reference(
         descriptor, FIXTURES / "descriptor-f1.json"
     )

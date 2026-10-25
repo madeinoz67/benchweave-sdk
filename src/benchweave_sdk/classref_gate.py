@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from .classref import (
+    _MEMBER_LEDGER_VOCABULARIES,
     LAYOUT_EXTENSION_KEY,
     derive_ui,
     find_reference,
@@ -702,7 +703,20 @@ def _composed_members_findings(
             "object keyed by vocabulary"
         ]
     reported: list[str] = []
-    for vocabulary in ("procedures", "settings", "datasets", "channels"):
+    # (#556 B3 fold F4) The read-back iterated the four vocabularies alone,
+    # so authored junk under any other key was ignored silently — an
+    # unknown key REPORTs, in this channel's own mismatch wording (the
+    # no-schema-yet posture, D8: the key set's contract is this read-back
+    # and the prose, and the writer emits exactly the four).
+    for key in sorted(ledger_members):
+        if key not in _MEMBER_LEDGER_VOCABULARIES:
+            reported.append(
+                "composed members mismatch: the authored declaration's "
+                f"composed_members carries key {key!r}, which is no "
+                "composed vocabulary "
+                f"({', '.join(_MEMBER_LEDGER_VOCABULARIES)})"
+            )
+    for vocabulary in _MEMBER_LEDGER_VOCABULARIES:
         derived_rows = {
             str(row.get("slot", "")): row
             for row in derived_members.get(vocabulary, ())
@@ -790,6 +804,7 @@ def verify_ui(
             empty_pins,
             composed_members,
             unapplied_member_pins,
+            unapplied_members,
         ) = coverage_plan_without_reference(descriptor, descriptor_path)
         manifest = json.loads((package_dir / "ui" / "manifest.json").read_bytes())
         pages = [str(page["id"]) for page in manifest.get("pages", [])]
@@ -862,6 +877,15 @@ def verify_ui(
             reported.extend(
                 f"composed member declaration {path} applied nowhere"
                 for path in unapplied_member_pins
+            )
+            # (#556 B3 fold F2) The per-member rows: a dead member inside a
+            # pin that APPLIED is invisible to the pin-level row above, and
+            # it derives nothing anywhere (a member that applies nowhere
+            # injects nothing), so this channel is its only disclosure.
+            reported.extend(
+                f"composed member declaration {path} member {slot} "
+                f"applied nowhere ({reason})"
+                for path, slot, reason in unapplied_members
             )
         else:
             if custom_urms:
@@ -1049,7 +1073,10 @@ def verify_ui(
     # #556 §3 rules 1-2: the composed-members inventory reads back the
     # same way — both directions, per-member slot mapping, REPORTED — and
     # a pin whose members applied nowhere discloses on the same channel,
-    # never drift.
+    # never drift. The B3 fold's F2 adds the per-member rows: a dead
+    # member inside a pin that applied is invisible to the pin-level row
+    # and derives nothing anywhere, so this channel is its only
+    # disclosure.
     reported.extend(
         _composed_members_findings(
             ledger.get("composed_members"), derived.composed_members
@@ -1058,6 +1085,11 @@ def verify_ui(
     reported.extend(
         f"composed member declaration {path} applied nowhere"
         for path in derived.unapplied_member_pins
+    )
+    reported.extend(
+        f"composed member declaration {path} member {slot} "
+        f"applied nowhere ({reason})"
+        for path, slot, reason in derived.unapplied_members
     )
     # B7: pins whose documents matched neither shape discriminator are
     # disclosed on the REPORTED channel every run — never silent, never

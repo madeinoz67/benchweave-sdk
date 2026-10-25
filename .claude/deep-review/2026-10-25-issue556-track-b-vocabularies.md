@@ -723,3 +723,117 @@ divergence until the pointer advances), so a differential run does not
 rediscover the tie as an unexplained failure. Recording that requirement
 here is the SDK-side half of the obligation; the note itself belongs with
 the next change to that census, which this arc does not make.
+
+### 2026-10-25 — B3 fold: the join half of the capacity boundary, the per-member applied-nowhere row, and two inventory corrections
+
+The adversarial lane on B3 confirmed the walk's predicate, M6, the refusal
+classes and the gate's mapping read-back, and found two defects plus two
+inventory drifts; all four fold in one commit with per-finding RED
+evidence, recorded here because two of them are rules, not code.
+
+**F1 (MEDIUM-HIGH) — the page-level lane join is bounded, and the capacity
+boundary gains its join half.** Per-slot `_resolve_channels` bounds each
+slot alone at `_LANE_CEILING` (64), but the join in `_lanes_for_page` —
+the first slot's lanes plus every placed member slot's — bounded nothing:
+a 32-lane reference role beside a 40-lane composed role derived a
+72-entry `y` against the manifest schema's 64 with zero disclosures, and
+the real `verify_ui` raised
+`PluginLoadError: standalone_plugin_invalid: preview_invalid_presentation:
+invalid_document: ui-manifest: Document does not satisfy its schema`
+(reproduced by the fold's arm before any fix; the neutralized bound
+reproduces it after). The fix extends today's capacity ruling by its
+missing half, stated as ONE boundary in two clauses:
+
+- **A single slot over the cap REFUSES** (`classref_lane_ceiling`, the
+  per-slot arm in `test_classref_expand.py`, unchanged): a lane has no
+  surface other than the plot, so truncating one slot's own declaration
+  would misrepresent the capture — and the author can fix the
+  declaration, which is what a refusal asks.
+- **A joined page over the cap DISCLOSES AND DROPS**: the sum of
+  admissible declarations is not an authoring error — no single
+  declaration is at fault, so no refusal names one. The overflow drops
+  from the PLOT alone (the wire shape keeps every joined lane — the B1
+  fold's discipline, `dropped from the PLOT alone: the wire still carries
+  it`), and each dropped lane lands a REPORTED row:
+
+  `composed lane <id> (role <role>): no lane surface on page <page> (the
+  page's channels slots join to <n> lanes; the plot's y admits 64)`
+
+  At exactly 64 joined lanes nothing drops and no row appears (armed);
+  at 65 the tail lane drops and reports (armed at 72/8-dropped, with the
+  gate rendering clean over the bounded plot — the census counts the 64
+  the plot carries, and the channel closure stays quiet because every
+  dropped lane's role RESOLVED: the dropped lane's own row is the
+  disclosure, not a second one). The overflow is structurally composed
+  lanes — the first slot's own count is inside the per-slot ceiling and
+  the join order puts it first — which is why the row kind is `composed
+  lane` and the class's own lanes never drop.
+
+**F2 (MEDIUM) — a member that applies nowhere inside a partially-applied
+pin is no longer silent.** The applied-nowhere disclosure was pin-level
+only: a members document with one applying member and one dead one
+reported nothing about the dead one — no refusal, no row, no ledger
+entry. The fold adds the per-member REPORTED row, in the pin-level row's
+wording family, naming the member's slot and the reason; the pin-level
+row stays and stays quiet exactly when the pin applied:
+
+`composed member declaration <pin> member <slot> applied nowhere (its
+claims name no action this descriptor declares)` — the claim half
+mirrors the composed-class row's own wording; the channels half reads
+`(no declared channel carries role <role>)`. Both gate arms carry it
+(the B6/B7/R3 discipline); `DerivedUI` and
+`coverage_plan_without_reference` grow the parallel
+`unapplied_members` structure (the coverage tuple is now 8 wide).
+
+**F3 (LOW) — `classref_invalid_member_declaration` joins this record's
+committed inventory.** The walk introduced a typed refusal the design's
+enumerations did not carry: §3 rule 4 lists the conflict refusals and the
+integrity codes but not the member-declaration SCHEMA-validation refusal
+(the `_validate_member_declaration` arm, firing on a document carrying
+`members` that fails the vendored `composed-member-declaration.schema`
+— the `_invalid_composed_class` precedent exactly: a schema-invalid
+pinned class document refuses `classref_invalid_composed_class` under
+the same posture). §3 rule 4's enumeration extends to name it; it is a
+SURVIVOR (M2's "parent §8 survivors" set gains this code alongside the
+walk's other integrity refusals — the parent §8 row itself is
+gateway-side and rides B7/B8's mirror legs). Fixed by inventory, not by
+code: the code keeps its name.
+
+**F4 (LOW) — the gate's `composed_members` read-back reports unknown
+keys.** The read-back iterated the closed four-vocabulary set, so
+authored junk under any other key (`composed_members.observations`,
+anything outside the four) was ignored silently. An unknown key now
+REPORTs in the read-back's own wording —
+`composed members mismatch: the authored declaration's composed_members
+carries key '<k>', which is no composed vocabulary (procedures,
+settings, datasets, channels)` — REPORTED, never a findings failure (the
+D8 no-schema-yet posture). The four now live in one named constant
+(`_MEMBER_LEDGER_VOCABULARIES`) shared by the writer, the read-back and
+the unknown-key row: the read-back's loop literal was the third copy of
+the four, and a third copy is how the four drift.
+
+**NITs.** The same-document member-slot duplicate now says "declared by
+two members in the same pinned document (<pin>)" instead of printing the
+pin twice ("<pin> and <pin>"); the two-document form is unchanged. The
+R2 ambiguity message stays as committed — the arms assert substrings,
+rewording buys nothing and risks the arms (the refute's own note).
+
+**Recorded for the next slice (B4), two facts this fold surfaced:**
+
+1. **The seam does not yet reach production.** The B3 first-commit arm
+   proves the validator, the vendored schema and the pinned merge agree
+   (`merge_pinned_documents` over `_pinned_schemas` in the test), and
+   the negative control proves the seam load-bearing — but
+   `presentation.py::validate_presentation` still passes
+   `schema_documents=_pinned_schemas(descriptor)` alone, so a vendor
+   target would still fail the REAL `check-ui` with
+   `capability_mismatch` until the pinned-document merge is wired into
+   that path. B4 wires it, and B4 must carry an arm at the real
+   `check-ui` path rather than the test's manual merge — the seam arm
+   proves the validator, not the production call.
+2. **M1's denominator will not catch an F2-shaped silence.** A dead
+   member inside an applied pin is in neither M1's numerator (it derives
+   no surface) nor any residual row (a member that applies nowhere
+   injects nothing, so no vocabulary's residual walk sees it) — the
+   per-member REPORTED row this fold adds IS the guard, and M1's
+   100%-coverage claim must not be read as covering it.

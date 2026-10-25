@@ -167,6 +167,12 @@ class DerivedUI:
     #: names a declared action and no declared channel matches its role —
     #: disclosed on the REPORTED channel every run, the R1 discipline.
     unapplied_member_pins: tuple[str, ...] = ()
+    #: Dead members inside pins that APPLIED (the B3 fold's F2): each as
+    #: ``(pin path, slot, reason)`` — a pin-level row alone left a member
+    #: whose claims or role match nothing silent whenever a sibling member
+    #: applied, and such a member is silent on every surface by
+    #: construction (it injects nothing). REPORTED every run, both arms.
+    unapplied_members: tuple[tuple[str, str, str], ...] = ()
 
 
 @cache
@@ -459,6 +465,12 @@ _MEMBER_VOCABULARY = {
     "dataset": "datasets",
     "channels": "channels",
 }
+#: The ledger's key set, in its own name: the writer's iteration order
+#: (``_build_declaration``), the gate read-back's closed set and the
+#: unknown-key row's expectation all read ONE tuple — the B3 fold's F4
+#: made the read-back's literal the third copy of the four, and a third
+#: copy is how the four drift.
+_MEMBER_LEDGER_VOCABULARIES = ("procedures", "settings", "datasets", "channels")
 
 
 def _member_applies(member: Mapping[str, Any], descriptor: dict[str, Any]) -> bool:
@@ -501,12 +513,34 @@ def _applied_member_row(
     return row
 
 
+def _member_nowhere_reason(member: Mapping[str, Any]) -> str:
+    """Why one member applied nowhere (the B3 fold's F2): the claim half
+    mirrors the composed-class row's own wording; the claim-less channels
+    half names the role no declared channel carries."""
+    if member.get("kind") == "channels":
+        return (
+            "no declared channel carries role "
+            f"{str(member.get('where_role', ''))}"
+        )
+    return "its claims name no action this descriptor declares"
+
+
 def _composed_member_inventory(
     declarations: tuple[ComposedMemberDeclaration, ...],
     descriptor: dict[str, Any],
-) -> tuple[dict[str, tuple[dict[str, str], ...]], tuple[str, ...]]:
+) -> tuple[
+    dict[str, tuple[dict[str, str], ...]],
+    tuple[str, ...],
+    tuple[tuple[str, str, str], ...],
+]:
     """(#556 §3 rules 1-2) The composed-members inventory: the APPLIED set
-    per vocabulary, and the pins whose members apply nowhere.
+    per vocabulary, the pins whose members apply nowhere, and — the B3
+    fold's F2 — the dead MEMBERS inside pins that applied: a pin-level row
+    alone left a member whose claims (or role) match nothing silent
+    whenever a sibling member applied, and a member that applies nowhere
+    is silent on every surface by construction (it injects nothing, so no
+    residual row can name it either). Each dead member rides back as
+    ``(pin path, slot, reason)`` for the gate's REPORTED channel.
 
     Only the composed-member walk feeds this; the ledger's
     ``composed_members`` records exactly the applied set, so a pin whose
@@ -515,10 +549,18 @@ def _composed_member_inventory(
     the R1 discipline, never drift."""
     rows: dict[str, list[dict[str, str]]] = {}
     unapplied: list[str] = []
+    unapplied_members: list[tuple[str, str, str]] = []
     for declaration in declarations:
         applied_any = False
         for member in declaration.members:
             if not _member_applies(member, descriptor):
+                unapplied_members.append(
+                    (
+                        declaration.pin_path,
+                        str(member.get("slot", "")),
+                        _member_nowhere_reason(member),
+                    )
+                )
                 continue
             applied_any = True
             vocabulary = _MEMBER_VOCABULARY[str(member.get("kind", ""))]
@@ -528,7 +570,7 @@ def _composed_member_inventory(
         if not applied_any:
             unapplied.append(declaration.pin_path)
     frozen = {key: tuple(value) for key, value in rows.items()}
-    return frozen, tuple(unapplied)
+    return frozen, tuple(unapplied), tuple(unapplied_members)
 
 
 def _check_member_reference_conflicts(
@@ -889,6 +931,15 @@ def _vendor_documents(
             slot = str(member.get("slot", ""))
             holder_pin = member_slot_owner.get(slot)
             if holder_pin is not None:
+                # The B3 fold's NIT: two members of ONE document naming the
+                # same slot printed the pin twice ("x and x"); the message
+                # names the document once and says the pair is internal.
+                if holder_pin == declaration.pin_path:
+                    raise _refuse(
+                        "classref_composed_slot_conflict",
+                        f"member slot {slot} is declared by two members in "
+                        f"the same pinned document ({holder_pin})",
+                    )
                 raise _refuse(
                     "classref_composed_slot_conflict",
                     f"member slot {slot} is declared by two members "
@@ -1763,12 +1814,13 @@ def derive_ui(
         member_declarations,
     ) = _vendor_documents(descriptor, descriptor_path, catalog_actions)
     catalog_actions.update(vendor_actions)
-    # #556 §3 rule 1: the applied member set (per vocabulary) and the pins
-    # whose members applied nowhere — computed from the descriptor here so
+    # #556 §3 rule 1: the applied member set (per vocabulary), the pins
+    # whose members applied nowhere and the dead members inside pins that
+    # applied (the B3 fold's F2) — computed from the descriptor here so
     # every consumer (the ledger, the gate's REPORTED channel) reads ONE
     # derivation of application.
-    composed_members, unapplied_member_pins = _composed_member_inventory(
-        member_declarations, descriptor
+    composed_members, unapplied_member_pins, unapplied_members = (
+        _composed_member_inventory(member_declarations, descriptor)
     )
     actions = descriptor.get("actions") or {}
     # #541 layer 3: a descriptor action no served catalog describes is a
@@ -1809,6 +1861,7 @@ def derive_ui(
         member_declarations=member_declarations,
         composed_members=composed_members,
         unapplied_member_pins=unapplied_member_pins,
+        unapplied_members=unapplied_members,
     )
 
 
@@ -1986,6 +2039,7 @@ def _assemble(
     member_declarations: tuple[ComposedMemberDeclaration, ...] = (),
     composed_members: Mapping[str, tuple[dict[str, str], ...]] | None = None,
     unapplied_member_pins: tuple[str, ...] = (),
+    unapplied_members: tuple[tuple[str, str, str], ...] = (),
 ) -> DerivedUI:
     version = active_version("plugin-ui")
     merged = _merge_references(references)
@@ -2039,6 +2093,7 @@ def _assemble(
         empty_action_pins=empty_action_pins,
         composed_members=composed_members or {},
         unapplied_member_pins=unapplied_member_pins,
+        unapplied_members=unapplied_members,
         member_declarations=member_declarations,
     )
 
@@ -2237,6 +2292,7 @@ def _finish(
     empty_action_pins: tuple[str, ...] = (),
     composed_members: Mapping[str, tuple[dict[str, str], ...]] | None = None,
     unapplied_member_pins: tuple[str, ...] = (),
+    unapplied_members: tuple[tuple[str, str, str], ...] = (),
     member_declarations: tuple[ComposedMemberDeclaration, ...] = (),
 ) -> DerivedUI:
     """Assemble every emitted document from the resolved inventory."""
@@ -2774,6 +2830,10 @@ def _finish(
     # residual channel names them; the dataset's variable set still carries
     # them.
     series_overflow: dict[str, tuple[str, ...]] = {}
+    # (#556 B3 fold F1) The page-level lane join over the ceiling: page id
+    # to (joined count, dropped lane rows) — the disclosure source beside
+    # ``series_overflow``.
+    lane_join_overflow: dict[str, tuple[int, tuple[dict[str, Any], ...]]] = {}
     for page in pages_out:
         template = next(
             (row for row in merged["pages"] if str(row["id"]) == page["id"]), None
@@ -2847,6 +2907,24 @@ def _finish(
         # The logic-alphabet lanes of THIS plot (#556 B3): the placed
         # channels slots' lanes, the founding default when none is placed.
         plot_lanes = lanes_for_over_slot.get(over_key, default_lanes)
+        # (#556 B3 fold F1) The PAGE-LEVEL JOIN is bounded: per-slot
+        # resolution refuses a slot over the ceiling alone, but the join of
+        # the first slot's lanes with every placed member slot's lanes
+        # bounded nothing, so a 32-lane reference beside a 40-lane composed
+        # role emitted a schema-invalid 72-entry ``y`` and the real gate
+        # died in the host load. The join over the cap is a capacity limit
+        # no single declaration is at fault for (the 2026-10-25 boundary's
+        # join half): the overflow drops from the PLOT alone — the wire
+        # shape keeps every joined lane, the B1 discipline — and each
+        # dropped lane REPORTs below. The overflow is structurally composed
+        # lanes: the first slot's own count is inside the per-slot ceiling
+        # and the join order puts it first.
+        if len(plot_lanes) > _LANE_CEILING:
+            lane_join_overflow[str(page["id"])] = (
+                len(plot_lanes),
+                tuple(plot_lanes[_LANE_CEILING:]),
+            )
+            plot_lanes = plot_lanes[:_LANE_CEILING]
         lane_var_rows = [
             {"id": row["id"], "type": "string", "unit": None, "shape": "vector"}
             for row in plot_lanes
@@ -3004,6 +3082,23 @@ def _finish(
                         "keeps the class's plot)",
                     )
                 )
+    # (#556 B3 fold F1) The join overflow rows — one per dropped lane, in
+    # the residual wording family, each naming the page, the joined count
+    # and the ceiling (the number and its denominator, G4). The lane's role
+    # RESOLVED (its slot joined the page), so the B1 channel closure stays
+    # quiet: this row is the disclosure, not a second one.
+    for page_id, (joined, dropped_rows) in lane_join_overflow.items():
+        for lane_row in dropped_rows:
+            member_residual_rows.append(
+                ResidualMember(
+                    "composed lane",
+                    "channels and decoders",
+                    f"{lane_row.get('id')} (role {lane_row.get('role', '')})",
+                    "no lane surface on page "
+                    f"{page_id} (the page's channels slots join to "
+                    f"{joined} lanes; the plot's y admits {_LANE_CEILING})",
+                )
+            )
     # The residual inventory (#556 Track B §3 rule 3) needs four facts about
     # THIS run: which channel roles rendered lanes, which dataset targets
     # derived (and the base variable ids their wire shape carries), which
@@ -3057,6 +3152,7 @@ def _finish(
         residual_members=residual,
         composed_members=composed_members or {},
         unapplied_member_pins=unapplied_member_pins,
+        unapplied_members=unapplied_members,
     )
     return result
 
@@ -3097,6 +3193,7 @@ def coverage_plan_without_reference(
     tuple[str, ...],
     Mapping[str, tuple[dict[str, str], ...]],
     tuple[str, ...],
+    tuple[tuple[str, str, str], ...],
 ]:
     """The D14 coverage plan for a descriptor with NO class reference:
     every declared action through the ladder with no named slots (the
@@ -3108,7 +3205,8 @@ def coverage_plan_without_reference(
     the reference-carrying arm does), the unapplied composed classes,
     the empty-catalog pins (R1/R5, 2026-10-23 fold wave 3) and, since
     #556 B3, the composed-member inventory — the applied set per
-    vocabulary and the pins whose members applied nowhere, the same
+    vocabulary, the pins whose members applied nowhere and the dead
+    members inside pins that applied (the fold's F2), the same
     descriptor-side computation the reference-carrying derivation
     performs (the B6/B7/R3 discipline: both arms, every disclosure)."""
     catalog = _catalog_documents(descriptor)
@@ -3122,8 +3220,8 @@ def coverage_plan_without_reference(
         member_declarations,
     ) = _vendor_documents(descriptor, descriptor_path, actions_map)
     actions_map.update(vendor_actions)
-    composed_members, unapplied_member_pins = _composed_member_inventory(
-        member_declarations, descriptor
+    composed_members, unapplied_member_pins, unapplied_members = (
+        _composed_member_inventory(member_declarations, descriptor)
     )
     actions = descriptor.get("actions") or {}
     # #541 layer 3, the same treatment as derive_ui: a catalog-absent
@@ -3141,6 +3239,7 @@ def coverage_plan_without_reference(
         empty_pins,
         composed_members,
         unapplied_member_pins,
+        unapplied_members,
     )
 
 
@@ -3706,7 +3805,7 @@ def _build_declaration(
         "composed_classes": composed_classes,
         "composed_members": {
             vocabulary: [dict(row) for row in members_inventory.get(vocabulary, ())]
-            for vocabulary in ("procedures", "settings", "datasets", "channels")
+            for vocabulary in _MEMBER_LEDGER_VOCABULARIES
         },
     }
 

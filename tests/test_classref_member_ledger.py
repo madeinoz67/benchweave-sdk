@@ -199,6 +199,127 @@ def test_an_omitted_applied_member_reports(tmp_path: Path) -> None:
     ), report.reported_deviations
 
 
+def test_a_dead_member_beside_an_applying_one_reports_per_member(
+    tmp_path: Path,
+) -> None:
+    """(#556 B3 fold F2) The applied-nowhere disclosure is not pin-level
+    alone: a members document with one applying member and one dead one
+    applied (so the pin-level row stays quiet BY DESIGN) — the dead MEMBER
+    reports anyway, naming its slot and the reason. The refute's shape: a
+    channels member that applies beside a procedure member claiming an
+    undeclared URN."""
+    declaration = {
+        "contract_version": "0.1.0",
+        "members": [
+            {
+                "slot": "trigger_lanes",
+                "kind": "channels",
+                "where_role": COMPOSED_ROLE,
+                "page": "capture",
+            },
+            {
+                "slot": "ghost_sweep",
+                "kind": "procedure",
+                "claims": ["com.example.sweep/1.0.0"],
+                "page": "capture",
+            },
+        ],
+    }
+    descriptor = _channels_descriptor()
+    for row in descriptor["contracts"]:
+        if row.get("path") == MEMBER_PIN:
+            row["sha256"] = hashlib.sha256(_raw(declaration)).hexdigest()
+    project, derived = _build(
+        tmp_path / "dead-member", descriptor=descriptor, declaration=declaration
+    )
+    # The applying member lands its row; the dead one stays out of the
+    # ledger (the applied-set keying) and out of the pin-level disclosure
+    # (the pin applied).
+    assert derived.composed_members["channels"] == (dict(CHANNELS_ROW),)
+    assert derived.unapplied_member_pins == ()
+    assert derived.unapplied_members == (
+        (
+            MEMBER_PIN,
+            "ghost_sweep",
+            "its claims name no action this descriptor declares",
+        ),
+    ), derived.unapplied_members
+    report = verify_ui(project, reference=REFERENCE)
+    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
+    assert (
+        f"composed member declaration {MEMBER_PIN} member ghost_sweep "
+        "applied nowhere (its claims name no action this descriptor declares)"
+        in report.reported_deviations
+    ), report.reported_deviations
+    # The pin-level row stays quiet exactly when the pin applied.
+    assert not any(
+        row == f"composed member declaration {MEMBER_PIN} applied nowhere"
+        for row in report.reported_deviations
+    ), report.reported_deviations
+
+
+def test_a_dead_channels_member_names_its_role(
+    tmp_path: Path,
+) -> None:
+    """The channels kind's per-member reason names the role (the R1 rule's
+    other half): no declared channel carries it."""
+    declaration = {
+        "contract_version": "0.1.0",
+        "members": [
+            {
+                "slot": "trigger_lanes",
+                "kind": "channels",
+                "where_role": COMPOSED_ROLE,
+                "page": "capture",
+            },
+            {
+                "slot": "empty_lanes",
+                "kind": "channels",
+                "where_role": "rf_input",
+                "page": "capture",
+            },
+        ],
+    }
+    descriptor = _channels_descriptor()
+    for row in descriptor["contracts"]:
+        if row.get("path") == MEMBER_PIN:
+            row["sha256"] = hashlib.sha256(_raw(declaration)).hexdigest()
+    project, derived = _build(
+        tmp_path / "dead-channels", descriptor=descriptor, declaration=declaration
+    )
+    assert derived.unapplied_members == (
+        (MEMBER_PIN, "empty_lanes", "no declared channel carries role rf_input"),
+    ), derived.unapplied_members
+    report = verify_ui(project, reference=REFERENCE)
+    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
+    assert (
+        f"composed member declaration {MEMBER_PIN} member empty_lanes "
+        "applied nowhere (no declared channel carries role rf_input)"
+        in report.reported_deviations
+    ), report.reported_deviations
+
+
+def test_an_unknown_ledger_key_under_composed_members_reports(
+    tmp_path: Path,
+) -> None:
+    """(#556 B3 fold F4) The read-back iterated the four vocabularies
+    alone, so authored junk under any other key was ignored silently — an
+    unknown key REPORTs in the read-back's own mismatch wording, never a
+    findings failure (the no-schema-yet posture, D8)."""
+    def forge(document: dict[str, Any]) -> None:
+        document["composed_members"]["observations"] = [{"slot": "cv1"}]
+
+    project, _derived = _build(tmp_path / "unknown-key", ledger_edits=forge)
+    report = verify_ui(project, reference=REFERENCE)
+    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
+    assert (
+        "composed members mismatch: the authored declaration's "
+        "composed_members carries key 'observations', which is no composed "
+        "vocabulary (procedures, settings, datasets, channels)"
+        in " | ".join(report.reported_deviations)
+    ), report.reported_deviations
+
+
 def test_an_applied_nowhere_pin_reports_through_the_gate(tmp_path: Path) -> None:
     """The applied-nowhere row (§3 rule 1): a pin whose members match
     nothing — no channel carries its role — reports every run, never
