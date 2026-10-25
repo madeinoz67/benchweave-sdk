@@ -101,7 +101,10 @@ from pathlib import Path
 from benchweave_sdk_server.session import load_plugin_project
 
 plugin = load_plugin_project(Path(sys.argv[1]))
-print(f"adapter_factory={'loaded' if plugin.adapter_factory is not None else 'none'}")
+# ``callable``, not ``is not None``: an attribute that merely exists (a
+# module-level string, a sentinel) is not a factory, and this probe is the
+# half of the arm the whole leg's load claim rests on.
+print(f"adapter_factory={'loaded' if callable(plugin.adapter_factory) else 'none'}")
 print(f"load_diagnostic={plugin.load_diagnostic}")
 """
 

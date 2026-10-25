@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -122,6 +123,121 @@ def test_a_module_sharing_the_package_name_prefix_still_degrades(tmp_path: Path)
     assert plugin.adapter_factory is None
     assert plugin.load_diagnostic is not None
     assert plugin.load_diagnostic.startswith("standalone_plugin_entry_point:")
+
+
+# --- F1 (refute fold): containment is provenance, not spelling ----------------
+#
+# The string rule above proves the entry point NAMES a member of the package.
+# It cannot prove the import resolved THIS project's bytes: three hand-reachable
+# shapes resolve foreign code while the string is perfectly "inside". Each arm
+# below is red before the provenance check and green after it, and every one
+# asserts the DEGRADE (None + diagnostic), not a refusal — the adapter surface
+# fails the way §4.5 requires.
+
+
+def test_a_package_named_for_a_frozen_stdlib_module_degrades(tmp_path: Path) -> None:
+    """F1(a): a package directory named ``os`` with ``os:putenv``.
+
+    The module IS the package, so the string rule admits it; the frozen
+    importer precedes the path finder, so ``src/os`` never loads and the
+    factory resolves to the builtin ``putenv``. The loader must judge where the
+    imported bytes came from, not what the entry point spelled.
+    """
+    from benchweave_sdk.scaffold import create_project
+
+    project = tmp_path / "frozen-stdlib-shadow"
+    create_project(project, "example_plugin")
+    (project / "src" / "example_plugin").rename(project / "src" / "os")
+    _broken_entry_point(project, "os:putenv", package="os")
+    host_os = sys.modules["os"]
+
+    plugin = load_plugin_project(project)
+
+    assert plugin.adapter_factory is None
+    assert plugin.load_diagnostic is not None
+    assert plugin.load_diagnostic.startswith("standalone_plugin_entry_point:")
+    # A directory NAME must not make the loader evict and re-execute the
+    # interpreter's own module: dropping ``os`` from the import cache replaces
+    # the module object and its ``environ`` — host-state corruption from an
+    # entry-point NAME, independent of which factory was resolved.
+    assert sys.modules["os"] is host_os
+
+
+def test_a_namespace_only_package_shadowed_by_an_installed_distribution_degrades(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F1(b): a directory with no ``__init__.py`` named for an installed
+    distribution.
+
+    A namespace portion never wins the import against a regular package later
+    on ``sys.path``, so ``shadow_dist:get`` resolves the INSTALLED
+    distribution's bytes while the entry point names the local directory.
+    """
+    from benchweave_sdk.scaffold import create_project
+
+    project = tmp_path / "namespace-shadow"
+    create_project(project, "example_plugin")
+    (project / "src" / "example_plugin").rename(project / "src" / "shadow_dist")
+    (project / "src" / "shadow_dist" / "__init__.py").unlink()
+    _broken_entry_point(project, "shadow_dist:get", package="shadow_dist")
+
+    installed = tmp_path / "site-packages"
+    (installed / "shadow_dist").mkdir(parents=True)
+    (installed / "shadow_dist" / "__init__.py").write_text(
+        "def get():\n    return 'installed distribution bytes'\n"
+    )
+    monkeypatch.syspath_prepend(str(installed))
+
+    plugin = load_plugin_project(project)
+
+    assert plugin.adapter_factory is None
+    assert plugin.load_diagnostic is not None
+    assert plugin.load_diagnostic.startswith("standalone_plugin_entry_point:")
+
+
+def test_a_second_project_does_not_resolve_the_first_projects_adapter(
+    tmp_path: Path,
+) -> None:
+    """F1(c): cross-project resolution through the shared ``sys.path``.
+
+    The loader prepends each project's ``src`` and never removes it. A
+    namespace-only same-named package in project two is shadowed by project
+    one's regular package, so project two would serve the FIRST project's
+    adapter bytes with no diagnostic.
+    """
+    from benchweave_sdk.scaffold import create_project
+
+    first = tmp_path / "project-one"
+    create_project(first, "example_plugin")
+    second = tmp_path / "project-two"
+    create_project(second, "example_plugin")
+    (second / "src" / "example_plugin" / "__init__.py").unlink()
+
+    first_plugin = load_plugin_project(first)
+    assert first_plugin.adapter_factory is not None, first_plugin.load_diagnostic
+
+    second_plugin = load_plugin_project(second)
+
+    assert second_plugin.adapter_factory is None
+    assert second_plugin.load_diagnostic is not None
+    assert second_plugin.load_diagnostic.startswith("standalone_plugin_entry_point:")
+
+
+def test_the_legitimate_package_root_and_beneath_forms_still_load(tmp_path: Path) -> None:
+    """The provenance rule must not reject the two shapes the descriptor
+    schema admits: the package itself (``<package>:create_plugin``) and a
+    module beneath it (the template's ``<package>.adapter:create_plugin``)."""
+    from benchweave_sdk.scaffold import create_project
+
+    beneath = tmp_path / "beneath-entry"
+    create_project(beneath, "example_plugin")
+    beneath_plugin = load_plugin_project(beneath)
+    assert beneath_plugin.load_diagnostic is None
+    assert callable(beneath_plugin.adapter_factory)
+
+    root_plugin = load_plugin_project(_package_root_project(tmp_path))
+    assert root_plugin.load_diagnostic is None
+    assert callable(root_plugin.adapter_factory)
 
 
 @pytest.mark.parametrize(

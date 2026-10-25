@@ -9,6 +9,19 @@ then drives one adapter instance through the strict ``Adapter`` lifecycle:
 ``open`` binds descriptor and services, ``execute`` runs one operation per
 fresh context, ``close`` is idempotent-tolerant (REG-1).
 
+Containment is judged twice. The entry point must NAME a member of the
+package (the string rule), and the module the import actually resolved must
+have a file origin under this project's ``src`` (the provenance rule): a
+package directory named for a frozen or installed module, or a same-named
+package a previous project left on ``sys.path``, can satisfy the spelling
+while serving foreign bytes. A provenance failure degrades exactly like any
+other adapter failure. Two limits are deliberate and stated so the rule is
+not read for more than it does: the provenance check runs AFTER the import,
+so a foreign module's import-time code has already executed when the load
+degrades; and it says nothing about what the plugin imports itself — a
+plugin that deliberately imports foreign code is exercising its own trust
+boundary, not the entry-point rule.
+
 Every operation context is bounded by the descriptor's OWN operation policy
 (``operations[verb].timeout_ms``): the plugin's declared bound is the bound;
 the host adds no uncommissioned envelope (A02's posture). Lifecycle contexts
@@ -484,20 +497,56 @@ def mock_transport_factory(
 def _evict_foreign_package(package: str, src: Path) -> None:
     """Drop cached modules of ``package`` whose files live OUTSIDE this
     project's src root, so a fresh load imports THIS project's bytes (the
-    import cache is keyed by name, not by path)."""
+    import cache is keyed by name, not by path).
+
+    Builtin and frozen modules are never evicted: they are not project bytes,
+    and deleting one re-executes it on the next import — for ``os`` that
+    replaces the module object and its ``environ``, so a project directory
+    NAME could corrupt the host. Nothing is gained by evicting them either:
+    the builtin and frozen finders precede the path finder, so a local
+    directory can never shadow them. Alias entries (``os.path`` -> posixpath)
+    are skipped too: the cache key is not the module's name, and re-importing
+    under the alias would create a second module object.
+    """
     root = src.resolve()
     prefix = f"{package}."
     for name in list(sys.modules):
         if name != package and not name.startswith(prefix):
             continue
-        module_file = getattr(sys.modules.get(name), "__file__", None)
+        module = sys.modules.get(name)
+        if module is None or name in sys.builtin_module_names:
+            continue
+        module_file = getattr(module, "__file__", None)
         if not module_file:
             continue
+        spec = getattr(module, "__spec__", None)
+        if spec is not None and spec.origin == "frozen":
+            continue
+        if getattr(module, "__name__", name) != name:
+            continue  # an alias entry (``os.path`` -> posixpath), not a submodule
         try:
             if not Path(module_file).resolve().is_relative_to(root):
                 del sys.modules[name]
         except OSError:
             continue
+
+
+def _module_origin_is_under(module: Any, root: Path) -> bool:
+    """Whether the imported module's bytes live under ``root``.
+
+    ``__file__`` is the origin: absent for builtins and namespace packages,
+    and not a path at all for frozen modules on host builds that keep the
+    ``<frozen ...>`` spelling. Only an ABSOLUTE origin that resolves inside
+    the project counts — a relative one would be resolved against the process
+    CWD, which is not evidence about the project.
+    """
+    origin = getattr(module, "__file__", None)
+    if not isinstance(origin, str) or not Path(origin).is_absolute():
+        return False
+    try:
+        return Path(origin).resolve().is_relative_to(root)
+    except (OSError, RuntimeError, ValueError):
+        return False
 
 
 def load_plugin_project(project_root: Path) -> LoadedPlugin:
@@ -558,8 +607,18 @@ def load_plugin_project(project_root: Path) -> LoadedPlugin:
             f"inside the {package} package"
         )
     else:
-        if str(src) not in sys.path:
-            sys.path.insert(0, str(src))
+        # This project's ``src`` must be the path the import actually
+        # searches FIRST. The entry is often already on ``sys.path`` from an
+        # earlier load but no longer at the front (every project prepends its
+        # own), and leaving it in place lets a later-loaded project's regular
+        # package win the name and serve ITS bytes for THIS project's entry
+        # point — the cross-project shape, on a project that is in fact
+        # healthy. Re-prepending makes the winner deterministic; provenance
+        # below then judges what was actually resolved.
+        src_entry = str(src)
+        while src_entry in sys.path:
+            sys.path.remove(src_entry)
+        sys.path.insert(0, src_entry)
         # A same-named package cached from ANOTHER project's root would win
         # the import by name and serve ITS bytes (invisible while every
         # test project had identical content; a broken or edited sibling
@@ -568,7 +627,18 @@ def load_plugin_project(project_root: Path) -> LoadedPlugin:
         _evict_foreign_package(package, src)
         try:
             module = importlib.import_module(module_name)
-            adapter = getattr(module, factory_name)
+            if _module_origin_is_under(module, src):
+                adapter = getattr(module, factory_name)
+            else:
+                # The string rule proved the entry point NAMES a member of
+                # this package; it cannot prove the import resolved THIS
+                # project's bytes. Name the origin that was actually served
+                # so the author sees which bytes the host judged.
+                origin = getattr(module, "__file__", None) or "no module file"
+                diagnostic = (
+                    f"standalone_plugin_entry_point: {entry_point} resolved to "
+                    f"{origin}, outside this project's src tree"
+                )
         except (Exception, SystemExit) as exc:  # noqa: BLE001 - plugin import code
             # ANY exception raised while executing the plugin's adapter
             # module at import time is an adapter import failure — the

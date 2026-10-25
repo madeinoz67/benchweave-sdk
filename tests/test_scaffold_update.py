@@ -251,6 +251,17 @@ def _scaffold(stage: tuple, project: Path, with_ui: bool) -> None:
 def test_update_keeps_the_update_promise(
     tmp_path: Path, update_stage: tuple, with_ui: bool
 ) -> None:
+    """A1-A5 over one update.
+
+    Honest limit (A5): the protocol makes BASE the newest template-touching
+    ancestor, so at every COMMITTED state ``changed`` is empty and every
+    clause derived from it — A5's footprint equality and the skip-protected
+    exclusions — is vacuous in CI. The existence-aware exclusion is proven by
+    INJECTING a template delta (add a member under ``src/**``: red before,
+    green after), not by the committed tree. The standing teeth for template
+    motion are A1 (byte-equal managed render) and A3 (provenance), which do
+    move with template history.
+    """
     repo, _materialized, base, target = update_stage
     project = tmp_path / ("P-ui" if with_ui else "P")
     _scaffold(update_stage, project, with_ui)
@@ -356,10 +367,17 @@ def test_update_keeps_the_update_promise(
     # skip-wins is the update promise for owned files (A2), so such a path is
     # excluded from the required footprint and separately asserted absent.
     # Every other template delta must appear.
+    #
+    # The exclusion is EXISTENCE-aware (refute F2): ``_skip_if_exists`` only
+    # protects files that already exist in the project. A template release
+    # that ADDS a path under ``src/**`` writes it, so the addition is a real
+    # change in the footprint — excluding it by pattern alone reds on correct
+    # behaviour.
     skip_protected = _skip_protected(set(changed))
-    expected_touched = {".copier-answers.yml"} | (set(changed) - skip_protected)
+    protected_before_update = {path for path in skip_protected if path in author_state}
+    expected_touched = {".copier-answers.yml"} | (set(changed) - protected_before_update)
     assert touched == expected_touched, porcelain
-    assert not (touched & skip_protected), sorted(touched & skip_protected)
+    assert not (touched & protected_before_update), sorted(touched & protected_before_update)
     added_by_template = {_project_member(relative) for relative in set(target) - set(base)}
     assert set(updated) - set(author_state) <= added_by_template
     for relative, content in updated.items():

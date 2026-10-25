@@ -400,3 +400,57 @@ through `render_pages` over the same degraded-adapter path and assert derived do
 and page content, not a loaded plugin. A later reader must not mistake them for load
 proofs. Strengthening them is a separate arm's job, not an edit to those assertions —
 none of them was weakened or replaced here.
+
+## 12. Fold wave (2026-10-25) — the refute's F1-F3
+
+An adversarial pass over the addendum's commits confirmed the string-level rule is
+airtight and found that containment was still spelling-deep, plus two weaker arms. This
+section records what changed; it does not rewrite §11.
+
+**F1 — containment is provenance.** The string rule proves the entry point NAMES a
+member of the package; it cannot prove the import resolved THIS project's bytes. Three
+hand-reachable shapes defeat it with no diagnostic: (a) a package directory renamed to a
+frozen stdlib name (`src/os` + `os:putenv`) — the frozen finder precedes the path finder,
+so the factory is the builtin; (b) a namespace-only directory named for an installed
+distribution — a namespace portion never beats a later regular package; (c) a second
+project's namespace-only same-named package — the loader prepends each project's `src`
+and never removes it, so project two resolves project one's regular package.
+`load_plugin_project` now requires the imported module's file origin to be under this
+project's `src`; a failure sets the `standalone_plugin_entry_point` diagnostic and leaves
+`adapter_factory` None — the existing degrade path, not a refusal. The string rule is
+unchanged.
+
+Load ordering is now deterministic as well: the project's `src` is re-prepended on every
+load (it was inserted only when absent), so the project being loaded is the first path
+the import searches. Without that, a module-scoped project loaded again after other
+projects had prepended their own `src` resolved another project's regular package — the
+same cross-project shape as (c), on a project that is healthy, which the provenance check
+would otherwise degrade.
+
+The eviction that precedes the import is now guarded against builtin and frozen modules
+and cache aliases: deleting a frozen `os` from the import cache re-executes it and
+replaces the module object and its `environ`, so a directory NAME could corrupt the host
+even though the provenance check would then degrade the load.
+
+What the provenance check does not catch, stated in the module docstring: it runs AFTER
+the import, so a foreign module's import-time code executes before the degrade; and it
+says nothing about what the plugin imports itself — that is the plugin's own trust
+boundary, not the entry-point rule.
+
+**F2 — the A5 exclusion is existence-aware.** `_skip_if_exists` protects files that
+already exist, so a template release that ADDS a path under `src/**` writes it; the
+pattern-only exclusion excluded it from the required footprint and asserted it untouched,
+reddening on correct behaviour. Excluded-and-asserted-untouched is now limited to deltas
+whose project path exists before the update; an addition under `src/**` is a real change
+in the footprint. Honest limit, recorded on the arm: at every COMMITTED state the base
+ancestor equals the target tree, so `changed` — and every clause derived from it — is
+vacuous in CI; the fix is proven by injecting a template delta, and the standing teeth
+for template motion are A1 and A3.
+
+**F3 — the installed-SDK probe asserts callable.** `adapter_factory is not None` passes
+for a non-callable module attribute; the probe now reports `loaded` only for
+`callable(adapter_factory)`, matching the checkout-side arm's callable-and-openable
+assertion.
+
+All four new/repointed arms are RED before their change and green after; the RED output
+is quoted in the fold commit's message.
