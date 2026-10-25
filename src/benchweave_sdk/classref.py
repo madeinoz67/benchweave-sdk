@@ -2953,7 +2953,8 @@ def _finish(
         ),
     )
     declaration = _build_declaration(
-        references, divergences, plan, ignored_pins
+        references, divergences, plan, ignored_pins,
+        composed_members=composed_members,
     )
     cannot = list(merged["cannot_derive"])
     # (#556 §4 V3 layer 2) An APPLIED channels member whose page hosts no
@@ -3094,6 +3095,8 @@ def coverage_plan_without_reference(
     tuple[str, ...],
     tuple[tuple[str, str], ...],
     tuple[str, ...],
+    Mapping[str, tuple[dict[str, str], ...]],
+    tuple[str, ...],
 ]:
     """The D14 coverage plan for a descriptor with NO class reference:
     every declared action through the ladder with no named slots (the
@@ -3102,9 +3105,12 @@ def coverage_plan_without_reference(
     reference, is what the always-on arm checks. The trailing elements
     are the pin disclosures, mirroring ``DerivedUI``'s: the ignored-pin
     set (B7: the reference-less gate arm discloses them too, exactly as
-    the reference-carrying arm does), the unapplied composed classes and
-    the empty-catalog pins (R1/R5, 2026-10-23 fold wave 3 — the same
-    disclosures, the same channel)."""
+    the reference-carrying arm does), the unapplied composed classes,
+    the empty-catalog pins (R1/R5, 2026-10-23 fold wave 3) and, since
+    #556 B3, the composed-member inventory — the applied set per
+    vocabulary and the pins whose members applied nowhere, the same
+    descriptor-side computation the reference-carrying derivation
+    performs (the B6/B7/R3 discipline: both arms, every disclosure)."""
     catalog = _catalog_documents(descriptor)
     actions_map: dict[str, Any] = dict(catalog.get("actions", {}))
     (
@@ -3113,9 +3119,12 @@ def coverage_plan_without_reference(
         ignored,
         unapplied,
         empty_pins,
-        _member_declarations,
+        member_declarations,
     ) = _vendor_documents(descriptor, descriptor_path, actions_map)
     actions_map.update(vendor_actions)
+    composed_members, unapplied_member_pins = _composed_member_inventory(
+        member_declarations, descriptor
+    )
     actions = descriptor.get("actions") or {}
     # #541 layer 3, the same treatment as derive_ui: a catalog-absent
     # declared action is a residual member that derives, resolution
@@ -3124,7 +3133,15 @@ def coverage_plan_without_reference(
     plan, _divergences = _derive_controls(
         actions, actions_map, {}, {}, {}
     )
-    return plan, actions_map, ignored, unapplied, empty_pins
+    return (
+        plan,
+        actions_map,
+        ignored,
+        unapplied,
+        empty_pins,
+        composed_members,
+        unapplied_member_pins,
+    )
 
 
 def _capture_page_id(pages: list[dict[str, Any]]) -> str:
@@ -3547,6 +3564,7 @@ def _build_declaration(
     divergences: list[dict[str, str]],
     plan: dict[str, dict[str, Any]],
     ignored_pins: tuple[str, ...] = (),
+    composed_members: Mapping[str, tuple[dict[str, str], ...]] | None = None,
 ) -> dict[str, Any]:
     """The birth conformance declaration (D12c): the reference the project
     follows plus the deviation ledger. Presets are commissioned evidence, so
@@ -3670,6 +3688,14 @@ def _build_declaration(
             }
         )
     ]
+    # #556 §3 rule 2: the composed-members inventory, one key per
+    # vocabulary, always present (the composed_actions shape). No schema
+    # governs this document's key set (the D8 posture) — the gate's
+    # read-back and the prose are the contract. The rows are the APPLIED
+    # set exactly as the walk computed it: one writer, and a pin whose
+    # members applied nowhere stays out BY DESIGN (its disclosure is the
+    # gate's applied-nowhere row, never drift).
+    members_inventory = composed_members or {}
     return {
         "contract_version": active_version(_FAMILY),
         "profile_ids": sorted({str(item["profile_id"]) for item in references}),
@@ -3678,6 +3704,10 @@ def _build_declaration(
         "custom_actions": custom_rows,
         "composed_actions": composed_rows,
         "composed_classes": composed_classes,
+        "composed_members": {
+            vocabulary: [dict(row) for row in members_inventory.get(vocabulary, ())]
+            for vocabulary in ("procedures", "settings", "datasets", "channels")
+        },
     }
 
 

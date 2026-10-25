@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from pathlib import Path
@@ -679,6 +680,78 @@ def _composed_inventory_findings(
     return reported
 
 
+def _composed_members_findings(
+    ledger_members: Any,
+    derived_members: Mapping[str, tuple[dict[str, str], ...]],
+) -> list[str]:
+    """(#556 §3 rule 2) The composed-members ledger, read back: the
+    authored ``composed_members`` compares against the derivation's
+    applied set per vocabulary, both directions, AND per-member slot
+    MAPPING — the B6/R6 discipline (sets alone were proved insufficient
+    once already in this family's composed action classes: a forged row
+    naming the right member with the wrong mapping verified clean and
+    migrated with "nothing to do"). Every mismatch lands in the REPORTED
+    channel, never a ``findings`` failure — the same no-schema-yet
+    posture as the custom and composed read-backs beside it (D8)."""
+    if ledger_members is None:
+        ledger_members = {}
+    if not isinstance(ledger_members, dict):
+        return [
+            "composed members mismatch: the authored declaration's "
+            f"composed_members is {type(ledger_members).__name__}, not an "
+            "object keyed by vocabulary"
+        ]
+    reported: list[str] = []
+    for vocabulary in ("procedures", "settings", "datasets", "channels"):
+        derived_rows = {
+            str(row.get("slot", "")): row
+            for row in derived_members.get(vocabulary, ())
+        }
+        authored_rows = ledger_members.get(vocabulary, [])
+        if not isinstance(authored_rows, list):
+            reported.append(
+                "composed members mismatch: the authored declaration's "
+                f"composed_members.{vocabulary} is "
+                f"{type(authored_rows).__name__}, not a list"
+            )
+            continue
+        authored_slots: set[str] = set()
+        for row in authored_rows:
+            if not isinstance(row, dict) or not row.get("slot"):
+                reported.append(
+                    f"composed members mismatch: malformed {vocabulary} "
+                    f"row {row!r}"
+                )
+                continue
+            slot = str(row["slot"])
+            authored_slots.add(slot)
+            derived = derived_rows.get(slot)
+            if derived is None:
+                reported.append(
+                    "composed members mismatch: the authored declaration's "
+                    f"composed_members names {vocabulary} member {slot}, "
+                    "which the derivation applied no member for"
+                )
+                continue
+            # R6: the mapping comparison — every field the derived row
+            # carries must match the authored row for that slot.
+            for field, value in derived.items():
+                if str(row.get(field, "")) != str(value):
+                    reported.append(
+                        f"composed members mismatch: {vocabulary} member "
+                        f"{slot} derives {field} {value} but the authored "
+                        "declaration's composed_members names "
+                        f"{row.get(field, '')}"
+                    )
+        for slot in sorted(set(derived_rows) - authored_slots):
+            reported.append(
+                f"composed members mismatch: {vocabulary} member {slot} "
+                "derives applied but the authored declaration's "
+                "composed_members omits it"
+            )
+    return reported
+
+
 def verify_ui(
     project: Path,
     *,
@@ -709,9 +782,15 @@ def verify_ui(
         from .classref_gate_render import render_pages
 
         descriptor = json.loads(descriptor_raw)
-        plan, _actions_map, ignored_pins, unapplied, empty_pins = (
-            coverage_plan_without_reference(descriptor, descriptor_path)
-        )
+        (
+            plan,
+            _actions_map,
+            ignored_pins,
+            unapplied,
+            empty_pins,
+            composed_members,
+            unapplied_member_pins,
+        ) = coverage_plan_without_reference(descriptor, descriptor_path)
         manifest = json.loads((package_dir / "ui" / "manifest.json").read_bytes())
         pages = [str(page["id"]) for page in manifest.get("pages", [])]
         first = pages[0] if pages else ""
@@ -770,6 +849,19 @@ def verify_ui(
                         if str(row.get("resolution", "catalog")) == "composed"
                     },
                 )
+            )
+            # #556 B3: the composed-members read-back and the applied-
+            # nowhere disclosure run on this arm too — the reference-less
+            # plan resolves the same member pins against the same
+            # descriptor (the B6/B7/R3 discipline).
+            reported.extend(
+                _composed_members_findings(
+                    declaration.get("composed_members"), composed_members
+                )
+            )
+            reported.extend(
+                f"composed member declaration {path} applied nowhere"
+                for path in unapplied_member_pins
             )
         else:
             if custom_urms:
@@ -953,6 +1045,19 @@ def verify_ui(
                 if str(row.get("resolution", "catalog")) == "composed"
             },
         )
+    )
+    # #556 §3 rules 1-2: the composed-members inventory reads back the
+    # same way — both directions, per-member slot mapping, REPORTED — and
+    # a pin whose members applied nowhere discloses on the same channel,
+    # never drift.
+    reported.extend(
+        _composed_members_findings(
+            ledger.get("composed_members"), derived.composed_members
+        )
+    )
+    reported.extend(
+        f"composed member declaration {path} applied nowhere"
+        for path in derived.unapplied_member_pins
     )
     # B7: pins whose documents matched neither shape discriminator are
     # disclosed on the REPORTED channel every run — never silent, never
