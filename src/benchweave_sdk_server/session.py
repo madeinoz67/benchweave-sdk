@@ -539,9 +539,17 @@ def load_plugin_project(project_root: Path) -> LoadedPlugin:
         descriptor.get("integration", {}).get("adapter", {}).get("entry_point", "")
     )
     module_name, _, factory_name = entry_point.partition(":")
+    # The module may be the package ITSELF or any module beneath it. The
+    # frozen descriptor schema admits both (the entry-point pattern has no
+    # dot requirement) and every shipped standards example uses the
+    # package-root form, so a bare ``startswith(f"{package}.")`` rejected a
+    # conforming entry point. Equality is checked exactly and the dot stays
+    # in the prefix test: ``example_plugin_extra`` is a sibling module, not
+    # a member of ``example_plugin``.
+    inside_package = module_name == package or module_name.startswith(f"{package}.")
     adapter: Any | None = None
     diagnostic: str | None = None
-    if not module_name.startswith(f"{package}.") or not factory_name:
+    if not inside_package or not factory_name:
         # Adapter-failure class (§4.5): the entry point STRING is part of
         # the adapter surface, not the documents — a malformed one degrades
         # (layout renders, device ops not_ready) instead of refusing.

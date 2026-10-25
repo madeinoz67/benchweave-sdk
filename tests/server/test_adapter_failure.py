@@ -47,6 +47,27 @@ def _malformed_project(tmp_path: Path) -> Path:
     return project
 
 
+def _package_root_project(tmp_path: Path) -> Path:
+    """A scaffold whose entry point names the package ROOT.
+
+    ``<package>:create_plugin`` is the shape the frozen OTD descriptor
+    schema admits (``^[A-Za-z_]\\w*(\\.[A-Za-z_]\\w*)*:[A-Za-z_]\\w*$``) and
+    the shape every shipped standards example uses
+    (``reference_daq:create_plugin``). The re-export is written by this arm
+    rather than assumed from the template, so the host's module rule is the
+    only variable under test.
+    """
+    from benchweave_sdk.scaffold import create_project
+
+    project = tmp_path / "root-entry"
+    create_project(project, "example_plugin")
+    (project / "src" / "example_plugin" / "__init__.py").write_text(
+        "from .adapter import create_plugin\n"
+    )
+    _broken_entry_point(project, "example_plugin:create_plugin")
+    return project
+
+
 def _policy() -> GuardPolicy:
     return GuardPolicy.complete(
         bound_host="127.0.0.1",
@@ -71,6 +92,61 @@ def test_a_malformed_entry_point_degrades_with_the_diagnostic(tmp_path: Path) ->
     assert plugin.adapter_factory is None
     assert plugin.load_diagnostic is not None
     assert plugin.load_diagnostic.startswith("standalone_plugin_entry_point:")
+
+
+def test_a_package_root_entry_point_loads_the_adapter(tmp_path: Path) -> None:
+    """The module may be the package itself, not only a module beneath it:
+    ``<package>:create_plugin`` is a schema-conforming entry point and must
+    resolve the factory, with no diagnostic."""
+    plugin = load_plugin_project(_package_root_project(tmp_path))
+    assert plugin.load_diagnostic is None
+    factory = plugin.adapter_factory
+    assert callable(factory)
+    # The resolved attribute is the factory, not merely some attribute: it
+    # builds an object the session can open and execute.
+    instance = factory()
+    assert callable(instance.open)
+    assert callable(instance.execute)
+
+
+def test_a_module_sharing_the_package_name_prefix_still_degrades(tmp_path: Path) -> None:
+    """The hole a bare ``startswith(package)`` would open: a sibling module
+    whose name merely begins with the package name is OUTSIDE the package
+    and stays a malformed entry point."""
+    from benchweave_sdk.scaffold import create_project
+
+    project = tmp_path / "prefix-sibling"
+    create_project(project, "example_plugin")
+    _broken_entry_point(project, "example_plugin_extra.adapter:create_plugin")
+    plugin = load_plugin_project(project)
+    assert plugin.adapter_factory is None
+    assert plugin.load_diagnostic is not None
+    assert plugin.load_diagnostic.startswith("standalone_plugin_entry_point:")
+
+
+@pytest.mark.parametrize(
+    "entry_point",
+    [
+        "example_plugin",  # no separator at all
+        "example_plugin:",  # separator, no factory name
+        ":create_plugin",  # factory name, no module
+    ],
+)
+def test_an_entry_point_without_a_factory_still_refuses(
+    tmp_path: Path, entry_point: str
+) -> None:
+    """A string that names no factory remains a DOCUMENT failure: the frozen
+    descriptor schema's entry-point pattern refuses it before the loader's
+    module rule runs. The package-root acceptance must not turn a malformed
+    string into a load."""
+    from benchweave_sdk.scaffold import create_project
+    from benchweave_sdk_server.session import PluginLoadError
+
+    project = tmp_path / "missing-factory"
+    create_project(project, "example_plugin")
+    _broken_entry_point(project, entry_point)
+    with pytest.raises(PluginLoadError, match="standalone_plugin_invalid:"):
+        load_plugin_project(project)
 
 
 def test_document_failures_still_refuse_startup(tmp_path: Path) -> None:
