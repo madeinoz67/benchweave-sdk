@@ -1,0 +1,178 @@
+{
+  "contract_version": "0.5.0",
+  "profile_id": "otdp.smu/1.0.0",
+  "title": "Source-measure unit",
+  "targets": {
+    "plugin_ui": ">=0.4.0"
+  },
+  "slots": {
+    "channels": {
+      "kind": "channels",
+      "where_role": "source_measure",
+      "key": "id",
+      "label": "label"
+    },
+    "measure": {
+      "kind": "dataset",
+      "action": "otdp.smu.measure/1.0.0",
+      "schema_source": "output_measurement"
+    },
+    "configure": {
+      "kind": "configuration",
+      "action": "otdp.smu.configure/1.0.0",
+      "schema_source": "input_schema"
+    },
+    "output": {
+      "kind": "procedure",
+      "action": "otdp.smu.output/1.0.0"
+    },
+    "vendor_actions": {
+      "kind": "vendor_actions"
+    }
+  },
+  "pages": [
+    {
+      "id": "output",
+      "title": "Output",
+      "kind": "readings",
+      "binding_slots": [
+        "measure"
+      ],
+      "plot": {
+        "kind": "time_series",
+        "over_slot": "measure",
+        "series": "numeric_variables"
+      }
+    },
+    {
+      "id": "configuration",
+      "title": "Configuration",
+      "kind": "configuration",
+      "binding_slots": [
+        "configure"
+      ]
+    },
+    {
+      "id": "device-features",
+      "title": "Device features",
+      "kind": "configuration",
+      "binding_slots": [
+        "vendor_actions"
+      ],
+      "vendor_features": true
+    }
+  ],
+  "layouts": [
+    {
+      "page_id": "output",
+      "sections": [
+        {
+          "id": "readings",
+          "title": "Readings",
+          "surface": "raised",
+          "span": 12,
+          "children": [
+            {
+              "binding_id": "measure",
+              "kind": "reading-tile"
+            }
+          ]
+        },
+        {
+          "id": "trend",
+          "title": "Trend",
+          "surface": "recessed",
+          "span": 7,
+          "children": [
+            {
+              "plot_index": 0
+            }
+          ]
+        },
+        {
+          "id": "table",
+          "title": "Table",
+          "surface": "raised",
+          "span": 5,
+          "children": [
+            {
+              "binding_id": "measure",
+              "kind": "data-table"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "expect": {
+    "components": {
+      "reading-tile": {
+        "count": "{n_reading_tiles}",
+        "per_page": "output"
+      },
+      "data-table": {
+        "count": "1",
+        "per_page": "output"
+      },
+      "engineering-plot": {
+        "count": "1",
+        "per_page": "output"
+      },
+      "panel": {
+        "count": "{n_pages}"
+      },
+      "mode-banner": {
+        "count": "1",
+        "per_page": "*"
+      }
+    },
+    "controls": {
+      "otdp.smu.configure/1.0.0": "preset",
+      "otdp.smu.output/1.0.0": "deviation"
+    },
+    "forbid": [
+      "confirm-wrapped-run-action",
+      "color-role-hint-on-lane",
+      "untraceable-lane-label",
+      "intermediated-energy-removing-action"
+    ]
+  },
+  "cannot_derive": [
+    {
+      "id": "output-control",
+      "aspect": "the output on/off control",
+      "reason": "the directional section C.1 presentation (energise stages then confirms naming effect, values and target; de-energise is one ungated action, R-DEENERGISE-1) is beyond the per-action control vocabulary; the confirm's values pair by the sourced function - the setpoint with the opposite-quantity compliance, the transpose between sourcing modes, never a flattened single pair; renderer enforcement belongs to the safety-behaviours slice",
+      "author_action": "none until that slice lands; the deviation is REPORTED, never silent"
+    },
+    {
+      "id": "source-settings",
+      "aspect": "the function/setpoint/compliance/sensing selection surface",
+      "reason": "configure is preset-mediated at birth; the function-selected source is configure input schema - data at expansion, never reference structure; presets are commissioned evidence (A02)",
+      "author_action": "author ui/presets/*.json via check-preset; the expander emits the scaffold"
+    },
+    {
+      "id": "compliance-alert",
+      "aspect": "the compliance-active alert",
+      "reason": "the condition is the device-reported compliance state - runtime observation data (device-classes section 10), not a declared channel quantity and not commissioned policy; structure renders the alert variant, data decides it",
+      "author_action": "bench observation; the alert-bubble renders from host-observed conditions"
+    },
+    {
+      "id": "compliance-overlay",
+      "aspect": "the trend's dashed compliance bound",
+      "reason": "the compliance value is runtime configuration data; the overlay is a runtime join against the active configuration",
+      "author_action": "host composition where compliance is active"
+    },
+    {
+      "id": "sweep-surfaces",
+      "aspect": "the sweep configuration, run and results surfaces (the profile's five optional actions, deferred as a unit)",
+      "reason": "the fetch dataset is table-kind - a derivation arm designed nowhere in this train; the signature I-V presentation needs a plot kind where the x axis is a measured variable, which plugin-ui 0.4.0 does not carry; the block's composition is procedure-owned (device-classes section 10's enclosing-procedure clause; completion and abort must execute the commissioned source-safe transition); the run controls inherit the directional deviation's section C.1 disclosure",
+      "author_action": "the sweep landing slice, on evidence; until then the declared sweep actions surface via Device features - REPORTED, never silent"
+    },
+    {
+      "id": "channel-names",
+      "aspect": "channel names beyond descriptor labels",
+      "reason": "the descriptor owns channel identity",
+      "author_action": "label channels in the descriptor"
+    }
+  ]
+}

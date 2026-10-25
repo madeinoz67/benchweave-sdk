@@ -1,0 +1,116 @@
+{
+  "contract_version": "0.5.0",
+  "profile_id": "otdp.function_generator/1.0.0",
+  "title": "Function and arbitrary waveform generator",
+  "targets": {
+    "plugin_ui": ">=0.4.0"
+  },
+  "slots": {
+    "outputs": {
+      "kind": "channels",
+      "where_role": "source",
+      "key": "id",
+      "label": "label"
+    },
+    "configure": {
+      "kind": "configuration",
+      "action": "otdp.function_generator.configure/1.0.0",
+      "schema_source": "input_schema"
+    },
+    "output": {
+      "kind": "procedure",
+      "action": "otdp.function_generator.output/1.0.0"
+    },
+    "upload": {
+      "kind": "procedure",
+      "action": "otdp.function_generator.upload/1.0.0",
+      "when_declared": true
+    },
+    "vendor_actions": {
+      "kind": "vendor_actions"
+    }
+  },
+  "pages": [
+    {
+      "id": "configuration",
+      "title": "Configuration",
+      "kind": "configuration",
+      "binding_slots": [
+        "configure"
+      ]
+    },
+    {
+      "id": "device-features",
+      "title": "Device features",
+      "kind": "configuration",
+      "binding_slots": [
+        "vendor_actions"
+      ],
+      "vendor_features": true
+    }
+  ],
+  "expect": {
+    "components": {
+      "data-table": {
+        "count": "1",
+        "per_page": "configuration"
+      },
+      "panel": {
+        "count": "{n_pages}"
+      },
+      "mode-banner": {
+        "count": "1",
+        "per_page": "*"
+      }
+    },
+    "controls": {
+      "otdp.function_generator.configure/1.0.0": "preset",
+      "otdp.function_generator.output/1.0.0": "deviation",
+      "otdp.function_generator.upload/1.0.0": "deviation"
+    },
+    "forbid": [
+      "confirm-wrapped-run-action",
+      "color-role-hint-on-lane",
+      "untraceable-lane-label",
+      "intermediated-energy-removing-action"
+    ]
+  },
+  "cannot_derive": [
+    {
+      "id": "output-control",
+      "aspect": "the output on/off control",
+      "reason": "the directional section C.1 presentation (energise stages then confirms naming effect, values and target; de-energise is one ungated action) is beyond the per-action control vocabulary; renderer enforcement belongs to the safety-behaviours slice",
+      "author_action": "none until that slice lands; the deviation is REPORTED, never silent"
+    },
+    {
+      "id": "waveform-upload",
+      "aspect": "the arbitrary-waveform upload surface",
+      "reason": "the channel field is pattern-narrowed (inexpressible at the section E.1 trio) and dataset_id names a host-validated artifact - a selection the derived-control vocabulary does not model",
+      "author_action": "host composition / procedure execution until the channel-enum and artifact-selection surfaces land; upload then derives at L2 (the widening's first named beneficiary)"
+    },
+    {
+      "id": "waveform-preview",
+      "aspect": "the emitted-shape preview panel",
+      "reason": "the preview is a runtime join against the effective configuration; arbitrary mode requires the uploaded dataset's content, referenced only by waveform_id - no dataset action exists for a plot template to bind",
+      "author_action": "host composition where an active configuration exists; a contract preview surface is a named wall-payment item"
+    },
+    {
+      "id": "function-selection",
+      "aspect": "the function/frequency/amplitude/offset/phase/load selection surface",
+      "reason": "configure is preset-mediated at birth; presets are commissioned evidence (A02)",
+      "author_action": "author ui/presets/*.json via check-preset; the expander emits the scaffold"
+    },
+    {
+      "id": "load-convention-alert",
+      "aspect": "the load-convention alert",
+      "reason": "the condition (delivered amplitude at the declared load vs the display convention) is commissioned policy (A02), section 8's own required case",
+      "author_action": "bench policy at commissioning; the alert-bubble renders from host-observed conditions"
+    },
+    {
+      "id": "channel-names",
+      "aspect": "output names beyond descriptor labels",
+      "reason": "the descriptor owns channel identity",
+      "author_action": "label channels in the descriptor"
+    }
+  ]
+}

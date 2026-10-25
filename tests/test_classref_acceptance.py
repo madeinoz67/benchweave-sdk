@@ -47,6 +47,7 @@ from benchweave_sdk.classref import ResidualMember, derive_ui, find_reference
 from benchweave_sdk.classref_gate import census, verify_ui
 from benchweave_sdk.classref_gate_render import render_pages
 from benchweave_sdk.cli import cli
+from benchweave_sdk.served import active_version
 
 FIXTURES = Path(__file__).parent / "fixtures" / "classref"
 PACKAGE = "meridian_m400_plugin"
@@ -264,7 +265,10 @@ def test_a2_composed_action_surfaces_from_the_plugin_class(tmp_path: Path) -> No
     assert [field["field"] for field in row["fields"]] == ["burst_count"]
     ledger = derived.declaration
     assert ledger["composed_classes"] == [
-        {"class": CLASS_URN, "validated_against": "0.4.0"}
+        {
+            "class": CLASS_URN,
+            "validated_against": active_version("plugin-ui-class-reference"),
+        }
     ]
     assert ledger["composed_actions"] == [
         {"action": BURST_URN, "resolution": "composed", "class": CLASS_URN}
@@ -393,7 +397,10 @@ def test_a3_the_composed_class_resolves_after_install(
     assert derived.control_plan[BURST_URN]["resolution"] == "composed"
     assert derived.control_plan[BURST_URN]["class"] == CLASS_URN
     assert derived.declaration["composed_classes"] == [
-        {"class": CLASS_URN, "validated_against": "0.4.0"}
+        {
+            "class": CLASS_URN,
+            "validated_against": active_version("plugin-ui-class-reference"),
+        }
     ]
     # Preview standalone from the installed tree, through the real host.
     report = verify_ui(stage)
