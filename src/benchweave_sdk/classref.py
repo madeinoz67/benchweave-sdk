@@ -22,6 +22,7 @@ import json
 import re
 from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from functools import cache
 from pathlib import Path
 from typing import Any
@@ -150,6 +151,28 @@ class DerivedUI:
     #: is two-sided — never refuses AND never silent — and silence here is
     #: indistinguishable from "we rendered it and it looked fine".
     residual_members: tuple[ResidualMember, ...] = ()
+    #: (#556 track B §3 rule 1) The APPLIED composed-member set per
+    #: vocabulary (procedures/settings/datasets/channels) — a member
+    #: applies when the descriptor declares its claim (an action the
+    #: member claims is declared; a declared channel carries its
+    #: ``where_role``). Only the composed-member walk writes it; the
+    #: ledger's ``composed_members`` records exactly this set, so a pin
+    #: whose members apply nowhere stays out BY DESIGN and is the
+    #: ``unapplied_member_pins`` disclosure instead — never drift.
+    composed_members: Mapping[str, tuple[dict[str, str], ...]] = dataclass_field(
+        default_factory=dict
+    )
+    #: Pins whose member declarations applied nowhere (#556 §3 rule 1):
+    #: digest-verified, schema-valid, conflict-free, but no member's claim
+    #: names a declared action and no declared channel matches its role —
+    #: disclosed on the REPORTED channel every run, the R1 discipline.
+    unapplied_member_pins: tuple[str, ...] = ()
+    #: Dead members inside pins that APPLIED (the B3 fold's F2): each as
+    #: ``(pin path, slot, reason)`` — a pin-level row alone left a member
+    #: whose claims or role match nothing silent whenever a sibling member
+    #: applied, and such a member is silent on every surface by
+    #: construction (it injects nothing). REPORTED every run, both arms.
+    unapplied_members: tuple[tuple[str, str, str], ...] = ()
 
 
 @cache
@@ -283,6 +306,23 @@ class ComposedClass:
     pin_path: str
 
 
+@dataclass(frozen=True)
+class ComposedMemberDeclaration:
+    """One pinned, digest-verified composed-member declaration (#556 track
+    B layer 2): the vendor-authored document that supplies the reference
+    side — one slot per member, its page placement, optionally one vendor
+    profile row — the served corpus does not carry.
+
+    ``profile`` is the declaration's one vendor profile row (the
+    device-profile-catalog row shape, carried under the plural ``profiles``
+    key the canonical validator's map reads) or None; ``members`` are the
+    raw schema-validated member rows; ``pin_path`` names the pinned file."""
+
+    profile: dict[str, Any] | None
+    members: tuple[dict[str, Any], ...]
+    pin_path: str
+
+
 def _validate_composed_class(
     document: Any, pin_path: Any
 ) -> dict[str, Any]:
@@ -319,6 +359,47 @@ def validate_composed_class(document: Any, pin_path: Any) -> dict[str, Any]:
     return _validate_composed_class(document, pin_path)
 
 
+@cache
+def _member_declaration_schema() -> dict[str, Any]:
+    """The family's composed-member-declaration schema, from the vendored,
+    lock-verified tree (#556 track B; the family gained the schema at
+    0.5.0). Resolved lazily — a tree serving an older family derives
+    member-pin-free projects unchanged; a member PIN on such a tree is a
+    platform fault and refuses loudly here, never a silently-empty read."""
+    key = (
+        f"{_FAMILY}/{active_version(_FAMILY)}"
+        "/composed-member-declaration.schema.json"
+    )
+    schema = contract_documents().get(key)
+    if schema is None:
+        raise RuntimeError(
+            "plugin-ui-class-reference member-declaration schema missing from "
+            "the vendored tree; run sync-standards or reinstall the SDK"
+        )
+    return schema  # type: ignore[no-any-return]
+
+
+def _validate_member_declaration(
+    document: Any, pin_path: Any
+) -> dict[str, Any]:
+    """One pinned document against the vendored member-declaration schema
+    (every closed set in it is an owner's own — the reference schema's
+    slot vocabulary, the page id shape, the plot block verbatim, the
+    profile-catalog row shape)."""
+    findings = sorted(
+        Draft202012Validator(_member_declaration_schema()).iter_errors(document),
+        key=lambda error: list(error.path),
+    )
+    if findings:
+        first = findings[0]
+        where = "/".join(str(part) for part in first.path) or "(root)"
+        raise _refuse(
+            "classref_invalid_member_declaration",
+            f"pinned document {pin_path}: {where}: {first.message}",
+        )
+    return document  # type: ignore[no-any-return]
+
+
 def composed_ledger_inventory(
     descriptor: dict[str, Any], descriptor_path: Path | None
 ) -> tuple[set[str], dict[str, str], set[str]]:
@@ -337,9 +418,14 @@ def composed_ledger_inventory(
     migrate-ui refuses, never silently upgrades."""
     catalog = _catalog_documents(descriptor)
     served = dict(catalog.get("actions", {}))
-    vendor_actions, classes, _ignored, _unapplied, _empty = _vendor_documents(
-        descriptor, descriptor_path, served
-    )
+    (
+        vendor_actions,
+        classes,
+        _ignored,
+        _unapplied,
+        _empty,
+        _members,
+    ) = _vendor_documents(descriptor, descriptor_path, served)
     covered = set(served) | set(vendor_actions)
     declared_actions = descriptor.get("actions") or {}
     declared = set(declared_actions)
@@ -371,6 +457,161 @@ def _applied_class_urns(
     }
 
 
+#: The ledger vocabulary each member kind lands under (#556 §3 rule 2):
+#: one key per composed vocabulary, the design's own names.
+_MEMBER_VOCABULARY = {
+    "procedure": "procedures",
+    "configuration": "settings",
+    "dataset": "datasets",
+    "channels": "channels",
+}
+#: The ledger's key set, in its own name: the writer's iteration order
+#: (``_build_declaration``), the gate read-back's closed set and the
+#: unknown-key row's expectation all read ONE tuple — the B3 fold's F4
+#: made the read-back's literal the third copy of the four, and a third
+#: copy is how the four drift.
+_MEMBER_LEDGER_VOCABULARIES = ("procedures", "settings", "datasets", "channels")
+
+
+def _member_applies(member: Mapping[str, Any], descriptor: dict[str, Any]) -> bool:
+    """(#556 §3 rule 1, the R1 rule verbatim) A member applies when the
+    descriptor declares its claim: an action member (dataset,
+    configuration, procedure) when any claimed URN names a declared
+    action; the claim-less channels kind when any declared channel carries
+    its ``where_role``."""
+    if member.get("kind") == "channels":
+        role = str(member.get("where_role", ""))
+        return any(
+            isinstance(row, dict) and str(row.get("role")) == role
+            for row in descriptor.get("channels") or ()
+        )
+    declared = descriptor.get("actions") or {}
+    return any(str(claim) in declared for claim in member.get("claims") or ())
+
+
+def _applied_member_row(
+    member: Mapping[str, Any], descriptor: dict[str, Any]
+) -> dict[str, str]:
+    """The ledger row one APPLIED member lands (#556 §4's per-vocabulary
+    rows): channels carry ``where_role``; the claim-carrying kinds carry
+    the action — the FIRST claim the descriptor declares, in document
+    claim order (the design's rows are one action per row; a multi-claim
+    member whose every claim is declared names its first, and the
+    per-claim surface question belongs to the slices that derive those
+    vocabularies)."""
+    row = {
+        "slot": str(member.get("slot", "")),
+        "page": str(member.get("page", "")),
+    }
+    if member.get("kind") == "channels":
+        row["where_role"] = str(member.get("where_role", ""))
+    else:
+        declared = descriptor.get("actions") or {}
+        row["action"] = next(
+            str(claim) for claim in member.get("claims") or () if str(claim) in declared
+        )
+    return row
+
+
+def _member_nowhere_reason(member: Mapping[str, Any]) -> str:
+    """Why one member applied nowhere (the B3 fold's F2): the claim half
+    mirrors the composed-class row's own wording; the claim-less channels
+    half names the role no declared channel carries."""
+    if member.get("kind") == "channels":
+        return (
+            "no declared channel carries role "
+            f"{str(member.get('where_role', ''))}"
+        )
+    return "its claims name no action this descriptor declares"
+
+
+def _composed_member_inventory(
+    declarations: tuple[ComposedMemberDeclaration, ...],
+    descriptor: dict[str, Any],
+) -> tuple[
+    dict[str, tuple[dict[str, str], ...]],
+    tuple[str, ...],
+    tuple[tuple[str, str, str], ...],
+]:
+    """(#556 §3 rules 1-2) The composed-members inventory: the APPLIED set
+    per vocabulary, the pins whose members apply nowhere, and — the B3
+    fold's F2 — the dead MEMBERS inside pins that applied: a pin-level row
+    alone left a member whose claims (or role) match nothing silent
+    whenever a sibling member applied, and a member that applies nowhere
+    is silent on every surface by construction (it injects nothing, so no
+    residual row can name it either). Each dead member rides back as
+    ``(pin path, slot, reason)`` for the gate's REPORTED channel.
+
+    Only the composed-member walk feeds this; the ledger's
+    ``composed_members`` records exactly the applied set, so a pin whose
+    members apply nowhere (a shape the schema sanctions) stays out of it
+    BY DESIGN and rides back as its pin path for the REPORTED channel —
+    the R1 discipline, never drift."""
+    rows: dict[str, list[dict[str, str]]] = {}
+    unapplied: list[str] = []
+    unapplied_members: list[tuple[str, str, str]] = []
+    for declaration in declarations:
+        applied_any = False
+        for member in declaration.members:
+            if not _member_applies(member, descriptor):
+                unapplied_members.append(
+                    (
+                        declaration.pin_path,
+                        str(member.get("slot", "")),
+                        _member_nowhere_reason(member),
+                    )
+                )
+                continue
+            applied_any = True
+            vocabulary = _MEMBER_VOCABULARY[str(member.get("kind", ""))]
+            rows.setdefault(vocabulary, []).append(
+                _applied_member_row(member, descriptor)
+            )
+        if not applied_any:
+            unapplied.append(declaration.pin_path)
+    frozen = {key: tuple(value) for key, value in rows.items()}
+    return frozen, tuple(unapplied), tuple(unapplied_members)
+
+
+def _check_member_reference_conflicts(
+    merged: dict[str, Any],
+    declarations: tuple[ComposedMemberDeclaration, ...],
+) -> None:
+    """(#556 §3 rule 4; README rules 1 and 3) The reference-side member
+    conflicts, over the MERGED reference (final page ids and slot keys —
+    later profiles' ids carry their slug): a member slot key a reference
+    slot already holds, a claim a reference slot already binds, and a
+    ``page`` naming no page the composed reference declares all refuse
+    ``classref_composed_slot_conflict`` — the composed slot composes
+    BESIDE the reference, never over it."""
+    pages = {str(page.get("id")) for page in merged["pages"]}
+    for declaration in declarations:
+        for member in declaration.members:
+            slot = str(member.get("slot", ""))
+            if slot in merged["slots"]:
+                raise _refuse(
+                    "classref_composed_slot_conflict",
+                    f"member slot {slot} is already a slot of the composed "
+                    "reference",
+                )
+            page = str(member.get("page", ""))
+            if page not in pages:
+                raise _refuse(
+                    "classref_composed_slot_conflict",
+                    f"member {slot} names page {page}, which the composed "
+                    "reference does not declare",
+                )
+            for claim in member.get("claims") or ():
+                claim = str(claim)
+                for key, ref_slot in merged["slots"].items():
+                    if str(ref_slot.get("action", "")) == claim:
+                        raise _refuse(
+                            "classref_composed_slot_conflict",
+                            f"member {slot} claims {claim}, which reference "
+                            f"slot {key} already binds",
+                        )
+
+
 def _vendor_documents(
     descriptor: dict[str, Any],
     descriptor_path: Path | None,
@@ -381,10 +622,12 @@ def _vendor_documents(
     tuple[str, ...],
     tuple[tuple[str, str], ...],
     tuple[str, ...],
+    tuple[ComposedMemberDeclaration, ...],
 ]:
-    """Action rows, composed classes, ignored pins, unapplied classes and
-    empty-catalog pins from the descriptor's pinned documents (the proven
-    vendor-catalog walk, #541 record §2).
+    """Action rows, composed classes, ignored pins, unapplied classes,
+    empty-catalog pins and composed-member declarations from the
+    descriptor's pinned documents (the proven vendor-catalog walk, #541
+    record §2).
 
     #541 slice 2 (standards record §6): the same walk discriminates by
     document shape — a document carrying ``urn`` AND ``claims`` (the
@@ -412,6 +655,25 @@ def _vendor_documents(
     pinned file's bytes are verified whatever shape they turn out to
     carry.
 
+    #556 track B (§3): a document carrying ``members`` is a composed
+    MEMBER declaration, validated against the vendored
+    ``composed-member-declaration.schema.json`` — the R2 ambiguity
+    question generalizes to the three key sets (a key set is not a shape
+    claim: any overlap of the member/class/catalog keys refuses the R2
+    code, naming the carried keys). A member's ``plot.over_slot`` naming
+    a slot other than its own is the document referring to itself
+    inconsistently and refuses ``classref_composed_plot_slot_mismatch``
+    (the README's named cannot-catch; the schema cannot compare two
+    instance values). Member conflicts refuse
+    ``classref_composed_slot_conflict`` (record §3 rule 4, the
+    refuse-never-merge family): a slot key two members declare, and a
+    claim held by another member or by a composed action class. The
+    reference-side conflicts (a member slot key a reference slot already
+    holds, a claim a reference slot already binds, a page the reference
+    does not declare) run at the injection seam
+    (``_check_member_reference_conflicts``), where the merged reference
+    exists.
+
     Conflicts refuse, never merge (record §8): a claim against a served
     or pinned catalogue row, a claim another class already holds, and a
     second document carrying one class urn all refuse
@@ -429,6 +691,7 @@ def _vendor_documents(
     classes: dict[str, ComposedClass] = {}
     ignored: list[str] = []
     empty_pins: list[str] = []
+    member_declarations: list[ComposedMemberDeclaration] = []
     pinned_sources: dict[str, str] = {}
     for row in descriptor.get("contracts", []):
         identifier = str(row.get("id", ""))
@@ -463,20 +726,64 @@ def _vendor_documents(
                 "classref_vendor_catalog_invalid",
                 f"pinned vendor catalog {row.get('path')} is not a JSON object",
             )
-        composed_keys = "urn" in document and "claims" in document
-        if "actions" in document and ("urn" in document or "claims" in document):
-            # R2 (2026-10-23 fold, wave 3): the ambiguity test is its own
-            # question — actions AND (urn OR claims). Naming the carried
-            # keys says WHY the pin is ambiguous, not just that it is.
+        # R2 generalized (#556 §3): the ambiguity question is KEY-SET
+        # overlap — a key set is not a shape claim. The member keys, the
+        # composed-class keys and the catalog keys are three disjoint
+        # vocabularies; a pin carrying keys from more than one refuses,
+        # naming the carried keys (the pre-#556 predicate — actions AND
+        # (urn OR claims) — is this rule's catalog/class row exactly).
+        shape_groups: list[str] = []
+        if "members" in document:
+            shape_groups.append("members")
+        if "urn" in document or "claims" in document:
+            shape_groups.append("composed-class")
+        if "actions" in document:
+            shape_groups.append("actions")
+        if len(shape_groups) > 1:
             carried = sorted(
-                key for key in ("actions", "urn", "claims") if key in document
+                key
+                for key in ("members", "urn", "claims", "actions")
+                if key in document
             )
             raise _refuse(
                 "classref_invalid_composed_class",
-                f"pinned document {row.get('path')} carries both vendor-catalog "
-                f"and composed-class keys ({', '.join(carried)}) — an "
-                "ambiguous pin",
+                f"pinned document {row.get('path')} carries keys of more "
+                f"than one pin shape ({', '.join(shape_groups)}: "
+                f"{', '.join(carried)}) — an ambiguous pin",
             )
+        composed_keys = "urn" in document and "claims" in document
+        if "members" in document:
+            _validate_member_declaration(document, row.get("path"))
+            # The self-reference rule (README rule 2): ``plot.over_slot``
+            # names the member's own slot or the document contradicts
+            # itself — refused here, before any member can inject.
+            for member in document["members"]:
+                slot = str(member.get("slot", ""))
+                plot = member.get("plot")
+                if (
+                    isinstance(plot, dict)
+                    and str(plot.get("over_slot", "")) != slot
+                ):
+                    raise _refuse(
+                        "classref_composed_plot_slot_mismatch",
+                        f"member {slot} carries plot.over_slot "
+                        f"{plot.get('over_slot')!r}, which is not the "
+                        "member's own slot (a document referring to itself "
+                        "inconsistently)",
+                    )
+            member_declarations.append(
+                ComposedMemberDeclaration(
+                    profile=(
+                        document["profiles"][0]
+                        if isinstance(document.get("profiles"), list)
+                        and document["profiles"]
+                        else None
+                    ),
+                    members=tuple(document["members"]),
+                    pin_path=str(row.get("path", "")),
+                )
+            )
+            continue
         if composed_keys:
             _validate_composed_class(document, row.get("path"))
             cls = ComposedClass(
@@ -607,7 +914,63 @@ def _vendor_documents(
         for urn in sorted(classes)
         if not any(claim in descriptor_actions for claim in classes[urn].claims)
     )
-    return actions, classes, tuple(ignored), unapplied, tuple(empty_pins)
+    # #556 §3 rule 4: member conflicts across the whole pin set — a slot
+    # key two members declare (whatever pin each rode), and a claim held
+    # by another member or by a composed action class (the class owns the
+    # catalogue side, the member the placement; one claim, one owner).
+    # One slot per member, one claim per owner — refuse, never merge.
+    member_slot_owner: dict[str, str] = {}
+    member_claim_owner: dict[str, str] = {}
+    class_claims = {
+        claim: cls_urn
+        for cls_urn, cls in classes.items()
+        for claim in cls.claims
+    }
+    for declaration in member_declarations:
+        for member in declaration.members:
+            slot = str(member.get("slot", ""))
+            holder_pin = member_slot_owner.get(slot)
+            if holder_pin is not None:
+                # The B3 fold's NIT: two members of ONE document naming the
+                # same slot printed the pin twice ("x and x"); the message
+                # names the document once and says the pair is internal.
+                if holder_pin == declaration.pin_path:
+                    raise _refuse(
+                        "classref_composed_slot_conflict",
+                        f"member slot {slot} is declared by two members in "
+                        f"the same pinned document ({holder_pin})",
+                    )
+                raise _refuse(
+                    "classref_composed_slot_conflict",
+                    f"member slot {slot} is declared by two members "
+                    f"({holder_pin} and {declaration.pin_path})",
+                )
+            member_slot_owner[slot] = declaration.pin_path
+            for claim in member.get("claims") or ():
+                claim = str(claim)
+                member_holder = member_claim_owner.get(claim)
+                if member_holder is not None:
+                    raise _refuse(
+                        "classref_composed_slot_conflict",
+                        f"{claim} is claimed by both member {member_holder} "
+                        f"and member {slot}",
+                    )
+                class_holder = class_claims.get(claim)
+                if class_holder is not None:
+                    raise _refuse(
+                        "classref_composed_slot_conflict",
+                        f"member {slot} claims {claim}, which composed class "
+                        f"{class_holder} claims",
+                    )
+                member_claim_owner[claim] = slot
+    return (
+        actions,
+        classes,
+        tuple(ignored),
+        unapplied,
+        tuple(empty_pins),
+        tuple(member_declarations),
+    )
 
 
 def _intersect_property(
@@ -1442,10 +1805,23 @@ def derive_ui(
             )
     catalog = _catalog_documents(descriptor)
     catalog_actions: dict[str, Any] = dict(catalog.get("actions", {}))
-    vendor_actions, _composed, ignored_pins, unapplied, empty_pins = (
-        _vendor_documents(descriptor, descriptor_path, catalog_actions)
-    )
+    (
+        vendor_actions,
+        _composed,
+        ignored_pins,
+        unapplied,
+        empty_pins,
+        member_declarations,
+    ) = _vendor_documents(descriptor, descriptor_path, catalog_actions)
     catalog_actions.update(vendor_actions)
+    # #556 §3 rule 1: the applied member set (per vocabulary), the pins
+    # whose members applied nowhere and the dead members inside pins that
+    # applied (the B3 fold's F2) — computed from the descriptor here so
+    # every consumer (the ledger, the gate's REPORTED channel) reads ONE
+    # derivation of application.
+    composed_members, unapplied_member_pins, unapplied_members = (
+        _composed_member_inventory(member_declarations, descriptor)
+    )
     actions = descriptor.get("actions") or {}
     # #541 layer 3: a descriptor action no served catalog describes is a
     # residual member, not a refusal — it derives from the descriptor's own
@@ -1482,6 +1858,10 @@ def derive_ui(
         descriptor_path=descriptor_path, descriptor_raw=descriptor_raw,
         ignored_pins=ignored_pins, unapplied_classes=unapplied,
         empty_action_pins=empty_pins,
+        member_declarations=member_declarations,
+        composed_members=composed_members,
+        unapplied_member_pins=unapplied_member_pins,
+        unapplied_members=unapplied_members,
     )
 
 
@@ -1573,33 +1953,77 @@ def _merge_references(references: list[dict[str, Any]]) -> dict[str, Any]:
     return merged
 
 
-def _channels_slot(merged: dict[str, Any]) -> dict[str, Any] | None:
-    """The ONE channels slot this derivation resolves lanes for — the first
-    in merge order (#556 B1 keeps the founding one-slot rule; the per-slot
-    channels generalization is a later slice). ``residual_members`` uses it to
-    name the one role a channel can still resolve against."""
-    return next(
-        (slot for slot in merged["slots"].values() if slot.get("kind") == "channels"),
-        None,
-    )
+def _channels_slots(merged: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Every channels slot in merge order (#556 B3: the reference's own
+    and every applied composed member's injection) — per-slot lane
+    resolution keys on exactly this set."""
+    return {
+        key: slot
+        for key, slot in merged["slots"].items()
+        if slot.get("kind") == "channels"
+    }
 
 
-def _resolve_channels(descriptor: dict[str, Any], merged: dict[str, Any]) -> list[dict[str, Any]]:
-    """The class-role lanes, in declaration order; fail-closed count
-    refusals (record §3.3)."""
-    slot = _channels_slot(merged)
-    if slot is None:
-        return []
-    role = str(slot.get("where_role", ""))
-    lanes = [row for row in descriptor.get("channels", []) if str(row.get("role")) == role]
-    if not lanes:
-        raise _refuse("classref_no_lanes", "0 channels carry role " + role)
-    if len(lanes) > _LANE_CEILING:
-        raise _refuse(
-            "classref_lane_ceiling",
-            f"{len(lanes)} channels carry role {role} (ceiling {_LANE_CEILING})",
-        )
-    return lanes
+def _resolve_channels(
+    descriptor: dict[str, Any], merged: dict[str, Any]
+) -> dict[str, list[dict[str, Any]]]:
+    """The lanes each channels slot resolves, keyed by slot in merge order;
+    fail-closed count refusals per slot (record §3.3 — zero matching
+    channels and over-ceiling counts refuse naming the slot's role, every
+    channels slot alike: the reference's own and a composed member's
+    injection are one rule)."""
+    resolved: dict[str, list[dict[str, Any]]] = {}
+    for key, slot in _channels_slots(merged).items():
+        role = str(slot.get("where_role", ""))
+        lanes = [
+            row
+            for row in descriptor.get("channels", [])
+            if str(row.get("role")) == role
+        ]
+        if not lanes:
+            raise _refuse("classref_no_lanes", "0 channels carry role " + role)
+        if len(lanes) > _LANE_CEILING:
+            raise _refuse(
+                "classref_lane_ceiling",
+                f"{len(lanes)} channels carry role {role} (ceiling {_LANE_CEILING})",
+            )
+        resolved[key] = lanes
+    return resolved
+
+
+def _inject_composed_members(
+    descriptor: dict[str, Any],
+    merged: dict[str, Any],
+    declarations: tuple[ComposedMemberDeclaration, ...],
+) -> None:
+    """(#556 §3) The injection seam: every APPLIED composed member's slot
+    joins the merged reference, after ``_merge_references`` and after the
+    conflict checks, so the existing derivation arms run unchanged on the
+    injected rows. B3 injects the channels kind (V3 layer 2 — per-slot
+    lane resolution consumes it, and the member's fields ARE the
+    reference's own channels-slot branch verbatim); the action-kind
+    injections ride their own slices (B4/B5), whose arms carry the
+    vendor-profile seam their targets need. A member that applies nowhere
+    injects nothing — its disclosure is the applied-nowhere row."""
+    for declaration in declarations:
+        for member in declaration.members:
+            if member.get("kind") != "channels":
+                continue
+            if not _member_applies(member, descriptor):
+                continue
+            slot_key = str(member.get("slot", ""))
+            merged["slots"][slot_key] = {
+                "kind": "channels",
+                "where_role": str(member.get("where_role", "")),
+                "key": "id",
+                "label": "label",
+            }
+            page_id = str(member.get("page", ""))
+            for page in merged["pages"]:
+                if str(page.get("id")) == page_id:
+                    page.setdefault("_slot_keys", []).append(slot_key)
+                    page.setdefault("bindings", []).append(slot_key)
+                    break
 
 
 def _assemble(
@@ -1612,10 +2036,20 @@ def _assemble(
     ignored_pins: tuple[str, ...] = (),
     unapplied_classes: tuple[tuple[str, str], ...] = (),
     empty_action_pins: tuple[str, ...] = (),
+    member_declarations: tuple[ComposedMemberDeclaration, ...] = (),
+    composed_members: Mapping[str, tuple[dict[str, str], ...]] | None = None,
+    unapplied_member_pins: tuple[str, ...] = (),
+    unapplied_members: tuple[tuple[str, str, str], ...] = (),
 ) -> DerivedUI:
     version = active_version("plugin-ui")
     merged = _merge_references(references)
-    lanes = _resolve_channels(descriptor, merged)
+    # #556 §3 rule 4: the reference-side member conflicts run over the
+    # MERGED reference (final page ids and slot keys) and before any
+    # member injects — the composed slot composes beside the reference,
+    # never over it.
+    _check_member_reference_conflicts(merged, member_declarations)
+    _inject_composed_members(descriptor, merged, member_declarations)
+    lanes_by_slot = _resolve_channels(descriptor, merged)
     slot_for_urn = {
         slot["action"]: (key, slot)
         for key, slot in merged["slots"].items()
@@ -1652,11 +2086,15 @@ def _assemble(
                 # rendering only when that rendering occurs.
             }
     return _finish(
-        descriptor, references, merged, lanes, actions, catalog_actions,
+        descriptor, references, merged, lanes_by_slot, actions, catalog_actions,
         plan, divergences, version, descriptor_path=descriptor_path,
         descriptor_file_raw=descriptor_raw,
         ignored_pins=ignored_pins, unapplied_classes=unapplied_classes,
         empty_action_pins=empty_action_pins,
+        composed_members=composed_members or {},
+        unapplied_member_pins=unapplied_member_pins,
+        unapplied_members=unapplied_members,
+        member_declarations=member_declarations,
     )
 
 
@@ -1841,7 +2279,7 @@ def _finish(
     descriptor: dict[str, Any],
     references: list[dict[str, Any]],
     merged: dict[str, Any],
-    lanes: list[dict[str, Any]],
+    lanes_by_slot: Mapping[str, list[dict[str, Any]]],
     actions: dict[str, Any],
     catalog_actions: dict[str, Any],
     plan: dict[str, dict[str, Any]],
@@ -1852,6 +2290,10 @@ def _finish(
     ignored_pins: tuple[str, ...] = (),
     unapplied_classes: tuple[tuple[str, str], ...] = (),
     empty_action_pins: tuple[str, ...] = (),
+    composed_members: Mapping[str, tuple[dict[str, str], ...]] | None = None,
+    unapplied_member_pins: tuple[str, ...] = (),
+    unapplied_members: tuple[tuple[str, str, str], ...] = (),
+    member_declarations: tuple[ComposedMemberDeclaration, ...] = (),
 ) -> DerivedUI:
     """Assemble every emitted document from the resolved inventory."""
     import hashlib
@@ -1888,12 +2330,53 @@ def _finish(
         ),
         f"urn:otdp:measurement:{descriptor['otdp_version']}",
     )
-    # The wire's logic alphabet renders as string/vector samples; the time
-    # axis is a vector in seconds (the vendored digital_lanes plot rules).
-    lane_vars = [
-        {"id": row["id"], "type": "string", "unit": None, "shape": "vector"}
-        for row in lanes
-    ]
+    # (#556 B3, V3 layer 2) Per-slot lanes: every channels slot resolves
+    # its role's channels; a page's plot consumes the lanes of the
+    # channels slots PLACED on that page (an applied composed member's
+    # placement), keeping the founding default — the FIRST slot's lanes —
+    # for pages that place none. Every vendored reference places none
+    # (asserted in-repo, tests/test_classref_member_channels.py), so the
+    # founding fixtures derive byte-identically under the generalization
+    # (the record's M6, proved by digest at the motion's commit).
+    channels_order = list(lanes_by_slot)
+    default_lanes: list[dict[str, Any]] = (
+        lanes_by_slot[channels_order[0]] if channels_order else []
+    )
+
+    def _lanes_for_page(page_id: str) -> list[dict[str, Any]]:
+        placed = [
+            key
+            for page in merged["pages"]
+            if str(page.get("id")) == page_id
+            for key in page.get("_slot_keys", [])
+            if key in lanes_by_slot
+        ]
+        # The founding default is the BASE (the class's implicit
+        # slot-to-plot association — no vendored reference places its
+        # channels slot on any page), and a placed slot's lanes JOIN it:
+        # composing beside, never replacing.
+        order = [channels_order[0]] if channels_order else []
+        order.extend(key for key in placed if key not in order)
+        lane_rows: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for key in order:
+            for row in lanes_by_slot[key]:
+                if str(row.get("id")) not in seen:
+                    seen.add(str(row.get("id")))
+                    lane_rows.append(row)
+        return lane_rows
+
+    # The lanes feeding each page-template plot, keyed by its over-slot —
+    # the map every lane-derived variable set reads (a dataset slot with
+    # no plot of its own keeps the founding default).
+    lanes_for_over_slot: dict[str, list[dict[str, Any]]] = {}
+    for page in merged["pages"]:
+        spec = page.get("plot")
+        if not spec:
+            continue
+        lanes_for_over_slot[str(spec.get("over_slot", ""))] = _lanes_for_page(
+            str(page["id"])
+        )
     x_var = {
         "id": "t", "type": "number", "unit": "s",
         "shape": "vector", "axis_role": "x",
@@ -1919,34 +2402,48 @@ def _finish(
         for key in page.get("_slot_keys", [])
         if key in dataset_slots
     }
+    # The parameter map is descriptor-wide (channel identity to readable
+    # parameter): built over every resolved lane, so a page's tiles read
+    # their own lanes' parameters from one map.
+    all_lanes: list[dict[str, Any]] = [
+        row for rows in lanes_by_slot.values() for row in rows
+    ]
     parameter_rows = (
-        _resolve_parameters(descriptor, lanes) if readings_slots else {}
+        _resolve_parameters(descriptor, all_lanes) if readings_slots else {}
     )
-    quantity_vars: list[dict[str, Any]] = [
-        {
-            "id": f"{row['id']}-{quantity}",
-            "type": "number",
-            "unit": (parameter_rows.get((str(row["id"]), str(quantity))) or {}).get(
-                "unit"
-            ),
-            "shape": "scalar",
-            "axis_role": "value",
-        }
-        for row in lanes
-        for quantity in row.get("quantities") or []
-    ]
-    trace_vars: list[dict[str, Any]] = [
-        {
-            "id": f"{row['id']}-{quantity}",
-            "type": "number",
-            "unit": (parameter_rows.get((str(row["id"]), str(quantity))) or {}).get(
-                "unit"
-            ),
-            "shape": "vector",
-        }
-        for row in lanes
-        for quantity in row.get("quantities") or []
-    ]
+
+    def _quantity_vars(
+        lane_rows: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        return [
+            {
+                "id": f"{row['id']}-{quantity}",
+                "type": "number",
+                "unit": (
+                    parameter_rows.get((str(row["id"]), str(quantity))) or {}
+                ).get("unit"),
+                "shape": "scalar",
+                "axis_role": "value",
+            }
+            for row in lane_rows
+            for quantity in row.get("quantities") or []
+        ]
+
+    def _trace_vars(
+        lane_rows: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        return [
+            {
+                "id": f"{row['id']}-{quantity}",
+                "type": "number",
+                "unit": (
+                    parameter_rows.get((str(row["id"]), str(quantity))) or {}
+                ).get("unit"),
+                "shape": "vector",
+            }
+            for row in lane_rows
+            for quantity in row.get("quantities") or []
+        ]
     # time_series speaks receipt time (the canonical validator's own rule:
     # the x axis is receipt_time in seconds, every axis scalar); waveform
     # speaks the explicit time-axis vector alongside its traces.
@@ -1982,13 +2479,22 @@ def _finish(
 
     def _dataset_base(slot_key: str) -> tuple[list[dict[str, Any]], str]:
         """The wire shape a dataset slot carries WITHOUT the computed rows,
-        and its axis variable id."""
+        and its axis variable id. The lane-derived rows are the lanes of the
+        PLOT over this slot (#556 B3) — the founding default for a slot
+        with no plot of its own."""
         kind = plot_kind_for_slot.get(slot_key, "digital_lanes")
+        lane_rows = lanes_for_over_slot.get(slot_key, default_lanes)
         if kind == "time_series":
-            return [receipt_var, *quantity_vars], str(receipt_var["id"])
+            return [receipt_var, *_quantity_vars(lane_rows)], str(receipt_var["id"])
         if kind == "waveform":
-            return [x_var, *trace_vars], str(x_var["id"])
-        return [x_var, *lane_vars], str(x_var["id"])
+            return [x_var, *_trace_vars(lane_rows)], str(x_var["id"])
+        return [
+            x_var,
+            *(
+                {"id": row["id"], "type": "string", "unit": None, "shape": "vector"}
+                for row in lane_rows
+            ),
+        ], str(x_var["id"])
 
     def _dataset_shape(slot_key: str) -> list[dict[str, Any]]:
         kind = plot_kind_for_slot.get(slot_key, "digital_lanes")
@@ -2042,6 +2548,17 @@ def _finish(
         None,
     )
     decoder_lanes: list[dict[str, Any]] = []
+    # The lanes a decoder's sources map onto: the lanes of the plot that
+    # hosts decoder lanes — the digital_lanes plot (#556 B3: per-page lane
+    # sets; founding behavior is the default set, the one channels slot).
+    decode_host_lanes: list[dict[str, Any]] = next(
+        (
+            lanes_for_over_slot[str(spec.get("over_slot", ""))]
+            for page in merged["pages"]
+            if str((spec := page.get("plot") or {}).get("kind", "")) == "digital_lanes"
+        ),
+        default_lanes,
+    )
     if (
         (decode_declared or decode_annotated_urn)
         and descriptor.get("decoders")
@@ -2058,9 +2575,9 @@ def _finish(
                 ]
             except (ValueError, OSError, json.JSONDecodeError):
                 line_ids = []
-            if not line_ids or len(line_ids) > len(lanes):
+            if not line_ids or len(line_ids) > len(decode_host_lanes):
                 continue
-            sources = [row["id"] for row in lanes[: len(line_ids)]]
+            sources = [row["id"] for row in decode_host_lanes[: len(line_ids)]]
             settings = {
                 str(line): source
                 for line, source in zip(line_ids, sources, strict=False)
@@ -2105,11 +2622,14 @@ def _finish(
         if str(page.get("kind", "readings")) != "readings":
             continue
         page_id = str(page["id"])
+        # The page's own tiles read the page's lanes (#556 B3: the placed
+        # channels slots' lanes, the founding default when none is placed).
+        page_lanes = _lanes_for_page(page_id)
         for key in page.get("_slot_keys", []):
             if key not in dataset_slots:
                 continue
             ids: list[str] = []
-            for row in lanes:
+            for row in page_lanes:
                 for quantity in row.get("quantities") or []:
                     binding_id = f"{key}-{row['id']}-{quantity}"
                     value_id = f"{row['id']}-{quantity}"
@@ -2310,6 +2830,10 @@ def _finish(
     # residual channel names them; the dataset's variable set still carries
     # them.
     series_overflow: dict[str, tuple[str, ...]] = {}
+    # (#556 B3 fold F1) The page-level lane join over the ceiling: page id
+    # to (joined count, dropped lane rows) — the disclosure source beside
+    # ``series_overflow``.
+    lane_join_overflow: dict[str, tuple[int, tuple[dict[str, Any], ...]]] = {}
     for page in pages_out:
         template = next(
             (row for row in merged["pages"] if str(row["id"]) == page["id"]), None
@@ -2380,8 +2904,33 @@ def _finish(
             )
             page["plots"] = [plots[-1]]
             continue
+        # The logic-alphabet lanes of THIS plot (#556 B3): the placed
+        # channels slots' lanes, the founding default when none is placed.
+        plot_lanes = lanes_for_over_slot.get(over_key, default_lanes)
+        # (#556 B3 fold F1) The PAGE-LEVEL JOIN is bounded: per-slot
+        # resolution refuses a slot over the ceiling alone, but the join of
+        # the first slot's lanes with every placed member slot's lanes
+        # bounded nothing, so a 32-lane reference beside a 40-lane composed
+        # role emitted a schema-invalid 72-entry ``y`` and the real gate
+        # died in the host load. The join over the cap is a capacity limit
+        # no single declaration is at fault for (the 2026-10-25 boundary's
+        # join half): the overflow drops from the PLOT alone — the wire
+        # shape keeps every joined lane, the B1 discipline — and each
+        # dropped lane REPORTs below. The overflow is structurally composed
+        # lanes: the first slot's own count is inside the per-slot ceiling
+        # and the join order puts it first.
+        if len(plot_lanes) > _LANE_CEILING:
+            lane_join_overflow[str(page["id"])] = (
+                len(plot_lanes),
+                tuple(plot_lanes[_LANE_CEILING:]),
+            )
+            plot_lanes = plot_lanes[:_LANE_CEILING]
+        lane_var_rows = [
+            {"id": row["id"], "type": "string", "unit": None, "shape": "vector"}
+            for row in plot_lanes
+        ]
         groups = []
-        n = len(lane_vars)
+        n = len(lane_var_rows)
         full = n // _GROUP_SIZE
         remainder = n % _GROUP_SIZE
         # A trailing remainder of exactly 1 forms no group (member_ids
@@ -2390,7 +2939,7 @@ def _finish(
         for k in range(total):
             start = k * _GROUP_SIZE
             width = _GROUP_SIZE if k < full else remainder
-            members = [row["id"] for row in lane_vars[start : start + width]]
+            members = [row["id"] for row in lane_var_rows[start : start + width]]
             groups.append(
                 {
                     "id": f"lanes-{k + 1}",
@@ -2404,9 +2953,10 @@ def _finish(
                 "kind": "digital_lanes",
                 "binding_id": capture_binding_id,
                 "x": "t",
-                "y": [row["id"] for row in lane_vars],
+                "y": [row["id"] for row in lane_var_rows],
                 "channel_hints": [
-                    {"variable_id": row["id"], "visible": True} for row in lane_vars
+                    {"variable_id": row["id"], "visible": True}
+                    for row in lane_var_rows
                 ],
                 "lane_groups": groups,
                 "decoder_lanes": decoder_lanes,
@@ -2453,6 +3003,18 @@ def _finish(
         "descriptor_sha256": descriptor_hash,
         "targets": targets,
     }
+    # The lanes a derived plot actually CARRIES (#556 B3): expectation
+    # counts read the rendered set, and so does the residual channel
+    # closure — a channel of a role no rendered lanes carry reports, which
+    # covers both a role no slot resolves and a slot whose lanes land on
+    # no plot (applied is not rendered).
+    rendered_lanes: list[dict[str, Any]] = []
+    seen_channel_ids: set[str] = set()
+    for rows in lanes_for_over_slot.values():
+        for row in rows:
+            if str(row.get("id")) not in seen_channel_ids:
+                seen_channel_ids.add(str(row.get("id")))
+                rendered_lanes.append(row)
     expectation = _build_expectation(
         merged, plan, pages_out,
         plot_group_count=sum(
@@ -2463,19 +3025,85 @@ def _finish(
             urn for urn, row in plan.items()
             if row["level"] in ("L1", "L2") and row["page"] == _capture_page_id(pages_out)
         ],
-        channel_count=len(lanes),
-        variable_count=sum(len(row.get("quantities") or ()) for row in lanes),
+        channel_count=len(rendered_lanes),
+        variable_count=sum(
+            len(row.get("quantities") or ()) for row in rendered_lanes
+        ),
     )
     declaration = _build_declaration(
-        references, divergences, plan, ignored_pins
+        references, divergences, plan, ignored_pins,
+        composed_members=composed_members,
     )
     cannot = list(merged["cannot_derive"])
+    # (#556 §4 V3 layer 2) An APPLIED channels member whose page hosts no
+    # plot applies but renders nothing: its channels resolved (their role
+    # matched the composed slot, so B1's channel closure is quiet) yet no
+    # surface carries them. The member's own row discloses it — applied is
+    # not rendered, and silence would read as "it rendered and looked
+    # fine". A page whose plot IS analog renders the member's channels as
+    # their quantity/trace variables (the founding daq behavior), so only
+    # the plot-less page reaches this row.
+    member_residual_rows: list[ResidualMember] = []
+    pages_with_plot = {
+        str(page.get("id")) for page in merged["pages"] if page.get("plot")
+    }
+    for row in (composed_members or {}).get("channels", ()):
+        if row["page"] not in pages_with_plot:
+            member_residual_rows.append(
+                ResidualMember(
+                    "composed channels",
+                    "channels and decoders",
+                    str(row["slot"]),
+                    f"no lane host (page {row['page']} hosts no plot; lanes "
+                    "render into the named page's plot alone)",
+                )
+            )
+    # (#556, the 0.5.0 README rule 4; the maintainer's 2026-10-25
+    # capacity-versus-declaration ruling) A dataset member's ``plot`` on a
+    # page whose class template already hosts a plot is ADMISSIBLE — a
+    # placement limit the declaration cannot see, never a conflict — so it
+    # never refuses: the page keeps the class's plot, the member's plot
+    # derives nothing (its derivation is B5's slice), and every run
+    # REPORTS the row the README publishes verbatim.
+    for member_document in member_declarations:
+        for member in member_document.members:
+            if not isinstance(member.get("plot"), dict):
+                continue
+            if not _member_applies(member, descriptor):
+                continue
+            page_id = str(member.get("page", ""))
+            if page_id in pages_with_plot:
+                member_residual_rows.append(
+                    ResidualMember(
+                        "composed plot",
+                        "datasets and capture shapes",
+                        str(member.get("slot", "")),
+                        f"page {page_id} already hosts a plot (the page "
+                        "keeps the class's plot)",
+                    )
+                )
+    # (#556 B3 fold F1) The join overflow rows — one per dropped lane, in
+    # the residual wording family, each naming the page, the joined count
+    # and the ceiling (the number and its denominator, G4). The lane's role
+    # RESOLVED (its slot joined the page), so the B1 channel closure stays
+    # quiet: this row is the disclosure, not a second one.
+    for page_id, (joined, dropped_rows) in lane_join_overflow.items():
+        for lane_row in dropped_rows:
+            member_residual_rows.append(
+                ResidualMember(
+                    "composed lane",
+                    "channels and decoders",
+                    f"{lane_row.get('id')} (role {lane_row.get('role', '')})",
+                    "no lane surface on page "
+                    f"{page_id} (the page's channels slots join to "
+                    f"{joined} lanes; the plot's y admits {_LANE_CEILING})",
+                )
+            )
     # The residual inventory (#556 Track B §3 rule 3) needs four facts about
-    # THIS run: which channel roles resolved lanes, which dataset targets
+    # THIS run: which channel roles rendered lanes, which dataset targets
     # derived (and the base variable ids their wire shape carries), which
     # composed series the plot ceiling forced off a plot, and which plot
     # kinds derived.
-    channels_slot = _channels_slot(merged)
     residual = residual_members(
         descriptor,
         # The rendered set, not the built set (R10's condition): lanes a
@@ -2485,12 +3113,15 @@ def _finish(
             for plot in plots
             for lane in (plot.get("decoder_lanes") or [])
         },
-        # The founding rule resolves ONE channels slot, so at most one role
-        # resolves lanes here; a channel of another role reports (#556 B1).
+        # The roles the run RESOLVED lanes for (#556 B1's closure, kept
+        # resolution-keyed): every channels slot's role — reference or
+        # composed. A channel of a role no slot resolves reports; a channel
+        # of a RESOLVED role whose member renders nowhere is disclosed by
+        # the member's own row below (applied is not rendered — but the
+        # channel did resolve, and B1's two-sided promise keys on that).
         channel_roles=(
-            (str(channels_slot.get("where_role", "")),)
-            if channels_slot is not None
-            else ()
+            str(slot.get("where_role", ""))
+            for slot in _channels_slots(merged).values()
         ),
         dataset_variables={
             str(target["id"]): frozenset(
@@ -2502,6 +3133,7 @@ def _finish(
         series_overflow=series_overflow,
         plot_kinds=[str(plot.get("kind", "")) for plot in plots],
     )
+    residual = tuple([*residual, *member_residual_rows])
     result = DerivedUI(
         manifest=manifest,
         envelope=envelope,
@@ -2518,6 +3150,9 @@ def _finish(
         unapplied_classes=unapplied_classes,
         empty_action_pins=empty_action_pins,
         residual_members=residual,
+        composed_members=composed_members or {},
+        unapplied_member_pins=unapplied_member_pins,
+        unapplied_members=unapplied_members,
     )
     return result
 
@@ -2531,9 +3166,14 @@ def effective_action_fields(
     descriptor's own constraints, exactly as the plan row derives them."""
     catalog = _catalog_documents(descriptor)
     actions = dict(catalog.get("actions", {}))
-    vendor_actions, _composed, _ignored, _unapplied, _empty = _vendor_documents(
-        descriptor, descriptor_path, actions
-    )
+    (
+        vendor_actions,
+        _composed,
+        _ignored,
+        _unapplied,
+        _empty,
+        _member_declarations,
+    ) = _vendor_documents(descriptor, descriptor_path, actions)
     actions.update(vendor_actions)
     constraints = (descriptor.get("actions") or {}).get(urn, {}).get(
         "input_constraints"
@@ -2551,6 +3191,9 @@ def coverage_plan_without_reference(
     tuple[str, ...],
     tuple[tuple[str, str], ...],
     tuple[str, ...],
+    Mapping[str, tuple[dict[str, str], ...]],
+    tuple[str, ...],
+    tuple[tuple[str, str, str], ...],
 ]:
     """The D14 coverage plan for a descriptor with NO class reference:
     every declared action through the ladder with no named slots (the
@@ -2559,15 +3202,27 @@ def coverage_plan_without_reference(
     reference, is what the always-on arm checks. The trailing elements
     are the pin disclosures, mirroring ``DerivedUI``'s: the ignored-pin
     set (B7: the reference-less gate arm discloses them too, exactly as
-    the reference-carrying arm does), the unapplied composed classes and
-    the empty-catalog pins (R1/R5, 2026-10-23 fold wave 3 — the same
-    disclosures, the same channel)."""
+    the reference-carrying arm does), the unapplied composed classes,
+    the empty-catalog pins (R1/R5, 2026-10-23 fold wave 3) and, since
+    #556 B3, the composed-member inventory — the applied set per
+    vocabulary, the pins whose members applied nowhere and the dead
+    members inside pins that applied (the fold's F2), the same
+    descriptor-side computation the reference-carrying derivation
+    performs (the B6/B7/R3 discipline: both arms, every disclosure)."""
     catalog = _catalog_documents(descriptor)
     actions_map: dict[str, Any] = dict(catalog.get("actions", {}))
-    vendor_actions, _composed, ignored, unapplied, empty_pins = (
-        _vendor_documents(descriptor, descriptor_path, actions_map)
-    )
+    (
+        vendor_actions,
+        _composed,
+        ignored,
+        unapplied,
+        empty_pins,
+        member_declarations,
+    ) = _vendor_documents(descriptor, descriptor_path, actions_map)
     actions_map.update(vendor_actions)
+    composed_members, unapplied_member_pins, unapplied_members = (
+        _composed_member_inventory(member_declarations, descriptor)
+    )
     actions = descriptor.get("actions") or {}
     # #541 layer 3, the same treatment as derive_ui: a catalog-absent
     # declared action is a residual member that derives, resolution
@@ -2576,7 +3231,16 @@ def coverage_plan_without_reference(
     plan, _divergences = _derive_controls(
         actions, actions_map, {}, {}, {}
     )
-    return plan, actions_map, ignored, unapplied, empty_pins
+    return (
+        plan,
+        actions_map,
+        ignored,
+        unapplied,
+        empty_pins,
+        composed_members,
+        unapplied_member_pins,
+        unapplied_members,
+    )
 
 
 def _capture_page_id(pages: list[dict[str, Any]]) -> str:
@@ -2999,6 +3663,7 @@ def _build_declaration(
     divergences: list[dict[str, str]],
     plan: dict[str, dict[str, Any]],
     ignored_pins: tuple[str, ...] = (),
+    composed_members: Mapping[str, tuple[dict[str, str], ...]] | None = None,
 ) -> dict[str, Any]:
     """The birth conformance declaration (D12c): the reference the project
     follows plus the deviation ledger. Presets are commissioned evidence, so
@@ -3122,6 +3787,14 @@ def _build_declaration(
             }
         )
     ]
+    # #556 §3 rule 2: the composed-members inventory, one key per
+    # vocabulary, always present (the composed_actions shape). No schema
+    # governs this document's key set (the D8 posture) — the gate's
+    # read-back and the prose are the contract. The rows are the APPLIED
+    # set exactly as the walk computed it: one writer, and a pin whose
+    # members applied nowhere stays out BY DESIGN (its disclosure is the
+    # gate's applied-nowhere row, never drift).
+    members_inventory = composed_members or {}
     return {
         "contract_version": active_version(_FAMILY),
         "profile_ids": sorted({str(item["profile_id"]) for item in references}),
@@ -3130,6 +3803,10 @@ def _build_declaration(
         "custom_actions": custom_rows,
         "composed_actions": composed_rows,
         "composed_classes": composed_classes,
+        "composed_members": {
+            vocabulary: [dict(row) for row in members_inventory.get(vocabulary, ())]
+            for vocabulary in _MEMBER_LEDGER_VOCABULARIES
+        },
     }
 
 
