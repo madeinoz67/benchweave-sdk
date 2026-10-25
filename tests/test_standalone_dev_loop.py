@@ -35,8 +35,10 @@ What this module does NOT catch, stated so the claim does not outrun it:
   loader's own banner wordings — a control can be present, derived and
   mis-styled and every arm here stays green.
 * The spawned-serve arms are skipped on Windows (the skip reason names the
-  coverage that remains). The non-spawn arms — install, scaffold, derive,
-  verify, ledger — run on all three OSes.
+  coverage that remains). Locally that leaves the non-spawn arms — install,
+  scaffold, derive, verify, ledger — on all three OSes. CI runs this module as
+  the ``loop`` partition in a serial ubuntu-only step (design record §13), so
+  macOS and Windows no longer measure it there.
 * The pin's authoring friction: until ``pin-class`` lands, the pin row and its
   digest are hand-written and this lane consumes them as authored input. The
   lane would not notice a stale hand-computed digest — ``derive_ui`` would
@@ -70,6 +72,15 @@ import pytest
 
 from benchweave_sdk.classref_gate import census
 from benchweave_sdk.served import active_version
+
+#: The whole module is CI's ``loop`` partition (issue #556, design record
+#: §13). The session fixtures below build this repository's wheel and a fresh
+#: venv, so under ``-n auto`` every xdist worker that holds one of these tests
+#: repeats that build. The parallel leg deselects the marker and a serial
+#: ubuntu-only step runs it. A plain ``uv run pytest
+#: tests/test_standalone_dev_loop.py`` still runs the module: markers filter
+#: only when ``-m`` is passed.
+pytestmark = pytest.mark.loop
 
 REPO = Path(__file__).resolve().parents[1]
 FIXTURES = Path(__file__).parent / "fixtures" / "classref"
@@ -116,7 +127,8 @@ SPAWN_SKIPPED_ON_WINDOWS = pytest.mark.skipif(
         "the spawned arm stops the server with SIGINT (POSIX signal semantics); "
         "the ubuntu-only installed-wheel spawn smokes in .github/workflows/ci.yml "
         "and publish.yml are the spawned-shape coverage on Windows-hosted CI, and "
-        "the non-spawn arms of this module still run there"
+        "a direct invocation on Windows still runs this module's non-spawn arms "
+        "(CI itself runs the `loop` module ubuntu-only — design record §13)"
     ),
 )
 

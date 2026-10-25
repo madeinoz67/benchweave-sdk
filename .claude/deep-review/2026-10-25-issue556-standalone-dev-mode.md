@@ -454,3 +454,91 @@ assertion.
 
 All four new/repointed arms are RED before their change and green after; the RED output
 is quoted in the fold commit's message.
+
+## 13. Addendum (2026-10-25) — the CI-cost fallback, in force
+
+§8's kill (c) fired on measurement. This section records the numbers, the mechanism they
+exposed, and the fallback now in force. It does not rewrite §8, and it changes no
+assertion in the lane: this is a placement change, not a strength change.
+
+**The measurement.** §8 budgeted a CI `sdk`-job wall-clock delta of ≤3 min per OS against
+the parent commit. Read from the CI run pages, against parent `dc6e429` (176 s ubuntu,
+309 s macOS, 445 s Windows):
+
+| run | ubuntu | macOS | Windows |
+|---|---|---|---|
+| `#206` | 249 s (Δ +73) | 332 s (Δ +23) | 654 s (Δ +209) |
+| `#207` | 210 s (Δ +34) | 448 s (Δ +139) | 820 s (Δ +375) |
+
+Windows breaches the budget in both runs; ubuntu and macOS do not.
+
+**The Windows number is partly confounded, and this addendum does not claim otherwise.**
+The sibling B1 branch measured +281 s on the same Windows runner with none of this leg's
+code, so the excess is not established as this lane's to account for. What the record does
+establish is the mechanism below: the lane's cost multiplies with the number of workers
+that hold one of its tests.
+
+**Why `-n auto` multiplies it.** Each xdist worker is its own pytest session, so a
+session-scoped fixture is paid once PER WORKER. The module's `installed` fixture builds
+this repository's wheel, creates a fresh venv, and installs `<wheel>[server,scaffold]`
+from the index; every worker that holds even one of the module's ten tests repeats that.
+The refute probe measured `-n 4` at 33.6 s against 15-16 s serial, with three to four
+separate fixture roots left on disk — the same work, repeated per worker.
+
+**The fallback now in force.**
+
+1. `tests/test_standalone_dev_loop.py` carries a module-level `pytestmark =
+   pytest.mark.loop`; the marker is registered in `pyproject.toml`'s `markers` list.
+2. The `sdk` job's parallel leg selects `-m "not browser and not timing and not loop"` —
+   the `timing` partition's shape, applied to cost rather than to flakes.
+3. A dedicated ubuntu-only step, `Standalone dev loop — serial, ubuntu-only (issue #556)`,
+   runs `uv run pytest -q -m loop` with no `-n`: one worker, the expensive proof run on
+   the only OS with budget headroom for it. It is not added to the macOS or Windows legs.
+4. A plain `uv run pytest tests/test_standalone_dev_loop.py` still runs the module: markers
+   filter only when `-m` is passed, so the local developer loop is not narrowed.
+
+The module's own prose moved with the mechanism: its docstring and its Windows skip reason
+both said the non-spawn arms run on all three OSes in CI. Both now say the three-OS run is
+what a direct local invocation gives, and that CI runs the module ubuntu-only. A prose
+claim left unedited is exactly what G4 forbids.
+
+**A deviation from §8's pre-named form, recorded.** §8 named the fallback as "mark the
+module `loop` and append the composed fill + control grep to the existing ubuntu
+wheel-smoke bash block". The marker half is as pre-named. The second half is not: the arms
+run as their own serial pytest step rather than a shell re-implementation. The reason is
+the corpus's own — a bash copy of the fill-and-grep would be a second implementation of the
+same claim, free to drift from the assertions it duplicates, and its evidence would live in
+shell exit codes rather than junitxml. Recorded as a deviation from the pre-committed rule;
+the rule's substance (the lane runs in CI, and the budget is met) is unchanged.
+
+**What the fallback does not fix.**
+
+- macOS and Windows no longer measure this lane AT ALL. Before, the non-spawn arms
+  (install, scaffold, derive, verify, ledger) ran on all three OSes; now the ubuntu serial
+  step is the only CI evidence. The module's Windows-specific code (the `Scripts` bin
+  directory, `os.name == "nt"`) and the macOS canonical-path caveat its docstring records
+  are not exercised by CI any more.
+- It does not lower the cost of one run; it removes the per-worker multiplication. The
+  ubuntu serial step still builds a wheel and installs from the index, so its wall-clock
+  still moves with index latency.
+- It does not restore the ≤3 min measurement on macOS or Windows for this lane. The budget
+  applies to what CI runs, and CI now runs the lane once, on ubuntu.
+
+**How the evidence could rot without a red.**
+
+1. Delete the ubuntu step while the parallel expression still says `not loop`: the lane
+   stops running and every lane stays green. Nothing in the tree asserts that the step
+   exists — the standing guard is the CI map row in `docs/internal/drift-and-obligations.md`
+   and review (G5), not a test.
+2. Remove `pytestmark`: the module returns to the parallel leg. It still runs (not
+   vacuous), but the per-worker multiplication — and the budget breach — returns with it.
+3. Rename the marker on one side only: the serial step then selects nothing and exits 5
+   (verified against this module: a marker matching no test returns 5 with
+   `10 deselected`), so that direction reds rather than passing quietly. The parallel leg
+   would run the module in the meantime.
+4. Rename the module's file: `-m loop` selects over `testpaths`, not a path literal, so a
+   renamed module is still found — the `timing` precedent this copies has the same
+   property.
+5. Drop the marker's registration from `pyproject.toml`: `--strict-markers` is not enabled,
+   so an unregistered marker warns (`PytestUnknownMarkWarning`) and still filters.
+   Registration is hygiene; the mechanism is `pytestmark` plus the two `-m` expressions.
