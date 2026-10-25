@@ -87,6 +87,9 @@ DERIVED_DOCUMENTS = (
     "ui/settings/vendor-configure.schema.json",
     "ui/class-reference.json",
 )
+#: (#556 B5) The dataset member's capture verb — the V4 composing surface
+#: the wheel arm below carries end to end.
+SEGMENT_CAPTURE_URN = "com.meridian.m400.segment_capture/1.0.0"
 
 
 def _raw(document: dict[str, Any]) -> bytes:
@@ -504,6 +507,85 @@ def test_a3_the_wheel_carries_the_composed_declaration(m400_wheel: tuple[Path, P
         "ui/class-reference.json",
     ):
         assert prefix + member in members, sorted(members)
+
+
+def test_a3_the_composed_dataset_survives_the_wheel_install(
+    m400_wheel: tuple[Path, Path], tmp_path: Path
+) -> None:
+    """(#556 B5, the A3 shape over the extended fixture) The composed
+    DATASET surface survives a real wheel install and resolves and previews
+    from OUTSIDE the checkout: the member-declaration pin and the vendor
+    catalog ride the wheel beside the descriptor, the target composes from
+    the installed bytes with the vendor profile row and the pinned
+    measurement contract id, its wire shape is the page's waveform (the
+    inheritance rule), the capture page's plot renders on the real host,
+    and verify-ui is clean over the installed tree with the no-binding row
+    on the REPORTED channel — the neighbour-plot disclosure, never a
+    failure. The L4 row claims no rendered_by (the plot binds the class
+    capture slot, not the member's)."""
+    _project, wheel = m400_wheel
+    members = set(zipfile.ZipFile(wheel).namelist())
+    prefix = f"{PACKAGE}/"
+    for member in (
+        "member-declaration-m400.json",
+        "meridian-actions.json",
+    ):
+        assert prefix + member in members, sorted(members)
+    stage = tmp_path / "installed"
+    (stage / "src").mkdir(parents=True)
+    installed = subprocess.run(
+        [
+            "uv", "pip", "install", "--target", str(stage / "src"),
+            "--no-deps", str(wheel),
+        ],
+        capture_output=True, text=True, check=False,
+    )
+    assert installed.returncode == 0, installed.stderr
+    package = stage / "src" / PACKAGE
+    reference = find_reference(PROFILE)
+    assert reference is not None
+    derived = derive_ui(
+        (package / "descriptor.json").read_bytes(),
+        reference,
+        descriptor_path=package / "descriptor.json",
+    )
+    target = next(
+        row
+        for row in derived.catalogue["targets"]
+        if row["action_id"] == SEGMENT_CAPTURE_URN
+    )
+    assert target == {
+        "id": "segment-capture",
+        "kind": "dataset",
+        "action_id": SEGMENT_CAPTURE_URN,
+        "profile_ids": [VENDOR_PROFILE_ID],
+        "measurement_schema_id": "urn:otdp:measurement:0.2.3",
+        "variables": [
+            {"id": "t", "type": "number", "unit": "s", "shape": "vector",
+             "axis_role": "x"},
+            {"id": "ch1-voltage", "type": "number", "unit": None,
+             "shape": "vector"},
+            {"id": "ch2-voltage", "type": "number", "unit": None,
+             "shape": "vector"},
+            {"id": "ch3-strain", "type": "number", "unit": None,
+             "shape": "vector"},
+        ],
+    }, target
+    row = derived.control_plan[SEGMENT_CAPTURE_URN]
+    assert (row["level"], row["page"]) == ("L4", "capture"), row
+    assert "rendered_by" not in row, row
+    # Preview standalone from the installed tree, through the real host.
+    report = verify_ui(stage)
+    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
+    assert (
+        "composed dataset segment-capture: no plot carries its binding "
+        "(the plot on page capture binds capture)"
+        in report.reported_deviations
+    ), report.reported_deviations
+    pages = [str(page["id"]) for page in derived.manifest["pages"]]
+    rendered = render_pages(stage, pages)
+    assert set(rendered) == set(pages)
+    assert census(rendered["capture"])["plots"] == 1
 
 
 def test_a3_the_composed_class_resolves_after_install(
