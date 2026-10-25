@@ -2,16 +2,80 @@
 
 All notable changes to this project will be documented in this file.
 
-## [0.22.0] - Unreleased
+## [0.22.0] - 2026-10-25
+
+### Bug Fixes
+
+- Drop-and-disclose on the composition's two schema roads
+- The exclusive end wins a bound tie on both sides
+- Admit the package itself as a plugin entry-point module
+- Export the factory from the scaffold package root; prove the loop loads it
+- Contain the entry point by provenance; sharpen the A5 and probe arms
+- B4 refute fold — five findings, one commit (binding hijack, per-surface tables, pinned-$id agreement, ignored pins, V6 classifier)
+- B5 refute fold — five findings, one commit (readings-page tiles per surface, emitted-binding row reasons, typed plot/page and id-collision refusals, scoped stamp, per-scope table counts)
+- B6 fold — two-sided dialect guard and a keying-discriminating arm
+- B6 refute fold — composed-member multiplicity, four guide corrections, inventory boundary
+
+### Documentation
+
+- The CI map stops claiming a release-preflight job
+- Document the standalone development loop end to end
+- Commit the Track B design record in the SDK
+- The computed-variable dispositions, and the capacity ruling
+- Record the bound-tie fix as an outstanding mirror obligation
+- Both halves carry the bound-tie fix; the divergence is pin lag
+- ASD-STE100 register pass over the composed-member guide prose
 
 ### Features
 
-- Vendor the plugin-ui-class-reference 0.5.0 family (gateway #556): the vendored import carries the composed-member declaration schema; 0.4.0 stays in the tree frozen and flips to retained
+- Computed variables derive into dataset shapes (V2)
+- Close the unmatched-channel silence (V3 layer 3)
+- Vendor plugin-ui-class-reference 0.5.0 (gateway #556)
+- B3 motion 2 — the composed-member walk
+- B3 motion 3 — channels layer 2, per-slot lane resolution
+- B3 motion 4 — the plot placement disposition, disclosed not refused
+- B3 motion 5 — the composed-members ledger key and its gate read-back
+- Fold B3 refute F1-F4 — bounded page join, per-member applied-nowhere row, inventory corrections
+- B4 motion 1 — the pinned-document merge rides the real check-ui path
+- B4 motion 2 — V1 procedures layer 2 through the existing loop
+- B4 motion 3 — V6 settings idioms layer 2 with the A02 birth deviation
+- B4 motion 4 — the M-400 fixture extended, both vocabularies end to end
+- B5 motion 1 — V4 dataset members layer 2 through the dataset arm
+- B5 motion 2 — V5 plot kinds, the R9 stamp, and the residual rows
+- B6 — composed-member drift arithmetic, the declaration-dialect guard, and the guide's member contract
 
 ### Miscellaneous
 
-- 0.21.0 -> 0.22.0 — the classref 0.5.0 carried-set motion (the sync's bump-class gate refuses an EQUAL-version sync across a widened declared range); the carried set grows 20 -> 21 rows / 14 retained
+- Bump fastapi from 0.143.0 to 0.152.0 (#196)
+- Bump types-jsonschema (#197)
+- Bump ruff from 0.17.0 to 0.17.1 (#198)
+- Bump fastmcp from 4.1.0 to 4.1.1 (#199)
+- Bump rich from 14.3.4 to 15.0.0 (#200)
+- Bump the codeql-action group with 2 updates (#201)
+- Bump pypa/gh-action-pypi-publish from 1.14.2 to 1.14.3 (#202)
 
+### Testing
+
+- Prove the composed dev loop from the installed SDK
+- Guard both halves of the loop lane's CI partition
+- B3 first commit — the vendor-profile seam arm, green
+- B4 battery fold — the loop module and the docs gate over the extended fixture
+- B5 motion 3 — the A3 wheel/install arm over the extended fixture
+
+### Ci
+
+- Run the standalone dev loop serially on ubuntu only
+
+### Release
+
+- V0.22.0
+- V0.22.0 phase-2 registration at the tag commit
+
+
+### Contributors
+
+- Stephen Eaton (39 commits)
+- Dependabot[bot] (7 commits)
 ## [0.21.0] - 2026-10-24
 
 ### Bug Fixes
