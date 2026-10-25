@@ -20,8 +20,8 @@ from pathlib import Path
 from typing import Any
 
 from .classref import (
-    _MEMBER_LEDGER_VOCABULARIES,
     LAYOUT_EXTENSION_KEY,
+    composed_member_mismatches,
     derive_ui,
     find_reference,
 )
@@ -817,85 +817,14 @@ def _composed_members_findings(
     ledger_members: Any,
     derived_members: Mapping[str, tuple[dict[str, str], ...]],
 ) -> list[str]:
-    """(#556 §3 rule 2) The composed-members ledger, read back: the
-    authored ``composed_members`` compares against the derivation's
-    applied set per vocabulary, both directions, AND per-member slot
-    MAPPING — the B6/R6 discipline (sets alone were proved insufficient
-    once already in this family's composed action classes: a forged row
-    naming the right member with the wrong mapping verified clean and
-    migrated with "nothing to do"). Every mismatch lands in the REPORTED
-    channel, never a ``findings`` failure — the same no-schema-yet
-    posture as the custom and composed read-backs beside it (D8)."""
-    if ledger_members is None:
-        ledger_members = {}
-    if not isinstance(ledger_members, dict):
-        return [
-            "composed members mismatch: the authored declaration's "
-            f"composed_members is {type(ledger_members).__name__}, not an "
-            "object keyed by vocabulary"
-        ]
-    reported: list[str] = []
-    # (#556 B3 fold F4) The read-back iterated the four vocabularies alone,
-    # so authored junk under any other key was ignored silently — an
-    # unknown key REPORTs, in this channel's own mismatch wording (the
-    # no-schema-yet posture, D8: the key set's contract is this read-back
-    # and the prose, and the writer emits exactly the four).
-    for key in sorted(ledger_members):
-        if key not in _MEMBER_LEDGER_VOCABULARIES:
-            reported.append(
-                "composed members mismatch: the authored declaration's "
-                f"composed_members carries key {key!r}, which is no "
-                "composed vocabulary "
-                f"({', '.join(_MEMBER_LEDGER_VOCABULARIES)})"
-            )
-    for vocabulary in _MEMBER_LEDGER_VOCABULARIES:
-        derived_rows = {
-            str(row.get("slot", "")): row
-            for row in derived_members.get(vocabulary, ())
-        }
-        authored_rows = ledger_members.get(vocabulary, [])
-        if not isinstance(authored_rows, list):
-            reported.append(
-                "composed members mismatch: the authored declaration's "
-                f"composed_members.{vocabulary} is "
-                f"{type(authored_rows).__name__}, not a list"
-            )
-            continue
-        authored_slots: set[str] = set()
-        for row in authored_rows:
-            if not isinstance(row, dict) or not row.get("slot"):
-                reported.append(
-                    f"composed members mismatch: malformed {vocabulary} "
-                    f"row {row!r}"
-                )
-                continue
-            slot = str(row["slot"])
-            authored_slots.add(slot)
-            derived = derived_rows.get(slot)
-            if derived is None:
-                reported.append(
-                    "composed members mismatch: the authored declaration's "
-                    f"composed_members names {vocabulary} member {slot}, "
-                    "which the derivation applied no member for"
-                )
-                continue
-            # R6: the mapping comparison — every field the derived row
-            # carries must match the authored row for that slot.
-            for field, value in derived.items():
-                if str(row.get(field, "")) != str(value):
-                    reported.append(
-                        f"composed members mismatch: {vocabulary} member "
-                        f"{slot} derives {field} {value} but the authored "
-                        "declaration's composed_members names "
-                        f"{row.get(field, '')}"
-                    )
-        for slot in sorted(set(derived_rows) - authored_slots):
-            reported.append(
-                f"composed members mismatch: {vocabulary} member {slot} "
-                "derives applied but the authored declaration's "
-                "composed_members omits it"
-            )
-    return reported
+    """(#556 §3 rule 2) The composed-members ledger, read back through the
+    ONE arithmetic the derivation and migrate-ui share
+    (``classref.composed_member_mismatches``): both directions, the
+    per-member slot mapping and the unknown-key row, every mismatch in the
+    REPORTED channel, never a ``findings`` failure — the no-schema-yet
+    posture (D8). The definition moved to ``classref`` in #556 B6 so
+    migrate-ui's drift refusal and this read-back cannot disagree."""
+    return composed_member_mismatches(ledger_members, derived_members)
 
 
 def verify_ui(

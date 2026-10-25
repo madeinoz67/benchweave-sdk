@@ -679,3 +679,398 @@ def test_r6_wrong_class_in_composed_actions_refuses_drift(
     assert "migrate_ui_ledger_drift:" in rendered
     assert "otdp.action.veridian_staging_alt/1.0.0" in rendered
     assert _tree(package) == before
+
+
+# ---------------------------------------------------------------------------
+# #556 track B B6: the composed-MEMBER inventory joins the drift arithmetic
+# (design §5's B6 row, §3 rules 1-2). The ledger records the APPLIED member
+# set, so the arithmetic keys to what the derivation applied — never to what
+# the pins declare (the R1 rule carried onto the member vocabulary).
+# ---------------------------------------------------------------------------
+
+MEMBER_PIN = "member-lanes.json"
+MEMBER_ROLE = "digital_output"
+
+
+def _member_declaration() -> dict[str, Any]:
+    return {
+        "contract_version": "0.1.0",
+        "members": [
+            {
+                "slot": "trigger_lanes",
+                "kind": "channels",
+                "where_role": MEMBER_ROLE,
+                "page": "capture",
+            }
+        ],
+    }
+
+
+def _member_descriptor(declaration: dict[str, Any]) -> dict[str, Any]:
+    descriptor = json.loads((FIXTURES / "descriptor-f1.json").read_bytes())
+    descriptor["channels"].extend(
+        {
+            "id": f"q{i}",
+            "label": f"Trigger line {i}",
+            "role": MEMBER_ROLE,
+            "quantities": ["digital_level"],
+            "parameter_names": [],
+        }
+        for i in range(2)
+    )
+    descriptor["contracts"].append(
+        {
+            "id": "urn:veridian:member-declaration:1.0.0",
+            "path": MEMBER_PIN,
+            "sha256": hashlib.sha256(_raw(declaration)).hexdigest(),
+        }
+    )
+    return descriptor
+
+
+def _member_project(
+    destination: Path,
+    *,
+    declaration: dict[str, Any] | None = None,
+    ledger_edits: Any = None,
+) -> Path:
+    """A real scaffolded plugin carrying a composed-MEMBER declaration
+    (a channels slot), derived at the active family — the birth ledger
+    carries ``composed_members`` with the applied row. ``ledger_edits``
+    forges the authored inventory per arm."""
+    declaration = declaration if declaration is not None else _member_declaration()
+    descriptor = _member_descriptor(declaration)
+    create_project(destination, PACKAGE, with_ui=False)
+    package = destination / "src" / PACKAGE
+    (package / MEMBER_PIN).write_bytes(_raw(declaration))
+    (package / "vendor-catalog.json").write_bytes(
+        (FIXTURES / "vendor-catalog.json").read_bytes()
+    )
+    descriptor_path = package / "descriptor.json"
+    descriptor_path.write_bytes(_raw(descriptor))
+    derived = derive_ui(
+        _raw(descriptor), REFERENCE, descriptor_path=descriptor_path
+    )
+    ui = package / "ui"
+    ui.mkdir(exist_ok=True)
+    (ui / "manifest.json").write_bytes(_raw(derived.manifest))
+    (package / "presentation.json").write_bytes(_raw(derived.envelope))
+    (package / "binding-catalogue.json").write_bytes(_raw(derived.catalogue))
+    settings = ui / "settings"
+    settings.mkdir(exist_ok=True)
+    (settings / "configure.schema.json").write_bytes(_raw(derived.settings_schema))
+    presets = ui / "presets"
+    presets.mkdir(exist_ok=True)
+    for slug, row in derived.preset_scaffolds.items():
+        (presets / f"{slug}.json").write_bytes(_raw(row))
+    declaration_document = dict(derived.declaration)
+    if ledger_edits is not None:
+        ledger_edits(declaration_document)
+    (ui / "class-reference.json").write_bytes(_raw(declaration_document))
+    return package
+
+
+def test_b6_the_member_project_births_the_applied_row(tmp_path: Path) -> None:
+    """Fixture sanity: the member project's birth ledger carries exactly
+    the applied channels row, so the drift arms below measure the
+    arithmetic and not a mis-built fixture."""
+    package = _member_project(tmp_path / "member-sanity")
+    ledger = json.loads((package / "ui" / "class-reference.json").read_bytes())
+    assert ledger["composed_members"] == {
+        "procedures": [],
+        "settings": [],
+        "datasets": [],
+        "channels": [
+            {"slot": "trigger_lanes", "page": "capture", "where_role": MEMBER_ROLE}
+        ],
+    }
+
+
+def test_b6_forged_member_row_refuses_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The extra-member direction: a ledger whose ``composed_members``
+    names a member the derivation applied no row for refuses
+    ``migrate_ui_ledger_drift`` — a version write must not launder a
+    stale member inventory (the pre-fix walk re-stamped it green)."""
+
+    def forge(document: dict[str, Any]) -> None:
+        document["composed_members"]["channels"].append(
+            {"slot": "ghost_lanes", "page": "capture", "where_role": "rf_input"}
+        )
+
+    package = _member_project(tmp_path / "member-forged", ledger_edits=forge)
+    _downstamp_ledger(package)
+    before = _tree(package)
+    capsys.readouterr()
+    assert _migrate(monkeypatch, package) == 1
+    rendered = capsys.readouterr().err
+    assert "migrate_ui_ledger_drift:" in rendered
+    assert "ghost_lanes" in rendered
+    assert _tree(package) == before
+
+
+def test_b6_omitted_applied_member_refuses_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The missing direction: a ledger that OMITS an applied member
+    refuses drift — the ledger records what the derivation applied, and a
+    deletion is a derive-ui motion, not a version write."""
+
+    def drop(document: dict[str, Any]) -> None:
+        document["composed_members"]["channels"] = []
+
+    package = _member_project(tmp_path / "member-omitted", ledger_edits=drop)
+    _downstamp_ledger(package)
+    before = _tree(package)
+    capsys.readouterr()
+    assert _migrate(monkeypatch, package) == 1
+    rendered = capsys.readouterr().err
+    assert "migrate_ui_ledger_drift:" in rendered
+    assert "trigger_lanes" in rendered
+    assert _tree(package) == before
+
+
+def test_b6_forged_member_mapping_refuses_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The R6 rule on the member vocabulary: sets alone are insufficient.
+    A ledger row naming the RIGHT slot with the WRONG mapping (a foreign
+    role) refuses drift — the per-member slot mapping is compared, never
+    the set alone (the B6/R6 discipline)."""
+
+    def forge(document: dict[str, Any]) -> None:
+        document["composed_members"]["channels"][0]["where_role"] = "rf_input"
+
+    package = _member_project(tmp_path / "member-mapping", ledger_edits=forge)
+    _downstamp_ledger(package)
+    before = _tree(package)
+    capsys.readouterr()
+    assert _migrate(monkeypatch, package) == 1
+    rendered = capsys.readouterr().err
+    assert "migrate_ui_ledger_drift:" in rendered
+    assert MEMBER_ROLE in rendered
+    assert "rf_input" in rendered
+    assert _tree(package) == before
+
+
+def test_b6_duplicated_member_row_refuses_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """(#556 B6 fold F1) The second consumer of the ONE arithmetic: a
+    verbatim duplicate ``composed_members`` row — the same slot and the
+    same mapping twice — re-stamped green with "nothing to do", because
+    the comparison had no multiplicity. The authored row count against
+    the derived count is part of the drift arithmetic now."""
+
+    def forge(document: dict[str, Any]) -> None:
+        applied = dict(document["composed_members"]["channels"][0])
+        document["composed_members"]["channels"] = [applied, dict(applied)]
+
+    package = _member_project(tmp_path / "member-duplicated", ledger_edits=forge)
+    _downstamp_ledger(package)
+    before = _tree(package)
+    capsys.readouterr()
+    assert _migrate(monkeypatch, package) == 1
+    rendered = capsys.readouterr().err
+    assert "migrate_ui_ledger_drift:" in rendered
+    assert (
+        "composed_members.channels carries 2 channels rows, but the "
+        "derivation applied 1"
+    ) in rendered
+    assert _tree(package) == before
+
+
+def test_b6_unknown_member_ledger_key_refuses_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An authored key outside the four vocabularies is part of the
+    arithmetic (the gate's own unknown-key read-back): ``observations``
+    under ``composed_members`` refuses drift, never a silent green."""
+
+    def forge(document: dict[str, Any]) -> None:
+        document["composed_members"]["observations"] = [{"slot": "cv1"}]
+
+    package = _member_project(tmp_path / "member-unknown-key", ledger_edits=forge)
+    _downstamp_ledger(package)
+    before = _tree(package)
+    capsys.readouterr()
+    assert _migrate(monkeypatch, package) == 1
+    rendered = capsys.readouterr().err
+    assert "migrate_ui_ledger_drift:" in rendered
+    assert "observations" in rendered
+    assert _tree(package) == before
+
+
+def test_b6_unapplied_member_in_a_pin_is_not_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The applied-set keying, and the wrong-keying discriminator. The pin
+    declares an APPLIED channels member beside an UNAPPLIED procedure
+    member (its claim names no declared action); the birth ledger carries
+    only the applied row, exactly as derive-ui writes it. The run must be
+    clean and must re-stamp.
+
+    This arm is what the wrong keying reds: keyed to the PIN-DECLARED
+    member set (the shape R1 removed for classes), the unapplied member
+    becomes a demanded row the ledger legitimately omits, so migrate-ui
+    would refuse drift against a ledger its own derivation just wrote —
+    the remediation loop. The sabotage that proves it is recorded in the
+    B6 addendum and the commit message."""
+    declaration = {
+        "contract_version": "0.1.0",
+        "members": [
+            {
+                "slot": "trigger_lanes",
+                "kind": "channels",
+                "where_role": MEMBER_ROLE,
+                "page": "capture",
+            },
+            {
+                "slot": "ghost_sweep",
+                "kind": "procedure",
+                "claims": ["com.example.sweep/1.0.0"],
+                "page": "capture",
+            },
+        ],
+    }
+    package = _member_project(
+        tmp_path / "member-unapplied", declaration=declaration
+    )
+    ledger_path = package / "ui" / "class-reference.json"
+    birth = json.loads(ledger_path.read_bytes())
+    assert birth["composed_members"]["channels"] == [
+        {"slot": "trigger_lanes", "page": "capture", "where_role": MEMBER_ROLE}
+    ]
+    assert birth["composed_members"]["procedures"] == []
+    _downstamp_ledger(package)
+    before = _tree(package)
+    capsys.readouterr()
+    code = _migrate(monkeypatch, package)
+    rendered = capsys.readouterr().err
+    assert code == 0, (
+        "migrate-ui keyed the drift arithmetic to the PIN-DECLARED member set, "
+        "not the APPLIED set: it demanded a ledger row for the unapplied member "
+        "'ghost_sweep' (its claim names no declared action). The applied-set "
+        f"keying is the rule; stderr: {rendered}"
+    )
+    assert "migrate_ui_ledger_drift" not in rendered
+    moved = {name for name in before if before[name] != _tree(package).get(name)}
+    assert moved == {"ui/class-reference.json"}, sorted(moved)
+
+
+def _rewrite_member_declaration(package: Path, dialect: str) -> None:
+    """Rewrite the pinned member declaration's own dialect and repair the
+    descriptor pin digest — the shape a document last touched at another
+    dialect carries when the family's schema moves under it."""
+    declaration = json.loads((package / MEMBER_PIN).read_bytes())
+    declaration["contract_version"] = dialect
+    raw = _raw(declaration)
+    (package / MEMBER_PIN).write_bytes(raw)
+    descriptor_path = package / "descriptor.json"
+    descriptor = json.loads(descriptor_path.read_bytes())
+    for row in descriptor["contracts"]:
+        if row.get("path") == MEMBER_PIN:
+            row["sha256"] = hashlib.sha256(raw).hexdigest()
+    descriptor_path.write_bytes(_raw(descriptor))
+
+
+def test_b6_member_declaration_dialect_ahead_refuses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The declaration's OWN dialect version joins the migration's version
+    guards: a declaration above the active dialect refuses
+    ``migrate_ui_ahead`` — migrate-ui never writes a version down, and the
+    guard names the version motion rather than the walk's generic
+    schema-invalid code. Nothing is written."""
+    package = _member_project(tmp_path / "member-dialect-ahead")
+    _rewrite_member_declaration(package, "9.0.0")
+    _downstamp_ledger(package)
+    before = _tree(package)
+    capsys.readouterr()
+    assert _migrate(monkeypatch, package) == 1
+    rendered = capsys.readouterr().err
+    assert "migrate_ui_ahead:" in rendered
+    assert "9.0.0" in rendered
+    assert _tree(package) == before
+
+
+def test_b6_member_declaration_dialect_absent_refuses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A declaration with no version-shaped dialect refuses
+    ``migrate_ui_version_absent`` before the walk, naming the document —
+    the re-stamp never rides an unversioned declaration. Nothing is
+    written."""
+    package = _member_project(tmp_path / "member-dialect-absent")
+    _rewrite_member_declaration(package, "not-a-version")
+    _downstamp_ledger(package)
+    before = _tree(package)
+    capsys.readouterr()
+    assert _migrate(monkeypatch, package) == 1
+    rendered = capsys.readouterr().err
+    assert "migrate_ui_version_absent:" in rendered
+    assert "composed-member declaration" in rendered
+    assert _tree(package) == before
+
+
+def test_b6_member_declaration_dialect_behind_refuses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The other side of the guard: the SDK's active dialect ahead of the
+    declaration's also refuses ``migrate_ui_ahead``, naming both versions.
+    migrate-ui will not write the author's pinned declaration up, so the
+    author moves it. The behind value is synthetic fixture input — no
+    predecessor member dialect ever shipped — so this arm pins the guard's
+    shape, not a real historical document."""
+    package = _member_project(tmp_path / "member-dialect-behind")
+    _rewrite_member_declaration(package, "0.0.9")
+    _downstamp_ledger(package)
+    before = _tree(package)
+    capsys.readouterr()
+    assert _migrate(monkeypatch, package) == 1
+    rendered = capsys.readouterr().err
+    assert "migrate_ui_ahead:" in rendered
+    assert "0.0.9" in rendered
+    assert "update the declaration" in rendered
+    assert _tree(package) == before
+
+
+def test_b6_no_member_declaration_is_a_no_op_for_the_guard(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """No member declaration means nothing for the dialect guard to do: a
+    composed-CLASS project (no member pin) still migrates, and no
+    member-dialect refusal appears."""
+    package = _composed_project(tmp_path / "no-member")
+    _downstamp_ledger(package)
+    capsys.readouterr()
+    assert _migrate(monkeypatch, package) == 0
+    rendered = capsys.readouterr().err
+    assert "migrate_ui_ahead" not in rendered
+    assert "migrate_ui_version_absent" not in rendered
+
+
+def test_b6_family_bump_does_not_repin_the_member_declaration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The dialect is decoupled from the family version: a clean family
+    bump re-stamps the ledger's family stamps (and, where classes apply,
+    each ``composed_classes[].validated_against`` — the composed-class arm
+    above pins that motion) but never rewrites the pinned declaration or
+    its descriptor pin. The declaration stays valid across the bump by
+    design, so the migration's diff is the ledger alone."""
+    package = _member_project(tmp_path / "member-dialect-stable")
+    declaration_before = (package / MEMBER_PIN).read_bytes()
+    descriptor_before = (package / "descriptor.json").read_bytes()
+    _downstamp_ledger(package)
+    capsys.readouterr()
+    assert _migrate(monkeypatch, package) == 0
+    assert (package / MEMBER_PIN).read_bytes() == declaration_before
+    assert (package / "descriptor.json").read_bytes() == descriptor_before
+    ledger = json.loads((package / "ui" / "class-reference.json").read_bytes())
+    assert ledger["contract_version"] == _ACTIVE_FAMILY
+    assert ledger["reference_version"] == _ACTIVE_FAMILY
+    assert ledger["composed_members"]["channels"] == [
+        {"slot": "trigger_lanes", "page": "capture", "where_role": MEMBER_ROLE}
+    ]

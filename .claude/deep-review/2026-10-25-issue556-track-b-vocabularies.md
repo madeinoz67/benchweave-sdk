@@ -1201,3 +1201,131 @@ exact-markup oracles gained the tile attribution. Byte stability:
 all thirteen committed shapes derive byte-identically pre/post (digests
 in the commit message; f1 `8764b42c16878880` and daq `9d744557d304ff8e`
 match the values recorded at B5 motion 2).
+
+### 2026-10-26 — B6: the member inventory in the drift arithmetic, the declaration-dialect guard, and the guide's stale deferral paragraph
+
+B6 landed in three motions: the drift arithmetic over `composed_members`,
+the composed-member declaration's own dialect in the migration's version
+guards, and the user-guide leg. The corrections the code forced, recorded
+here because two are rules.
+
+**One arithmetic, two consumers.** The composed-members read-back lived
+only in the gate (`classref_gate._composed_members_findings`). migrate-ui
+needed the same comparison, and a second copy is exactly how the four
+vocabularies drift (the B3 fold's F4 made the key-set literal the third
+copy once already). The arithmetic moved to
+`classref.composed_member_mismatches`; the gate's function is now a
+delegate. `composed_ledger_inventory` gained a fourth return — the
+composed-member walk's APPLIED inventory — so the drift walk and the
+ledger writer read the same set from one walk.
+
+**The drift arithmetic keys on the applied set (R1's rule, member
+vocabulary).** migrate-ui's ledger motion now compares the authored
+`composed_members` against the derivation's APPLIED set: both directions,
+the per-member slot mapping and the unknown-key row. An authored row
+naming a member the derivation did not apply refuses
+`migrate_ui_ledger_drift`; an applied member the authored set omits
+refuses the same; a right-slot/wrong-mapping row refuses the same (the
+R6 rule). A member that applies NOWHERE stays absent from both sides by
+construction — it is the applied-nowhere disclosure — so the arithmetic
+never demands it.
+
+**RED evidence.** Four arms, pre-fix `tests=6 failures=4 errors=0` (the
+two passers are the fixture sanity arm and the applied-set control): the
+forged-row, omitted-applied, forged-mapping and unknown-key arms each
+failed `assert 0 == 1` — migrate-ui re-stamped the stale ledger green.
+The wrong-keying sabotage (key the derived set to the PIN-DECLARED
+members, `cp` backup, restored) reds the control arm alone,
+`tests=1 failures=1`, with the false-drift message
+`migrate_ui_ledger_drift: ... (composed members mismatch: procedures
+member ghost_sweep derives applied but the authored declaration's
+composed_members omits it)`. That is the R1 loop shape reproduced on the
+member vocabulary: keying to the pins demands a row derive-ui never
+writes. The control arm's assertion message names which of the two
+keyings it caught ("keyed the drift arithmetic to the PIN-DECLARED member
+set, not the APPLIED set"), so a future regression cannot be reported as
+an anonymous green. Restored, `tests=13 failures=0` for the module's B6
+arms.
+
+**The declaration's own dialect: guarded on both sides, never rewritten —
+the owner's ruling, with its reasons.** The brief asked that "re-stamping
+must cover the composed-member declaration's own dialect version". The
+owner ruled the reading: (B), guard not rewrite, because three things
+make the rewrite (A) wrong rather than merely bigger. (1) The schema
+states the decoupling's purpose in its own text: a pinned, digest-verified
+document stays valid across family bumps. (2) The composed-action-class
+sibling says a dialect bump is a standards motion of its own. (3)
+migrate-ui rewriting a vendor-pinned document and then repairing the
+descriptor's digest to match is exactly the silent rewrite this project
+refuses elsewhere: the author's bytes are the author's.
+
+So the guard READS the dialect and never writes the pinned document, on
+BOTH sides of the active dialect:
+
+- the active dialect ahead of the declaration's → `migrate_ui_ahead`,
+  naming both, because the migration will not write the author's
+  declaration up — the author updates it;
+- the declaration's ahead of the SDK's → `migrate_ui_ahead`, naming both,
+  because the SDK cannot know a future dialect's semantics;
+- an equal dialect → a no-op;
+- no declaration at all → nothing to do, no row, no write.
+
+Every APPLIED class's `composed_classes[].validated_against` re-stamps as
+it does today, keyed on the applied set rather than the pins (arm
+`test_ledger_restamps_across_the_family_bump`). A family bump rewrites
+neither the declaration nor the descriptor pin (arm
+`test_b6_family_bump_does_not_repin_the_member_declaration`).
+
+(A)'s write surface is unreachable in-tree today: no predecessor member
+dialect ever shipped, so choosing (A) would have invented a mutation to
+satisfy a sentence rather than a need. The four arms pin the guard's
+shape; the behind value and the ahead value are synthetic fixture input,
+not historical documents.
+
+RED for the guard: neutralized (the call commented, `cp` backup,
+restored), all three dialect arms fail `tests=3 failures=3 errors=0`,
+each answering
+`classref_invalid_member_declaration: pinned document member-lanes.json:
+contract_version: '0.1.0' was expected` where `migrate_ui_ahead:` /
+`migrate_ui_version_absent:` were expected. Restored, green (13 B6 arms).
+
+**The guide exposed two design statements the code did not ship, and one
+stale paragraph.** (1) §4 V1's ledger row is written
+`{slot, action, page, class?}`; `_applied_member_row` never writes a
+`class` — a member's claim is an ACTION URN, and a claim a composed class
+holds refuses as a conflict, so no member row can name a class. The guide
+documents the SHIPPED row shape (`slot`, `page`, `action`, plus
+`plot_kind` on datasets), not the design's optional field. (2) §3 rule 4's
+catalogue-side refusal does not transfer to the dataset kind: the dataset
+target carries `measurement_schema_id`, never `input_schema_id`, so a
+dataset member needs the profile row and no catalogue row (the B5
+addendum's split). The guide states that exemption where an author meets
+it. (3) The guide's own "Three behaviors are deferred" paragraph predated
+B1/B3/B5 and told authors that computed variables and decoder documents
+"derive no surface" — false of the shipped state (computed variables
+derive into dataset targets; decoder lanes render in a digital-lanes
+plot). Corrected against the machine source, per the prose-defers rule.
+
+**The user-guide leg.** A new section, "Author a composed member
+declaration" (`{#composed-member-declarations}`), states the document
+shape, the four member kinds and their closed field sets, the vendor
+profile seam, the conflict and integrity refusals, and the applied-nowhere
+rule. The ledger key table gained `composed_members`; the verify-ui
+disclosure table gained the seven composed-member rows; the migrate-ui
+section states the member inventory drift and the dialect decoupling; and
+the standalone loop names the member document and its ledger row. No
+version literal was added: the prose counter's per-file pin stays at 14
+sites for `plugin-sdk.qmd`, its share of the 82-site, 11-file census.
+
+**Files.** `src/benchweave_sdk/classref.py` (the shared comparator, the
+4-tuple inventory), `src/benchweave_sdk/classref_gate.py` (the delegate),
+`src/benchweave_sdk/presentation.py` (the member drift block and the
+two-sided dialect guard), `tests/test_migrate_ui_composed.py` (thirteen
+B6 arms), `user_guide/plugin-sdk.qmd`.
+
+**Boundary.** The shared inventory computes an applied row from the member's claim or role alone, so on a project whose derivation refuses it can name a member the walk rejected; no green path reaches that state, because the protection is downstream — the descriptor-digest guard refuses with nothing written (`derive_ui_dirty_tree`) and copy-never-move keeps reference pages stable — so the inventory's docstring is the applied-set definition, never a structural guarantee.
+
+**Deferred.** Nothing in this slice. B7 (the gateway mirror) and B8
+(docs and close-out) remain as §5 plans; the B7 mirror must carry this
+slice's member-inventory drift and the dialect guard when Track A's
+mirror merges (CON-12).

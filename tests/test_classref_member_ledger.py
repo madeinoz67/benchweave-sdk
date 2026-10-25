@@ -199,6 +199,30 @@ def test_an_omitted_applied_member_reports(tmp_path: Path) -> None:
     ), report.reported_deviations
 
 
+def test_a_duplicated_applied_member_row_reports(tmp_path: Path) -> None:
+    """(#556 B6 fold F1) The read-back compared per-slot sets with no
+    MULTIPLICITY: a verbatim duplicate row — the same slot with the same
+    mapping, twice — verified clean here and migrated green on the second
+    consumer, though the ledger claims two applied members where the
+    derivation applied one. The arithmetic carries the authored row count
+    against the derived count now, in this channel's own mismatch wording."""
+    def forge(document: dict[str, Any]) -> None:
+        document["composed_members"]["channels"] = [
+            dict(CHANNELS_ROW),
+            dict(CHANNELS_ROW),
+        ]
+
+    project, _derived = _build(tmp_path / "duplicated", ledger_edits=forge)
+    report = verify_ui(project, reference=REFERENCE)
+    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
+    assert (
+        "composed members mismatch: the authored declaration's "
+        "composed_members.channels carries 2 channels rows, but the "
+        "derivation applied 1"
+        in " | ".join(report.reported_deviations)
+    ), report.reported_deviations
+
+
 def test_a_dead_member_beside_an_applying_one_reports_per_member(
     tmp_path: Path,
 ) -> None:

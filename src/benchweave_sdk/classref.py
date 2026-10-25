@@ -411,20 +411,28 @@ def _validate_member_declaration(
 
 def composed_ledger_inventory(
     descriptor: dict[str, Any], descriptor_path: Path | None
-) -> tuple[set[str], dict[str, str], set[str]]:
+) -> tuple[
+    set[str],
+    dict[str, str],
+    set[str],
+    dict[str, tuple[dict[str, str], ...]],
+]:
     """The ledger's set arithmetic over the current descriptor and pins
-    (#541 slice 2, standards record §8.4; R1, 2026-10-23 fold wave 3):
-    ``(custom, composed_of, applied_classes)`` where custom = declared −
-    (catalog ∪ composed-claimed), ``composed_of`` maps each DECLARED action
-    a class claims to that class's urn, and ``applied_classes`` is the set
-    of pin-declared classes at least one of whose claims the descriptor
-    declares. Both the ledger and migrate-ui's drift arithmetic key to
-    the APPLIED set — the ledger records what the derivation applied, so
-    a class that applies nowhere (its claims name no action this
-    descriptor declares — a shape §3 sanctions) is the gate's disclosure,
-    never drift. Raises the resolution's own refusals — a project whose
-    pins cannot resolve honestly cannot have its ledger re-stamped;
-    migrate-ui refuses, never silently upgrades."""
+    (#541 slice 2, standards record §8.4; R1, 2026-10-23 fold wave 3;
+    #556 track B B6): ``(custom, composed_of, applied_classes,
+    applied_members)`` where custom = declared − (catalog ∪
+    composed-claimed), ``composed_of`` maps each DECLARED action a class
+    claims to that class's urn, ``applied_classes`` is the set of
+    pin-declared classes at least one of whose claims the descriptor
+    declares, and ``applied_members`` is the composed-member walk's APPLIED
+    inventory per vocabulary (the exact mapping the ledger's
+    ``composed_members`` records). Both the ledger and migrate-ui's drift
+    arithmetic key to the APPLIED sets — the ledger records what the
+    derivation applied, so a class or member that applies nowhere (a shape
+    §3 sanctions) is the gate's disclosure, never drift. Raises the
+    resolution's own refusals — a project whose pins cannot resolve
+    honestly cannot have its ledger re-stamped; migrate-ui refuses, never
+    silently upgrades."""
     catalog = _catalog_documents(descriptor)
     served = dict(catalog.get("actions", {}))
     (
@@ -433,7 +441,7 @@ def composed_ledger_inventory(
         _ignored,
         _unapplied,
         _empty,
-        _members,
+        members,
     ) = _vendor_documents(descriptor, descriptor_path, served)
     covered = set(served) | set(vendor_actions)
     declared_actions = descriptor.get("actions") or {}
@@ -445,7 +453,10 @@ def composed_ledger_inventory(
         and "composed_class" in vendor_actions[urn]
     }
     applied = _applied_class_urns(classes, declared_actions)
-    return declared - covered, composed_of, applied
+    applied_members, _unapplied_pins, _dead_members = _composed_member_inventory(
+        members, descriptor
+    )
+    return declared - covered, composed_of, applied, applied_members
 
 
 def _applied_class_urns(
@@ -586,6 +597,126 @@ def _composed_member_inventory(
             unapplied.append(declaration.pin_path)
     frozen = {key: tuple(value) for key, value in rows.items()}
     return frozen, tuple(unapplied), tuple(unapplied_members)
+
+
+def composed_member_mismatches(
+    ledger_members: Any,
+    derived_members: Mapping[str, tuple[dict[str, str], ...]],
+) -> list[str]:
+    """(#556 §3 rule 2; #556 B6) The composed-members read-back arithmetic:
+    the authored ``composed_members`` against the derivation's APPLIED set
+    per vocabulary, BOTH directions AND per-member slot MAPPING — the
+    B6/R6 discipline (sets alone were proved insufficient once already in
+    this family's composed action classes: a forged row naming the right
+    member with the wrong mapping verified clean and migrated with
+    "nothing to do"). ONE definition serves the gate's REPORTED channel
+    and migrate-ui's drift refusal, so the two surfaces cannot drift.
+
+    ``derived_members`` is the APPLIED set the derivation wrote (R1's rule
+    carried onto the member vocabulary). An authored row naming a member
+    the derivation did not apply is a mismatch, and an applied member the
+    authored set omits is the other direction. The comparison carries
+    MULTIPLICITY as well as the set and the mapping (the B6 fold's F1): a
+    verbatim duplicate row is invisible to a per-slot set comparison, and
+    the authored row count above the derived count names it. A member that
+    applies NOWHERE is absent from both sides by construction (its
+    disclosure is the applied-nowhere row), so this arithmetic never
+    demands it — keying to the PIN-DECLARED set instead refused a ledger
+    the derivation itself had just written.
+
+    Every mismatch lands in the caller's REPORTED/drift channel, never a
+    findings failure — the no-schema-yet posture (D8). The strings are the
+    channel's own wording; both callers render them verbatim."""
+    if ledger_members is None:
+        ledger_members = {}
+    if not isinstance(ledger_members, dict):
+        return [
+            "composed members mismatch: the authored declaration's "
+            f"composed_members is {type(ledger_members).__name__}, not an "
+            "object keyed by vocabulary"
+        ]
+    reported: list[str] = []
+    # (#556 B3 fold F4) The read-back iterated the four vocabularies alone,
+    # so authored junk under any other key was ignored silently — an
+    # unknown key REPORTs, in this channel's own mismatch wording (the
+    # no-schema-yet posture, D8: the key set's contract is this read-back
+    # and the prose, and the writer emits exactly the four).
+    for key in sorted(ledger_members):
+        if key not in _MEMBER_LEDGER_VOCABULARIES:
+            reported.append(
+                "composed members mismatch: the authored declaration's "
+                f"composed_members carries key {key!r}, which is no "
+                "composed vocabulary "
+                f"({', '.join(_MEMBER_LEDGER_VOCABULARIES)})"
+            )
+    for vocabulary in _MEMBER_LEDGER_VOCABULARIES:
+        derived_rows = {
+            str(row.get("slot", "")): row
+            for row in derived_members.get(vocabulary, ())
+        }
+        authored_rows = ledger_members.get(vocabulary, [])
+        if not isinstance(authored_rows, list):
+            reported.append(
+                "composed members mismatch: the authored declaration's "
+                f"composed_members.{vocabulary} is "
+                f"{type(authored_rows).__name__}, not a list"
+            )
+            continue
+        authored_slots: set[str] = set()
+        authored_count = 0
+        for row in authored_rows:
+            if not isinstance(row, dict) or not row.get("slot"):
+                reported.append(
+                    f"composed members mismatch: malformed {vocabulary} "
+                    f"row {row!r}"
+                )
+                continue
+            authored_count += 1
+            slot = str(row["slot"])
+            authored_slots.add(slot)
+            derived = derived_rows.get(slot)
+            if derived is None:
+                reported.append(
+                    "composed members mismatch: the authored declaration's "
+                    f"composed_members names {vocabulary} member {slot}, "
+                    "which the derivation applied no member for"
+                )
+                continue
+            # R6: the mapping comparison — every field the derived row
+            # carries must match the authored row for that slot.
+            for field, value in derived.items():
+                if str(row.get(field, "")) != str(value):
+                    reported.append(
+                        f"composed members mismatch: {vocabulary} member "
+                        f"{slot} derives {field} {value} but the authored "
+                        "declaration's composed_members names "
+                        f"{row.get(field, '')}"
+                    )
+        for slot in sorted(set(derived_rows) - authored_slots):
+            reported.append(
+                f"composed members mismatch: {vocabulary} member {slot} "
+                "derives applied but the authored declaration's "
+                "composed_members omits it"
+            )
+        # (#556 B6 fold F1) The per-slot comparison has no MULTIPLICITY:
+        # a verbatim duplicate row — the same slot carrying the same
+        # mapping, twice — passed every check above, so a ledger claiming
+        # two applied members where the derivation applied one verified
+        # clean here and re-stamped green on migrate-ui. The authored row
+        # count against the derived count is part of the arithmetic now,
+        # in this channel's own wording; it is the only row that can name
+        # a duplicate. Only WELL-FORMED authored rows count — a malformed
+        # row already REPORTed above, and counting it here would report
+        # one defect twice.
+        derived_count = len(derived_members.get(vocabulary, ()))
+        if authored_count != derived_count:
+            reported.append(
+                "composed members mismatch: the authored declaration's "
+                f"composed_members.{vocabulary} carries {authored_count} "
+                f"{vocabulary} rows, but the derivation applied "
+                f"{derived_count}"
+            )
+    return reported
 
 
 def _check_member_reference_conflicts(

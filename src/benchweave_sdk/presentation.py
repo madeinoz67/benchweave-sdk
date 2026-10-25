@@ -2,7 +2,9 @@
 
 The ``migrate_ui`` lane (issue #460) refuses with these ``snake_case:`` prefixes
 (STD-4): ``migrate_ui_ahead:`` (a document above the lock's active — install the
-newer SDK, never a downgrade write), ``migrate_ui_version_absent:`` (a document
+newer SDK, never a downgrade write; a composed-member declaration whose decoupled
+dialect sits on either side of the active also refuses here, naming both, because
+migrate-ui never rewrites a pinned document), ``migrate_ui_version_absent:`` (a document
 that is unparseable or carries no version-shaped ``contract_version``),
 ``migrate_ui_stamp_unlocatable:`` (the version value parses but its byte pattern
 cannot be located for in-place re-stamping), and
@@ -783,6 +785,114 @@ def _resolve_ledger_class(
     raise _ledger_class_unresolved(class_urn, reasons)
 
 
+def _member_declaration_dialect() -> str | None:
+    """The active composed-member-declaration dialect — the schema's own
+    ``contract_version`` const — or None when the served tree carries no
+    such schema (an older family, where a member pin cannot resolve). The
+    family name comes from ``classref._FAMILY`` so this key cannot drift
+    from the schema loader's."""
+    from .classref import _FAMILY
+
+    key = (
+        f"{_FAMILY}/{active_version(_FAMILY)}/"
+        "composed-member-declaration.schema.json"
+    )
+    schema = contract_documents().get(key)
+    if not isinstance(schema, dict):
+        return None
+    properties = schema.get("properties")
+    if not isinstance(properties, dict):
+        return None
+    row = properties.get("contract_version")
+    if not isinstance(row, dict):
+        return None
+    value = row.get("const")
+    return value if isinstance(value, str) else None
+
+
+def _guard_member_declaration_dialects(
+    descriptor: dict[str, Any], descriptor_path: Path
+) -> None:
+    """B6 (#556 track B): the composed-member declaration's own dialect
+    version joins migrate-ui's version guards.
+
+    The dialect is deliberately decoupled from the family version — the
+    schema's own words: a pinned, digest-verified document stays valid
+    across family bumps — so the migration never RE-STAMPS it (a family
+    bump does not repin the document). It does READ it, and it guards BOTH
+    sides of the active dialect, because migrate-ui never rewrites a
+    pinned document (the author's bytes are the author's):
+
+    - the declaration's dialect AHEAD of the active refuses
+      ``migrate_ui_ahead`` naming both, because the SDK cannot know a
+      future dialect's semantics;
+    - the ACTIVE dialect ahead of the declaration's refuses
+      ``migrate_ui_ahead`` naming both, because the migration will not
+      write the author's declaration up — the author updates it;
+    - an equal dialect is a no-op, and a project with no member
+      declaration has nothing to do: no row, no write.
+
+    Without this guard a mismatched declaration would answer through the
+    walk's ``classref_invalid_member_declaration``, a generic schema fault
+    for a version motion the migration family owns — the declaration is
+    the only pinned document whose dialect the class-reference family
+    itself serves.
+
+    Only digest-verified member-SHAPE pins are inspected; the walk keeps
+    ownership of every other integrity refusal (unreadable, digest
+    mismatch, invalid JSON), which this guard skips so the code and the
+    message stay the walk's."""
+    import hashlib
+
+    from .classref import _pin_shape_groups
+
+    target = _member_declaration_dialect()
+    if target is None:
+        return
+    for row in descriptor.get("contracts", []):
+        identifier = str(row.get("id", ""))
+        if identifier.startswith("urn:otdp:"):
+            continue
+        path = descriptor_path.parent / str(row.get("path", ""))
+        try:
+            raw = read_file(path)
+        except (ValueError, OSError):
+            continue  # the walk owns the unreadable-pin refusal
+        if hashlib.sha256(raw).hexdigest() != row.get("sha256"):
+            continue  # the walk owns the digest-mismatch refusal
+        try:
+            document = json.loads(raw)
+        except json.JSONDecodeError:
+            continue  # the walk owns the invalid-JSON refusal
+        if not isinstance(document, dict):
+            continue
+        if _pin_shape_groups(document) != ["members"]:
+            continue
+        dialect = document.get("contract_version")
+        if not isinstance(dialect, str) or _tuple_or_none(dialect) is None:
+            raise ValueError(
+                "migrate_ui_version_absent: "
+                f"{row.get('path')}: no version-shaped contract_version on "
+                f"the composed-member declaration ({dialect!r})"
+            )
+        if _tuple(dialect) > _tuple(target):
+            raise ValueError(
+                "migrate_ui_ahead: "
+                f"{row.get('path')} is at composed-member-declaration "
+                f"dialect {dialect}, above this SDK's active {target}; "
+                f"install the newer SDK that serves {dialect} — migrate-ui "
+                "never writes versions down"
+            )
+        if _tuple(dialect) < _tuple(target):
+            raise ValueError(
+                "migrate_ui_ahead: this SDK's active "
+                "composed-member-declaration dialect "
+                f"{target} is ahead of {row.get('path')}'s {dialect}; "
+                f"update the declaration to {target} — migrate-ui never "
+                "rewrites a pinned document"
+            )
+
+
 def _migrate_classref_ledger(
     ledger_path: Path,
     descriptor_raw: bytes,
@@ -802,7 +912,7 @@ def _migrate_classref_ledger(
     ``migrate_ui_stamp_unlocatable`` with NOTHING written (the caller
     computes this before any write).
     """
-    from .classref import composed_ledger_inventory
+    from .classref import composed_ledger_inventory, composed_member_mismatches
 
     raw = read_file(ledger_path)
     try:
@@ -856,6 +966,9 @@ def _migrate_classref_ledger(
         raise ValueError(
             "migrate_ui_version_absent: descriptor.json is not a JSON object"
         )
+    # B6 (#556 track B): the composed-member declaration's own dialect
+    # version is guarded before the walk (which owns the schema refusals).
+    _guard_member_declaration_dialects(descriptor, descriptor_path)
     # The class re-resolution runs FIRST: a ledger-named class that cannot
     # re-resolve refuses under its own code before the inventory walk can
     # raise the resolution's integrity codes for the same broken pin.
@@ -890,8 +1003,8 @@ def _migrate_classref_ledger(
                 f"{stamp} — migrate-ui never writes versions down"
             )
         _resolve_ledger_class(descriptor, descriptor_path, row["class"])
-    custom_set, composed_of, applied_classes = composed_ledger_inventory(
-        descriptor, descriptor_path
+    custom_set, composed_of, applied_classes, derived_members = (
+        composed_ledger_inventory(descriptor, descriptor_path)
     )
     drift: list[str] = []
     ledger_custom: set[str] = set()
@@ -971,6 +1084,19 @@ def _migrate_classref_ledger(
             f"the descriptor applies composed class {class_urn} but the "
             "ledger's composed_classes omits it"
         )
+    # B6 (#556 track B §3 rules 1-2): the composed-MEMBER inventory joins
+    # the drift arithmetic through the SAME read-back the gate runs
+    # (``composed_member_mismatches``): both directions, the per-member
+    # slot mapping and the unknown-key row, keyed to the APPLIED set the
+    # derivation wrote — never the PIN-DECLARED set. Keying to the pins
+    # would demand a row for a member that applies nowhere, refusing drift
+    # against a ledger derive-ui had just written (R1's loop shape, carried
+    # onto the member vocabulary). One arithmetic, two consumers, so the
+    # gate's REPORTED channel and this refusal cannot disagree.
+    for mismatch in composed_member_mismatches(
+        ledger.get("composed_members"), derived_members
+    ):
+        drift.append(mismatch)
     if drift:
         raise ValueError(
             "migrate_ui_ledger_drift: the class-reference ledger's "

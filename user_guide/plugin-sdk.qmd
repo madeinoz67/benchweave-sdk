@@ -155,9 +155,11 @@ The workflow never refuses an action that no catalog describes, and every render
 
 A residual member renders into a section the expander mints, titled `Custom device actions`, on the device-features page. Catalogued vendor actions stay in the main section, so resolution partitions the two, and they never mix. A page whose layout the reference authors stands as authored. The custom member then surfaces in the plan, the ledger, and the gate report only.
 
-Three behaviors are deferred. Computed measurement variables and custom decoder documents are not resolved through a class or a catalog. Both declare cleanly and derive no surface. The gate discloses each member every run, and the verify-ui section below gives the exact rows. Decoder annotation lanes land in a digital-lanes plot only. The `decode_annotated` row names the lanes as its rendered surface exactly when they land.
+A computed measurement variable derives into the dataset targets as an ordinary value variable. It also derives a plot series when the plot kind admits numeric series. It never derives a reading tile. A reading tile must name a readable parameter, and a computed variable has no parameter. The gate states each target the value derives into, and each target the value does not derive into.
 
-The gateway mirror of this resolution is also deferred. A gateway still refuses an action the SDK resolves.
+A custom decoder needs no catalog row. Its annotation lanes render in a digital-lanes plot only. A decoder whose lanes no derived plot carries stays disclosed. A channel whose role matches no resolved channel slot stays disclosed too. The verify-ui section below gives the exact rows.
+
+The gateway mirror of this resolution is also deferred. A gateway still refuses an action that the SDK resolves.
 
 ### Author a composed action class {#composed-action-classes}
 
@@ -212,6 +214,70 @@ Put the document in the plugin package, beside the descriptor. Pin it in `descri
 
 The derivation resolves the path relative to the descriptor. The file must be a regular file, and no path component may be a symlink. A claim that names no action the descriptor declares applies nowhere. The gate discloses such a class every run, and the ledger does not count it.
 
+### Author a composed member declaration {#composed-member-declarations}
+
+A composed member declaration is a versioned JSON document. It supplies the placement side of the derivation that the served class reference does not carry. The class reference authors the slots and pages. The member declaration adds one slot for each member and the page that hosts the slot.
+
+The document is a pinned project document. Put it in the plugin package, beside the descriptor. Pin it in `descriptor.json` under `contracts[]`. The pin row carries a non-`urn:otdp:` id, a path relative to the descriptor, and the sha256 of the file bytes. The pin has the same shape as the pin of a composed action class. The section "Author a composed action class" above gives the pin row.
+
+The document has three keys:
+
+| Key | What it carries |
+|---|---|
+| `contract_version` | The dialect version of this document. The schema fixes the value. The value is not the class-reference family version, so a family bump does not change the document. |
+| `members` | One to 64 member rows. The array is required. |
+| `profiles` | One optional vendor profile row. The array holds exactly one row when it is present. |
+
+A member row has a `slot`, a `kind` and a `page`. The `page` must name an existing page of the class reference. The `slot` names the new slot key. Four kinds take a slot:
+
+- `channels` adds a channels slot. The row also carries `where_role`. The optional `key` is `id`. The optional `label` is `label`. The member applies when a declared channel carries the role.
+- `dataset` adds a dataset slot. The row also carries `claims`. The row can also carry `plot`.
+- `configuration` adds a configuration slot. The row also carries `claims`.
+- `procedure` adds a procedure slot. The row also carries `claims`.
+
+A `dataset`, `configuration` or `procedure` member also carries `claims`, an array of one to 64 action URNs. The descriptor must declare the claim. An action member also needs the vendor profile row in the same document. A `configuration` or `procedure` member also needs a served catalog or a pinned vendor catalog to describe the claimed action. The vendor profile row names the profile that the composed target uses. It does not supply the action input schema.
+
+A `dataset` member does not need a catalog row: its target carries the descriptor's pinned measurement contract. The member table below gives the fields each kind accepts.
+
+| Field | `channels` | `dataset` | `configuration` | `procedure` |
+|---|---|---|---|---|
+| `slot` | required | required | required | required |
+| `kind` | required | required | required | required |
+| `page` | required | required | required | required |
+| `where_role` | optional | - | - | - |
+| `claims` | - | required | required | required |
+| `plot` | - | optional | - | - |
+| `schema_source` | - | optional | optional | optional |
+| `host_supplied` | - | optional | optional | optional |
+| `when_declared` | - | optional | optional | optional |
+
+A `channels` member with no `where_role` applies nowhere. It discloses as an applied-nowhere row. It does not refuse.
+
+The schema admits `schema_source`, `host_supplied` and `when_declared` on every action kind. The derivation copies them into the composed slot.
+
+A `plot` block carries a `kind` and an `over_slot`. The `kind` is `digital_lanes`, `time_series` or `waveform`. The `over_slot` must name the member's own slot. A `time_series` or `waveform` plot also carries `series` with the value `numeric_variables`. A `digital_lanes` plot can carry `group_size`, `group_label_pattern` and `group_radix`. The plot kind decides the shape of the dataset variables.
+
+The vendor profile row makes the composed target admissible. The row carries `id`, `title`, `channel_roles`, `required_actions` and `optional_actions`. The descriptor claims the row by listing the profile `id` in its `profiles[]` array. The descriptor `profiles[]` accepts any profile id. A composed action target names this profile id, so the canonical validator admits it.
+
+Every closed set in the document comes from a document that already ships it. The member kinds, the channel fields and the action fields come from the class reference's slot vocabulary. The page id shape and the plot block come from the class reference's page template. The claim pattern and the profile row shape come from the composed action class and the device profile catalog.
+
+Conflicts refuse. They never merge. These refusals can stop the derivation:
+
+- A slot key that a reference slot or another member already uses refuses with `classref_composed_slot_conflict:`.
+- A claim that a reference slot, another member or a composed action class already holds refuses with `classref_composed_slot_conflict:`.
+- A `page` that names no existing page refuses with `classref_composed_slot_conflict:`.
+- A `plot.over_slot` that names another slot refuses with `classref_composed_plot_slot_mismatch:`.
+- A member `plot` whose kind the page cannot host refuses with `classref_composed_plot_page_mismatch:`. A readings page hosts a time-series plot only.
+- A document with keys from more than one pin shape refuses with `classref_invalid_composed_class:`. A member document carries `members` alone.
+- A document that fails the member-declaration schema refuses with `classref_invalid_member_declaration:`. The same code stops an applied action member whose document carries no vendor profile row.
+- An action member whose claim no served catalog or pinned vendor catalog describes refuses with `classref_unknown_action:`. This rule covers the `configuration` and `procedure` kinds. A `dataset` member is exempt, because its target carries the measurement contract.
+- A member id that the derivation already owns on a readings page refuses with `classref_composed_slot_conflict:`.
+- An unreadable pin refuses with `classref_vendor_catalog_unreadable:`. A digest that does not match refuses with `classref_vendor_catalog_digest_mismatch:`. A pin that is not a JSON object refuses with `classref_vendor_catalog_invalid:`.
+
+A member that applies nowhere composes nothing. A malformed declaration still refuses, whether or not the member applies. The shape, self-reference, page and conflict refusals over the declaration itself cover every declared member. Three refusals need the composed surface and therefore depend on the member's application: the vendor profile row, the claimed action's catalogue entry and the derived-id collision. The gate discloses a member that applies nowhere. The verify-ui section below gives the disclosure rows.
+
+The composed member surface is not an admission claim. A clean derivation proves the declaration well-formed and self-consistent only.
+
 ### The conformance ledger (`ui/class-reference.json`) {#class-reference-ledger}
 
 `derive-ui` writes `ui/class-reference.json` when the project's profile has a vendored class reference. The file is the project's conformance record. You can edit its rows. The `upgrade` command and `migrate-ui` both read the file.
@@ -226,12 +292,15 @@ The document carries these keys:
 | `custom_actions` | One row per residual member: `action`, `resolution`, and `reason`. |
 | `composed_actions` | One row per composed member: `action`, `resolution`, and `class`. |
 | `composed_classes` | One row per applied class: `class` and `validated_against`. |
+| `composed_members` | One row per applied member, keyed by vocabulary: `procedures`, `settings`, `datasets` and `channels`. A channels row carries `slot`, `page` and `where_role`. An action row carries `slot`, `page` and `action`. A dataset row can also carry `plot_kind`. |
 
 At birth the derivation fills `deviations` with three kinds of row. An intended control that derives at a different level gets one row. A configuration surface with no commissioned presets gets one row. A catalogued member that derives no control gets one row.
 
 The deviation vocabulary refuses an unknown id with `classref_unknown_expectation:`. A deviation row that names an action in the abort class refuses with `classref_deviation_forbidden:`. The same refusal applies to an action whose class declares `energy_removing`.
 
 The ledger records the classes the derivation applied. A pinned class whose claims name no action the descriptor declares applies nowhere. It stays out of `composed_classes`, and the gate discloses it every run.
+
+The ledger also records the composed members that the derivation applied. A member that applies nowhere stays out of `composed_members`. The gate discloses it every run. The gate compares the authored inventory with the derived inventory in both directions and for each member slot. The gate reports a row that names the right slot with the wrong mapping.
 
 No schema governs the whole key set. Only the deviation vocabulary is validated. The gate reports a row that disagrees with the derivation, and `migrate-ui` refuses a drifted ledger.
 
@@ -261,6 +330,13 @@ These rows are disclosures, not failures:
 | `observation variable <id>: computes no dataset variable (no dataset target derives); no tile (no parameter to read)` | No dataset target derives the value. The host computes no variable for the id. |
 | `channel <id> (role <role>): resolves to no lanes surface` | A channel whose role matches no channel slot the derivation resolves lanes for. The channel derives no lane. A channel that resolves is not disclosed. |
 | `custom decoder <id>: no lane host (this class's plot is <kind>; lanes host in digital_lanes plots alone)` | A pinned decoder that no derived plot renders. A decoder whose lanes land is not disclosed. |
+| `composed member declaration <pin> applied nowhere` | A pinned member declaration whose members apply nowhere. No member matched a declared action or a declared channel role. |
+| `composed member declaration <pin> member <slot> applied nowhere (its claims name no action this descriptor declares)` | One action member inside a pin that applied. This member applies nowhere, so it composes nothing. |
+| `composed member declaration <pin> member <slot> applied nowhere (no declared channel carries role <role>)` | One channels member inside a pin that applied. No declared channel carries its role. |
+| `composed plot <slot>: page <page> admits no plot (plots render on dataset and readings pages alone)` | A member plot on a page that hosts no plot. The member derives no plot. |
+| `composed dataset <slot>: no plot carries its binding (the plot on page <page> binds <over_slot>)` | A dataset member whose page plot binds another slot. The member derives no plot. |
+| `composed lane <id> (role <role>): no lane surface on page <page> (the page's channels slots join to <n> lanes; the plot's y admits 64)` | A joined lane set above the plot limit. The plot drops the overflow lane. The row names it. |
+| `composed members mismatch: ...` | The ledger's `composed_members` inventory disagrees with the derived inventory in either direction. The row also reports a member slot with the wrong mapping. |
 
 A residual-member row names one member. A computed measurement discloses on every run. A channel discloses only when no resolved channel slot takes its role. A decoder discloses only when no derived plot carries a lane for it. A built lane is not a rendered lane. Lanes land in a digital-lanes plot alone. In the reference-less arm every declared channel and every declared decoder discloses, because that path resolves no slot and derives no lanes at all.
 
@@ -282,7 +358,7 @@ You can author, derive and preview a composed user interface with no gateway. Th
    benchweave-sdk new acme-widget --package acme_widget_plugin --with-ui
    ```
 
-3. Write the composed action class document in the plugin package, beside the descriptor. The section "Author a composed action class" above gives the document shape.
+3. Write the composed action class document in the plugin package, beside the descriptor. The section "Author a composed action class" above gives the document shape. A composed member declaration uses the same pin seam. The section "Author a composed member declaration" above gives that document shape.
 
 4. Pin the document in `descriptor.json` under `contracts[]`. The pin gives an id, a path relative to the descriptor, and the sha256 of the file bytes. The same section gives the row shape. The digest is the digest of the current bytes. Update the pin after each edit of the document. A pin that does not match the bytes refuses the derivation with `classref_vendor_catalog_digest_mismatch:`.
 
@@ -306,7 +382,7 @@ You can author, derive and preview a composed user interface with no gateway. Th
 
    The command prints the serve URL and the bearer token. Open the URL in a browser.
 
-The loop shows these results. After step 5, `ui/class-reference.json` records one row for each composed action and one row for each residual member. After step 6, the command prints `Rendered gate clean`. It also prints one `reported deviation:` line for each residual member and for each declared deviation. The served device-features page shows the composed control. The control takes its fields from the class's `input_schema`. The page also shows the `Custom device actions` section for the residual members.
+The loop shows these results. After step 5, `ui/class-reference.json` records one row for each composed action, one row for each residual member and one row for each applied composed member. After step 6, the command prints `Rendered gate clean`. It also prints one `reported deviation:` line for each residual member and for each declared deviation. The served device-features page shows the composed control. The control takes its fields from the class's `input_schema`. The page also shows the `Custom device actions` section for the residual members.
 
 The preview host pins the mock transport. Every value on the page is simulated, and the page labels each one. The loop never admits a plugin. It never operates hardware.
 
@@ -330,6 +406,10 @@ When all three documents and the ledger already carry the active versions, the c
 Two surfaces point at the command. `check-ui` adds a remediation line when a finding has code `unsupported_version` on one of the three documents. `upgrade` prints a notice when the artifacts are behind the active version. The notice tells you to run `migrate-ui` after you commit the upgrade.
 
 Migration is not re-derivation. `migrate-ui` keeps your manifest content. It does not derive pages or plots from the descriptor. For that path, use `benchweave-sdk derive-ui`. A class-conformant project also carries `ui/class-reference.json`. The command re-stamps this file's `contract_version` and `reference_version` stamps to the active class-reference version. It also re-stamps each `composed_classes[].validated_against` record. It does this only after it resolves each named class from its pin and validates the document under the active version. The class urn keeps its own version. The command never writes content. Author overlays survive in `ui/manifest.overrides.json`.
+
+The command also reads the ledger's `composed_members` inventory. The inventory must agree with the members that the derivation applied, in both directions and for each member slot. An inventory that disagrees refuses with `migrate_ui_ledger_drift:`.
+
+The command does not rewrite a member declaration across a family bump. The declaration carries its own dialect version. The schema keeps that version across a family bump. The command reads the dialect and names both versions when they disagree. A declaration above the active dialect refuses with `migrate_ui_ahead:`. The active dialect above the declaration refuses with `migrate_ui_ahead:` too, because the command does not write the declaration. A declaration with no version-shaped dialect refuses with `migrate_ui_version_absent:`.
 
 `derive-ui` writes `ui/manifest.json` from the descriptor. A `ui/manifest.json` that records another descriptor's digest is stale, and the command replaces it. It refuses without `--force` only when the file records this descriptor's digest and still differs (author drift), or when it records no digest at all — there a descriptor change cannot be told from author edits. Put author edits in `ui/manifest.overrides.json`.
 
