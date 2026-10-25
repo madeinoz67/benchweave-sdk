@@ -629,3 +629,30 @@ traces exceed the kind's ceiling — stays as-is; dropping class-declared
 traces is a behaviour change outside this slice's licence. Recorded here
 so the known defect is a disclosure, not a silent drop. Tagged
 PRE-EXISTING, outside B1's scope.
+
+### 2026-10-25 — the capacity-versus-declaration boundary (maintainer ruling)
+
+B1's fold surfaced a fork between two slices of this track. §4 V5
+pre-commits that a composed member whose chosen plot kind cannot satisfy
+its own per-kind rules "refuses typed (`classref_series_ceiling`)", while
+B1's fold handled the same physical situation — a plot whose series count
+exceeds the kind's ceiling — by dropping the overflow and disclosing it.
+The same condition, two dispositions, in one vocabulary. Ruled before B5
+so the vocabulary does not fork silently.
+
+**The boundary is not the situation; it is whose error it is.** A refusal
+is for a **declaration conflict the schema cannot express**: a slot key or
+claimed action colliding with a reference slot, another member or a
+composed action class; a page that does not exist; an ambiguous pin; a
+`side_effect` outside the closed set. Every one of those is a malformed
+declaration, and only a malformed declaration reaches it. A **capacity
+limit is not the vendor's error**: the declaration is admissible, the
+derivation simply cannot render all of it, so it drops what it cannot
+render and discloses each drop on the REPORTED channel.
+
+**Consequence for B5:** `classref_series_ceiling` is retired as a
+pre-committed refusal. A composed plot that would exceed its kind's ceiling
+drops the overflow and discloses it, in the same wording family B1 minted.
+If B5 finds a case where a member's own declaration is *malformed* rather
+than merely oversized, that is a declaration conflict and refuses under the
+existing conflict codes, not a capacity rule.
