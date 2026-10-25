@@ -1015,3 +1015,189 @@ settings asset — a composed package cannot be check-ui-clean through the
 bytes-only call without them. `test_classref_member_seam._check_ui_package`
 gains `descriptor`/`extra_pins` substitution so variant packages stay
 internally digest-consistent.
+
+### 2026-10-26 — B5, motion by motion: what the code forced, stated where the design was silent
+
+**The dataset member's admission refusals split by target shape.** The B4
+admission pair (profile row + catalogue side) does not transfer to the
+dataset kind as a pair: the profile-row refusal DOES (an applied dataset
+member composes a target naming the declaration's vendor row — the seam —
+so a row-less declaration is malformed for the surface it requests, under
+`classref_invalid_member_declaration` exactly as for procedure and
+configuration), while the catalogue-side refusal does NOT and never will:
+the dataset target carries `measurement_schema_id` (the descriptor's pinned
+measurement contract), never `input_schema_id`, so there is no catalogue
+side for the claim to need. The B4 sentence "Dataset members are exempt
+until B5 composes their targets" resolves to this split, stated where it is
+enforced.
+
+**The V4 layer-3 classifier is the derived state — the V6 precedent.**
+§4 V4's "a capture-shaped declared action" has no descriptor-side signal:
+OTDP types no verbs, and `capture_formats[]` is device-level (read by
+nothing in the SDK — measured). The classifier is what the derivation can
+honestly read: unclaimed (plan page device-features) AND level L1 (the
+bare-button shape; L2 is the settings vocabulary's own row, and L0 renders
+nothing so "its control renders on device-features" would be false of it),
+under the same class-listed exclusion B4's F5 minted (a served profile
+row's listing is the one honest class-action signal). Measured before
+implementation: no committed fixture carries an unclaimed L1 action, so
+the founding residual digests do not move — the row's statement is true of
+everything it names (advisory REPORTED, never a failure), and it
+disappears when a dataset member claims the action.
+
+**Two placement rows, one wording family.** The 2026-10-25
+capacity-versus-declaration boundary ruled the already-hosted-plot case
+(B3's row). B5 adds its sibling the boundary implies but had not named: a
+member `plot` naming a page whose KIND the manifest schema admits no plot
+on (configuration; the family's own plot def carries no page-kind rule,
+so the member schema cannot refuse it at the pin) derives nothing and
+discloses — `composed plot <slot>: page <page> admits no plot (plots
+render on dataset and readings pages alone)`. The B3 interim arm that
+asserted no row for any plot-less page moved with it (marked in place).
+
+**The lanes plot binds its over-slot's own dataset.** The founding
+digital_lanes emission bound `capture_binding_id` — correct for the corpus,
+where every lanes plot's over-slot IS the capture slot, but dishonest for a
+composed lanes plot over a member's slot: the plot's y names lane string
+variables, which the class capture's waveform shape does not carry. The
+emission now binds the over-slot's own binding; on every committed fixture
+the two are the same id, so all eight founding derivations are
+byte-identical (proved by digest at this slice's commits: manifest
+9d744557d304ff8e daq, 8764b42c16878880 f1/logic_analyser, and the other
+six unchanged from the B4 base).
+
+**Risk #6's falsifier is a REPORTED row plus a stamp discipline.** A
+composed dataset slot on a plot-bearing page whose plot does not carry its
+binding: the L4 census on that page still covers it (plots >= 1), and the
+row that keeps the coverage honest is `composed dataset <slot>: no plot
+carries its binding (the plot on page <page> binds <over_slot>)` —
+REPORTED, never a finding — beside the `rendered_by: "the page plot"`
+stamp that lands ONLY when a derived plot carries the member's binding
+(the R9 site, after plot construction). Both directions armed: the row
+disappears and the stamp lands when the member's own plot derives.
+
+### 2026-10-26 — the B5 refute fold: the readings-page corner, per surface
+
+One adversarial lane reviewed B5; it confirmed M1-M6, proved byte
+stability independently across fifteen fixtures, reproduced the wheel
+arm's RED, and found the readings-class corner wider than the slice
+disclosed. Five findings plus nits fold in one commit, each with a RED
+arm quoted in the commit message. The unifying rule, following the B4
+fold's data-table precedent: **tile and table surfaces compare PER PAGE
+AND PER SURFACE against the derivation's own minted set, never a fixed
+authored count.**
+
+**F1 (MEDIUM-HIGH) — an admitted dataset member on a readings page reds
+the real gate.** Four of eight stock classes carry a readings page with a
+dataset slot (dc_psu, dmm, electronic_load, smu); the committed fixtures
+are dataset-page classes, so no arm saw it. A second dataset slot on a
+readings page mints one tile set PER DATASET SLOT (the L11 expansion
+loop), so the render serves twelve tiles where the authored
+`{n_reading_tiles}` template resolved six — a clean declaration reds
+(`classref_gate_excess: reading-tile on output: expected 6, censused 12`,
+reproduced on the SMU before any fix). This was §6's UNDERPOWERED shape
+in appearance and an SDK arithmetic defect in fact: the host rendered
+exactly what the derivation minted. The fix is two-sided, the data-table
+precedent end to end: the reading-tile template resolves PER SCOPE (the
+derivation's own minted observation count for the row's page; pooled
+across pages for a pooled row; a LITERAL count stays the author's fixed
+contract, the A6 deviation path), and the gate gains a third component
+detector — `_reading_surface_findings`, comparing (page, binding) sets
+between the DERIVED manifest's observation bindings and the census's
+attributed tiles (the render now carries `data-bw-binding` on every
+tile, web.py, the table's own precedent). MISSING is not
+ledger-downgradable (the W6 ruling); EXCESS downgrades under a declared
+`reading-tile` row. The count row keeps multiplicity teeth a set
+comparison cannot have (a duplicated render). On the founding fixtures
+(one dataset slot per readings page, the page's lanes the rendered set)
+the per-scope resolution equals the inventory's variable count,
+byte-identically — re-derived across all thirteen committed shapes.
+
+**F2 (MEDIUM) — the composed-dataset residual row stated a false reason
+on readings pages.** The reason named the page TEMPLATE's `over_slot`
+(`binds measure`) while the emitted time-series plot binds the page's
+first OBSERVATION (`measure-ch1-voltage`) — and in the plot-less variant
+the template's over_slot WAS the member's own slot, so the row read "no
+plot carries its binding (the plot binds <itself>)". The reason now
+names the EMITTED plot's binding; dataset pages are unchanged (the
+emitted binding there IS the over-slot's own).
+
+**F3 (MEDIUM, latent) — a member waveform plot on a plot-less readings
+page derived green and died untyped.** The derive emitted a waveform
+plot binding the member's dataset, the page-kind discipline admits
+observation bindings alone, and the gate died in
+`PluginLoadError: standalone_plugin_invalid: preview_invalid_presentation:
+invalid_plot: pages.output.plots: Plot axes are incompatible` (reproduced).
+Ruled a MALFORMED PLACEMENT, not a capacity limit, under the 2026-10-25
+capacity-versus-declaration boundary: the member asks for a plot shape
+the page's binding discipline cannot host — the author can fix the
+declaration. It refuses typed at the reference-conflict seam under a new
+code, **`classref_composed_plot_page_mismatch`** (the
+`classref_composed_plot_slot_mismatch` sibling), which joins §3 rule 4's
+conflict enumeration BY THIS ADDENDUM and the §8 survivor set beside the
+walk's other integrity refusals (the parent §8 row is gateway-side and
+rides B7/B8's mirror legs). `time_series` — the one kind a readings page
+hosts, binding an observation — still composes (armed).
+
+**F4 (LOW-MEDIUM) — the stamp and the residual-row skip keyed on
+slot-key strings across every plot binding id.** A member slot named
+like an observation binding id (`measure-ch1-voltage`) won a false
+`rendered_by: "the page plot"`, suppressed its honest disclosure row,
+and emitted duplicate target ids that crashed the gate untyped
+(`invalid_document: targets: Duplicate identifiers`, reproduced). Two
+halves: the stamp/skip membership is now SCOPED to a plot on the
+member's own page whose binding resolves to a DATASET binding; and the
+id collision REFUSES at the readings-expansion mint under the EXISTING
+`classref_composed_slot_conflict` (a new trigger under a committed code,
+inventoried here — the declaration names an id the derivation already
+owns, and renaming the slot is the author's fix). After the refusal the
+false-stamp family is unreachable from a green derive; the scoping is
+the structural fix that keeps it closed.
+
+**F5 (LOW-MEDIUM) — the B4 settings-member count contribution landed on
+the class's authored row whatever page the member's table renders on.**
+On the SMU (a per-page `data-table` row naming the class's output page;
+the member's table minting on its own configuration page) a clean
+declaration reded `expected 2, censused 1` (reproduced). The
+contribution is per-scope now: a per-page row counts only member tables
+the LAYOUT BLOCK mints on that page, a pooled row counts them all, and
+the member's own surface is the per-surface comparison's business
+(already armed in the B4 fold).
+
+**NITs.** The 2026-10-26 "B5, motion by motion" addendum's V4-classifier
+premise sentence is corrected by this paragraph: it reads "Measured
+before implementation: no committed fixture carries an unclaimed L1
+action" — the plain reading is FALSE. `descriptor-smu` carries two
+unclaimed L1 actions (`otdp.smu.abort/1.0.0`, `otdp.smu.trigger/1.0.0`,
+measured: plan page device-features, level L1); the CLASS-LISTED
+EXCLUSION (both are listed in the served `otdp.smu` profile row's
+optional actions) is what keeps them quiet, so the measured CONCLUSION —
+the founding residual digests do not move — stands, for the stated
+classifier reason rather than an absent shape. The digest-mismatch
+detail no longer calls a members document a "vendor catalog" (the
+refusal code keeps its historical name — a survivor — the prose does
+not: `pinned document <path> digest mismatch`). And the neutralization
+red-sanity the refute noted missing for B5's three residual-row families
+has run: with the three mints neutralized (cp backup, restored) the four
+row-arms red (`tests=4 failures=4 errors=0` — the placement row, the
+no-binding row, the L1 row, and the fold's reason arm that rides the
+no-binding row); restored, green.
+
+**Mirror obligation (recorded, dated).** B7's gateway mirror must carry
+this fold's SDK-side behavior when it lands (CON-12's discipline): the
+`classref_composed_plot_page_mismatch` refusal, the duplicate-id
+conflict trigger, the scoped stamp/skip, the emitted-binding row reason,
+the per-scope expectation resolution, and the render's tile attribution.
+The gateway's per-surface gate rows grow the reading-tile comparison
+beside its data-table one.
+
+**Evidence summary (this fold, all quoted in the commit message).** RED:
+six arms pre-fix, `tests=6 failures=6 errors=0` (junit); the five
+finding reproductions on the SMU before any fix; the neutralization
+`tests=4 failures=4 errors=0`. GREEN: the B5 module 19/19, the
+render-arms + acceptance + gate suites 94/94, the full non-server tree
+1367 passed / 5 skipped, the server tree green after the two
+exact-markup oracles gained the tile attribution. Byte stability:
+all thirteen committed shapes derive byte-identically pre/post (digests
+in the commit message; f1 `8764b42c16878880` and daq `9d744557d304ff8e`
+match the values recorded at B5 motion 2).

@@ -9,7 +9,8 @@
       ],
       "required_actions": [
         "com.meridian.m400.profile_mode/1.0.0",
-        "com.meridian.m400.sweep/1.0.0"
+        "com.meridian.m400.sweep/1.0.0",
+        "com.meridian.m400.segment_capture/1.0.0"
       ],
       "optional_actions": []
     }
@@ -31,6 +32,15 @@
       ],
       "schema_source": "input_schema",
       "page": "configuration"
+    },
+    {
+      "slot": "segment-capture",
+      "kind": "dataset",
+      "claims": [
+        "com.meridian.m400.segment_capture/1.0.0"
+      ],
+      "schema_source": "output_measurement",
+      "page": "capture"
     }
   ]
 }

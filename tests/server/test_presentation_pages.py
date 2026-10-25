@@ -200,7 +200,11 @@ def test_the_readings_page_renders_tiles_through_the_package_partial(
 ) -> None:
     """Component parity's unit arm: the page contains the EXACT
     ``render_reading`` output built from the live read — a hand-rolled
-    tile cannot pass an exact-substring containment."""
+    tile cannot pass an exact-substring containment. The tile carries its
+    binding attribute (2026-10-26, #556 B5 refute fold F1 — the gate's
+    census attributes every served tile to its surface), so the oracle
+    applies the same attribution the host renders, with the binding id
+    read from the loaded presentation."""
     from benchweave_ui_html.data import ReadingData
     from benchweave_ui_html.partials import render_reading
 
@@ -211,6 +215,13 @@ def test_the_readings_page_renders_tiles_through_the_package_partial(
         headers={"authorization": f"Bearer {policy.bearer_token}"},
     )
     assert read.status_code == 200
+    binding_id = next(
+        str(binding.id)
+        for page_view in client.app.state.seam.presentation.pages
+        if page_view.kind == "readings"
+        for binding in page_view.bindings
+        if binding.kind == "observation" and binding.parameter_id == "voltage"
+    )
     expected = render_reading(
         ReadingData(
             label="voltage",
@@ -221,6 +232,10 @@ def test_the_readings_page_renders_tiles_through_the_package_partial(
             freshness="0 ms",
             stale_verdict="fresh",
         )
+    ).replace(
+        ' data-severity="',
+        f' data-bw-binding="{binding_id}" data-severity="',
+        1,
     )
     page = client.get("/pages/readings")
     assert page.status_code == 200

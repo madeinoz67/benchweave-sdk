@@ -47,6 +47,26 @@
         "type": "object"
       },
       "side_effect": "state_change"
+    },
+    "com.meridian.m400.segment_capture/1.0.0": {
+      "description": "Capture one M-400 waveform segment.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "duration_s": {
+            "type": "number",
+            "minimum": 0.1
+          }
+        },
+        "required": [
+          "duration_s"
+        ],
+        "$id": "urn:meridian:action:segment-capture:1.0.0:input"
+      },
+      "output_schema": {
+        "type": "object"
+      },
+      "side_effect": "state_change"
     }
   }
 }
