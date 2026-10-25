@@ -1900,33 +1900,77 @@ def _merge_references(references: list[dict[str, Any]]) -> dict[str, Any]:
     return merged
 
 
-def _channels_slot(merged: dict[str, Any]) -> dict[str, Any] | None:
-    """The ONE channels slot this derivation resolves lanes for — the first
-    in merge order (#556 B1 keeps the founding one-slot rule; the per-slot
-    channels generalization is a later slice). ``residual_members`` uses it to
-    name the one role a channel can still resolve against."""
-    return next(
-        (slot for slot in merged["slots"].values() if slot.get("kind") == "channels"),
-        None,
-    )
+def _channels_slots(merged: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Every channels slot in merge order (#556 B3: the reference's own
+    and every applied composed member's injection) — per-slot lane
+    resolution keys on exactly this set."""
+    return {
+        key: slot
+        for key, slot in merged["slots"].items()
+        if slot.get("kind") == "channels"
+    }
 
 
-def _resolve_channels(descriptor: dict[str, Any], merged: dict[str, Any]) -> list[dict[str, Any]]:
-    """The class-role lanes, in declaration order; fail-closed count
-    refusals (record §3.3)."""
-    slot = _channels_slot(merged)
-    if slot is None:
-        return []
-    role = str(slot.get("where_role", ""))
-    lanes = [row for row in descriptor.get("channels", []) if str(row.get("role")) == role]
-    if not lanes:
-        raise _refuse("classref_no_lanes", "0 channels carry role " + role)
-    if len(lanes) > _LANE_CEILING:
-        raise _refuse(
-            "classref_lane_ceiling",
-            f"{len(lanes)} channels carry role {role} (ceiling {_LANE_CEILING})",
-        )
-    return lanes
+def _resolve_channels(
+    descriptor: dict[str, Any], merged: dict[str, Any]
+) -> dict[str, list[dict[str, Any]]]:
+    """The lanes each channels slot resolves, keyed by slot in merge order;
+    fail-closed count refusals per slot (record §3.3 — zero matching
+    channels and over-ceiling counts refuse naming the slot's role, every
+    channels slot alike: the reference's own and a composed member's
+    injection are one rule)."""
+    resolved: dict[str, list[dict[str, Any]]] = {}
+    for key, slot in _channels_slots(merged).items():
+        role = str(slot.get("where_role", ""))
+        lanes = [
+            row
+            for row in descriptor.get("channels", [])
+            if str(row.get("role")) == role
+        ]
+        if not lanes:
+            raise _refuse("classref_no_lanes", "0 channels carry role " + role)
+        if len(lanes) > _LANE_CEILING:
+            raise _refuse(
+                "classref_lane_ceiling",
+                f"{len(lanes)} channels carry role {role} (ceiling {_LANE_CEILING})",
+            )
+        resolved[key] = lanes
+    return resolved
+
+
+def _inject_composed_members(
+    descriptor: dict[str, Any],
+    merged: dict[str, Any],
+    declarations: tuple[ComposedMemberDeclaration, ...],
+) -> None:
+    """(#556 §3) The injection seam: every APPLIED composed member's slot
+    joins the merged reference, after ``_merge_references`` and after the
+    conflict checks, so the existing derivation arms run unchanged on the
+    injected rows. B3 injects the channels kind (V3 layer 2 — per-slot
+    lane resolution consumes it, and the member's fields ARE the
+    reference's own channels-slot branch verbatim); the action-kind
+    injections ride their own slices (B4/B5), whose arms carry the
+    vendor-profile seam their targets need. A member that applies nowhere
+    injects nothing — its disclosure is the applied-nowhere row."""
+    for declaration in declarations:
+        for member in declaration.members:
+            if member.get("kind") != "channels":
+                continue
+            if not _member_applies(member, descriptor):
+                continue
+            slot_key = str(member.get("slot", ""))
+            merged["slots"][slot_key] = {
+                "kind": "channels",
+                "where_role": str(member.get("where_role", "")),
+                "key": "id",
+                "label": "label",
+            }
+            page_id = str(member.get("page", ""))
+            for page in merged["pages"]:
+                if str(page.get("id")) == page_id:
+                    page.setdefault("_slot_keys", []).append(slot_key)
+                    page.setdefault("bindings", []).append(slot_key)
+                    break
 
 
 def _assemble(
@@ -1950,7 +1994,8 @@ def _assemble(
     # member injects — the composed slot composes beside the reference,
     # never over it.
     _check_member_reference_conflicts(merged, member_declarations)
-    lanes = _resolve_channels(descriptor, merged)
+    _inject_composed_members(descriptor, merged, member_declarations)
+    lanes_by_slot = _resolve_channels(descriptor, merged)
     slot_for_urn = {
         slot["action"]: (key, slot)
         for key, slot in merged["slots"].items()
@@ -1987,7 +2032,7 @@ def _assemble(
                 # rendering only when that rendering occurs.
             }
     return _finish(
-        descriptor, references, merged, lanes, actions, catalog_actions,
+        descriptor, references, merged, lanes_by_slot, actions, catalog_actions,
         plan, divergences, version, descriptor_path=descriptor_path,
         descriptor_file_raw=descriptor_raw,
         ignored_pins=ignored_pins, unapplied_classes=unapplied_classes,
@@ -2178,7 +2223,7 @@ def _finish(
     descriptor: dict[str, Any],
     references: list[dict[str, Any]],
     merged: dict[str, Any],
-    lanes: list[dict[str, Any]],
+    lanes_by_slot: Mapping[str, list[dict[str, Any]]],
     actions: dict[str, Any],
     catalog_actions: dict[str, Any],
     plan: dict[str, dict[str, Any]],
@@ -2227,12 +2272,53 @@ def _finish(
         ),
         f"urn:otdp:measurement:{descriptor['otdp_version']}",
     )
-    # The wire's logic alphabet renders as string/vector samples; the time
-    # axis is a vector in seconds (the vendored digital_lanes plot rules).
-    lane_vars = [
-        {"id": row["id"], "type": "string", "unit": None, "shape": "vector"}
-        for row in lanes
-    ]
+    # (#556 B3, V3 layer 2) Per-slot lanes: every channels slot resolves
+    # its role's channels; a page's plot consumes the lanes of the
+    # channels slots PLACED on that page (an applied composed member's
+    # placement), keeping the founding default — the FIRST slot's lanes —
+    # for pages that place none. Every vendored reference places none
+    # (asserted in-repo, tests/test_classref_member_channels.py), so the
+    # founding fixtures derive byte-identically under the generalization
+    # (the record's M6, proved by digest at the motion's commit).
+    channels_order = list(lanes_by_slot)
+    default_lanes: list[dict[str, Any]] = (
+        lanes_by_slot[channels_order[0]] if channels_order else []
+    )
+
+    def _lanes_for_page(page_id: str) -> list[dict[str, Any]]:
+        placed = [
+            key
+            for page in merged["pages"]
+            if str(page.get("id")) == page_id
+            for key in page.get("_slot_keys", [])
+            if key in lanes_by_slot
+        ]
+        # The founding default is the BASE (the class's implicit
+        # slot-to-plot association — no vendored reference places its
+        # channels slot on any page), and a placed slot's lanes JOIN it:
+        # composing beside, never replacing.
+        order = [channels_order[0]] if channels_order else []
+        order.extend(key for key in placed if key not in order)
+        lane_rows: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for key in order:
+            for row in lanes_by_slot[key]:
+                if str(row.get("id")) not in seen:
+                    seen.add(str(row.get("id")))
+                    lane_rows.append(row)
+        return lane_rows
+
+    # The lanes feeding each page-template plot, keyed by its over-slot —
+    # the map every lane-derived variable set reads (a dataset slot with
+    # no plot of its own keeps the founding default).
+    lanes_for_over_slot: dict[str, list[dict[str, Any]]] = {}
+    for page in merged["pages"]:
+        spec = page.get("plot")
+        if not spec:
+            continue
+        lanes_for_over_slot[str(spec.get("over_slot", ""))] = _lanes_for_page(
+            str(page["id"])
+        )
     x_var = {
         "id": "t", "type": "number", "unit": "s",
         "shape": "vector", "axis_role": "x",
@@ -2258,34 +2344,48 @@ def _finish(
         for key in page.get("_slot_keys", [])
         if key in dataset_slots
     }
+    # The parameter map is descriptor-wide (channel identity to readable
+    # parameter): built over every resolved lane, so a page's tiles read
+    # their own lanes' parameters from one map.
+    all_lanes: list[dict[str, Any]] = [
+        row for rows in lanes_by_slot.values() for row in rows
+    ]
     parameter_rows = (
-        _resolve_parameters(descriptor, lanes) if readings_slots else {}
+        _resolve_parameters(descriptor, all_lanes) if readings_slots else {}
     )
-    quantity_vars: list[dict[str, Any]] = [
-        {
-            "id": f"{row['id']}-{quantity}",
-            "type": "number",
-            "unit": (parameter_rows.get((str(row["id"]), str(quantity))) or {}).get(
-                "unit"
-            ),
-            "shape": "scalar",
-            "axis_role": "value",
-        }
-        for row in lanes
-        for quantity in row.get("quantities") or []
-    ]
-    trace_vars: list[dict[str, Any]] = [
-        {
-            "id": f"{row['id']}-{quantity}",
-            "type": "number",
-            "unit": (parameter_rows.get((str(row["id"]), str(quantity))) or {}).get(
-                "unit"
-            ),
-            "shape": "vector",
-        }
-        for row in lanes
-        for quantity in row.get("quantities") or []
-    ]
+
+    def _quantity_vars(
+        lane_rows: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        return [
+            {
+                "id": f"{row['id']}-{quantity}",
+                "type": "number",
+                "unit": (
+                    parameter_rows.get((str(row["id"]), str(quantity))) or {}
+                ).get("unit"),
+                "shape": "scalar",
+                "axis_role": "value",
+            }
+            for row in lane_rows
+            for quantity in row.get("quantities") or []
+        ]
+
+    def _trace_vars(
+        lane_rows: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        return [
+            {
+                "id": f"{row['id']}-{quantity}",
+                "type": "number",
+                "unit": (
+                    parameter_rows.get((str(row["id"]), str(quantity))) or {}
+                ).get("unit"),
+                "shape": "vector",
+            }
+            for row in lane_rows
+            for quantity in row.get("quantities") or []
+        ]
     # time_series speaks receipt time (the canonical validator's own rule:
     # the x axis is receipt_time in seconds, every axis scalar); waveform
     # speaks the explicit time-axis vector alongside its traces.
@@ -2321,13 +2421,22 @@ def _finish(
 
     def _dataset_base(slot_key: str) -> tuple[list[dict[str, Any]], str]:
         """The wire shape a dataset slot carries WITHOUT the computed rows,
-        and its axis variable id."""
+        and its axis variable id. The lane-derived rows are the lanes of the
+        PLOT over this slot (#556 B3) — the founding default for a slot
+        with no plot of its own."""
         kind = plot_kind_for_slot.get(slot_key, "digital_lanes")
+        lane_rows = lanes_for_over_slot.get(slot_key, default_lanes)
         if kind == "time_series":
-            return [receipt_var, *quantity_vars], str(receipt_var["id"])
+            return [receipt_var, *_quantity_vars(lane_rows)], str(receipt_var["id"])
         if kind == "waveform":
-            return [x_var, *trace_vars], str(x_var["id"])
-        return [x_var, *lane_vars], str(x_var["id"])
+            return [x_var, *_trace_vars(lane_rows)], str(x_var["id"])
+        return [
+            x_var,
+            *(
+                {"id": row["id"], "type": "string", "unit": None, "shape": "vector"}
+                for row in lane_rows
+            ),
+        ], str(x_var["id"])
 
     def _dataset_shape(slot_key: str) -> list[dict[str, Any]]:
         kind = plot_kind_for_slot.get(slot_key, "digital_lanes")
@@ -2381,6 +2490,17 @@ def _finish(
         None,
     )
     decoder_lanes: list[dict[str, Any]] = []
+    # The lanes a decoder's sources map onto: the lanes of the plot that
+    # hosts decoder lanes — the digital_lanes plot (#556 B3: per-page lane
+    # sets; founding behavior is the default set, the one channels slot).
+    decode_host_lanes: list[dict[str, Any]] = next(
+        (
+            lanes_for_over_slot[str(spec.get("over_slot", ""))]
+            for page in merged["pages"]
+            if str((spec := page.get("plot") or {}).get("kind", "")) == "digital_lanes"
+        ),
+        default_lanes,
+    )
     if (
         (decode_declared or decode_annotated_urn)
         and descriptor.get("decoders")
@@ -2397,9 +2517,9 @@ def _finish(
                 ]
             except (ValueError, OSError, json.JSONDecodeError):
                 line_ids = []
-            if not line_ids or len(line_ids) > len(lanes):
+            if not line_ids or len(line_ids) > len(decode_host_lanes):
                 continue
-            sources = [row["id"] for row in lanes[: len(line_ids)]]
+            sources = [row["id"] for row in decode_host_lanes[: len(line_ids)]]
             settings = {
                 str(line): source
                 for line, source in zip(line_ids, sources, strict=False)
@@ -2444,11 +2564,14 @@ def _finish(
         if str(page.get("kind", "readings")) != "readings":
             continue
         page_id = str(page["id"])
+        # The page's own tiles read the page's lanes (#556 B3: the placed
+        # channels slots' lanes, the founding default when none is placed).
+        page_lanes = _lanes_for_page(page_id)
         for key in page.get("_slot_keys", []):
             if key not in dataset_slots:
                 continue
             ids: list[str] = []
-            for row in lanes:
+            for row in page_lanes:
                 for quantity in row.get("quantities") or []:
                     binding_id = f"{key}-{row['id']}-{quantity}"
                     value_id = f"{row['id']}-{quantity}"
@@ -2719,8 +2842,15 @@ def _finish(
             )
             page["plots"] = [plots[-1]]
             continue
+        # The logic-alphabet lanes of THIS plot (#556 B3): the placed
+        # channels slots' lanes, the founding default when none is placed.
+        plot_lanes = lanes_for_over_slot.get(over_key, default_lanes)
+        lane_var_rows = [
+            {"id": row["id"], "type": "string", "unit": None, "shape": "vector"}
+            for row in plot_lanes
+        ]
         groups = []
-        n = len(lane_vars)
+        n = len(lane_var_rows)
         full = n // _GROUP_SIZE
         remainder = n % _GROUP_SIZE
         # A trailing remainder of exactly 1 forms no group (member_ids
@@ -2729,7 +2859,7 @@ def _finish(
         for k in range(total):
             start = k * _GROUP_SIZE
             width = _GROUP_SIZE if k < full else remainder
-            members = [row["id"] for row in lane_vars[start : start + width]]
+            members = [row["id"] for row in lane_var_rows[start : start + width]]
             groups.append(
                 {
                     "id": f"lanes-{k + 1}",
@@ -2743,9 +2873,10 @@ def _finish(
                 "kind": "digital_lanes",
                 "binding_id": capture_binding_id,
                 "x": "t",
-                "y": [row["id"] for row in lane_vars],
+                "y": [row["id"] for row in lane_var_rows],
                 "channel_hints": [
-                    {"variable_id": row["id"], "visible": True} for row in lane_vars
+                    {"variable_id": row["id"], "visible": True}
+                    for row in lane_var_rows
                 ],
                 "lane_groups": groups,
                 "decoder_lanes": decoder_lanes,
@@ -2792,6 +2923,18 @@ def _finish(
         "descriptor_sha256": descriptor_hash,
         "targets": targets,
     }
+    # The lanes a derived plot actually CARRIES (#556 B3): expectation
+    # counts read the rendered set, and so does the residual channel
+    # closure — a channel of a role no rendered lanes carry reports, which
+    # covers both a role no slot resolves and a slot whose lanes land on
+    # no plot (applied is not rendered).
+    rendered_lanes: list[dict[str, Any]] = []
+    seen_channel_ids: set[str] = set()
+    for rows in lanes_for_over_slot.values():
+        for row in rows:
+            if str(row.get("id")) not in seen_channel_ids:
+                seen_channel_ids.add(str(row.get("id")))
+                rendered_lanes.append(row)
     expectation = _build_expectation(
         merged, plan, pages_out,
         plot_group_count=sum(
@@ -2802,19 +2945,43 @@ def _finish(
             urn for urn, row in plan.items()
             if row["level"] in ("L1", "L2") and row["page"] == _capture_page_id(pages_out)
         ],
-        channel_count=len(lanes),
-        variable_count=sum(len(row.get("quantities") or ()) for row in lanes),
+        channel_count=len(rendered_lanes),
+        variable_count=sum(
+            len(row.get("quantities") or ()) for row in rendered_lanes
+        ),
     )
     declaration = _build_declaration(
         references, divergences, plan, ignored_pins
     )
     cannot = list(merged["cannot_derive"])
+    # (#556 §4 V3 layer 2) An APPLIED channels member whose page hosts no
+    # plot applies but renders nothing: its channels resolved (their role
+    # matched the composed slot, so B1's channel closure is quiet) yet no
+    # surface carries them. The member's own row discloses it — applied is
+    # not rendered, and silence would read as "it rendered and looked
+    # fine". A page whose plot IS analog renders the member's channels as
+    # their quantity/trace variables (the founding daq behavior), so only
+    # the plot-less page reaches this row.
+    member_residual_rows: list[ResidualMember] = []
+    pages_with_plot = {
+        str(page.get("id")) for page in merged["pages"] if page.get("plot")
+    }
+    for row in (composed_members or {}).get("channels", ()):
+        if row["page"] not in pages_with_plot:
+            member_residual_rows.append(
+                ResidualMember(
+                    "composed channels",
+                    "channels and decoders",
+                    str(row["slot"]),
+                    f"no lane host (page {row['page']} hosts no plot; lanes "
+                    "render into the named page's plot alone)",
+                )
+            )
     # The residual inventory (#556 Track B §3 rule 3) needs four facts about
-    # THIS run: which channel roles resolved lanes, which dataset targets
+    # THIS run: which channel roles rendered lanes, which dataset targets
     # derived (and the base variable ids their wire shape carries), which
     # composed series the plot ceiling forced off a plot, and which plot
     # kinds derived.
-    channels_slot = _channels_slot(merged)
     residual = residual_members(
         descriptor,
         # The rendered set, not the built set (R10's condition): lanes a
@@ -2824,12 +2991,15 @@ def _finish(
             for plot in plots
             for lane in (plot.get("decoder_lanes") or [])
         },
-        # The founding rule resolves ONE channels slot, so at most one role
-        # resolves lanes here; a channel of another role reports (#556 B1).
+        # The roles the run RESOLVED lanes for (#556 B1's closure, kept
+        # resolution-keyed): every channels slot's role — reference or
+        # composed. A channel of a role no slot resolves reports; a channel
+        # of a RESOLVED role whose member renders nowhere is disclosed by
+        # the member's own row below (applied is not rendered — but the
+        # channel did resolve, and B1's two-sided promise keys on that).
         channel_roles=(
-            (str(channels_slot.get("where_role", "")),)
-            if channels_slot is not None
-            else ()
+            str(slot.get("where_role", ""))
+            for slot in _channels_slots(merged).values()
         ),
         dataset_variables={
             str(target["id"]): frozenset(
@@ -2841,6 +3011,7 @@ def _finish(
         series_overflow=series_overflow,
         plot_kinds=[str(plot.get("kind", "")) for plot in plots],
     )
+    residual = tuple([*residual, *member_residual_rows])
     result = DerivedUI(
         manifest=manifest,
         envelope=envelope,
