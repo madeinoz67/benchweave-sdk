@@ -507,7 +507,11 @@ def _applied_member_row(
     claim order (the design's rows are one action per row; a multi-claim
     member whose every claim is declared names its first, and the
     per-claim surface question belongs to the slices that derive those
-    vocabularies)."""
+    vocabularies). A dataset member's declared ``plot`` (B5, §4 V5) rides
+    as ``plot_kind`` — the member's own choice, present exactly when the
+    declaration carries one: the derived plot row is wire-shaped BY DESIGN
+    (indistinguishable from a class plot), so the ledger is the provenance
+    surface for the vendor's choice."""
     row = {
         "slot": str(member.get("slot", "")),
         "page": str(member.get("page", "")),
@@ -519,6 +523,8 @@ def _applied_member_row(
         row["action"] = next(
             str(claim) for claim in member.get("claims") or () if str(claim) in declared
         )
+    if member.get("kind") == "dataset" and isinstance(member.get("plot"), dict):
+        row["plot_kind"] = str(member["plot"].get("kind", ""))
     return row
 
 
@@ -1896,14 +1902,19 @@ def derive_ui(
                     "classref_unknown_action",
                     f"slot {key} names {urn}, absent from the served catalogs",
                 )
-    # (#556 §4 V1/V6, B4) The D4 rule's member half: an APPLIED procedure
-    # or configuration member composes a target whose input_schema_id names
-    # the catalogue side — an action no served or pinned catalog describes
-    # has none, and the canonical validator refuses the target twice over
-    # (unresolved_reference and capability_mismatch), so the derivation
-    # refuses at the claim instead of emitting a document the validator
-    # rejects. A member that applies nowhere composes nothing and stays the
-    # applied-nowhere disclosure; a dataset member rides B5.
+    # (#556 §4 V1/V6, B4; B5's dataset half) The D4 rule's member half: an
+    # APPLIED procedure or configuration member composes a target whose
+    # input_schema_id names the catalogue side — an action no served or
+    # pinned catalog describes has none, and the canonical validator
+    # refuses the target twice over (unresolved_reference and
+    # capability_mismatch), so the derivation refuses at the claim instead
+    # of emitting a document the validator rejects. A member that applies
+    # nowhere composes nothing and stays the applied-nowhere disclosure.
+    # The dataset kind stays OUT of this rule structurally (B5): its
+    # composed target carries measurement_schema_id — the descriptor's
+    # pinned measurement contract — never input_schema_id, so there is no
+    # catalogue side for the claim to need; an uncatalogued capture verb
+    # composes its dataset surface and derives its control residual.
     for declaration in member_declarations:
         for member in declaration.members:
             if member.get("kind") not in ("procedure", "configuration"):
@@ -2076,33 +2087,35 @@ def _inject_composed_members(
     procedure and configuration kinds (V1/V6 layer 2 — the procedure loop
     and the configuration arm consume them, the member's fields the
     reference's own action-slot branch verbatim, the claimed URN the
-    first claim the descriptor declares); the dataset kind rides B5. A
-    member that applies nowhere injects nothing — its disclosure is the
+    first claim the descriptor declares); B5 injects the dataset kind (V4
+    layer 2 — the dataset arm composes the target with the vendor profile
+    row and the pinned measurement contract). A member that
+    applies nowhere injects nothing — its disclosure is the
     applied-nowhere row."""
     declared_actions = descriptor.get("actions") or {}
     for declaration in declarations:
         for member in declaration.members:
             kind = member.get("kind")
-            if kind not in ("channels", "procedure", "configuration"):
+            if kind not in ("channels", "procedure", "configuration", "dataset"):
                 continue
             if not _member_applies(member, descriptor):
                 continue
             slot_key = str(member.get("slot", ""))
             if kind != "channels" and declaration.profile is None:
-                # (#556 B4) An APPLIED procedure or configuration member
-                # composes a target naming the declaration's vendor profile
-                # row (the seam, §0.2); a declaration with no row is
-                # malformed for the surface it requests — a cross-array
-                # conditional the 0.1.0 dialect schema cannot express,
-                # refused under the declaration's own invalidity code. A
-                # member that applies nowhere composes nothing, so a dead
-                # member in a profile-less document stays the applied-nowhere
+                # (#556 B4; B5 extends it to the dataset kind with the
+                # surface it guards) An APPLIED action-kind member composes
+                # a target naming the declaration's vendor profile row (the
+                # seam, §0.2); a declaration with no row is malformed for
+                # the surface it requests — a cross-array conditional the
+                # 0.1.0 dialect schema cannot express, refused under the
+                # declaration's own invalidity code. A member that applies
+                # nowhere composes nothing, so a dead member in a
+                # profile-less document stays the applied-nowhere
                 # disclosure, never this refusal. NOT caught here (the
-                # canonical validator's finding, never a refusal): a profile
-                # row whose required/optional actions omit the member's
-                # claim, which reports capability_mismatch at check-ui.
-                # Dataset members are exempt until B5 composes their
-                # targets; the channels kind claims no action and needs no
+                # canonical validator's finding, never a refusal): a
+                # profile row whose required/optional actions omit the
+                # member's claim, which reports capability_mismatch at
+                # check-ui. The channels kind claims no action and needs no
                 # row.
                 raise _refuse(
                     "classref_invalid_member_declaration",
@@ -2422,17 +2435,18 @@ def _finish(
     ).encode()
     descriptor_hash = hashlib.sha256(pin_bytes).hexdigest()
     profile_ids = sorted({str(row["profile_id"]) for row in references})
-    # (#556 §4 V1/V6, the seam) The profile ids a COMPOSED member's target
-    # names: the declaration's own vendor row — the row the pinned-document
-    # merge (B4 motion 1) puts in the validator's profile map — never the
-    # served set, whose rows list none of the member's claimed actions. A
-    # reference slot's target keeps the served set exactly as before.
+    # (#556 §4 V1/V6/V4, the seam) The profile ids a COMPOSED member's
+    # target names: the declaration's own vendor row — the row the
+    # pinned-document merge (B4 motion 1) puts in the validator's profile
+    # map — never the served set, whose rows list none of the member's
+    # claimed actions. A reference slot's target keeps the served set
+    # exactly as before.
     member_profile_for_slot: dict[str, str] = {}
     for member_declaration in member_declarations:
         if member_declaration.profile is None:
             continue
         for member in member_declaration.members:
-            if member.get("kind") not in ("procedure", "configuration"):
+            if member.get("kind") not in ("procedure", "configuration", "dataset"):
                 continue
             if not _member_applies(member, descriptor):
                 continue
@@ -2519,15 +2533,41 @@ def _finish(
     # wire shape its kind declares — the digital_lanes logic alphabet, the
     # scalar variables of a measure dataset (one per channel and declared
     # quantity), or the array-valued traces of a waveform dataset over the
-    # explicit time axis. A slot with no plot keeps the founding shape.
+    # explicit time axis. A slot with no plot keeps the founding shape —
+    # UNLESS its binding page hosts one (#556 §4 V4, B5): a plot-less slot
+    # INHERITS the page's plot kind, so a vendor capture bound beside a
+    # waveform plot derives the waveform wire shape rather than the
+    # founding digital-lanes string-lane shape that contradicts the page.
+    # No vendored reference places a dataset slot beside a foreign plot
+    # (asserted structurally in tests/test_classref_member_datasets.py), so
+    # the founding fixtures derive byte-identically under the inheritance.
     plot_kind_for_slot: dict[str, str] = {}
+    plot_kind_for_page: dict[str, str] = {}
+    page_of_slot: dict[str, str] = {}
     for page in merged["pages"]:
+        page_id = str(page["id"])
+        for key in page.get("_slot_keys", []):
+            page_of_slot.setdefault(key, page_id)
         spec = page.get("plot")
         if spec:
             plot_kind_for_slot.setdefault(
                 str(spec.get("over_slot", "")),
                 str(spec.get("kind", "digital_lanes")),
             )
+            plot_kind_for_page.setdefault(
+                page_id, str(spec.get("kind", "digital_lanes"))
+            )
+
+    def _slot_plot_kind(slot_key: str) -> str:
+        """The plot kind a dataset slot's wire shape speaks: its own plot
+        spec's kind first, then — B5's inheritance refinement — the binding
+        page's plot kind, then the founding digital_lanes shape."""
+        own = plot_kind_for_slot.get(slot_key)
+        if own is not None:
+            return own
+        return plot_kind_for_page.get(
+            page_of_slot.get(slot_key, ""), "digital_lanes"
+        )
     readings_slots = {
         key
         for page in merged["pages"]
@@ -2614,8 +2654,9 @@ def _finish(
         """The wire shape a dataset slot carries WITHOUT the computed rows,
         and its axis variable id. The lane-derived rows are the lanes of the
         PLOT over this slot (#556 B3) — the founding default for a slot
-        with no plot of its own."""
-        kind = plot_kind_for_slot.get(slot_key, "digital_lanes")
+        with no plot of its own. The KIND is the slot's own plot's, or its
+        binding page's (#556 B5 — the inheritance refinement)."""
+        kind = _slot_plot_kind(slot_key)
         lane_rows = lanes_for_over_slot.get(slot_key, default_lanes)
         if kind == "time_series":
             return [receipt_var, *_quantity_vars(lane_rows)], str(receipt_var["id"])
@@ -2630,7 +2671,7 @@ def _finish(
         ], str(x_var["id"])
 
     def _dataset_shape(slot_key: str) -> list[dict[str, Any]]:
-        kind = plot_kind_for_slot.get(slot_key, "digital_lanes")
+        kind = _slot_plot_kind(slot_key)
         wire_shape = "scalar" if kind == "time_series" else "vector"
         base, _axis = _dataset_base(slot_key)
         # A computed id equal to ANY variable id the base wire shape carries
@@ -2654,7 +2695,15 @@ def _finish(
                 "id": capture_key,
                 "kind": "dataset",
                 "action_id": capture_slot["action"],
-                "profile_ids": profile_ids,
+                # (#556 §4 V4) A composed dataset member in the capture
+                # position (a class whose reference carries no dataset slot
+                # of its own) names the vendor row — the seam — exactly as a
+                # composed procedure/configuration target does.
+                "profile_ids": (
+                    [member_profile_for_slot[capture_key]]
+                    if capture_key in member_profile_for_slot
+                    else profile_ids
+                ),
                 "measurement_schema_id": measurement_id,
                 "variables": _dataset_shape(capture_key),
             }
@@ -2736,12 +2785,50 @@ def _finish(
                 "id": decode_key,
                 "kind": "dataset",
                 "action_id": decode_slot["action"],
-                "profile_ids": profile_ids,
+                # (#556 §4 V4/V3) A composed dataset member in the decode
+                # position is the decoder lanes' binding host (the LA
+                # composing arm's shape) — and names the vendor row when the
+                # slot is a member's, exactly as the capture position does.
+                "profile_ids": (
+                    [member_profile_for_slot[decode_key]]
+                    if decode_key in member_profile_for_slot
+                    else profile_ids
+                ),
                 "measurement_schema_id": measurement_id,
                 "variables": _dataset_shape(decode_key),
             }
         )
         bindings.append({"id": decode_key, "kind": "dataset", "target_id": decode_key})
+    # (#556 §4 V4, B5) The dataset loop's composed tail: every dataset slot
+    # beyond the founding pair (the capture position and the decode
+    # position) whose action the descriptor declares composes its own
+    # target and binding through the same arm. Only an injected member
+    # reaches here — the vendored references carry at most two dataset
+    # slots (the structural premise the byte-stability arm pins) — and an
+    # APPLIED member's action is declared by construction; the guard keeps
+    # the arm honest for any future corpus shape the premise arm moves on.
+    for tail_key, tail_slot in dataset_slots.items():
+        if tail_key in (capture_key, decode_key):
+            continue
+        if str(tail_slot.get("action", "")) not in actions:
+            continue
+        targets.append(
+            {
+                "id": tail_key,
+                "kind": "dataset",
+                "action_id": tail_slot["action"],
+                "profile_ids": (
+                    [member_profile_for_slot[tail_key]]
+                    if tail_key in member_profile_for_slot
+                    else profile_ids
+                ),
+                "measurement_schema_id": measurement_id,
+                "variables": _dataset_shape(tail_key),
+            }
+        )
+        bindings.append(
+            {"id": tail_key, "kind": "dataset", "target_id": tail_key}
+        )
     # The readings expansion (the L11 rule): a readings page's rendered
     # tiles are OBSERVATION bindings — one per scalar variable of its
     # dataset slot — each naming the descriptor parameter the channel

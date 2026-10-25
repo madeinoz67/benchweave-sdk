@@ -3,7 +3,7 @@
   "descriptor_version": "1.0.0",
   "id": "dev.meridian.m400",
   "display_name": "Meridian M-400",
-  "description": "Acceptance fixture for the class-reference composition scenario (gateway #541, extended by #556 Track B): a mostly-DAQ device with one composed action class, one residual action, and a composed-member declaration carrying a vendor configure slot and a sweep procedure slot. Fixture vocabulary only; not a verified real device or implemented adapter.",
+  "description": "Acceptance fixture for the class-reference composition scenario (gateway #541, extended by #556 Track B): a mostly-DAQ device with one composed action class, one residual action, and a composed-member declaration carrying a vendor configure slot, a sweep procedure slot and a dataset member claiming the segment-capture verb (B5: its wire shape inherits the capture page's waveform plot). Fixture vocabulary only; not a verified real device or implemented adapter.",
   "identity": {
     "strategy": "adapter",
     "manufacturer": "Meridian Instruments",
@@ -134,12 +134,12 @@
     {
       "id": "urn:meridian:member-declaration:1.0.0",
       "path": "member-declaration-m400.json",
-      "sha256": "ab394cd306bb771c57d8a686420f370c10f4d2a8e4ee662f0896940124758e1f"
+      "sha256": "2fd243e33dfb618958b2e8bcbe55404ab97e30135f18c8ebc475115fb5a6241c"
     },
     {
       "id": "urn:meridian:actions:1.0.0",
       "path": "meridian-actions.json",
-      "sha256": "8dcb072db976fb96353f5c4d0a79183e21c4f8159ab52551bf5d5873e8838661"
+      "sha256": "1e02d7e38a16be16030614293c3b1cc55c9785782c3dc4dbf642ce976285f359"
     }
   ],
   "actions": {
@@ -247,6 +247,27 @@
       },
       "input_constraints": {},
       "timeout_ms": 10000,
+      "side_effect": "state_change",
+      "cancellable": true,
+      "retry": "never"
+    },
+    "com.meridian.m400.segment_capture/1.0.0": {
+      "binding": {
+        "kind": "adapter",
+        "key": "segment_capture"
+      },
+      "input_constraints": {
+        "properties": {
+          "duration_s": {
+            "type": "number",
+            "minimum": 0.1
+          }
+        },
+        "required": [
+          "duration_s"
+        ]
+      },
+      "timeout_ms": 30000,
       "side_effect": "state_change",
       "cancellable": true,
       "retry": "never"

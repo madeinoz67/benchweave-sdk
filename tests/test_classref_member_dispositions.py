@@ -53,7 +53,25 @@ def _plot_member(
 
 
 def _declaration(member: dict[str, Any]) -> dict[str, Any]:
-    return {"contract_version": "0.1.0", "members": [member]}
+    # MOVED DELIBERATELY 2026-10-26 (#556 B5): the declaration now carries
+    # the vendor profile row the B4 admission rule requires — a rule B5
+    # extended to the dataset kind with the target surface it guards, so a
+    # row-less dataset member refuses where these arms derived green. The
+    # arms' subject is the plot PLACEMENT disposition, which the row does
+    # not touch.
+    return {
+        "contract_version": "0.1.0",
+        "profiles": [
+            {
+                "id": "com.meridian.m400/1.0.0",
+                "title": "Meridian M-400 composed profile",
+                "channel_roles": ["digital_input"],
+                "required_actions": [VENDOR_URN],
+                "optional_actions": [],
+            }
+        ],
+        "members": [member],
+    }
 
 
 def _descriptor(declaration: dict[str, Any]) -> dict[str, Any]:
@@ -112,8 +130,18 @@ def test_a_member_plot_on_a_page_hosting_a_class_plot_is_reported(
             "class's plot)",
         ),
     ], rows
+    # MOVED DELIBERATELY 2026-10-26 (#556 B5, §4 V4 provenance): the
+    # datasets ledger row gains the declared ``plot_kind`` — the member's
+    # own choice, present exactly when the declaration carries one (the
+    # derived plot row is wire-shaped by design, so the ledger is the
+    # provenance surface for the vendor's choice).
     assert derived.composed_members["datasets"] == (
-        {"slot": "burst", "action": VENDOR_URN, "page": "capture"},
+        {
+            "slot": "burst",
+            "action": VENDOR_URN,
+            "page": "capture",
+            "plot_kind": "time_series",
+        },
     )
 
 

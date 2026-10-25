@@ -67,12 +67,14 @@ CLASS_ACTIONS = (
     "otdp.daq.fetch/1.0.0",
     "otdp.daq.trigger/1.0.0",
 )
-#: (#556 B4) The vendor actions the composed-member declaration claims and
-#: the pinned vendor catalog describes — the catalog layer beside the class
-#: actions (their surfaces are the member arms' subject below).
+#: (#556 B4; B5 adds the dataset member's capture verb) The vendor actions
+#: the composed-member declaration claims and the pinned vendor catalog
+#: describes — the catalog layer beside the class actions (their surfaces
+#: are the member arms' subject below).
 MEMBER_CLAIMED_ACTIONS = (
     "com.meridian.m400.profile_mode/1.0.0",
     "com.meridian.m400.sweep/1.0.0",
+    "com.meridian.m400.segment_capture/1.0.0",
 )
 #: The derived documents ``derive-ui`` writes — the set no author hand-writes.
 #: (#556 B4) one settings asset per configuration surface: the class
@@ -233,10 +235,11 @@ def test_a2_every_declared_action_resolves(tmp_path: Path) -> None:
         urn: row["resolution"] for urn, row in derived.control_plan.items()
     }
     assert set(resolutions.values()) == {"catalog", "composed", "custom"}
-    # MOVED DELIBERATELY 2026-10-25 (#556 B4): the fixture's member-declared
-    # vendor actions resolve through their pinned vendor catalog rows — the
-    # catalog layer beside the class actions, the composed class and the
-    # residual member.
+    # MOVED DELIBERATELY 2026-10-25 (#556 B4) and 2026-10-26 (#556 B5): the
+    # fixture's member-declared vendor actions resolve through their pinned
+    # vendor catalog rows — the catalog layer beside the class actions, the
+    # composed class and the residual member; B5's extension adds the
+    # dataset member's capture verb to that set.
     assert {urn for urn, value in resolutions.items() if value == "catalog"} == (
         set(CLASS_ACTIONS) | set(MEMBER_CLAIMED_ACTIONS)
     )
@@ -1040,8 +1043,14 @@ def test_scope_b1_the_series_ceiling_drops_only_composed_series(
     assert plot["y"][len(base_y):] == [f"cv{index}" for index in range(1, 14)]
     assert "cv14" not in plot["y"], plot
     # Dropped from the PLOT alone: the wire still carries the computed
-    # variable, so the dataset's variable set holds it.
-    (capture,) = _dataset_targets(over)
+    # variable, so the dataset's variable set holds it. (MOVED DELIBERATELY
+    # 2026-10-26, #556 B5: the fixture's extended declaration adds the
+    # segment-capture dataset member beside the class capture target, so the
+    # arm selects the CLASS capture by id instead of unpacking the one-row
+    # tuple that no longer is.)
+    capture = next(
+        row for row in _dataset_targets(over) if row["id"] == "capture"
+    )
     assert "cv14" in {row["id"] for row in capture["variables"]}, capture
     detail = (
         "computed variable derives into dataset variables (no tile; no "
