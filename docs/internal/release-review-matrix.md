@@ -333,6 +333,38 @@ Test surfaces: T1/T2 — the fixtures were regenerated in-arc by the sync PR (re
 | 8 | Gateway uv.lock SDK pin | recorded note — moves at the gateway's next lock run / pointer advance |
 | 9 | Served-set bump class | SERVED-SET MOTION in the window — the class is asserted by the sync machinery (sdk_bump_class_invalid:); the walk records it; release-cut refuses to guess a class (D7) |
 
+## Result record — v0.22.0 (2026-10-26)
+
+The bump rode the standards-sync PR (#208) that vendored `plugin-ui-class-reference`
+0.5.0; release-cut's `assert_increment` refuses a same-version re-cut, so the cut
+transaction could not run end to end (the v0.13.0 precedent). The walk performed
+the substitution surfaces occurrence-by-occurrence, regenerated the fixtures through
+`release_cut.regenerate_fixtures`, and staged the phase-2 patch with
+`release_cut.py --phase2-only`; `release-cut --verify` was green on the pre-tag tree.
+The walk found the bump itself had left three version-bearing prose surfaces stale
+(README, website hero, website tagline) plus two standards stamps (website OTDP, the
+class-reference badge) and the guide's OTDP sentence — all corrected here against
+their machine sources.
+
+| # | Surface | Result |
+|---|---------|--------|
+| 1 | README stamp | updated BY THE WALK → SDK 0.22.0 (pyproject was already 0.22.0 from #208; the README still stamped 0.21.0). OTDP 0.2.4 / adapter API 1.1 correct-as-is against the lock's active otdp row and the derived constant |
+| 1b | User-guide "current SDK" sentence | updated BY THE WALK → OTDP 0.2.4 (was 0.2.3, this row's own documented lag pattern). The sentence carries no SDK number (versionless by the R1 rider; the wheel filename is a glob since #102) |
+| 2 | Website hero status | updated BY THE WALK — two stale stamps: SDK 0.21.0 → 0.22.0 and OTDP 0.2.3 → 0.2.4. Adapter API 1.1 confirmed against `__init__.py`'s derived constant (`ADAPTER_API_VERSION`, read from the 0.2.4 descriptor) |
+| 3 | Docs selector | PHASE-2 — patch staged at `.release/phase2-v0.22.0.patch` (both selector surfaces: latest option + demoted prior); the tag commit applies it (registration precedes the tag; the same patch moves the zero-literal gate battery's anchors, #524). `release-cut --verify` confirmed the patch applies and is byte-equal to `build_phase2`'s recomputation |
+| 4 | Compatibility tagline | updated BY THE WALK → SDK 0.22.0 against the main-repository floor `>=0.1.0` (unchanged). `standards-lock.json` `compatibility.sdk` already 0.22.0 from the sync (the #189 pairing shape) |
+| 5 | Standards badges | updated BY THE WALK — two stale of seven: otdp 0.2.3 → 0.2.4 and plugin-ui-class-reference 0.2.0 → 0.5.0 (the 0.5.0 vendoring in #208; the badge had been stale across two releases). registry 0.1.3, execution 0.2.0, interface 0.1.1, plugin-ui 0.4.0, plugin-ui-preview 0.2.0 correct-as-is. All seven enumerated against the lock's ACTIVE rows |
+| 6 | `great-docs.yml` versions | PHASE-2 — the tag commit applies the staged patch (the ordering constraint: a tag missing itself fails the docs build) |
+| 7 | Contributor window `v0.21.0..HEAD` | 55 commits in the window — human authors other than the operator/bots: none (owner + `dependabot[bot]` + `benchweave-changelog[bot]` only); empty window recorded as a result |
+| 8 | Gateway uv.lock SDK pin | recorded note — moves at the gateway's next lock run / the pointer PR that pairs this release |
+| 9 | Served-set bump class | SERVED-SET MOTION in the window — `plugin-ui-class-reference` 0.4.0 → 0.5.0 (a new active row and the new `composed-member-declaration.schema.json`); MINOR, matching this release's number. The class was asserted by the sync machinery (`sdk_bump_class_invalid:`) in #208; the walk records it |
+
+Test surfaces: T1/T2 regenerated through `release_cut.regenerate_fixtures` at the
+staged tree — byte-identical to the committed fixtures (`git status` empty for
+`tests/fixtures/scaffold_expected`), which already carried 0.22.0 from #208. T3's
+docstring already names `make release-cut` as the procedure (no motion). T4 inert
+by design.
+
 ## Result record — v0.21.0 (2026-10-24)
 
 | # | Surface | Result |
