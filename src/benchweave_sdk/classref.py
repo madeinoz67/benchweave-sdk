@@ -22,6 +22,7 @@ import json
 import re
 from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from functools import cache
 from pathlib import Path
 from typing import Any
@@ -150,6 +151,22 @@ class DerivedUI:
     #: is two-sided — never refuses AND never silent — and silence here is
     #: indistinguishable from "we rendered it and it looked fine".
     residual_members: tuple[ResidualMember, ...] = ()
+    #: (#556 track B §3 rule 1) The APPLIED composed-member set per
+    #: vocabulary (procedures/settings/datasets/channels) — a member
+    #: applies when the descriptor declares its claim (an action the
+    #: member claims is declared; a declared channel carries its
+    #: ``where_role``). Only the composed-member walk writes it; the
+    #: ledger's ``composed_members`` records exactly this set, so a pin
+    #: whose members apply nowhere stays out BY DESIGN and is the
+    #: ``unapplied_member_pins`` disclosure instead — never drift.
+    composed_members: Mapping[str, tuple[dict[str, str], ...]] = dataclass_field(
+        default_factory=dict
+    )
+    #: Pins whose member declarations applied nowhere (#556 §3 rule 1):
+    #: digest-verified, schema-valid, conflict-free, but no member's claim
+    #: names a declared action and no declared channel matches its role —
+    #: disclosed on the REPORTED channel every run, the R1 discipline.
+    unapplied_member_pins: tuple[str, ...] = ()
 
 
 @cache
@@ -283,6 +300,23 @@ class ComposedClass:
     pin_path: str
 
 
+@dataclass(frozen=True)
+class ComposedMemberDeclaration:
+    """One pinned, digest-verified composed-member declaration (#556 track
+    B layer 2): the vendor-authored document that supplies the reference
+    side — one slot per member, its page placement, optionally one vendor
+    profile row — the served corpus does not carry.
+
+    ``profile`` is the declaration's one vendor profile row (the
+    device-profile-catalog row shape, carried under the plural ``profiles``
+    key the canonical validator's map reads) or None; ``members`` are the
+    raw schema-validated member rows; ``pin_path`` names the pinned file."""
+
+    profile: dict[str, Any] | None
+    members: tuple[dict[str, Any], ...]
+    pin_path: str
+
+
 def _validate_composed_class(
     document: Any, pin_path: Any
 ) -> dict[str, Any]:
@@ -319,6 +353,47 @@ def validate_composed_class(document: Any, pin_path: Any) -> dict[str, Any]:
     return _validate_composed_class(document, pin_path)
 
 
+@cache
+def _member_declaration_schema() -> dict[str, Any]:
+    """The family's composed-member-declaration schema, from the vendored,
+    lock-verified tree (#556 track B; the family gained the schema at
+    0.5.0). Resolved lazily — a tree serving an older family derives
+    member-pin-free projects unchanged; a member PIN on such a tree is a
+    platform fault and refuses loudly here, never a silently-empty read."""
+    key = (
+        f"{_FAMILY}/{active_version(_FAMILY)}"
+        "/composed-member-declaration.schema.json"
+    )
+    schema = contract_documents().get(key)
+    if schema is None:
+        raise RuntimeError(
+            "plugin-ui-class-reference member-declaration schema missing from "
+            "the vendored tree; run sync-standards or reinstall the SDK"
+        )
+    return schema  # type: ignore[no-any-return]
+
+
+def _validate_member_declaration(
+    document: Any, pin_path: Any
+) -> dict[str, Any]:
+    """One pinned document against the vendored member-declaration schema
+    (every closed set in it is an owner's own — the reference schema's
+    slot vocabulary, the page id shape, the plot block verbatim, the
+    profile-catalog row shape)."""
+    findings = sorted(
+        Draft202012Validator(_member_declaration_schema()).iter_errors(document),
+        key=lambda error: list(error.path),
+    )
+    if findings:
+        first = findings[0]
+        where = "/".join(str(part) for part in first.path) or "(root)"
+        raise _refuse(
+            "classref_invalid_member_declaration",
+            f"pinned document {pin_path}: {where}: {first.message}",
+        )
+    return document  # type: ignore[no-any-return]
+
+
 def composed_ledger_inventory(
     descriptor: dict[str, Any], descriptor_path: Path | None
 ) -> tuple[set[str], dict[str, str], set[str]]:
@@ -337,9 +412,14 @@ def composed_ledger_inventory(
     migrate-ui refuses, never silently upgrades."""
     catalog = _catalog_documents(descriptor)
     served = dict(catalog.get("actions", {}))
-    vendor_actions, classes, _ignored, _unapplied, _empty = _vendor_documents(
-        descriptor, descriptor_path, served
-    )
+    (
+        vendor_actions,
+        classes,
+        _ignored,
+        _unapplied,
+        _empty,
+        _members,
+    ) = _vendor_documents(descriptor, descriptor_path, served)
     covered = set(served) | set(vendor_actions)
     declared_actions = descriptor.get("actions") or {}
     declared = set(declared_actions)
@@ -371,6 +451,125 @@ def _applied_class_urns(
     }
 
 
+#: The ledger vocabulary each member kind lands under (#556 §3 rule 2):
+#: one key per composed vocabulary, the design's own names.
+_MEMBER_VOCABULARY = {
+    "procedure": "procedures",
+    "configuration": "settings",
+    "dataset": "datasets",
+    "channels": "channels",
+}
+
+
+def _member_applies(member: Mapping[str, Any], descriptor: dict[str, Any]) -> bool:
+    """(#556 §3 rule 1, the R1 rule verbatim) A member applies when the
+    descriptor declares its claim: an action member (dataset,
+    configuration, procedure) when any claimed URN names a declared
+    action; the claim-less channels kind when any declared channel carries
+    its ``where_role``."""
+    if member.get("kind") == "channels":
+        role = str(member.get("where_role", ""))
+        return any(
+            isinstance(row, dict) and str(row.get("role")) == role
+            for row in descriptor.get("channels") or ()
+        )
+    declared = descriptor.get("actions") or {}
+    return any(str(claim) in declared for claim in member.get("claims") or ())
+
+
+def _applied_member_row(
+    member: Mapping[str, Any], descriptor: dict[str, Any]
+) -> dict[str, str]:
+    """The ledger row one APPLIED member lands (#556 §4's per-vocabulary
+    rows): channels carry ``where_role``; the claim-carrying kinds carry
+    the action — the FIRST claim the descriptor declares, in document
+    claim order (the design's rows are one action per row; a multi-claim
+    member whose every claim is declared names its first, and the
+    per-claim surface question belongs to the slices that derive those
+    vocabularies)."""
+    row = {
+        "slot": str(member.get("slot", "")),
+        "page": str(member.get("page", "")),
+    }
+    if member.get("kind") == "channels":
+        row["where_role"] = str(member.get("where_role", ""))
+    else:
+        declared = descriptor.get("actions") or {}
+        row["action"] = next(
+            str(claim) for claim in member.get("claims") or () if str(claim) in declared
+        )
+    return row
+
+
+def _composed_member_inventory(
+    declarations: tuple[ComposedMemberDeclaration, ...],
+    descriptor: dict[str, Any],
+) -> tuple[dict[str, tuple[dict[str, str], ...]], tuple[str, ...]]:
+    """(#556 §3 rules 1-2) The composed-members inventory: the APPLIED set
+    per vocabulary, and the pins whose members apply nowhere.
+
+    Only the composed-member walk feeds this; the ledger's
+    ``composed_members`` records exactly the applied set, so a pin whose
+    members apply nowhere (a shape the schema sanctions) stays out of it
+    BY DESIGN and rides back as its pin path for the REPORTED channel —
+    the R1 discipline, never drift."""
+    rows: dict[str, list[dict[str, str]]] = {}
+    unapplied: list[str] = []
+    for declaration in declarations:
+        applied_any = False
+        for member in declaration.members:
+            if not _member_applies(member, descriptor):
+                continue
+            applied_any = True
+            vocabulary = _MEMBER_VOCABULARY[str(member.get("kind", ""))]
+            rows.setdefault(vocabulary, []).append(
+                _applied_member_row(member, descriptor)
+            )
+        if not applied_any:
+            unapplied.append(declaration.pin_path)
+    frozen = {key: tuple(value) for key, value in rows.items()}
+    return frozen, tuple(unapplied)
+
+
+def _check_member_reference_conflicts(
+    merged: dict[str, Any],
+    declarations: tuple[ComposedMemberDeclaration, ...],
+) -> None:
+    """(#556 §3 rule 4; README rules 1 and 3) The reference-side member
+    conflicts, over the MERGED reference (final page ids and slot keys —
+    later profiles' ids carry their slug): a member slot key a reference
+    slot already holds, a claim a reference slot already binds, and a
+    ``page`` naming no page the composed reference declares all refuse
+    ``classref_composed_slot_conflict`` — the composed slot composes
+    BESIDE the reference, never over it."""
+    pages = {str(page.get("id")) for page in merged["pages"]}
+    for declaration in declarations:
+        for member in declaration.members:
+            slot = str(member.get("slot", ""))
+            if slot in merged["slots"]:
+                raise _refuse(
+                    "classref_composed_slot_conflict",
+                    f"member slot {slot} is already a slot of the composed "
+                    "reference",
+                )
+            page = str(member.get("page", ""))
+            if page not in pages:
+                raise _refuse(
+                    "classref_composed_slot_conflict",
+                    f"member {slot} names page {page}, which the composed "
+                    "reference does not declare",
+                )
+            for claim in member.get("claims") or ():
+                claim = str(claim)
+                for key, ref_slot in merged["slots"].items():
+                    if str(ref_slot.get("action", "")) == claim:
+                        raise _refuse(
+                            "classref_composed_slot_conflict",
+                            f"member {slot} claims {claim}, which reference "
+                            f"slot {key} already binds",
+                        )
+
+
 def _vendor_documents(
     descriptor: dict[str, Any],
     descriptor_path: Path | None,
@@ -381,10 +580,12 @@ def _vendor_documents(
     tuple[str, ...],
     tuple[tuple[str, str], ...],
     tuple[str, ...],
+    tuple[ComposedMemberDeclaration, ...],
 ]:
-    """Action rows, composed classes, ignored pins, unapplied classes and
-    empty-catalog pins from the descriptor's pinned documents (the proven
-    vendor-catalog walk, #541 record §2).
+    """Action rows, composed classes, ignored pins, unapplied classes,
+    empty-catalog pins and composed-member declarations from the
+    descriptor's pinned documents (the proven vendor-catalog walk, #541
+    record §2).
 
     #541 slice 2 (standards record §6): the same walk discriminates by
     document shape — a document carrying ``urn`` AND ``claims`` (the
@@ -412,6 +613,25 @@ def _vendor_documents(
     pinned file's bytes are verified whatever shape they turn out to
     carry.
 
+    #556 track B (§3): a document carrying ``members`` is a composed
+    MEMBER declaration, validated against the vendored
+    ``composed-member-declaration.schema.json`` — the R2 ambiguity
+    question generalizes to the three key sets (a key set is not a shape
+    claim: any overlap of the member/class/catalog keys refuses the R2
+    code, naming the carried keys). A member's ``plot.over_slot`` naming
+    a slot other than its own is the document referring to itself
+    inconsistently and refuses ``classref_composed_plot_slot_mismatch``
+    (the README's named cannot-catch; the schema cannot compare two
+    instance values). Member conflicts refuse
+    ``classref_composed_slot_conflict`` (record §3 rule 4, the
+    refuse-never-merge family): a slot key two members declare, and a
+    claim held by another member or by a composed action class. The
+    reference-side conflicts (a member slot key a reference slot already
+    holds, a claim a reference slot already binds, a page the reference
+    does not declare) run at the injection seam
+    (``_check_member_reference_conflicts``), where the merged reference
+    exists.
+
     Conflicts refuse, never merge (record §8): a claim against a served
     or pinned catalogue row, a claim another class already holds, and a
     second document carrying one class urn all refuse
@@ -429,6 +649,7 @@ def _vendor_documents(
     classes: dict[str, ComposedClass] = {}
     ignored: list[str] = []
     empty_pins: list[str] = []
+    member_declarations: list[ComposedMemberDeclaration] = []
     pinned_sources: dict[str, str] = {}
     for row in descriptor.get("contracts", []):
         identifier = str(row.get("id", ""))
@@ -463,20 +684,64 @@ def _vendor_documents(
                 "classref_vendor_catalog_invalid",
                 f"pinned vendor catalog {row.get('path')} is not a JSON object",
             )
-        composed_keys = "urn" in document and "claims" in document
-        if "actions" in document and ("urn" in document or "claims" in document):
-            # R2 (2026-10-23 fold, wave 3): the ambiguity test is its own
-            # question — actions AND (urn OR claims). Naming the carried
-            # keys says WHY the pin is ambiguous, not just that it is.
+        # R2 generalized (#556 §3): the ambiguity question is KEY-SET
+        # overlap — a key set is not a shape claim. The member keys, the
+        # composed-class keys and the catalog keys are three disjoint
+        # vocabularies; a pin carrying keys from more than one refuses,
+        # naming the carried keys (the pre-#556 predicate — actions AND
+        # (urn OR claims) — is this rule's catalog/class row exactly).
+        shape_groups: list[str] = []
+        if "members" in document:
+            shape_groups.append("members")
+        if "urn" in document or "claims" in document:
+            shape_groups.append("composed-class")
+        if "actions" in document:
+            shape_groups.append("actions")
+        if len(shape_groups) > 1:
             carried = sorted(
-                key for key in ("actions", "urn", "claims") if key in document
+                key
+                for key in ("members", "urn", "claims", "actions")
+                if key in document
             )
             raise _refuse(
                 "classref_invalid_composed_class",
-                f"pinned document {row.get('path')} carries both vendor-catalog "
-                f"and composed-class keys ({', '.join(carried)}) — an "
-                "ambiguous pin",
+                f"pinned document {row.get('path')} carries keys of more "
+                f"than one pin shape ({', '.join(shape_groups)}: "
+                f"{', '.join(carried)}) — an ambiguous pin",
             )
+        composed_keys = "urn" in document and "claims" in document
+        if "members" in document:
+            _validate_member_declaration(document, row.get("path"))
+            # The self-reference rule (README rule 2): ``plot.over_slot``
+            # names the member's own slot or the document contradicts
+            # itself — refused here, before any member can inject.
+            for member in document["members"]:
+                slot = str(member.get("slot", ""))
+                plot = member.get("plot")
+                if (
+                    isinstance(plot, dict)
+                    and str(plot.get("over_slot", "")) != slot
+                ):
+                    raise _refuse(
+                        "classref_composed_plot_slot_mismatch",
+                        f"member {slot} carries plot.over_slot "
+                        f"{plot.get('over_slot')!r}, which is not the "
+                        "member's own slot (a document referring to itself "
+                        "inconsistently)",
+                    )
+            member_declarations.append(
+                ComposedMemberDeclaration(
+                    profile=(
+                        document["profiles"][0]
+                        if isinstance(document.get("profiles"), list)
+                        and document["profiles"]
+                        else None
+                    ),
+                    members=tuple(document["members"]),
+                    pin_path=str(row.get("path", "")),
+                )
+            )
+            continue
         if composed_keys:
             _validate_composed_class(document, row.get("path"))
             cls = ComposedClass(
@@ -607,7 +872,54 @@ def _vendor_documents(
         for urn in sorted(classes)
         if not any(claim in descriptor_actions for claim in classes[urn].claims)
     )
-    return actions, classes, tuple(ignored), unapplied, tuple(empty_pins)
+    # #556 §3 rule 4: member conflicts across the whole pin set — a slot
+    # key two members declare (whatever pin each rode), and a claim held
+    # by another member or by a composed action class (the class owns the
+    # catalogue side, the member the placement; one claim, one owner).
+    # One slot per member, one claim per owner — refuse, never merge.
+    member_slot_owner: dict[str, str] = {}
+    member_claim_owner: dict[str, str] = {}
+    class_claims = {
+        claim: cls_urn
+        for cls_urn, cls in classes.items()
+        for claim in cls.claims
+    }
+    for declaration in member_declarations:
+        for member in declaration.members:
+            slot = str(member.get("slot", ""))
+            holder_pin = member_slot_owner.get(slot)
+            if holder_pin is not None:
+                raise _refuse(
+                    "classref_composed_slot_conflict",
+                    f"member slot {slot} is declared by two members "
+                    f"({holder_pin} and {declaration.pin_path})",
+                )
+            member_slot_owner[slot] = declaration.pin_path
+            for claim in member.get("claims") or ():
+                claim = str(claim)
+                member_holder = member_claim_owner.get(claim)
+                if member_holder is not None:
+                    raise _refuse(
+                        "classref_composed_slot_conflict",
+                        f"{claim} is claimed by both member {member_holder} "
+                        f"and member {slot}",
+                    )
+                class_holder = class_claims.get(claim)
+                if class_holder is not None:
+                    raise _refuse(
+                        "classref_composed_slot_conflict",
+                        f"member {slot} claims {claim}, which composed class "
+                        f"{class_holder} claims",
+                    )
+                member_claim_owner[claim] = slot
+    return (
+        actions,
+        classes,
+        tuple(ignored),
+        unapplied,
+        tuple(empty_pins),
+        tuple(member_declarations),
+    )
 
 
 def _intersect_property(
@@ -1442,10 +1754,22 @@ def derive_ui(
             )
     catalog = _catalog_documents(descriptor)
     catalog_actions: dict[str, Any] = dict(catalog.get("actions", {}))
-    vendor_actions, _composed, ignored_pins, unapplied, empty_pins = (
-        _vendor_documents(descriptor, descriptor_path, catalog_actions)
-    )
+    (
+        vendor_actions,
+        _composed,
+        ignored_pins,
+        unapplied,
+        empty_pins,
+        member_declarations,
+    ) = _vendor_documents(descriptor, descriptor_path, catalog_actions)
     catalog_actions.update(vendor_actions)
+    # #556 §3 rule 1: the applied member set (per vocabulary) and the pins
+    # whose members applied nowhere — computed from the descriptor here so
+    # every consumer (the ledger, the gate's REPORTED channel) reads ONE
+    # derivation of application.
+    composed_members, unapplied_member_pins = _composed_member_inventory(
+        member_declarations, descriptor
+    )
     actions = descriptor.get("actions") or {}
     # #541 layer 3: a descriptor action no served catalog describes is a
     # residual member, not a refusal — it derives from the descriptor's own
@@ -1482,6 +1806,9 @@ def derive_ui(
         descriptor_path=descriptor_path, descriptor_raw=descriptor_raw,
         ignored_pins=ignored_pins, unapplied_classes=unapplied,
         empty_action_pins=empty_pins,
+        member_declarations=member_declarations,
+        composed_members=composed_members,
+        unapplied_member_pins=unapplied_member_pins,
     )
 
 
@@ -1612,9 +1939,17 @@ def _assemble(
     ignored_pins: tuple[str, ...] = (),
     unapplied_classes: tuple[tuple[str, str], ...] = (),
     empty_action_pins: tuple[str, ...] = (),
+    member_declarations: tuple[ComposedMemberDeclaration, ...] = (),
+    composed_members: Mapping[str, tuple[dict[str, str], ...]] | None = None,
+    unapplied_member_pins: tuple[str, ...] = (),
 ) -> DerivedUI:
     version = active_version("plugin-ui")
     merged = _merge_references(references)
+    # #556 §3 rule 4: the reference-side member conflicts run over the
+    # MERGED reference (final page ids and slot keys) and before any
+    # member injects — the composed slot composes beside the reference,
+    # never over it.
+    _check_member_reference_conflicts(merged, member_declarations)
     lanes = _resolve_channels(descriptor, merged)
     slot_for_urn = {
         slot["action"]: (key, slot)
@@ -1657,6 +1992,8 @@ def _assemble(
         descriptor_file_raw=descriptor_raw,
         ignored_pins=ignored_pins, unapplied_classes=unapplied_classes,
         empty_action_pins=empty_action_pins,
+        composed_members=composed_members or {},
+        unapplied_member_pins=unapplied_member_pins,
     )
 
 
@@ -1852,6 +2189,8 @@ def _finish(
     ignored_pins: tuple[str, ...] = (),
     unapplied_classes: tuple[tuple[str, str], ...] = (),
     empty_action_pins: tuple[str, ...] = (),
+    composed_members: Mapping[str, tuple[dict[str, str], ...]] | None = None,
+    unapplied_member_pins: tuple[str, ...] = (),
 ) -> DerivedUI:
     """Assemble every emitted document from the resolved inventory."""
     import hashlib
@@ -2518,6 +2857,8 @@ def _finish(
         unapplied_classes=unapplied_classes,
         empty_action_pins=empty_action_pins,
         residual_members=residual,
+        composed_members=composed_members or {},
+        unapplied_member_pins=unapplied_member_pins,
     )
     return result
 
@@ -2531,9 +2872,14 @@ def effective_action_fields(
     descriptor's own constraints, exactly as the plan row derives them."""
     catalog = _catalog_documents(descriptor)
     actions = dict(catalog.get("actions", {}))
-    vendor_actions, _composed, _ignored, _unapplied, _empty = _vendor_documents(
-        descriptor, descriptor_path, actions
-    )
+    (
+        vendor_actions,
+        _composed,
+        _ignored,
+        _unapplied,
+        _empty,
+        _member_declarations,
+    ) = _vendor_documents(descriptor, descriptor_path, actions)
     actions.update(vendor_actions)
     constraints = (descriptor.get("actions") or {}).get(urn, {}).get(
         "input_constraints"
@@ -2564,9 +2910,14 @@ def coverage_plan_without_reference(
     disclosures, the same channel)."""
     catalog = _catalog_documents(descriptor)
     actions_map: dict[str, Any] = dict(catalog.get("actions", {}))
-    vendor_actions, _composed, ignored, unapplied, empty_pins = (
-        _vendor_documents(descriptor, descriptor_path, actions_map)
-    )
+    (
+        vendor_actions,
+        _composed,
+        ignored,
+        unapplied,
+        empty_pins,
+        _member_declarations,
+    ) = _vendor_documents(descriptor, descriptor_path, actions_map)
     actions_map.update(vendor_actions)
     actions = descriptor.get("actions") or {}
     # #541 layer 3, the same treatment as derive_ui: a catalog-absent
