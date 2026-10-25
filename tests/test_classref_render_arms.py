@@ -332,7 +332,13 @@ def test_red_sanity_neutralized_detector(
     data-table) independently of ``_assert_expect``; neutralizing the
     count detector alone would leave that red standing and prove nothing
     about either. Both detectors neutralize together; the per-surface
-    arm's own red-sanity runs beside the F2 arms."""
+    arm's own red-sanity runs beside the F2 arms.
+    MOVED DELIBERATELY AGAIN 2026-10-26 (#556 B5 refute fold F1): the gate
+    now carries a THIRD component detector — the per-surface reading-tile
+    comparison — which reds the dmm/dc_psu strips (their target surface is
+    a readings page's tile set) independently of the other two; all three
+    neutralize together, and the tile detector's own red-sanity runs in
+    test_classref_member_datasets beside the fold's F1 arms."""
     _surface, _page_id, mutate = _strip_spec(profile_id)
     project, _derived = _build(profile_id, tmp_path / "sanity")
     _rewrite_manifest(project, mutate)
@@ -341,6 +347,9 @@ def test_red_sanity_neutralized_detector(
     )
     monkeypatch.setattr(
         gate_module, "_data_table_surface_findings", lambda *a, **k: []
+    )
+    monkeypatch.setattr(
+        gate_module, "_reading_surface_findings", lambda *a, **k: []
     )
     reference = find_reference(profile_id)
     assert reference is not None

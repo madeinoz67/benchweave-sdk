@@ -79,6 +79,13 @@ class _CensusParser(HTMLParser):
         # so coverage compares SURFACES, never pooled counts (the
         # staged_control_ids precedent, gateway #463 RC fold).
         self.data_table_bindings: list[str] = []
+        # (#556 B5 refute fold F1) The bindings the served reading tiles
+        # carry — one per tile, the same attribution discipline: a readings
+        # page's tile count is one set PER DATASET SLOT on the page (a
+        # composed member's set is expected), and only per-surface
+        # attribution separates a member's honest second set from a padded
+        # duplicate or a stripped tile.
+        self.reading_bindings: list[str] = []
         self.readings = 0
         self.plots = 0
         self._button_depth = 0
@@ -121,6 +128,9 @@ class _CensusParser(HTMLParser):
                 self.data_table_bindings.append(binding)
         if "bw-reading" in classes:
             self.readings += 1
+            binding = data.get("data-bw-binding")
+            if binding:
+                self.reading_bindings.append(binding)
         if "bw-plot" in classes:
             self.plots += 1
         if "bw-confirm" in classes:
@@ -159,6 +169,7 @@ def census(html: str) -> dict[str, Any]:
         "confirms": parser.confirms,
         "data_tables": parser.data_tables,
         "data_table_bindings": list(dict.fromkeys(parser.data_table_bindings)),
+        "reading_bindings": list(dict.fromkeys(parser.reading_bindings)),
         "readings": parser.readings,
         "plots": parser.plots,
         "lane_labels": [
@@ -630,6 +641,62 @@ def _data_table_surface_findings(
     return findings
 
 
+def _reading_surface_findings(
+    derived_manifest: dict[str, Any],
+    censused: dict[str, dict[str, Any]],
+    declared: frozenset[str] = frozenset(),
+) -> list[GateFinding]:
+    """(#556 B5 refute fold F1) The per-surface reading-tile comparison —
+    the data-table precedent applied to the tile vocabulary: every
+    observation binding the DERIVED manifest carries on a page must render
+    a tile attributed to it, and every attributed tile the render serves
+    must be a surface the derivation minted. The count row alone laundered
+    strip-and-pad across bindings exactly the way the pooled data-table
+    count did (a member's tile stripped, a neighbour's duplicated, the
+    count re-satisfied), and a readings page's tile census is one set PER
+    DATASET SLOT (a composed member's set is expected — F1's rule), which
+    only per-surface attribution can tell from a padded duplicate.
+
+    The authority is the DERIVED manifest (the W6 criterion), never the
+    served one: an overlay that drops a binding from the served page does
+    not clear the debt the derivation minted. The MISSING direction is
+    not ledger-downgradable (same ruling as the data-table's); the EXCESS
+    direction downgrades under a declared ``reading-tile`` expectation
+    row like every additive count drift (A6)."""
+    findings: list[GateFinding] = []
+    declared_tiles = "reading-tile" in declared and _not_d7("reading-tile")
+    binding_kind = {
+        str(row.get("id")): str(row.get("kind", ""))
+        for row in derived_manifest.get("bindings", [])
+    }
+    for page in derived_manifest.get("pages", []):
+        page_id = str(page.get("id"))
+        minted = {
+            str(binding)
+            for binding in page.get("bindings", [])
+            if binding_kind.get(str(binding)) == "observation"
+        }
+        served = set(censused.get(page_id, {}).get("reading_bindings", ()))
+        for binding in sorted(minted - served):
+            findings.append(
+                GateFinding(
+                    "classref_gate_missing",
+                    f"reading tile {binding} on {page_id}: the derivation "
+                    "mints this surface, the render serves no tile for it",
+                )
+            )
+        if not declared_tiles:
+            for binding in sorted(served - minted):
+                findings.append(
+                    GateFinding(
+                        "classref_gate_excess",
+                        f"reading tile {binding} on {page_id}: the render "
+                        "serves a tile the derivation does not mint",
+                    )
+                )
+    return findings
+
+
 def _custom_inventory_findings(
     ledger_custom: list[Any], derived_custom: set[str]
 ) -> list[str]:
@@ -1070,6 +1137,15 @@ def verify_ui(
     findings.extend(
         _data_table_surface_findings(
             derived.layout_block, censused, frozenset(ledger_ids)
+        )
+    )
+    # (#556 B5 refute fold F1) The per-surface reading-tile comparison —
+    # the same laundering shape over the tile vocabulary, with the DERIVED
+    # manifest as the minted-set authority (the tile surfaces are the
+    # manifest's observation bindings, never layout-block nodes).
+    findings.extend(
+        _reading_surface_findings(
+            derived.manifest, censused, frozenset(ledger_ids)
         )
     )
     # F4: every rendered lane label must trace to the descriptor's channel

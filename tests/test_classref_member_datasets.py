@@ -43,6 +43,11 @@ from benchweave_sdk.classref import ResidualMember, derive_ui, find_reference
 
 FIXTURES = Path(__file__).parent / "fixtures" / "classref"
 REFERENCE = find_reference("otdp.daq/1.0.0")
+#: (#556 B5 refute fold) The readings-class reference the fold arms compose
+#: against: the SMU is the committed shape whose readings page (`output`)
+#: carries a dataset slot beside a time-series template — the corner the
+#: committed M-400 fixture (a dataset-page class) does not reach.
+SMU_REFERENCE = find_reference("otdp.smu/1.0.0")
 
 #: Invented vendor identity throughout (CLAUDE.md §4).
 VENDOR_PROFILE_ID = "com.meridian.m400/1.0.0"
@@ -777,3 +782,467 @@ def test_a_capture_shaped_residual_action_reports_no_dataset_surface(
         row.member == "com.meridian.m400.scope_shot/1.0.0"
         for row in claimed.residual_members
     ), claimed.residual_members
+
+
+# ---------------------------------------------------------------------------
+# The B5 refute fold (2026-10-26): the readings-page corner, per surface.
+# One adversarial lane confirmed M1-M6 and found the readings-class corner
+# wider than the slice disclosed: an admitted dataset member on a READINGS
+# page reds the real gate on the class's own tile count (F1), the
+# composed-dataset residual row states a false reason there (F2), a member
+# waveform plot on a plot-less readings page derives green and dies in an
+# untyped host refusal (F3), the stamp and the row skip key on slot-key
+# strings across every plot binding id (F4), and the B4 settings-member
+# count contribution lands on the class's per-page row (F5). The fold's
+# rule, following the B4 data-table precedent: tile surfaces compare PER
+# PAGE AND PER SURFACE against the derivation's own minted set, never a
+# fixed authored count.
+# ---------------------------------------------------------------------------
+
+#: The vendor verbs the fold's SMU variants declare (invented identity).
+SMU_SETTINGS_URN = "com.meridian.m400.profile_mode/1.0.0"
+
+
+def _smu_declaration(members: list[dict[str, Any]]) -> dict[str, Any]:
+    """The fold's member declaration over the SMU body: the vendor profile
+    row lists every claim-carrying member's claim (the seam's admission
+    half), the descriptor claims the profile id beside its served one."""
+    claims = sorted(
+        {
+            str(claim)
+            for member in members
+            if member.get("kind") != "channels"
+            for claim in member.get("claims", ())
+        }
+    )
+    return {
+        "contract_version": "0.1.0",
+        "profiles": [
+            {
+                "id": VENDOR_PROFILE_ID,
+                "title": "Meridian composed profile",
+                "channel_roles": ["analogue_input"],
+                "required_actions": claims,
+                "optional_actions": [],
+            }
+        ],
+        "members": members,
+    }
+
+
+def _smu_actions() -> dict[str, Any]:
+    """The vendor verbs the fold's descriptor adds to the SMU body: the
+    dataset member's capture verb and the settings member's configure
+    verb."""
+    return {
+        SEGMENT_CAPTURE_URN: {
+            "binding": {"kind": "adapter", "key": "segment_capture"},
+            "input_constraints": {
+                "properties": {"duration_s": {"type": "number", "minimum": 0.1}},
+                "required": ["duration_s"],
+            },
+            "timeout_ms": 30000,
+            "side_effect": "state_change",
+            "cancellable": True,
+            "retry": "never",
+        },
+        SMU_SETTINGS_URN: {
+            "binding": {"kind": "adapter", "key": "profile_mode"},
+            "input_constraints": {
+                "properties": {
+                    "mode": {"type": "string", "enum": ["fixed", "sweep"]}
+                },
+                "required": ["mode"],
+            },
+            "timeout_ms": 5000,
+            "side_effect": "state_change",
+            "cancellable": True,
+            "retry": "never",
+        },
+    }
+
+
+def _smu_catalog() -> dict[str, Any]:
+    """The pinned vendor catalog for both verbs (the catalogue side the
+    settings member's composed target needs; the dataset member needs none
+    but the row keeps its claim resolvable ``catalog``)."""
+    return {
+        "actions": {
+            SEGMENT_CAPTURE_URN: {
+                "description": "Capture one SMU segment.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "duration_s": {"type": "number", "minimum": 0.1}
+                    },
+                    "required": ["duration_s"],
+                    "$id": SEGMENT_CAPTURE_SCHEMA_ID,
+                },
+                "output_schema": {"type": "object"},
+                "side_effect": "state_change",
+            },
+            SMU_SETTINGS_URN: {
+                "description": "Set the profile mode.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "mode": {"type": "string", "enum": ["fixed", "sweep"]}
+                    },
+                    "required": ["mode"],
+                    "$id": "urn:meridian:action:profile-mode:1.0.0:input",
+                },
+                "output_schema": {"type": "object"},
+                "side_effect": "state_change",
+            },
+        }
+    }
+
+
+def _smu_dataset_member(
+    *,
+    slot: str = "segment-capture",
+    page: str = "output",
+    plot: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    member: dict[str, Any] = {
+        "slot": slot,
+        "kind": "dataset",
+        "claims": [SEGMENT_CAPTURE_URN],
+        "schema_source": "output_measurement",
+        "page": page,
+    }
+    if plot is not None:
+        member["plot"] = plot
+    return member
+
+
+def _smu_project(
+    tmp_path: Path,
+    members: list[dict[str, Any]],
+    *,
+    reference: dict[str, Any] | None = None,
+    doubled_readings: bool = False,
+) -> tuple[Any, Path]:
+    """Derive over the SMU fixture body with the fold's member declaration
+    and vendor catalog re-pinned beside the descriptor, then stage a real
+    gate project (the scaffold's adapter/vectors shape the readings classes
+    need: the fixture entry point names the scaffold's own package)."""
+    descriptor = json.loads((FIXTURES / "descriptor-smu.json").read_bytes())
+    descriptor["actions"].update(_smu_actions())
+    if VENDOR_PROFILE_ID not in descriptor["profiles"]:
+        descriptor["profiles"].append(VENDOR_PROFILE_ID)
+    pins = {
+        "member-declaration-smu.json": _smu_declaration(members),
+        "meridian-smu-actions.json": _smu_catalog(),
+    }
+    descriptor["contracts"] = [
+        row for row in descriptor["contracts"] if row.get("path") not in pins
+    ]
+    for name, document in pins.items():
+        descriptor["contracts"].append(
+            {
+                "id": f"urn:meridian:{name.removesuffix('.json')}:1.0.0",
+                "path": name,
+                "sha256": hashlib.sha256(_raw(document)).hexdigest(),
+            }
+        )
+    scratch = tmp_path / "scratch"
+    scratch.mkdir(parents=True)
+    (scratch / "descriptor.json").write_bytes(_raw(descriptor))
+    for name, document in pins.items():
+        (scratch / name).write_bytes(_raw(document))
+    for pinned in ("device-profile-catalog.json", "otdp-measurement.schema.json"):
+        source = FIXTURES / pinned
+        if source.is_file():
+            (scratch / pinned).write_bytes(source.read_bytes())
+    ref = SMU_REFERENCE if reference is None else reference
+    derived = derive_ui(
+        (scratch / "descriptor.json").read_bytes(),
+        ref,
+        descriptor_path=scratch / "descriptor.json",
+    )
+    from benchweave_sdk.scaffold import create_project
+
+    project = tmp_path / "gate"
+    create_project(project, "veridian_classref_plugin", with_ui=False)
+    package = project / "src" / "veridian_classref_plugin"
+    for path in sorted(scratch.iterdir()):
+        if path.is_file():
+            (package / path.name).write_bytes(path.read_bytes())
+    (package / "readings_adapter.py").write_bytes(
+        (FIXTURES / "readings_adapter.py").read_bytes()
+    )
+    vectors = json.loads((FIXTURES / "vectors-smu.json").read_bytes())
+    if doubled_readings:
+        # A member on the readings page doubles the page's observation
+        # bindings (one tile set per dataset slot), and the connected
+        # render reads one exchange per binding in order — the scripted
+        # stream repeats the parameter reads for the member's set.
+        identify, *reads = vectors["exchanges"]
+        vectors["exchanges"] = [identify, *reads, *reads]
+    (package / "vectors.json").write_bytes(_raw(vectors))
+    ui = package / "ui"
+    ui.mkdir()
+    (ui / "manifest.json").write_bytes(_raw(derived.manifest))
+    (package / "presentation.json").write_bytes(_raw(derived.envelope))
+    (package / "binding-catalogue.json").write_bytes(_raw(derived.catalogue))
+    settings = ui / "settings"
+    settings.mkdir()
+    for slot_key, schema in derived.settings_schemas.items():
+        (settings / f"{slot_key}.schema.json").write_bytes(_raw(schema))
+    presets = ui / "presets"
+    presets.mkdir()
+    for slug, scaffold in derived.preset_scaffolds.items():
+        (presets / f"{slug}.json").write_bytes(_raw(scaffold))
+    from benchweave_sdk.classref import declaration_scaffold
+
+    (ui / "class-reference.json").write_bytes(_raw(declaration_scaffold(derived)))
+    return derived, project
+
+
+def _smu_reference_without_output_plot() -> dict[str, Any]:
+    """The SMU reference with the output page's time-series template
+    stripped: a READINGS page hosting no plot — the placement V5's member
+    ``plot`` choice exists for, which no committed readings class carries."""
+    reference = json.loads(json.dumps(SMU_REFERENCE))
+    for page in reference["pages"]:
+        if str(page["id"]) == "output":
+            page.pop("plot", None)
+    return reference
+
+
+def test_a_dataset_member_on_a_readings_page_survives_the_real_gate(
+    tmp_path: Path,
+) -> None:
+    """(B5 refute fold F1) A clean declaration that reds the real gate is
+    the escalation shape the design refuses: on the SMU — whose readings
+    page carries the class ``measure`` dataset slot beside a time-series
+    template — an admitted dataset member is a SECOND dataset slot on the
+    page, so the readings expansion mints one tile set per dataset slot
+    and the render serves twelve tiles where the class's authored
+    ``{n_reading_tiles}`` template said six. The tile expectation is per
+    page and per surface (the B4 data-table precedent): the template
+    resolves to the derivation's own minted count for the row's page, and
+    the gate's per-surface comparison (armed below) attributes every
+    served tile to its binding — a composed member's tiles are EXPECTED,
+    never excess."""
+    from benchweave_sdk.classref_gate import verify_ui
+
+    derived, project = _smu_project(
+        tmp_path, [_smu_dataset_member()], doubled_readings=True
+    )
+    assert derived.expectation["components"]["reading-tile"] == {
+        "count": 12,
+        "per_page": "output",
+    }, derived.expectation["components"]["reading-tile"]
+    page = next(
+        row for row in derived.manifest["pages"] if row["id"] == "output"
+    )
+    observation_ids = [
+        binding
+        for binding in page["bindings"]
+        if binding.startswith(("measure-", "segment-capture-"))
+    ]
+    assert len(observation_ids) == 12, page["bindings"]
+    report = verify_ui(project, reference=SMU_REFERENCE)
+    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
+
+
+def test_a_stripped_member_tile_reds_the_per_surface_comparison(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """(B5 refute fold F1, the teeth) The per-surface reading-tile
+    comparison is load-bearing: with the count detector neutralized
+    (``_assert_expect`` forced empty — the composition gate's own
+    red-sanity idiom), a member tile stripped from the SERVED manifest's
+    page still reds typed, naming the binding — the count row alone
+    laundered strip-and-pad across bindings exactly the way the pooled
+    data-table count did (B4 fold F2)."""
+    import benchweave_sdk.classref_gate as gate_module
+    from benchweave_sdk.classref_gate import verify_ui
+
+    _derived, project = _smu_project(
+        tmp_path, [_smu_dataset_member()], doubled_readings=True
+    )
+    package = next((project / "src").iterdir())
+    manifest = json.loads((package / "ui" / "manifest.json").read_bytes())
+    page = next(row for row in manifest["pages"] if row["id"] == "output")
+    page["bindings"].remove("segment-capture-ch2-current")
+    raw_manifest = _raw(manifest)
+    (package / "ui" / "manifest.json").write_bytes(raw_manifest)
+    envelope = json.loads((package / "presentation.json").read_bytes())
+    envelope["manifest"]["sha256"] = hashlib.sha256(raw_manifest).hexdigest()
+    (package / "presentation.json").write_bytes(_raw(envelope))
+    monkeypatch.setattr(gate_module, "_assert_expect", lambda *a, **k: ([], []))
+    report = verify_ui(project, reference=SMU_REFERENCE)
+    surface = [
+        f
+        for f in report.findings
+        if f.code == "classref_gate_missing"
+        and f.detail.startswith("reading tile segment-capture-ch2-current")
+    ]
+    assert surface == [
+        gate_module.GateFinding(
+            "classref_gate_missing",
+            "reading tile segment-capture-ch2-current on output: the "
+            "derivation mints this surface, the render serves no tile for it",
+        )
+    ], [f"{f.code}: {f.detail}" for f in report.findings]
+
+
+def test_the_no_binding_row_reason_names_the_emitted_plot_binding(
+    tmp_path: Path,
+) -> None:
+    """(B5 refute fold F2) The composed-dataset residual row's reason is
+    the EMITTED plot's binding, never the page template's over-slot: on a
+    readings page the emitted time-series plot binds the page's first
+    OBSERVATION (the L11 rule), so the row that said ``binds measure``
+    (the template's over-slot) stated a false reason — the plot binds
+    ``measure-ch1-voltage``. On a dataset page the emitted plot binds the
+    over-slot's own binding, so the founding M-400 wording is unchanged."""
+    derived, _project_dir = _smu_project(tmp_path, [_smu_dataset_member()])
+    row = next(
+        row
+        for row in derived.residual_members
+        if row.kind == "composed dataset"
+    )
+    assert row.detail == (
+        "no plot carries its binding (the plot on page output binds "
+        "measure-ch1-voltage)"
+    ), row.detail
+    dataset_page = _project(tmp_path / "m400", _declaration([_dataset_member()]))
+    m400_row = next(
+        row
+        for row in dataset_page.residual_members
+        if row.kind == "composed dataset"
+    )
+    assert m400_row.detail == (
+        "no plot carries its binding (the plot on page capture binds capture)"
+    ), m400_row.detail
+
+
+def test_a_dataset_binding_plot_kind_on_a_readings_page_refuses(
+    tmp_path: Path,
+) -> None:
+    """(B5 refute fold F3) A member plot of a DATASET-BINDING kind (waveform,
+    digital_lanes) naming a readings page is a malformed placement, not a
+    capacity limit: readings pages admit observation bindings alone (the
+    manifest's own page-kind discipline), so the plot's dataset binding can
+    never sit on the page and the derive cannot compose it — before the
+    fold this derived green and died in the host's untyped
+    ``invalid_plot: Plot axes are incompatible``. It refuses typed under
+    the plot-placement family's code (the ``plot.over_slot`` mismatch's
+    sibling); ``time_series`` — the one kind a readings page hosts, binding
+    the page's first observation — still composes."""
+    plotless = _smu_reference_without_output_plot()
+    for kind in ("waveform", "digital_lanes"):
+        plot: dict[str, Any] = {"kind": kind, "over_slot": "segment-capture"}
+        if kind == "waveform":
+            plot["series"] = "numeric_variables"
+        with pytest.raises(
+            ValueError, match="^classref_composed_plot_page_mismatch:"
+        ) as raised:
+            _smu_project(
+                tmp_path / kind,
+                [_smu_dataset_member(plot=plot)],
+                reference=plotless,
+            )
+        assert "readings page output" in str(raised.value), raised.value
+    composed = _smu_project(
+        tmp_path / "time-series",
+        [
+            _smu_dataset_member(
+                plot={
+                    "kind": "time_series",
+                    "over_slot": "segment-capture",
+                    "series": "numeric_variables",
+                }
+            )
+        ],
+        reference=plotless,
+    )
+    derived = composed[0]
+    page = next(row for row in derived.manifest["pages"] if row["id"] == "output")
+    (plot_row,) = page["plots"]
+    assert plot_row["kind"] == "time_series", plot_row
+    assert plot_row["binding_id"] == "measure-ch1-voltage", plot_row
+    # No plot carries the member's DATASET binding (the plot binds the
+    # page's first observation), so the stamp stays absent and the honest
+    # row lands — the reason names the emitted binding (F2's rule).
+    assert "rendered_by" not in derived.control_plan[SEGMENT_CAPTURE_URN]
+    row = next(
+        row
+        for row in derived.residual_members
+        if row.kind == "composed dataset"
+    )
+    assert row.detail == (
+        "no plot carries its binding (the plot on page output binds "
+        "measure-ch1-voltage)"
+    ), row.detail
+
+
+def test_a_member_slot_spelling_an_observation_id_refuses_typed(
+    tmp_path: Path,
+) -> None:
+    """(B5 refute fold F4) A member slot key that spells an observation
+    binding id the readings expansion mints collides in the derived id
+    namespace: the member's dataset target and the class's observation
+    target share one id, the derive is green, and the gate dies in the
+    host's untyped ``invalid_document: targets: Duplicate identifiers``.
+    The collision refuses typed at the mint under the composed-slot
+    conflict code — a malformed declaration the author can fix by renaming
+    the slot (the 2026-10-25 capacity-versus-declaration boundary: whose
+    error it is decides the disposition)."""
+    with pytest.raises(
+        ValueError, match="^classref_composed_slot_conflict:"
+    ) as raised:
+        _smu_project(
+            tmp_path,
+            [_smu_dataset_member(slot="measure-ch1-voltage")],
+        )
+    assert "measure-ch1-voltage" in str(raised.value), raised.value
+
+
+def test_a_composed_settings_member_on_the_smu_keeps_the_class_row_honest(
+    tmp_path: Path,
+) -> None:
+    """(B5 refute fold F5) The B4 settings-member count contribution landed
+    on the CLASS's authored row whatever page the member's table renders
+    on: the SMU's authored ``data-table`` row names ``output`` (per-page),
+    the member's table mints and renders on its OWN page
+    (``configuration``, a derived page), and the gate reded ``expected 2,
+    censused 1`` on a clean declaration. The contribution is per-scope
+    now (the F1 rule, the data-table surface comparison's arithmetic
+    sibling): a per-page row counts only member tables minted ON that
+    page, a pooled row counts them all — and the member's own surface is
+    the per-surface comparison's business, already armed in B4."""
+    from benchweave_sdk.classref_gate import verify_ui
+
+    derived, project = _smu_project(
+        tmp_path,
+        [
+            {
+                "slot": "vendor-configure",
+                "kind": "configuration",
+                "claims": [SMU_SETTINGS_URN],
+                "schema_source": "input_schema",
+                "page": "configuration",
+            }
+        ],
+    )
+    assert derived.expectation["components"]["data-table"] == {
+        "count": 1,
+        "per_page": "output",
+    }, derived.expectation["components"]["data-table"]
+    report = verify_ui(project, reference=SMU_REFERENCE)
+    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
+    # The member's table mints and renders on its own page — the surface
+    # the per-surface comparison (B4 fold F2) attributes to its binding.
+    from benchweave_sdk.classref_gate import census
+    from benchweave_sdk.classref_gate_render import render_pages
+
+    censused = census(render_pages(project, ["configuration"])["configuration"])
+    assert censused["data_table_bindings"] == [
+        "configure",
+        "vendor-configure",
+    ], censused["data_table_bindings"]

@@ -117,6 +117,20 @@ def _observation_bindings(client: TestClient) -> list[str]:
     ]
 
 
+def _binding_ids(client: TestClient) -> dict[str, str]:
+    """(#556 B5 refute fold F1) The binding id each parameter's tile
+    carries as ``data-bw-binding`` — from the loaded presentation, the
+    same authority ``_observation_bindings`` reads."""
+    presentation = client.app.state.seam.presentation
+    return {
+        str(binding.parameter_id): str(binding.id)
+        for page in presentation.pages
+        if page.kind == "readings"
+        for binding in page.bindings
+        if binding.kind == "observation" and binding.parameter_id is not None
+    }
+
+
 def _manifest_pages(client: TestClient) -> list[str]:
     presentation = client.app.state.seam.presentation
     return [page.id for page in presentation.pages]
@@ -177,12 +191,21 @@ def _expected_severities(starter: Path) -> dict[str, str]:
     }
 
 
-def _expected_tile(data: dict, *, label: str, max_age_ms: float | None) -> str:
+def _expected_tile(
+    data: dict,
+    *,
+    label: str,
+    max_age_ms: float | None,
+    binding_id: str,
+) -> str:
     """The exact partial output the page must contain, built from the LIVE
     read through the design's rules (independent of the host's render).
     The staleness verdict is DERIVED from the read's age against the
     descriptor's own window (fold R-d: the oracle stops hardcoding
-    "fresh" — a stale read must fail the oracle, not pass it)."""
+    "fresh" — a stale read must fail the oracle, not pass it). The tile
+    carries its binding attribute (2026-10-26, #556 B5 refute fold F1 —
+    the gate's census attributes every served tile to its surface), so
+    the oracle applies the same attribution the host renders."""
     from benchweave_ui_html.data import ReadingData
     from benchweave_ui_html.partials import render_reading
     from benchweave_ui_html.staleness import staleness
@@ -196,7 +219,7 @@ def _expected_tile(data: dict, *, label: str, max_age_ms: float | None) -> str:
         text = "false"
     else:
         text = str(value)
-    return render_reading(
+    html = render_reading(
         ReadingData(
             label=label,
             severity=host_presentation.QUALITY_SEVERITY[data["quality"]],
@@ -206,6 +229,11 @@ def _expected_tile(data: dict, *, label: str, max_age_ms: float | None) -> str:
             freshness=f"{float(data['age_ms']):g} ms",
             stale_verdict=staleness(float(data["age_ms"]), max_age_ms),
         )
+    )
+    return html.replace(
+        ' data-severity="',
+        f' data-bw-binding="{binding_id}" data-severity="',
+        1,
     )
 
 
@@ -259,9 +287,15 @@ def test_component_and_severity_parity(scenario_app, starter: Path) -> None:
     # leave the looping mock's head aligned (see _read_all).
     windows = _descriptor_max_age(client)
     reads = _read_all(client, policy)
+    binding_ids = _binding_ids(client)
     for parameter, data in reads.items():
         # HTML and REST arms assert equal values (the tile shows the read).
-        oracle = _expected_tile(data, label=parameter, max_age_ms=windows[parameter])
+        oracle = _expected_tile(
+            data,
+            label=parameter,
+            max_age_ms=windows[parameter],
+            binding_id=binding_ids[parameter],
+        )
         assert oracle in body, (scenario_id, parameter)
         assert data["quality"] in body
     assert f'data-bw-page-severity="{expected[scenario_id]}"' in body
@@ -494,7 +528,12 @@ def test_control_bypass_tile_must_red_the_component_arm(
     data = reads[parameter]
     # The suite's oracle stays the partial's exact output; the HOST side
     # is sabotaged onto the I1-era hand tile.
-    oracle = _expected_tile(data, label=parameter, max_age_ms=windows[parameter])
+    oracle = _expected_tile(
+        data,
+        label=parameter,
+        max_age_ms=windows[parameter],
+        binding_id=_binding_ids(client)[parameter],
+    )
     monkeypatch.setattr(host_presentation, "PARTIAL_TILES", False)
     try:
         hand, _severity = host_presentation.reading_tile_html(
@@ -545,7 +584,10 @@ def test_control_hand_tile_on_one_binding_must_red_the_containment_arm(
     try:
         body = client.get(f"/pages/{_manifest_pages(client)[0]}").text
         oracle = _expected_tile(
-            reads[victim], label=victim, max_age_ms=_descriptor_max_age(client)[victim]
+            reads[victim],
+            label=victim,
+            max_age_ms=_descriptor_max_age(client)[victim],
+            binding_id=_binding_ids(client)[victim],
         )
         with pytest.raises(AssertionError):
             assert oracle in body, victim
@@ -588,12 +630,14 @@ def test_the_oracle_verdict_is_derived_not_hardcoded() -> None:
         {"value": 1.0, "unit": "V", "quality": "valid", "age_ms": 500},
         label="voltage",
         max_age_ms=500.0,
+        binding_id="voltage",
     )
     assert "bw-reading--stale" not in fresh
     stale = _expected_tile(
         {"value": 1.0, "unit": "V", "quality": "valid", "age_ms": 501},
         label="voltage",
         max_age_ms=500.0,
+        binding_id="voltage",
     )
     assert "bw-reading--stale" in stale
     assert 'data-bw-stale="true"' in stale

@@ -993,6 +993,19 @@ def _add_html_routes(
                 data = {**data, "value": seam.staged[binding.parameter_id]}
             reads[binding.parameter_id] = data
             html, severity = reading_tile_html(data, parameter, label=binding.target_id)
+            # (#556 B5 refute fold F1) A reading tile carries its binding as
+            # an attribute so the gate's census attributes the served tile
+            # to its surface (the data-table's ``data-bw-binding``
+            # precedent): a page's pooled tile count cannot tell a
+            # composed member's tile set from a padded duplicate, per
+            # surface attribution can. The attribute rides the tile's root
+            # element, before the template's own ``data-severity`` — the
+            # one anchor the stale-variant markup shares.
+            html = html.replace(
+                ' data-severity="',
+                f' data-bw-binding="{escape(binding.id)}" data-severity="',
+                1,
+            )
             tiles.append(html)
             severities.append(severity)
         return tiles, severities, no_data, None, reads

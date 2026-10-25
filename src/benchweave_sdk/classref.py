@@ -600,6 +600,10 @@ def _check_member_reference_conflicts(
     ``classref_composed_slot_conflict`` — the composed slot composes
     BESIDE the reference, never over it."""
     pages = {str(page.get("id")) for page in merged["pages"]}
+    page_kind_of = {
+        str(page.get("id")): str(page.get("kind", "readings"))
+        for page in merged["pages"]
+    }
     for declaration in declarations:
         for member in declaration.members:
             slot = str(member.get("slot", ""))
@@ -615,6 +619,32 @@ def _check_member_reference_conflicts(
                     "classref_composed_slot_conflict",
                     f"member {slot} names page {page}, which the composed "
                     "reference does not declare",
+                )
+            # (#556 B5 refute fold F3, 2026-10-26) A member plot of a
+            # DATASET-BINDING kind naming a readings page is a malformed
+            # placement, not a capacity limit: readings pages admit
+            # observation bindings alone (the manifest's own page-kind
+            # discipline, ``allowed_by_kind``), so the plot's dataset
+            # binding can never sit on the page and the emission would
+            # mint a plot the host refuses untyped
+            # (``invalid_plot: Plot axes are incompatible`` — reproduced by
+            # the fold's arm). It refuses here, the ``plot.over_slot``
+            # mismatch's sibling under the placement family's code;
+            # ``time_series`` — the one kind a readings page hosts, binding
+            # the page's first observation — composes.
+            plot = member.get("plot")
+            if (
+                isinstance(plot, dict)
+                and str(plot.get("kind", "")) in ("waveform", "digital_lanes")
+                and page_kind_of.get(page) == "readings"
+            ):
+                raise _refuse(
+                    "classref_composed_plot_page_mismatch",
+                    f"member {slot} carries plot kind {plot.get('kind')!r}, "
+                    f"which readings page {page} cannot host (readings "
+                    "pages admit observation bindings alone, so only a "
+                    "time_series plot — binding an observation — composes "
+                    "there)",
                 )
             for claim in member.get("claims") or ():
                 claim = str(claim)
@@ -747,10 +777,15 @@ def _vendor_documents(
             ) from exc
         if hashlib.sha256(raw).hexdigest() != row.get("sha256"):
             # #541 record §1: an integrity fault — tampering or corruption
-            # — refused under its own code since the split.
+            # — refused under its own code since the split. (#556 B5
+            # refute fold NIT) The detail names the pin neutrally: the
+            # walk verifies member declarations and vendor catalogs
+            # through this one seam, and a members document is not a
+            # vendor catalog — the code keeps its historical name (a
+            # survivor), the prose does not have to.
             raise _refuse(
                 "classref_vendor_catalog_digest_mismatch",
-                f"pinned vendor catalog {row.get('path')} digest mismatch",
+                f"pinned document {row.get('path')} digest mismatch",
             )
         document = json.loads(raw)
         if not isinstance(document, dict):
@@ -2867,6 +2902,17 @@ def _finish(
     # admittance table beside them.
     observation_ids_for_page: dict[str, list[str]] = {}
     observation_value_ids: dict[str, str] = {}
+    # (#556 B5 refute fold F4, 2026-10-26) The derived id namespace is
+    # shared: a member slot key that spells an observation binding id makes
+    # the member's dataset target and the class's observation target share
+    # one id — the derive stays green and the gate dies in the host's
+    # untyped ``invalid_document: targets: Duplicate identifiers``
+    # (reproduced by the fold's arm). The collision refuses at the mint,
+    # under the composed-slot conflict code: the declaration names an id
+    # the derivation already owns and the author can rename the slot — a
+    # malformed declaration, the 2026-10-25 capacity-versus-declaration
+    # boundary's refusal side.
+    minted_binding_ids = {row["id"] for row in bindings}
     for page in merged["pages"]:
         if str(page.get("kind", "readings")) != "readings":
             continue
@@ -2881,6 +2927,15 @@ def _finish(
             for row in page_lanes:
                 for quantity in row.get("quantities") or []:
                     binding_id = f"{key}-{row['id']}-{quantity}"
+                    if binding_id in minted_binding_ids:
+                        raise _refuse(
+                            "classref_composed_slot_conflict",
+                            f"observation binding {binding_id} on page "
+                            f"{page_id} collides with an id the derivation "
+                            "already mints (a member slot key must not spell "
+                            "a derived id — rename the slot)",
+                        )
+                    minted_binding_ids.add(binding_id)
                     value_id = f"{row['id']}-{quantity}"
                     parameter = parameter_rows.get(
                         (str(row["id"]), str(quantity))
@@ -3261,9 +3316,26 @@ def _finish(
     # plot-bearing page whose plot binds another slot claims nothing: the
     # census may cover its L4 page, but the row's own advertisement stays
     # silent and the residual walk below discloses the gap.
-    plot_binding_slots = {str(plot.get("binding_id")) for plot in plots}
+    # (#556 B5 refute fold F4, 2026-10-26) The membership test is SCOPED to
+    # a plot on the member's own page whose binding resolves to a DATASET
+    # binding — never a string match across every plot binding id: a
+    # readings page's plot binds an OBSERVATION id, and a member slot that
+    # shares its spelling (the F4 name) would win a false stamp and lose
+    # its honest disclosure row to the skip below. The page scope carries
+    # the same rule cross-page: a plot binding id minted on one page never
+    # answers the membership question for a member placed on another.
+    page_of_dataset_plot_binding: dict[str, str] = {}
+    plot_binding_of_page: dict[str, str] = {}
+    for page in pages_out:
+        for plot in page.get("plots") or ():
+            bound = str(plot.get("binding_id"))
+            plot_binding_of_page.setdefault(str(page["id"]), bound)
+            if binding_kind.get(bound) == "dataset":
+                page_of_dataset_plot_binding[bound] = str(page["id"])
     for member_row in (composed_members or {}).get("datasets", ()):
-        if str(member_row["slot"]) in plot_binding_slots:
+        if page_of_dataset_plot_binding.get(str(member_row["slot"])) == str(
+            member_row["page"]
+        ):
             plan_row = plan.get(str(member_row["action"]))
             if plan_row is not None:
                 plan_row["rendered_by"] = "the page plot"
@@ -3318,6 +3390,32 @@ def _finish(
             if str(row.get("id")) not in seen_channel_ids:
                 seen_channel_ids.add(str(row.get("id")))
                 rendered_lanes.append(row)
+    # (#556 B5 refute fold F5, 2026-10-26) The settings-member count
+    # contribution is per-scope: it counts the member tables the LAYOUT
+    # BLOCK mints, per page — never the applied set summed onto whatever
+    # row the class authored. A per-page authored row gains only member
+    # tables minted ON that page; a pooled row gains them all; a member
+    # whose table mints nowhere (an authored page stands as authored)
+    # contributes nothing, and its surface question belongs to the gate's
+    # per-surface comparison, not to this count.
+    member_settings_slots = {
+        str(row["slot"])
+        for row in (composed_members or {}).get("settings", ())
+    }
+    composed_settings_by_page: dict[str, int] = {}
+    for layout_page in layout_block.get("pages", []):
+        minted_tables = sum(
+            1
+            for section in layout_page.get("sections", [])
+            for node in section.get("children", [])
+            if isinstance(node, dict)
+            and node.get("kind") == "data-table"
+            and str(node.get("binding_id")) in member_settings_slots
+        )
+        if minted_tables:
+            composed_settings_by_page[str(layout_page.get("page_id"))] = (
+                minted_tables
+            )
     expectation = _build_expectation(
         merged, plan, pages_out,
         plot_group_count=sum(
@@ -3332,7 +3430,8 @@ def _finish(
         variable_count=sum(
             len(row.get("quantities") or ()) for row in rendered_lanes
         ),
-        composed_settings=len((composed_members or {}).get("settings", ())),
+        composed_settings_by_page=composed_settings_by_page,
+        observation_ids_for_page=observation_ids_for_page,
     )
     declaration = _build_declaration(
         references, divergences, plan, ignored_pins,
@@ -3384,11 +3483,6 @@ def _finish(
         str(page.get("id")): str(page.get("kind", "readings"))
         for page in merged["pages"]
     }
-    plot_over_slot_of = {
-        str(page.get("id")): (page.get("plot") or {}).get("over_slot")
-        for page in merged["pages"]
-        if page.get("plot")
-    }
     for member_document in member_declarations:
         for member in member_document.members:
             if not isinstance(member.get("plot"), dict):
@@ -3422,17 +3516,22 @@ def _finish(
     # plot-bearing page must not launder a binding the neighbour plot does
     # not carry (risk #6's falsifier; the row disappears when a plot
     # carries the binding, and the rendered_by stamp above is the other
-    # half of the same honesty rule).
+    # half of the same honesty rule). The skip is the stamp's own scoped
+    # test (a plot ON the member's page resolving to a dataset binding),
+    # and the reason names the EMITTED plot's binding (B5 refute fold F2):
+    # on a readings page the emitted time-series plot binds the page's
+    # first OBSERVATION, so a reason naming the template's over_slot
+    # states a binding the plot does not carry.
     for member_row in (composed_members or {}).get("datasets", ()):
         slot = str(member_row["slot"])
-        if slot in plot_binding_slots:
-            continue
         page_id = str(member_row["page"])
-        over = plot_over_slot_of.get(page_id)
-        if over is not None:
+        if page_of_dataset_plot_binding.get(slot) == page_id:
+            continue
+        emitted = plot_binding_of_page.get(page_id)
+        if emitted is not None:
             detail = (
                 f"no plot carries its binding (the plot on page {page_id} "
-                f"binds {over})"
+                f"binds {emitted})"
             )
         else:
             detail = f"no plot carries its binding (page {page_id} hosts no plot)"
@@ -4092,7 +4191,8 @@ def _build_expectation(
     run_actions: list[str],
     channel_count: int,
     variable_count: int,
-    composed_settings: int = 0,
+    composed_settings_by_page: dict[str, int] | None = None,
+    observation_ids_for_page: dict[str, list[str]] | None = None,
 ) -> dict[str, Any]:
     """Resolve the reference's expect expressions into the gate's numeric
     assertion document (record §3.4; closed vocabulary)."""
@@ -4137,17 +4237,49 @@ def _build_expectation(
         resolved_row: dict[str, Any] = {"count": resolved}
         if row.get("per_page") is not None:
             resolved_row["per_page"] = str(row["per_page"])
-        # (#556 B4, V6) The resolved expectation states THIS device's render,
-        # never the class document's raw contract (that stays frozen in the
-        # corpus): a composed settings member contributes one data-table the
-        # class's literal pooled count cannot see — the one component kind
-        # the settings vocabulary adds, added here by the member walk's own
-        # applied count. The templated rows ({n_run_actions},
-        # {n_configure_fields}) absorb their members through the plan
-        # already; a literal pooled count is the one shape that needs the
-        # explicit contribution.
-        if name == "data-table" and composed_settings:
-            resolved_row = {**resolved_row, "count": resolved + composed_settings}
+        # (#556 B4 V6; B5 refute fold F1/F5, 2026-10-26) The resolved
+        # expectation states THIS device's render, never the class
+        # document's raw contract (that stays frozen in the corpus), and
+        # the contribution is PER SCOPE: the row's own page for a per-page
+        # row, the whole render for a pooled one. The B4 form summed the
+        # applied settings members onto whatever row the class authored —
+        # on the SMU (a per-page row naming the class's output page, the
+        # member's table minting on its own configuration page) a clean
+        # declaration reded ``expected 2, censused 1``. The same scope
+        # rule resolves the reading-tile template: a readings page's tiles
+        # are one set PER DATASET SLOT ON THE PAGE (a composed member's
+        # set is expected, never excess), so ``{n_reading_tiles}`` resolves
+        # to the derivation's own minted count for the row's scope — on
+        # the founding fixtures (one dataset slot per readings page, the
+        # page's lanes the rendered set) that equals the inventory's
+        # variable count, byte-identically. A LITERAL count stays the
+        # author's fixed contract (a member pushing the census over it is
+        # an additive drift, the A6 declared-deviation path), and the
+        # templated rows ({n_run_actions}, {n_configure_fields}) keep
+        # absorbing their members through the plan.
+        if name == "data-table" and composed_settings_by_page:
+            scope = resolved_row.get("per_page")
+            extra = (
+                composed_settings_by_page.get(scope, 0)
+                if scope is not None
+                else sum(composed_settings_by_page.values())
+            )
+            if extra:
+                resolved_row = {**resolved_row, "count": resolved + extra}
+        if (
+            name == "reading-tile"
+            and isinstance(count, str)
+            and not count.isdigit()
+            and observation_ids_for_page is not None
+        ):
+            scope = resolved_row.get("per_page")
+            resolved_row["count"] = (
+                len(observation_ids_for_page.get(scope, ()))
+                if scope is not None
+                else sum(
+                    len(ids) for ids in observation_ids_for_page.values()
+                )
+            )
         attribute = {}
         for key, expr in (row.get("attribute") or {}).items():
             match = re.fullmatch(r"\{([a-z_]+)\}", str(expr))
