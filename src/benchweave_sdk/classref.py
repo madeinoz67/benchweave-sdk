@@ -1853,6 +1853,34 @@ def derive_ui(
                     "classref_unknown_action",
                     f"slot {key} names {urn}, absent from the served catalogs",
                 )
+    # (#556 §4 V1/V6, B4) The D4 rule's member half: an APPLIED procedure
+    # or configuration member composes a target whose input_schema_id names
+    # the catalogue side — an action no served or pinned catalog describes
+    # has none, and the canonical validator refuses the target twice over
+    # (unresolved_reference and capability_mismatch), so the derivation
+    # refuses at the claim instead of emitting a document the validator
+    # rejects. A member that applies nowhere composes nothing and stays the
+    # applied-nowhere disclosure; a dataset member rides B5.
+    for declaration in member_declarations:
+        for member in declaration.members:
+            if member.get("kind") not in ("procedure", "configuration"):
+                continue
+            claim = next(
+                (
+                    str(row)
+                    for row in member.get("claims") or ()
+                    if str(row) in actions
+                ),
+                None,
+            )
+            if claim is not None and claim not in catalog_actions:
+                raise _refuse(
+                    "classref_unknown_action",
+                    f"member slot {member.get('slot', '')} names {claim}, "
+                    "absent from the served catalogs (the composed target "
+                    "needs the catalogue side — pin a vendor catalog row "
+                    "carrying input_schema with an $id)",
+                )
     return _assemble(
         descriptor, references, actions, catalog_actions,
         descriptor_path=descriptor_path, descriptor_raw=descriptor_raw,
@@ -2001,23 +2029,68 @@ def _inject_composed_members(
     conflict checks, so the existing derivation arms run unchanged on the
     injected rows. B3 injects the channels kind (V3 layer 2 — per-slot
     lane resolution consumes it, and the member's fields ARE the
-    reference's own channels-slot branch verbatim); the action-kind
-    injections ride their own slices (B4/B5), whose arms carry the
-    vendor-profile seam their targets need. A member that applies nowhere
-    injects nothing — its disclosure is the applied-nowhere row."""
+    reference's own channels-slot branch verbatim); B4 injects the
+    procedure and configuration kinds (V1/V6 layer 2 — the procedure loop
+    and the configuration arm consume them, the member's fields the
+    reference's own action-slot branch verbatim, the claimed URN the
+    first claim the descriptor declares); the dataset kind rides B5. A
+    member that applies nowhere injects nothing — its disclosure is the
+    applied-nowhere row."""
+    declared_actions = descriptor.get("actions") or {}
     for declaration in declarations:
         for member in declaration.members:
-            if member.get("kind") != "channels":
+            kind = member.get("kind")
+            if kind not in ("channels", "procedure", "configuration"):
                 continue
             if not _member_applies(member, descriptor):
                 continue
             slot_key = str(member.get("slot", ""))
-            merged["slots"][slot_key] = {
-                "kind": "channels",
-                "where_role": str(member.get("where_role", "")),
-                "key": "id",
-                "label": "label",
-            }
+            if kind != "channels" and declaration.profile is None:
+                # (#556 B4) An APPLIED procedure or configuration member
+                # composes a target naming the declaration's vendor profile
+                # row (the seam, §0.2); a declaration with no row is
+                # malformed for the surface it requests — a cross-array
+                # conditional the 0.1.0 dialect schema cannot express,
+                # refused under the declaration's own invalidity code. A
+                # member that applies nowhere composes nothing, so a dead
+                # member in a profile-less document stays the applied-nowhere
+                # disclosure, never this refusal. NOT caught here (the
+                # canonical validator's finding, never a refusal): a profile
+                # row whose required/optional actions omit the member's
+                # claim, which reports capability_mismatch at check-ui.
+                # Dataset members are exempt until B5 composes their
+                # targets; the channels kind claims no action and needs no
+                # row.
+                raise _refuse(
+                    "classref_invalid_member_declaration",
+                    f"pinned document {declaration.pin_path}: member "
+                    f"{slot_key} (kind {kind}) composes a target naming "
+                    "the declaration's vendor profile row, which the "
+                    "document does not carry",
+                )
+            if kind == "channels":
+                merged["slots"][slot_key] = {
+                    "kind": "channels",
+                    "where_role": str(member.get("where_role", "")),
+                    "key": "id",
+                    "label": "label",
+                }
+            else:
+                slot_row: dict[str, Any] = {
+                    "kind": str(kind),
+                    "action": next(
+                        str(claim)
+                        for claim in member.get("claims") or ()
+                        if str(claim) in declared_actions
+                    ),
+                }
+                if member.get("when_declared") is not None:
+                    slot_row["when_declared"] = member["when_declared"]
+                if member.get("host_supplied"):
+                    slot_row["host_supplied"] = list(member["host_supplied"])
+                if member.get("schema_source") is not None:
+                    slot_row["schema_source"] = member["schema_source"]
+                merged["slots"][slot_key] = slot_row
             page_id = str(member.get("page", ""))
             for page in merged["pages"]:
                 if str(page.get("id")) == page_id:
@@ -2306,6 +2379,23 @@ def _finish(
     ).encode()
     descriptor_hash = hashlib.sha256(pin_bytes).hexdigest()
     profile_ids = sorted({str(row["profile_id"]) for row in references})
+    # (#556 §4 V1/V6, the seam) The profile ids a COMPOSED member's target
+    # names: the declaration's own vendor row — the row the pinned-document
+    # merge (B4 motion 1) puts in the validator's profile map — never the
+    # served set, whose rows list none of the member's claimed actions. A
+    # reference slot's target keeps the served set exactly as before.
+    member_profile_for_slot: dict[str, str] = {}
+    for member_declaration in member_declarations:
+        if member_declaration.profile is None:
+            continue
+        for member in member_declaration.members:
+            if member.get("kind") not in ("procedure", "configuration"):
+                continue
+            if not _member_applies(member, descriptor):
+                continue
+            member_profile_for_slot[str(member.get("slot", ""))] = str(
+                member_declaration.profile["id"]
+            )
 
     bindings: list[dict[str, Any]] = []
     targets: list[dict[str, Any]] = []
@@ -2690,6 +2780,14 @@ def _finish(
         urn = str(config_slot["action"])
         if urn not in actions:
             continue
+        # (#556 §4 V6) A composed settings member's target and scaffold
+        # name the declaration's vendor profile row (the seam); a class
+        # slot's keep the served set.
+        config_profile_ids = (
+            [member_profile_for_slot[config_key]]
+            if config_key in member_profile_for_slot
+            else profile_ids
+        )
         slot_catalogue_row = _catalogue_row(urn, catalog_actions)
         effective = _effective_action_schema(
             urn, slot_catalogue_row, actions[urn].get("input_constraints") or {}
@@ -2717,7 +2815,7 @@ def _finish(
             "title": f"Scaffold preset for {config_key}",
             "revision": "0",
             "plugin_id": str(descriptor["id"]),
-            "profile_ids": profile_ids,
+            "profile_ids": config_profile_ids,
             "supported_firmware": [
                 str(row)
                 for row in descriptor.get("identity", {}).get("supported_firmware", [])
@@ -2742,7 +2840,7 @@ def _finish(
                 "id": config_key,
                 "kind": "configuration",
                 "action_id": urn,
-                "profile_ids": profile_ids,
+                "profile_ids": config_profile_ids,
                 "input_schema_id": catalogue_input.get("$id"),
                 "schema_asset_id": schema_name,
                 "preset_asset_ids": [],
@@ -2759,12 +2857,19 @@ def _finish(
         urn = str(proc_slot["action"])
         if urn not in actions:
             continue  # when_declared slot the descriptor does not declare
+        # (#556 §4 V1) A composed procedure member's target names the
+        # declaration's vendor profile row (the seam); a class slot's
+        # keeps the served set.
         targets.append(
             {
                 "id": proc_key,
                 "kind": "procedure",
                 "action_id": urn,
-                "profile_ids": profile_ids,
+                "profile_ids": (
+                    [member_profile_for_slot[proc_key]]
+                    if proc_key in member_profile_for_slot
+                    else profile_ids
+                ),
                 "input_schema_id": (_catalogue_row(urn, catalog_actions) or {})
                 .get("input_schema", {})
                 .get("$id"),

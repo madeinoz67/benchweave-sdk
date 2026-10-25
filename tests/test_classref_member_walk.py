@@ -83,6 +83,28 @@ def _member_document(
         "contract_version": "0.1.0",
         "members": members if members is not None else [_channels_member()],
     }
+    # (#556 B4) An applied action-kind member composes a target naming the
+    # declaration's vendor profile row; the walk-machinery arms carry the
+    # row so their documents stay the production shape (the refusal for a
+    # profile-less APPLIED action member lives in the surfaces file's arms).
+    claims = sorted(
+        {
+            str(claim)
+            for member in document["members"]
+            if member.get("kind") != "channels"
+            for claim in member.get("claims", ())
+        }
+    )
+    if claims:
+        document["profiles"] = [
+            {
+                "id": "com.meridian.m400/1.0.0",
+                "title": "Meridian M-400 composed profile",
+                "channel_roles": ["digital_input"],
+                "required_actions": claims,
+                "optional_actions": [],
+            }
+        ]
     document.update(extra)
     return document
 
@@ -181,15 +203,45 @@ def test_a_member_pin_applies_and_lands_the_applied_set(tmp_path: Path) -> None:
 
 def test_an_action_member_applies_when_a_claim_is_declared(tmp_path: Path) -> None:
     """The claim-carrying kinds apply through the R1 rule's action half: one
-    declared claim applies the member (its vocabulary surface derives in the
-    B4/B5 slices; the applied set and the disclosures are this slice's)."""
+    declared claim applies the member. Since B4 the procedure surface
+    derives too, so the claim rides the production shape — a pinned vendor
+    catalog row carrying the catalogue side its target names (an uncatalogued
+    claim refuses ``classref_unknown_action``, the surfaces file's arm)."""
     document = _member_document(members=[_action_member(kind="procedure")])
+    catalog = {
+        "catalog_version": "1.0.0",
+        "vendor": "com.meridian",
+        "actions": {
+            VENDOR_URN: {
+                "description": "Burst capture mode.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"burst_count": {"type": "integer"}},
+                    "$id": "urn:meridian:action:burst:1.0.0:input",
+                },
+                "output_schema": {"type": "object"},
+                "side_effect": "state_change",
+            },
+        },
+    }
     descriptor = _member_descriptor(
         document=document,
         second_role_channels=False,
         declare_vendor_action=True,
+        extra_pins=[
+            {
+                "id": "urn:meridian:burst-catalog:1.0.0",
+                "path": "burst-catalog.json",
+                "sha256": hashlib.sha256(_raw(catalog)).hexdigest(),
+            }
+        ],
     )
-    path = _scratch(tmp_path / "action-apply", document=document, descriptor=descriptor)
+    path = _scratch(
+        tmp_path / "action-apply",
+        document=document,
+        descriptor=descriptor,
+        extra_documents={"burst-catalog.json": catalog},
+    )
     derived = _derive(descriptor, path)
     assert derived.composed_members["procedures"] == (
         {"slot": "burst", "action": VENDOR_URN, "page": "capture"},
