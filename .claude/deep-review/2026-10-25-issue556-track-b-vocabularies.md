@@ -700,20 +700,17 @@ classref suite (`test_classref_effective`, `_composed`, `_residual`,
 single property's numeric bounds; they do not re-derive every catalogue
 field, and no fixture byte moves.
 
-**Outstanding mirror obligation (recorded, dated).** The gateway lane is
-stood down for this arc and will not change code, so the SDK is the
-leading half — CON-12 says the gateway mirrors the SDK, never the other way
-round. The gateway mirror at
-`src/benchweave/presentation/classref.py::_intersect_property` (its own
-`_bound` + `min()` at the high end) carries the same defect TODAY and
-mirrors the SDK faithfully; it adopts the corrected semantics in the
-pointer PR that advances past the release carrying this fix, not before.
-Until that pointer moves, a DELIBERATE DIVERGENCE exists: the SDK previews
-the tighter control (an exclusive ceiling that refuses the tied value) and
-the gateway renders the looser one (an inclusive ceiling that admits it).
-This is a known, dated, convergent divergence, not an accident — the
-pointer PR closes it, and it is recorded here so a later differential run
-reads it as scheduled convergence rather than a regression.
+**Mirror obligation (recorded, dated).** BOTH halves carry the fix in this
+arc: the SDK in this commit, and the gateway on its own branch — `7f715e33`
+on `feat/556-gateway-mirror`, whose `_tighter_bound` states the same
+exclusive-wins-tie rule through one comparator for both sides. CON-12
+mirrors the two sources rather than one leading the other, so once both
+pull requests merge, gateway main and SDK main agree on the intersection.
+The remaining divergence is against the PINNED ARTIFACT only:
+benchweave-sdk v0.21.0 still ships the old tuple comparison until the
+release cut and the pointer PR — the ordinary pin lag every pointer closes,
+not a semantic split between merged sources. Recorded so a differential run
+against the pin reads it as scheduled convergence rather than a regression.
 
 **Census.** This repository carries no committed gateway-versus-SDK
 equivalence census; the only one is the gateway's
@@ -724,5 +721,5 @@ halves, it is where the tie case must be noted when it gains
 effective-schema arms — with the same future-fix framing (an expected
 divergence until the pointer advances), so a differential run does not
 rediscover the tie as an unexplained failure. Recording that requirement
-here is the SDK-side half of the obligation; the note itself belongs to the
-pointer PR, since the gateway lane does not change code in this arc.
+here is the SDK-side half of the obligation; the note itself belongs with
+the next change to that census, which this arc does not make.
