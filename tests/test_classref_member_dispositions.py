@@ -146,17 +146,29 @@ def test_a_member_plot_on_a_page_hosting_a_class_plot_is_reported(
 
 
 def test_a_member_plot_on_a_plotless_page_reports_no_row(tmp_path: Path) -> None:
-    """The disposition's boundary: a ``plot`` on a page hosting NO class
-    plot contradicts nothing AND has nothing placed in its way — the
-    member's plot is B5's derivation, and this slice reports no placement
-    row for it (the row exists exactly when the class template already
-    hosts a plot)."""
+    """MOVED DELIBERATELY 2026-10-26 (#556 B5, §4 V5): this arm pinned B3's
+    interim state — a member ``plot`` on a page hosting no class template
+    plot reported nothing, because deriving it was B5's to build. B5 builds
+    it: on a page whose kind the manifest schema admits plots on (dataset,
+    readings) the member's plot now DERIVES (the composing arms live in
+    tests/test_classref_member_datasets.py), and on a configuration page —
+    the page this arm names — no plot can render, so the placement limit
+    discloses instead. The row family is unchanged: a placement limit the
+    declaration cannot see is a disclosure, never a refusal."""
     derived = _derive_with(
         tmp_path, _declaration(_plot_member(page="configuration"))
     )
     assert [
         row for row in derived.residual_members if row.kind == "composed plot"
-    ] == []
+    ] == [
+        ResidualMember(
+            "composed plot",
+            "datasets and capture shapes",
+            "burst",
+            "page configuration admits no plot (plots render on dataset "
+            "and readings pages alone)",
+        ),
+    ], derived.residual_members
 
 
 def test_plot_over_slot_mismatch_still_refuses_typed(tmp_path: Path) -> None:

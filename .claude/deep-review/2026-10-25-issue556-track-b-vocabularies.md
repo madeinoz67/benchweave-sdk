@@ -1015,3 +1015,63 @@ settings asset — a composed package cannot be check-ui-clean through the
 bytes-only call without them. `test_classref_member_seam._check_ui_package`
 gains `descriptor`/`extra_pins` substitution so variant packages stay
 internally digest-consistent.
+
+### 2026-10-26 — B5, motion by motion: what the code forced, stated where the design was silent
+
+**The dataset member's admission refusals split by target shape.** The B4
+admission pair (profile row + catalogue side) does not transfer to the
+dataset kind as a pair: the profile-row refusal DOES (an applied dataset
+member composes a target naming the declaration's vendor row — the seam —
+so a row-less declaration is malformed for the surface it requests, under
+`classref_invalid_member_declaration` exactly as for procedure and
+configuration), while the catalogue-side refusal does NOT and never will:
+the dataset target carries `measurement_schema_id` (the descriptor's pinned
+measurement contract), never `input_schema_id`, so there is no catalogue
+side for the claim to need. The B4 sentence "Dataset members are exempt
+until B5 composes their targets" resolves to this split, stated where it is
+enforced.
+
+**The V4 layer-3 classifier is the derived state — the V6 precedent.**
+§4 V4's "a capture-shaped declared action" has no descriptor-side signal:
+OTDP types no verbs, and `capture_formats[]` is device-level (read by
+nothing in the SDK — measured). The classifier is what the derivation can
+honestly read: unclaimed (plan page device-features) AND level L1 (the
+bare-button shape; L2 is the settings vocabulary's own row, and L0 renders
+nothing so "its control renders on device-features" would be false of it),
+under the same class-listed exclusion B4's F5 minted (a served profile
+row's listing is the one honest class-action signal). Measured before
+implementation: no committed fixture carries an unclaimed L1 action, so
+the founding residual digests do not move — the row's statement is true of
+everything it names (advisory REPORTED, never a failure), and it
+disappears when a dataset member claims the action.
+
+**Two placement rows, one wording family.** The 2026-10-25
+capacity-versus-declaration boundary ruled the already-hosted-plot case
+(B3's row). B5 adds its sibling the boundary implies but had not named: a
+member `plot` naming a page whose KIND the manifest schema admits no plot
+on (configuration; the family's own plot def carries no page-kind rule,
+so the member schema cannot refuse it at the pin) derives nothing and
+discloses — `composed plot <slot>: page <page> admits no plot (plots
+render on dataset and readings pages alone)`. The B3 interim arm that
+asserted no row for any plot-less page moved with it (marked in place).
+
+**The lanes plot binds its over-slot's own dataset.** The founding
+digital_lanes emission bound `capture_binding_id` — correct for the corpus,
+where every lanes plot's over-slot IS the capture slot, but dishonest for a
+composed lanes plot over a member's slot: the plot's y names lane string
+variables, which the class capture's waveform shape does not carry. The
+emission now binds the over-slot's own binding; on every committed fixture
+the two are the same id, so all eight founding derivations are
+byte-identical (proved by digest at this slice's commits: manifest
+9d744557d304ff8e daq, 8764b42c16878880 f1/logic_analyser, and the other
+six unchanged from the B4 base).
+
+**Risk #6's falsifier is a REPORTED row plus a stamp discipline.** A
+composed dataset slot on a plot-bearing page whose plot does not carry its
+binding: the L4 census on that page still covers it (plots >= 1), and the
+row that keeps the coverage honest is `composed dataset <slot>: no plot
+carries its binding (the plot on page <page> binds <over_slot>)` —
+REPORTED, never a finding — beside the `rendered_by: "the page plot"`
+stamp that lands ONLY when a derived plot carries the member's binding
+(the R9 site, after plot construction). Both directions armed: the row
+disappears and the stamp lands when the member's own plot derives.

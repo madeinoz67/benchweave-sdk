@@ -39,7 +39,7 @@ from typing import Any
 
 import pytest
 
-from benchweave_sdk.classref import derive_ui, find_reference
+from benchweave_sdk.classref import ResidualMember, derive_ui, find_reference
 
 FIXTURES = Path(__file__).parent / "fixtures" / "classref"
 REFERENCE = find_reference("otdp.daq/1.0.0")
@@ -199,6 +199,69 @@ def _project(
 
 def _dataset_targets(derived: Any) -> list[dict[str, Any]]:
     return [row for row in derived.catalogue["targets"] if row["kind"] == "dataset"]
+
+
+def _plotless_reference() -> dict[str, Any]:
+    """The daq reference with the capture page's waveform plot stripped: a
+    dataset page that hosts NO plot template — the page shape V5's member
+    ``plot`` choice exists for (every vendored dataset/readings page hosts
+    one; the composing arm needs the plot-less page the corpus does not
+    carry, built here as the authoring-side test fixture it is)."""
+    reference = json.loads(json.dumps(REFERENCE))
+    for page in reference["pages"]:
+        if str(page["id"]) == "capture":
+            page.pop("plot", None)
+    return reference
+
+
+def _derive_custom(
+    tmp_path: Path, declaration: dict[str, Any], reference: dict[str, Any]
+) -> Any:
+    """_project's shape over a CUSTOM reference (the plot-less arm)."""
+    descriptor = json.loads((FIXTURES / "descriptor-m400.json").read_bytes())
+    catalog = json.loads((FIXTURES / CATALOG_PIN).read_bytes())
+    catalog["actions"][SEGMENT_CAPTURE_URN] = _catalog_row()
+    by_name = {MEMBER_PIN: declaration, CATALOG_PIN: catalog}
+    descriptor["contracts"] = [
+        row for row in descriptor["contracts"] if row.get("path") not in by_name
+    ]
+    for name, document in by_name.items():
+        descriptor["contracts"].append(
+            {
+                "id": f"urn:meridian:{name.removesuffix('.json')}:1.0.0",
+                "path": name,
+                "sha256": hashlib.sha256(_raw(document)).hexdigest(),
+            }
+        )
+    scratch = tmp_path / "project"
+    scratch.mkdir(parents=True)
+    (scratch / "descriptor.json").write_bytes(_raw(descriptor))
+    for name, document in by_name.items():
+        (scratch / name).write_bytes(_raw(document))
+    for pinned in (
+        "composed-burst.json",
+        "device-profile-catalog.json",
+        "otdp-measurement.schema.json",
+    ):
+        source = FIXTURES / pinned
+        if source.is_file():
+            (scratch / pinned).write_bytes(source.read_bytes())
+    return derive_ui(
+        (scratch / "descriptor.json").read_bytes(),
+        reference,
+        descriptor_path=scratch / "descriptor.json",
+    )
+
+
+def _plotless_project(
+    tmp_path: Path,
+    plot: dict[str, Any],
+) -> Any:
+    """Derive over the M-400 body with ONE dataset member carrying ``plot``
+    against the plot-less reference."""
+    return _derive_custom(
+        tmp_path, _declaration([_dataset_member(plot=plot)]), _plotless_reference()
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -399,3 +462,318 @@ def test_no_vendored_reference_places_a_dataset_slot_beside_a_foreign_plot() -> 
                         f"{page['id']} whose plot hosts over_slot "
                         f"{plot.get('over_slot')!r}"
                     )
+
+
+# ---------------------------------------------------------------------------
+# V5 layer 2 — the member's ``plot`` choice derives on a plot-less page
+# (§4 V5): among the EXISTING three kinds, validated against the family
+# schema's own plot def, through the existing plot emission.
+# ---------------------------------------------------------------------------
+
+
+def test_a_waveform_plot_choice_derives_on_a_plotless_page(tmp_path: Path) -> None:
+    """(#556 §4 V5 layer 2) A dataset member's ``plot`` on a page hosting no
+    plot template DERIVES: the existing emission renders the waveform over
+    the member's own slot — binding the member's dataset, x the explicit
+    time axis, y the shape's trace variables — and the member's dataset
+    shape speaks the chosen kind (the plot registers in
+    ``plot_kind_for_slot`` through the injected page template)."""
+    derived = _plotless_project(
+        tmp_path,
+        {"kind": "waveform", "over_slot": "segment-capture",
+         "series": "numeric_variables"},
+    )
+    (plot,) = [
+        plot
+        for page in derived.manifest["pages"]
+        for plot in (page.get("plots") or [])
+    ]
+    assert plot == {
+        "kind": "waveform",
+        "binding_id": "segment-capture",
+        "x": "t",
+        "y": list(LANE_TRACE_IDS),
+    }, plot
+    target = next(
+        row for row in _dataset_targets(derived) if row["id"] == "segment-capture"
+    )
+    assert [row["id"] for row in target["variables"]] == [
+        "t", *LANE_TRACE_IDS,
+    ], target
+    # The R9 stamp (§4 V4 provenance): a composed dataset row advertises a
+    # rendering only when a derived plot carries its binding — this one
+    # does, so the row carries rendered_by.
+    assert (
+        derived.control_plan[SEGMENT_CAPTURE_URN]["rendered_by"] == "the page plot"
+    ), derived.control_plan[SEGMENT_CAPTURE_URN]
+    # No residual row for a member whose plot derives (R10's direction).
+    assert not any(
+        row.member == "segment-capture" for row in derived.residual_members
+    ), derived.residual_members
+
+
+def test_a_time_series_plot_choice_derives_on_a_plotless_page(
+    tmp_path: Path,
+) -> None:
+    """The second of the three kinds: time_series speaks receipt time and
+    scalar value variables — x ``time``, y one per lane quantity, all
+    scalars (the wire shape the kind declares)."""
+    derived = _plotless_project(
+        tmp_path,
+        {"kind": "time_series", "over_slot": "segment-capture",
+         "series": "numeric_variables"},
+    )
+    (plot,) = [
+        plot
+        for page in derived.manifest["pages"]
+        for plot in (page.get("plots") or [])
+    ]
+    assert plot == {
+        "kind": "time_series",
+        "binding_id": "segment-capture",
+        "x": "time",
+        "y": list(LANE_TRACE_IDS),
+    }, plot
+    target = next(
+        row for row in _dataset_targets(derived) if row["id"] == "segment-capture"
+    )
+    assert [row["id"] for row in target["variables"]] == [
+        "time", *LANE_TRACE_IDS,
+    ], target
+    assert all(
+        row["shape"] == "scalar"
+        for row in target["variables"]
+        if row["id"] != "time"
+    ), target
+
+
+def test_a_digital_lanes_plot_choice_derives_on_a_plotless_page(
+    tmp_path: Path,
+) -> None:
+    """The third kind: digital_lanes over the member's own slot binds the
+    MEMBER's dataset — whose digital-lanes shape carries exactly these lane
+    string variables — never the class capture binding, whose waveform
+    shape carries none of them. The lane groups and channel hints derive
+    through the founding machinery."""
+    derived = _plotless_project(
+        tmp_path,
+        {"kind": "digital_lanes", "over_slot": "segment-capture"},
+    )
+    (plot,) = [
+        plot
+        for page in derived.manifest["pages"]
+        for plot in (page.get("plots") or [])
+    ]
+    assert plot["kind"] == "digital_lanes", plot
+    assert plot["binding_id"] == "segment-capture", plot
+    assert plot["y"] == ["ch1", "ch2", "ch3"], plot
+    assert [group["member_ids"] for group in plot["lane_groups"]] == [
+        ["ch1", "ch2", "ch3"]
+    ], plot
+    target = next(
+        row for row in _dataset_targets(derived) if row["id"] == "segment-capture"
+    )
+    assert [row["id"] for row in target["variables"]] == [
+        "t", "ch1", "ch2", "ch3",
+    ], target
+    assert all(
+        row["type"] == "string"
+        for row in target["variables"]
+        if row["id"] != "t"
+    ), target
+
+
+def test_the_plot_choice_survives_the_real_gate(tmp_path: Path) -> None:
+    """The composed plot through the real gate: the project derives, the
+    host renders, the census counts the member's plot on the capture page
+    (the reference's own engineering-plot expectation, still one — the
+    member's plot replaced the stripped template), and the run is clean
+    with the L4 dataset surface covered by the member's own plot."""
+    from benchweave_sdk.classref_gate import verify_ui
+    from benchweave_sdk.scaffold import create_project
+
+    derived = _derive_custom(
+        tmp_path / "derive",
+        _declaration(
+            [
+                _dataset_member(
+                    plot={
+                        "kind": "waveform",
+                        "over_slot": "segment-capture",
+                        "series": "numeric_variables",
+                    }
+                )
+            ]
+        ),
+        _plotless_reference(),
+    )
+    scratch = tmp_path / "derive" / "project"
+    project = tmp_path / "gate-project"
+    create_project(project, "veridian_dataset_plot_plugin", with_ui=False)
+    package = project / "src" / "veridian_dataset_plot_plugin"
+    for path in sorted(scratch.iterdir()):
+        if path.is_file():
+            (package / path.name).write_bytes(path.read_bytes())
+    ui = package / "ui"
+    ui.mkdir()
+    (ui / "manifest.json").write_bytes(_raw(derived.manifest))
+    (package / "presentation.json").write_bytes(_raw(derived.envelope))
+    (package / "binding-catalogue.json").write_bytes(_raw(derived.catalogue))
+    settings = ui / "settings"
+    settings.mkdir()
+    # One settings asset per configuration surface — the B4 writer shape;
+    # the single-slot convenience pins the wrong bytes on a composed
+    # project.
+    for slot_key, schema in derived.settings_schemas.items():
+        (settings / f"{slot_key}.schema.json").write_bytes(_raw(schema))
+    presets = ui / "presets"
+    presets.mkdir()
+    for slug, scaffold in derived.preset_scaffolds.items():
+        (presets / f"{slug}.json").write_bytes(_raw(scaffold))
+    (ui / "class-reference.json").write_bytes(_raw(derived.declaration))
+    report = verify_ui(project, reference=_plotless_reference())
+    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
+    # The dataset member's surface is not a deviation: no composed-plot row,
+    # no composed-dataset row, no applied-nowhere row rides the channel.
+    assert [
+        row for row in report.reported_deviations if "composed" in row
+    ] == [], report.reported_deviations
+
+
+# ---------------------------------------------------------------------------
+# The residual rows B5 mints: the placement limit (a page the manifest
+# schema admits no plot on), the dataset no-binding disclosure (risk #6's
+# falsifier — REPORTED, never laundered by the neighbour plot's census
+# coverage), and V4's layer-3 classifier for the unclaimed capture verb.
+# ---------------------------------------------------------------------------
+
+
+def test_a_member_plot_on_a_page_admitting_no_plot_reports(tmp_path: Path) -> None:
+    """The 2026-10-25 capacity-versus-declaration boundary's placement half:
+    a member ``plot`` naming a configuration page contradicts nothing the
+    member schema can see (the family's own plot def carries no page-kind
+    rule; the MANIFEST schema admits plots on dataset and readings pages
+    alone), so it never refuses — the page kind is a placement limit the
+    declaration cannot see, and the row discloses it every run."""
+    derived = _project(
+        tmp_path,
+        _declaration(
+            [
+                _dataset_member(
+                    page="configuration",
+                    plot={
+                        "kind": "time_series",
+                        "over_slot": "segment-capture",
+                        "series": "numeric_variables",
+                    },
+                )
+            ]
+        ),
+    )
+    rows = [
+        row for row in derived.residual_members if row.kind == "composed plot"
+    ]
+    assert rows == [
+        ResidualMember(
+            "composed plot",
+            "datasets and capture shapes",
+            "segment-capture",
+            "page configuration admits no plot (plots render on dataset "
+            "and readings pages alone)",
+        ),
+    ], derived.residual_members
+
+
+def test_a_composed_dataset_no_plot_carries_reports_not_launder(
+    tmp_path: Path,
+) -> None:
+    """(Record §9 risk #6's falsifier — the R9 lesson: building is not
+    rendering) A composed dataset slot on a plot-bearing page whose plot
+    does NOT carry its binding must REPORT, never pass silently on the
+    neighbour plot's census coverage: the M-400's production shape (the
+    member beside the class capture plot, no plot of its own) derives its
+    dataset surface and carries the disclosure row, and the plan row
+    carries NO rendered_by advertisement — the row claims a rendering only
+    when that rendering occurs."""
+    derived = _project(tmp_path, _declaration([_dataset_member()]))
+    rows = [
+        row
+        for row in derived.residual_members
+        if row.kind == "composed dataset"
+    ]
+    assert rows == [
+        ResidualMember(
+            "composed dataset",
+            "datasets and capture shapes",
+            "segment-capture",
+            "no plot carries its binding (the plot on page capture binds "
+            "capture)",
+        ),
+    ], derived.residual_members
+    assert "rendered_by" not in derived.control_plan[SEGMENT_CAPTURE_URN]
+    # The other direction (R10's rule is two-sided): when a derived plot
+    # carries the binding, no row and the stamp lands — the composing arm
+    # above asserts the stamp; this asserts the row's disappearance on the
+    # same body.
+    composed = _plotless_project(
+        tmp_path / "plotted",
+        {"kind": "waveform", "over_slot": "segment-capture",
+         "series": "numeric_variables"},
+    )
+    assert not any(
+        row.kind == "composed dataset" for row in composed.residual_members
+    ), composed.residual_members
+
+
+def test_a_capture_shaped_residual_action_reports_no_dataset_surface(
+    tmp_path: Path,
+) -> None:
+    """(#556 §4 V4 layer 3) A declared action whose bare button renders on
+    device-features — the capture verb's control shape — carries the
+    dataset vocabulary's residual row: it derives its action control only,
+    no dataset surface names it. The design's 'capture-shaped' has no
+    descriptor-side signal (OTDP types no verbs; ``capture_formats`` is
+    device-level and read by nothing), so the classifier is the derived
+    state — the V6 precedent: unclaimed (page device-features) AND level
+    L1, EXCEPT an action a served profile row of a claimed profile lists
+    (the one honest class-action signal). The row DISAPPEARS when a dataset
+    member claims the action."""
+    capture_verb = {
+        "com.meridian.m400.scope_shot/1.0.0": {
+            "binding": {"kind": "adapter", "key": "scope_shot"},
+            "input_constraints": {"properties": {}},
+            "timeout_ms": 5000,
+            "side_effect": "state_change",
+            "cancellable": True,
+            "retry": "never",
+        }
+    }
+    residual = _project(
+        tmp_path,
+        _declaration([_dataset_member()]),
+        extra_actions=capture_verb,
+    )
+    row = next(
+        (
+            row
+            for row in residual.residual_members
+            if row.member == "com.meridian.m400.scope_shot/1.0.0"
+        ),
+        None,
+    )
+    assert row is not None, residual.residual_members
+    assert row.kind == "dataset member"
+    assert row.vocabulary == "datasets and capture shapes"
+    assert row.detail == (
+        "no dataset surface declared (the action's control renders on "
+        "device-features)"
+    )
+    claimed = _project(
+        tmp_path / "claimed",
+        _declaration([_dataset_member(claim="com.meridian.m400.scope_shot/1.0.0")]),
+        extra_actions=capture_verb,
+    )
+    assert not any(
+        row.member == "com.meridian.m400.scope_shot/1.0.0"
+        for row in claimed.residual_members
+    ), claimed.residual_members

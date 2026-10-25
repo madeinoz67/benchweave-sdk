@@ -1060,9 +1060,11 @@ def test_scope_b1_the_series_ceiling_drops_only_composed_series(
     # Every computed variable carries its composed-state row (the denominator
     # is the descriptor's own declaration, 14 here); only the one dropped
     # from the plot carries the ceiling clause.
-    # MOVED DELIBERATELY 2026-10-25 (#556 B4, V6 layer 3): the fixture's
-    # two unclaimed staged actions gain their settings residual rows — 14
-    # computed rows plus the two named here, both counted, never filtered.
+    # MOVED DELIBERATELY 2026-10-25 (#556 B4, V6 layer 3) and 2026-10-26
+    # (#556 B5, §4 V4 layer 3): the fixture's two unclaimed staged actions
+    # gain their settings residual rows, and the extended fixture's dataset
+    # member gains its no-binding row — 14 computed rows plus every named
+    # row here, all counted, never filtered.
     settings_rows = [
         row
         for row in over.residual_members
@@ -1072,7 +1074,12 @@ def test_scope_b1_the_series_ceiling_drops_only_composed_series(
         "com.meridian.m400.burst_mode/1.0.0",
         "com.meridian.m400.self_cal/1.0.0",
     ], over.residual_members
-    assert len(over.residual_members) == 14 + len(settings_rows), (
+    assert [
+        row.member
+        for row in over.residual_members
+        if row.kind == "composed dataset"
+    ] == ["segment-capture"], over.residual_members
+    assert len(over.residual_members) == 14 + len(settings_rows) + 1, (
         over.residual_members
     )
     rows = {row.member: row.detail for row in over.residual_members}
@@ -1411,9 +1418,12 @@ def test_scope_b1_v3_a_decoder_with_no_lane_host_reports_its_reason(
     then hosted nowhere — so the row is the only surface that can tell the
     author the decoder has no lane host."""
     project, package, derived = _decoded_daq(tmp_path)
-    # MOVED DELIBERATELY 2026-10-25 (#556 B4, V6 layer 3): the fixture's
-    # two unclaimed staged actions (burst_mode, self_cal) gain their
-    # settings residual rows beside the decoder row this arm pins.
+    # MOVED DELIBERATELY 2026-10-25 (#556 B4, V6 layer 3) and 2026-10-26
+    # (#556 B5, §4 V4 layer 3): the fixture's two unclaimed staged actions
+    # (burst_mode, self_cal) gain their settings residual rows beside the
+    # decoder row this arm pins, and the extended fixture's dataset member
+    # gains its no-binding row (the class capture plot binds the class
+    # capture slot, never the member's).
     assert derived.residual_members == (
         ResidualMember(
             "custom decoder",
@@ -1421,6 +1431,13 @@ def test_scope_b1_v3_a_decoder_with_no_lane_host_reports_its_reason(
             "uart",
             "no lane host (this class's plot is waveform; lanes host in "
             "digital_lanes plots alone)",
+        ),
+        ResidualMember(
+            "composed dataset",
+            "datasets and capture shapes",
+            "segment-capture",
+            "no plot carries its binding (the plot on page capture binds "
+            "capture)",
         ),
         ResidualMember(
             "settings member",

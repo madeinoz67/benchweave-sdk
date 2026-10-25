@@ -2089,7 +2089,9 @@ def _inject_composed_members(
     reference's own action-slot branch verbatim, the claimed URN the
     first claim the descriptor declares); B5 injects the dataset kind (V4
     layer 2 — the dataset arm composes the target with the vendor profile
-    row and the pinned measurement contract). A member that
+    row and the pinned measurement contract, and a member's ``plot``
+    whose named page hosts no template plot joins that page's template so
+    the existing plot emission derives it, V5 layer 2). A member that
     applies nowhere injects nothing — its disclosure is the
     applied-nowhere row."""
     declared_actions = descriptor.get("actions") or {}
@@ -2152,6 +2154,33 @@ def _inject_composed_members(
                 if str(page.get("id")) == page_id:
                     page.setdefault("_slot_keys", []).append(slot_key)
                     page.setdefault("bindings", []).append(slot_key)
+                    # (#556 §4 V5, B5) The member's ``plot`` choice joins the
+                    # page template when the page hosts no plot of its own —
+                    # the existing emission derives it from the template, and
+                    # ``plot_kind_for_slot`` registers the member's kind so
+                    # the slot's dataset shape derives per the choice. The
+                    # two non-deriving placements disclose at the residual
+                    # walk, never silently: a page that already hosts a
+                    # template plot keeps the class's (the B3 row), and a
+                    # page whose kind the manifest schema admits no plot on
+                    # (configuration) derives nothing (this slice's row) —
+                    # both placement limits the declaration cannot see, the
+                    # 2026-10-25 capacity-versus-declaration boundary.
+                    if (
+                        kind == "dataset"
+                        and isinstance(member.get("plot"), dict)
+                        and page.get("plot") is None
+                        and str(page.get("kind", "readings"))
+                        in ("dataset", "readings")
+                    ):
+                        page["plot"] = dict(member["plot"])
+                        # The internal marker distinguishes an INJECTED
+                        # member plot from a class template plot downstream
+                        # (the B3 placement row keys on the CLASS template
+                        # alone — after injection both sit in
+                        # ``page["plot"]``, and the row's wording would be
+                        # false of the member's own plot).
+                        page["_member_plot_of"] = slot_key
                     break
 
 
@@ -3190,7 +3219,18 @@ def _finish(
         plots.append(
             {
                 "kind": "digital_lanes",
-                "binding_id": capture_binding_id,
+                # (#556 §4 V5, B5) The lanes plot binds the dataset whose
+                # shape carries its lane alphabet — the over-slot's own
+                # binding. The founding corpus's every lanes plot hosts the
+                # capture slot itself, so this equals the founding
+                # capture_binding_id on every committed fixture (the
+                # byte-stability digests at this slice's commit); a composed
+                # lanes plot over the member's own slot binds that member's
+                # dataset, whose digital-lanes shape carries exactly these
+                # lane variables — binding the class capture whose waveform
+                # shape carries none of them would name a wire the bound
+                # dataset does not speak.
+                "binding_id": over_key,
                 "x": "t",
                 "y": [row["id"] for row in lane_var_rows],
                 "channel_hints": [
@@ -3214,6 +3254,19 @@ def _finish(
         for urn, row in plan.items():
             if urn.split("/")[0].rsplit(".", 1)[-1] == "decode_annotated":
                 row["rendered_by"] = "decoder annotation lanes"
+    # (#556 §4 V4 provenance, B5; risk #6's falsifier) A COMPOSED dataset
+    # row advertises a rendering only when a derived plot carries its
+    # binding — the R9 stamp discipline, landed after plot construction
+    # exactly where the decode-annotated stamp sits. A composed slot on a
+    # plot-bearing page whose plot binds another slot claims nothing: the
+    # census may cover its L4 page, but the row's own advertisement stays
+    # silent and the residual walk below discloses the gap.
+    plot_binding_slots = {str(plot.get("binding_id")) for plot in plots}
+    for member_row in (composed_members or {}).get("datasets", ()):
+        if str(member_row["slot"]) in plot_binding_slots:
+            plan_row = plan.get(str(member_row["action"]))
+            if plan_row is not None:
+                plan_row["rendered_by"] = "the page plot"
     # (#556 B4) Binding-to-action resolution consults the slot keys: a
     # composed member's slot may name its binding anything the schema
     # admits, where the class convention binding id == action slug does
@@ -3314,8 +3367,28 @@ def _finish(
     # page whose class template already hosts a plot is ADMISSIBLE — a
     # placement limit the declaration cannot see, never a conflict — so it
     # never refuses: the page keeps the class's plot, the member's plot
-    # derives nothing (its derivation is B5's slice), and every run
-    # REPORTS the row the README publishes verbatim.
+    # derives nothing, and every run REPORTS the row the README publishes
+    # verbatim. B5 adds the placement family's second row: a ``plot``
+    # naming a page whose KIND the manifest schema admits no plot on
+    # (configuration pages; the family's own plot def carries no page-kind
+    # rule, so the member schema cannot refuse it at the pin) derives
+    # nothing either and discloses the page-kind limit. The injected
+    # member plots are marked, so the class-template question stays
+    # answerable after injection put a plot on the page.
+    member_plot_pages = {
+        str(page.get("id"))
+        for page in merged["pages"]
+        if page.get("_member_plot_of")
+    }
+    page_kind_of = {
+        str(page.get("id")): str(page.get("kind", "readings"))
+        for page in merged["pages"]
+    }
+    plot_over_slot_of = {
+        str(page.get("id")): (page.get("plot") or {}).get("over_slot")
+        for page in merged["pages"]
+        if page.get("plot")
+    }
     for member_document in member_declarations:
         for member in member_document.members:
             if not isinstance(member.get("plot"), dict):
@@ -3323,7 +3396,7 @@ def _finish(
             if not _member_applies(member, descriptor):
                 continue
             page_id = str(member.get("page", ""))
-            if page_id in pages_with_plot:
+            if page_id in pages_with_plot and page_id not in member_plot_pages:
                 member_residual_rows.append(
                     ResidualMember(
                         "composed plot",
@@ -3333,6 +3406,44 @@ def _finish(
                         "keeps the class's plot)",
                     )
                 )
+            elif page_kind_of.get(page_id) not in ("dataset", "readings"):
+                member_residual_rows.append(
+                    ResidualMember(
+                        "composed plot",
+                        "datasets and capture shapes",
+                        str(member.get("slot", "")),
+                        f"page {page_id} admits no plot (plots render on "
+                        "dataset and readings pages alone)",
+                    )
+                )
+    # (#556 §4 V4/V5 layer 3, B5) A composed dataset slot NO derived plot
+    # carries — the nine-presentation-kinds terminal state — discloses on
+    # the REPORTED channel: applied is not rendered, and the L4 census on a
+    # plot-bearing page must not launder a binding the neighbour plot does
+    # not carry (risk #6's falsifier; the row disappears when a plot
+    # carries the binding, and the rendered_by stamp above is the other
+    # half of the same honesty rule).
+    for member_row in (composed_members or {}).get("datasets", ()):
+        slot = str(member_row["slot"])
+        if slot in plot_binding_slots:
+            continue
+        page_id = str(member_row["page"])
+        over = plot_over_slot_of.get(page_id)
+        if over is not None:
+            detail = (
+                f"no plot carries its binding (the plot on page {page_id} "
+                f"binds {over})"
+            )
+        else:
+            detail = f"no plot carries its binding (page {page_id} hosts no plot)"
+        member_residual_rows.append(
+            ResidualMember(
+                "composed dataset",
+                "datasets and capture shapes",
+                slot,
+                detail,
+            )
+        )
     # (#556 B3 fold F1) The join overflow rows — one per dropped lane, in
     # the residual wording family, each naming the page, the joined count
     # and the ceiling (the number and its denominator, G4). The lane's role
@@ -3388,6 +3499,35 @@ def _finish(
                     urn,
                     "no settings surface declared "
                     "(controls render staged on device-features)",
+                )
+            )
+    # (#556 §4 V4 layer 3, B5) A declared action whose bare BUTTON renders
+    # on device-features — the capture verb's control shape — carries the
+    # dataset vocabulary's residual row: it derives its action control
+    # only, and no dataset surface names it. The design's
+    # "capture-shaped" has no descriptor-side signal either (OTDP types no
+    # verbs; ``capture_formats`` is device-level and read by nothing), so
+    # the classifier is the derived state — the V6 precedent exactly:
+    # unclaimed (page device-features) AND level L1 (the bare-button
+    # shape; L2 is the settings vocabulary's own row, L0 renders nothing
+    # so "its control renders" would be false of it) — under the same
+    # class-listed exclusion. No committed fixture carries an unclaimed
+    # L1 action (measured at this slice's design), so the founding
+    # residual digests do not move. A dataset member that claims the
+    # action moves its row off device-features and this row disappears.
+    for urn, row in sorted(plan.items()):
+        if (
+            row.get("page") == "device-features"
+            and row.get("level") == "L1"
+            and urn not in class_listed_actions
+        ):
+            member_residual_rows.append(
+                ResidualMember(
+                    "dataset member",
+                    "datasets and capture shapes",
+                    urn,
+                    "no dataset surface declared (the action's control "
+                    "renders on device-features)",
                 )
             )
     # The residual inventory (#556 Track B §3 rule 3) needs four facts about
