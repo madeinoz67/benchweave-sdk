@@ -2039,6 +2039,7 @@ def _assemble(
         empty_action_pins=empty_action_pins,
         composed_members=composed_members or {},
         unapplied_member_pins=unapplied_member_pins,
+        member_declarations=member_declarations,
     )
 
 
@@ -2236,6 +2237,7 @@ def _finish(
     empty_action_pins: tuple[str, ...] = (),
     composed_members: Mapping[str, tuple[dict[str, str], ...]] | None = None,
     unapplied_member_pins: tuple[str, ...] = (),
+    member_declarations: tuple[ComposedMemberDeclaration, ...] = (),
 ) -> DerivedUI:
     """Assemble every emitted document from the resolved inventory."""
     import hashlib
@@ -2977,6 +2979,30 @@ def _finish(
                     "render into the named page's plot alone)",
                 )
             )
+    # (#556, the 0.5.0 README rule 4; the maintainer's 2026-10-25
+    # capacity-versus-declaration ruling) A dataset member's ``plot`` on a
+    # page whose class template already hosts a plot is ADMISSIBLE — a
+    # placement limit the declaration cannot see, never a conflict — so it
+    # never refuses: the page keeps the class's plot, the member's plot
+    # derives nothing (its derivation is B5's slice), and every run
+    # REPORTS the row the README publishes verbatim.
+    for member_document in member_declarations:
+        for member in member_document.members:
+            if not isinstance(member.get("plot"), dict):
+                continue
+            if not _member_applies(member, descriptor):
+                continue
+            page_id = str(member.get("page", ""))
+            if page_id in pages_with_plot:
+                member_residual_rows.append(
+                    ResidualMember(
+                        "composed plot",
+                        "datasets and capture shapes",
+                        str(member.get("slot", "")),
+                        f"page {page_id} already hosts a plot (the page "
+                        "keeps the class's plot)",
+                    )
+                )
     # The residual inventory (#556 Track B §3 rule 3) needs four facts about
     # THIS run: which channel roles rendered lanes, which dataset targets
     # derived (and the base variable ids their wire shape carries), which
