@@ -259,6 +259,50 @@ A deferred-member row names one member and its vocabulary. A computed measuremen
 
 A disclosure row never fails the run by itself. A residual member still fails the coverage arm when the derivation minted its controls and the render lacks them.
 
+### Standalone development loop (composed UIs) {#standalone-dev-loop}
+
+You can author, derive and preview a composed user interface with no gateway. The workflow is offline after the installation. The loop has 7 steps.
+
+1. Install the SDK with the server and scaffold extras. The `[server]` extra supplies the preview host. The `[scaffold]` extra supplies the project template.
+
+   ```sh
+   uv pip install 'benchweave-sdk[server,scaffold]'
+   ```
+
+2. Create a project with the optional UI resources.
+
+   ```sh
+   benchweave-sdk new acme-widget --package acme_widget_plugin --with-ui
+   ```
+
+3. Write the composed action class document in the plugin package, beside the descriptor. The section "Author a composed action class" above gives the document shape.
+
+4. Pin the document in `descriptor.json` under `contracts[]`. The pin gives an id, a path relative to the descriptor, and the sha256 of the file bytes. The same section gives the row shape. The digest is the digest of the current bytes. Update the pin after each edit of the document. A pin that does not match the bytes refuses the derivation with `classref_vendor_catalog_digest_mismatch:`.
+
+5. Derive the presentation set.
+
+   ```sh
+   benchweave-sdk derive-ui acme-widget
+   ```
+
+6. Run the rendered gate.
+
+   ```sh
+   benchweave-sdk verify-ui acme-widget
+   ```
+
+7. Serve the preview.
+
+   ```sh
+   benchweave-sdk preview-ui acme-widget --no-open
+   ```
+
+   The command prints the serve URL and the bearer token. Open the URL in a browser.
+
+The loop shows these results. After step 5, `ui/class-reference.json` records one row for each composed action and one row for each residual member. After step 6, the command prints `Rendered gate clean`. It also prints one `reported deviation:` line for each residual member and for each declared deviation. The served device-features page shows the composed control. The control takes its fields from the class's `input_schema`. The page also shows the `Custom device actions` section for the residual members.
+
+The preview host pins the mock transport. Every value on the page is simulated, and the page labels each one. The loop never admits a plugin. It never operates hardware.
+
 ### Contract-version migration (`migrate-ui`) {#migrate-ui}
 
 The three presentation documents (`presentation.json`, `ui/manifest.json`, `binding-catalogue.json`) carry a `contract_version` stamp. The SDK writes this stamp when it generates the documents. The stamp comes from the lock's active plugin-ui version. A new SDK release can move the active version. The `upgrade` command refreshes the template only. It does not write into `src/`. The artifacts then keep the stamp of the SDK that made them. A project in this state fails `check-ui` and the generated preview test with `unsupported_version`.
