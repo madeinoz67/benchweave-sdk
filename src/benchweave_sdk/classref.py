@@ -30,7 +30,7 @@ from typing import Any
 from jsonschema import Draft202012Validator
 from referencing import Registry, Resource
 
-from .presentation import read_file
+from .presentation import _check_pinned_id_shadows, read_file
 from .served import active_version
 from .validation import contract_documents, validate_descriptor
 
@@ -124,6 +124,15 @@ class DerivedUI:
     reference: dict[str, Any]
     cannot_derive: list[dict[str, str]]
     declaration: dict[str, Any]
+    #: (#556 B4, V6) Every configuration slot's effective settings schema,
+    #: keyed by slot — the map the writer consumes (one asset per surface:
+    #: ``settings/<slot>.schema.json``). ``settings_schema`` above keeps the
+    #: founding single-slot semantics (the last configuration slot's schema)
+    #: for the single-surface consumers; a composed settings member beside a
+    #: class slot makes the two differ and the map the honest one.
+    settings_schemas: dict[str, dict[str, Any]] = dataclass_field(
+        default_factory=dict
+    )
     #: Pins whose documents matched neither shape discriminator (B7):
     #: digest-verified, contributed nothing, disclosed — never dropped
     #: silently. Empty tuple on derivations with no such pins.
@@ -612,6 +621,26 @@ def _check_member_reference_conflicts(
                         )
 
 
+def _pin_shape_groups(document: dict[str, Any]) -> list[str]:
+    """The pin-shape key sets a document carries (#556 B4 fold F4): the
+    member keys, the composed-class keys and the catalog keys are three
+    disjoint vocabularies, and the groups a document carries decide what
+    the walk does with it — one group is that shape, more than one refuses
+    as ambiguous, none is IGNORED (disclosed, contributing nothing). ONE
+    definition serves the walk's discrimination AND the presentation-side
+    pin reader's filter, so the derive and the check-ui agree on which
+    documents are accepted by construction — a second copy of the key sets
+    is how the two halves would drift."""
+    shape_groups: list[str] = []
+    if "members" in document:
+        shape_groups.append("members")
+    if "urn" in document or "claims" in document:
+        shape_groups.append("composed-class")
+    if "actions" in document:
+        shape_groups.append("actions")
+    return shape_groups
+
+
 def _vendor_documents(
     descriptor: dict[str, Any],
     descriptor_path: Path | None,
@@ -693,6 +722,7 @@ def _vendor_documents(
     empty_pins: list[str] = []
     member_declarations: list[ComposedMemberDeclaration] = []
     pinned_sources: dict[str, str] = {}
+    accepted_documents: dict[str, dict[str, Any]] = {}
     for row in descriptor.get("contracts", []):
         identifier = str(row.get("id", ""))
         if identifier.startswith("urn:otdp:"):
@@ -732,13 +762,12 @@ def _vendor_documents(
         # vocabularies; a pin carrying keys from more than one refuses,
         # naming the carried keys (the pre-#556 predicate — actions AND
         # (urn OR claims) — is this rule's catalog/class row exactly).
-        shape_groups: list[str] = []
-        if "members" in document:
-            shape_groups.append("members")
-        if "urn" in document or "claims" in document:
-            shape_groups.append("composed-class")
-        if "actions" in document:
-            shape_groups.append("actions")
+        # (#556 B4 folds F3/F4) The discriminator lives in ONE place
+        # (``_pin_shape_groups``) shared with the presentation-side pin
+        # reader, and every ACCEPTED document is collected for the
+        # vendored shadow guard below — the derive and the check-ui read
+        # the same accepted set.
+        shape_groups = _pin_shape_groups(document)
         if len(shape_groups) > 1:
             carried = sorted(
                 key
@@ -751,6 +780,11 @@ def _vendor_documents(
                 f"than one pin shape ({', '.join(shape_groups)}: "
                 f"{', '.join(carried)}) — an ambiguous pin",
             )
+        if shape_groups:
+            # (#556 B4 fold F3) Every ACCEPTED document rides the vendored
+            # shadow guard after the loop — exactly the set the check-ui
+            # merge sees, so the two surfaces refuse identically.
+            accepted_documents[str(row.get("path", ""))] = document
         composed_keys = "urn" in document and "claims" in document
         if "members" in document:
             _validate_member_declaration(document, row.get("path"))
@@ -848,6 +882,15 @@ def _vendor_documents(
                         }
                     actions[action_urn] = action_row
                     pinned_sources[action_urn] = str(row.get("path", ""))
+    # (#556 B4 fold F3) The walk-side half of the vendored ``pinned_id_shadow``
+    # guard: check-ui's merge has refused colliding embedded $ids (a pin
+    # shadowing a served $id, or aliasing a sibling pin's) since #446 slice 2,
+    # but the derive keyed actions by URN and never read $ids — two pinned
+    # catalogs sharing an input-schema $id derived green and the author
+    # learned only at check-ui, packages already derived. The SAME guard runs
+    # here, over exactly the accepted set, so both surfaces refuse the same
+    # shape under the same code.
+    _check_pinned_id_shadows(descriptor, accepted_documents)
     descriptor_actions = descriptor.get("actions") or {}
     claimant: dict[str, str] = {}
     for cls_urn in sorted(classes):
@@ -1853,6 +1896,34 @@ def derive_ui(
                     "classref_unknown_action",
                     f"slot {key} names {urn}, absent from the served catalogs",
                 )
+    # (#556 §4 V1/V6, B4) The D4 rule's member half: an APPLIED procedure
+    # or configuration member composes a target whose input_schema_id names
+    # the catalogue side — an action no served or pinned catalog describes
+    # has none, and the canonical validator refuses the target twice over
+    # (unresolved_reference and capability_mismatch), so the derivation
+    # refuses at the claim instead of emitting a document the validator
+    # rejects. A member that applies nowhere composes nothing and stays the
+    # applied-nowhere disclosure; a dataset member rides B5.
+    for declaration in member_declarations:
+        for member in declaration.members:
+            if member.get("kind") not in ("procedure", "configuration"):
+                continue
+            claim = next(
+                (
+                    str(row)
+                    for row in member.get("claims") or ()
+                    if str(row) in actions
+                ),
+                None,
+            )
+            if claim is not None and claim not in catalog_actions:
+                raise _refuse(
+                    "classref_unknown_action",
+                    f"member slot {member.get('slot', '')} names {claim}, "
+                    "absent from the served catalogs (the composed target "
+                    "needs the catalogue side — pin a vendor catalog row "
+                    "carrying input_schema with an $id)",
+                )
     return _assemble(
         descriptor, references, actions, catalog_actions,
         descriptor_path=descriptor_path, descriptor_raw=descriptor_raw,
@@ -2001,23 +2072,68 @@ def _inject_composed_members(
     conflict checks, so the existing derivation arms run unchanged on the
     injected rows. B3 injects the channels kind (V3 layer 2 — per-slot
     lane resolution consumes it, and the member's fields ARE the
-    reference's own channels-slot branch verbatim); the action-kind
-    injections ride their own slices (B4/B5), whose arms carry the
-    vendor-profile seam their targets need. A member that applies nowhere
-    injects nothing — its disclosure is the applied-nowhere row."""
+    reference's own channels-slot branch verbatim); B4 injects the
+    procedure and configuration kinds (V1/V6 layer 2 — the procedure loop
+    and the configuration arm consume them, the member's fields the
+    reference's own action-slot branch verbatim, the claimed URN the
+    first claim the descriptor declares); the dataset kind rides B5. A
+    member that applies nowhere injects nothing — its disclosure is the
+    applied-nowhere row."""
+    declared_actions = descriptor.get("actions") or {}
     for declaration in declarations:
         for member in declaration.members:
-            if member.get("kind") != "channels":
+            kind = member.get("kind")
+            if kind not in ("channels", "procedure", "configuration"):
                 continue
             if not _member_applies(member, descriptor):
                 continue
             slot_key = str(member.get("slot", ""))
-            merged["slots"][slot_key] = {
-                "kind": "channels",
-                "where_role": str(member.get("where_role", "")),
-                "key": "id",
-                "label": "label",
-            }
+            if kind != "channels" and declaration.profile is None:
+                # (#556 B4) An APPLIED procedure or configuration member
+                # composes a target naming the declaration's vendor profile
+                # row (the seam, §0.2); a declaration with no row is
+                # malformed for the surface it requests — a cross-array
+                # conditional the 0.1.0 dialect schema cannot express,
+                # refused under the declaration's own invalidity code. A
+                # member that applies nowhere composes nothing, so a dead
+                # member in a profile-less document stays the applied-nowhere
+                # disclosure, never this refusal. NOT caught here (the
+                # canonical validator's finding, never a refusal): a profile
+                # row whose required/optional actions omit the member's
+                # claim, which reports capability_mismatch at check-ui.
+                # Dataset members are exempt until B5 composes their
+                # targets; the channels kind claims no action and needs no
+                # row.
+                raise _refuse(
+                    "classref_invalid_member_declaration",
+                    f"pinned document {declaration.pin_path}: member "
+                    f"{slot_key} (kind {kind}) composes a target naming "
+                    "the declaration's vendor profile row, which the "
+                    "document does not carry",
+                )
+            if kind == "channels":
+                merged["slots"][slot_key] = {
+                    "kind": "channels",
+                    "where_role": str(member.get("where_role", "")),
+                    "key": "id",
+                    "label": "label",
+                }
+            else:
+                slot_row: dict[str, Any] = {
+                    "kind": str(kind),
+                    "action": next(
+                        str(claim)
+                        for claim in member.get("claims") or ()
+                        if str(claim) in declared_actions
+                    ),
+                }
+                if member.get("when_declared") is not None:
+                    slot_row["when_declared"] = member["when_declared"]
+                if member.get("host_supplied"):
+                    slot_row["host_supplied"] = list(member["host_supplied"])
+                if member.get("schema_source") is not None:
+                    slot_row["schema_source"] = member["schema_source"]
+                merged["slots"][slot_key] = slot_row
             page_id = str(member.get("page", ""))
             for page in merged["pages"]:
                 if str(page.get("id")) == page_id:
@@ -2306,6 +2422,23 @@ def _finish(
     ).encode()
     descriptor_hash = hashlib.sha256(pin_bytes).hexdigest()
     profile_ids = sorted({str(row["profile_id"]) for row in references})
+    # (#556 §4 V1/V6, the seam) The profile ids a COMPOSED member's target
+    # names: the declaration's own vendor row — the row the pinned-document
+    # merge (B4 motion 1) puts in the validator's profile map — never the
+    # served set, whose rows list none of the member's claimed actions. A
+    # reference slot's target keeps the served set exactly as before.
+    member_profile_for_slot: dict[str, str] = {}
+    for member_declaration in member_declarations:
+        if member_declaration.profile is None:
+            continue
+        for member in member_declaration.members:
+            if member.get("kind") not in ("procedure", "configuration"):
+                continue
+            if not _member_applies(member, descriptor):
+                continue
+            member_profile_for_slot[str(member.get("slot", ""))] = str(
+                member_declaration.profile["id"]
+            )
 
     bindings: list[dict[str, Any]] = []
     targets: list[dict[str, Any]] = []
@@ -2684,12 +2817,21 @@ def _finish(
         if slot.get("kind") == "configuration"
     }
     settings_schema: dict[str, Any] = {"type": "object", "properties": {}}
+    settings_schemas: dict[str, dict[str, Any]] = {}
     preset_scaffolds: dict[str, dict[str, Any]] = {}
     config_binding_ids: list[str] = []
     for config_key, config_slot in configuration_slots.items():
         urn = str(config_slot["action"])
         if urn not in actions:
             continue
+        # (#556 §4 V6) A composed settings member's target and scaffold
+        # name the declaration's vendor profile row (the seam); a class
+        # slot's keep the served set.
+        config_profile_ids = (
+            [member_profile_for_slot[config_key]]
+            if config_key in member_profile_for_slot
+            else profile_ids
+        )
         slot_catalogue_row = _catalogue_row(urn, catalog_actions)
         effective = _effective_action_schema(
             urn, slot_catalogue_row, actions[urn].get("input_constraints") or {}
@@ -2701,6 +2843,9 @@ def _finish(
             "$schema": "https://json-schema.org/draft/2020-12/schema",
             "type": "object",
         }
+        # (#556 B4, V6) Every configuration surface's schema, keyed by its
+        # slot — one asset per surface, the writer's map.
+        settings_schemas[config_key] = settings_schema
         schema_name = f"settings/{config_key}.schema.json"
         assets.append(
             {
@@ -2717,7 +2862,7 @@ def _finish(
             "title": f"Scaffold preset for {config_key}",
             "revision": "0",
             "plugin_id": str(descriptor["id"]),
-            "profile_ids": profile_ids,
+            "profile_ids": config_profile_ids,
             "supported_firmware": [
                 str(row)
                 for row in descriptor.get("identity", {}).get("supported_firmware", [])
@@ -2742,7 +2887,7 @@ def _finish(
                 "id": config_key,
                 "kind": "configuration",
                 "action_id": urn,
-                "profile_ids": profile_ids,
+                "profile_ids": config_profile_ids,
                 "input_schema_id": catalogue_input.get("$id"),
                 "schema_asset_id": schema_name,
                 "preset_asset_ids": [],
@@ -2759,12 +2904,19 @@ def _finish(
         urn = str(proc_slot["action"])
         if urn not in actions:
             continue  # when_declared slot the descriptor does not declare
+        # (#556 §4 V1) A composed procedure member's target names the
+        # declaration's vendor profile row (the seam); a class slot's
+        # keeps the served set.
         targets.append(
             {
                 "id": proc_key,
                 "kind": "procedure",
                 "action_id": urn,
-                "profile_ids": profile_ids,
+                "profile_ids": (
+                    [member_profile_for_slot[proc_key]]
+                    if proc_key in member_profile_for_slot
+                    else profile_ids
+                ),
                 "input_schema_id": (_catalogue_row(urn, catalog_actions) or {})
                 .get("input_schema", {})
                 .get("$id"),
@@ -2975,9 +3127,20 @@ def _finish(
         for urn, row in plan.items():
             if urn.split("/")[0].rsplit(".", 1)[-1] == "decode_annotated":
                 row["rendered_by"] = "decoder annotation lanes"
+    # (#556 B4) Binding-to-action resolution consults the slot keys: a
+    # composed member's slot may name its binding anything the schema
+    # admits, where the class convention binding id == action slug does
+    # not hold (the M-400 fixture's vendor-configure slot naming the
+    # profile_mode action).
+    slot_urns = {
+        key: str(slot["action"])
+        for key, slot in merged["slots"].items()
+        if slot.get("action")
+    }
     layout_block = _build_layout(
         pages_out, plots, merged["layouts"], plan, vendor_binding_ids,
         templates={str(row["id"]): row for row in merged["pages"]},
+        slot_urns=slot_urns,
     )
     manifest = {
         "contract_version": version,
@@ -3029,6 +3192,7 @@ def _finish(
         variable_count=sum(
             len(row.get("quantities") or ()) for row in rendered_lanes
         ),
+        composed_settings=len((composed_members or {}).get("settings", ())),
     )
     declaration = _build_declaration(
         references, divergences, plan, ignored_pins,
@@ -3099,6 +3263,46 @@ def _finish(
                     f"{joined} lanes; the plot's y admits {_LANE_CEILING})",
                 )
             )
+    # (#556 §4 V6 layer 3; B4 fold F5) A declared action whose controls
+    # render STAGED on device-features carries the settings idiom's control
+    # shape without the idiom — no schema asset, no preset scaffold, no
+    # data-table — and REPORTs every run. The design's "configuration-shaped"
+    # has no descriptor-side signal (verbs are not typed in OTDP), so the
+    # classifier is the derived state: unclaimed by any slot (page
+    # device-features) AND level L2 (staged) — EXCEPT an action a served
+    # profile row of a claimed profile lists (required or optional): a row
+    # listing is the one honest class-action signal, so otdp.smu.arm and
+    # otdp.smu.fetch are class run-verbs staging on device-features, never
+    # vendor settings members, whatever their derived level. A settings
+    # member that claims the action moves its row off device-features and
+    # this row disappears — the R10 two-sided rule's direction, asserted by
+    # the surfaces arms.
+    catalog_profiles = _catalog_documents(descriptor).get("profiles", [])
+    claimed_profiles = set(descriptor.get("profiles") or [])
+    class_listed_actions = {
+        str(action)
+        for row in catalog_profiles
+        if isinstance(row, dict) and str(row.get("id")) in claimed_profiles
+        for action in [
+            *(row.get("required_actions") or []),
+            *(row.get("optional_actions") or []),
+        ]
+    }
+    for urn, row in sorted(plan.items()):
+        if (
+            row.get("page") == "device-features"
+            and row.get("level") == "L2"
+            and urn not in class_listed_actions
+        ):
+            member_residual_rows.append(
+                ResidualMember(
+                    "settings member",
+                    "settings idioms",
+                    urn,
+                    "no settings surface declared "
+                    "(controls render staged on device-features)",
+                )
+            )
     # The residual inventory (#556 Track B §3 rule 3) needs four facts about
     # THIS run: which channel roles rendered lanes, which dataset targets
     # derived (and the base variable ids their wire shape carries), which
@@ -3139,6 +3343,7 @@ def _finish(
         envelope=envelope,
         catalogue=catalogue,
         settings_schema=settings_schema,
+        settings_schemas=settings_schemas,
         preset_scaffolds=preset_scaffolds,
         layout_block=layout_block,
         expectation=expectation,
@@ -3251,10 +3456,19 @@ def _capture_page_id(pages: list[dict[str, Any]]) -> str:
 
 
 def _configure_numeric_count(plan: dict[str, dict[str, Any]]) -> int:
-    for row in plan.values():
-        if row["level"] == "L3":
-            return sum(1 for field in row["fields"] if field["mode"] == "numeric")
-    return 0
+    """(#556 B4, V6) Every configuration surface's numeric fields — the sum
+    over ALL L3 rows, never the first row alone: a composed settings member
+    beside a class slot makes two exist, and first-wins under-counted the
+    ``{n_configure_fields}`` inventory from that moment. Every committed
+    class reference carries exactly one configuration slot, so the founding
+    derivations are unchanged by the sum."""
+    return sum(
+        1
+        for row in plan.values()
+        if row["level"] == "L3"
+        for field in row["fields"]
+        if field["mode"] == "numeric"
+    )
 
 
 def _numeric_nodes(binding_id: str, fields: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -3286,6 +3500,7 @@ def _build_layout(
     *,
     templates: dict[str, dict[str, Any]] | None = None,
     plan_is_placeholder: bool = False,
+    slot_urns: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """The namespaced layout block: authored sections where the reference
     carries them, derived sections otherwise — the main derived section,
@@ -3297,6 +3512,18 @@ def _build_layout(
     plot_done = False
     for page in pages:
         page_id = str(page["id"])
+        # (#556 B4 fold F1) The slot map this page's nodes resolve through
+        # covers exactly the slot keys PLACED on this page: a slot key
+        # placed elsewhere must not capture a binding id that only shares
+        # its spelling (an unclaimed vendor action slugged `capture` beside
+        # a reference `capture` slot on another page).
+        page_slots: dict[str, str] = {}
+        if slot_urns:
+            for row in page.get("bindings", []):
+                key = str(row if isinstance(row, str) else row.get("id"))
+                if key in slot_urns:
+                    page_slots[key] = slot_urns[key]
+        minted: dict[str, str] = {}
         authored_page = by_page.get(page_id)
         if authored_page is not None:
             # The reading-tile expansion consumes authored reading-tile
@@ -3320,7 +3547,7 @@ def _build_layout(
                 plot_done = True
             for row in page.get("bindings", []):
                 binding_id = str(row if isinstance(row, str) else row.get("id"))
-                urn = _urn_for_binding(plan, binding_id)
+                urn = _urn_for_binding(plan, binding_id, page_slots)
                 level = plan.get(urn, {}).get("level") if urn else None
                 if level == "L2" and urn is not None:
                     children.extend(
@@ -3377,6 +3604,10 @@ def _build_layout(
                         )
                     if plan_row["level"] in ("L1", "L2"):
                         target.append({"binding_id": slug, "kind": "button"})
+                        # (#556 B4 fold F1) The unclaimed-slug mint records
+                        # its own urn — the insert must never re-resolve the
+                        # slug through a slot key placed on any page.
+                        minted[slug] = urn
             sections = []
             if children:
                 sections.append({
@@ -3400,14 +3631,14 @@ def _build_layout(
                     "span": 12,
                     "children": custom_children,
                 })
-        _complete_authored_buttons(sections, plan, page_id)
+        _complete_authored_buttons(sections, plan, page_id, minted)
         # #541 W1 fold: completion runs BEFORE the ladder-numeric insert —
         # a button the completion pass appends (a when-declared action on
         # an authored page, a catalogued vendor action on an authored
         # device-features page) must arrive in time for the insert to give
         # it its numeric staging pair, or the action reds
         # classref_gate_uncovered with a button and no staged fields.
-        _insert_ladder_numerics(sections, plan)
+        _insert_ladder_numerics(sections, plan, page_slots, minted)
         if not sections:
             # Every declared page renders as a panel (the expect row's
             # meaning): a page whose surface is fully placed — or whose
@@ -3457,6 +3688,7 @@ def _complete_authored_buttons(
     sections: list[dict[str, Any]],
     plan: dict[str, dict[str, Any]],
     page_id: str,
+    minted: dict[str, str] | None = None,
 ) -> None:
     """A9's F3b arm: the reference's authored sections name only the
     always-present bindings — a when-declared action (trigger) that
@@ -3498,9 +3730,31 @@ def _complete_authored_buttons(
         target.setdefault("children", []).append(
             {"binding_id": slug, "kind": "button"}
         )
+        # (#556 B4 fold F1) The completion minted this button FOR this urn;
+        # record it so the ladder-numeric insert resolves the button by its
+        # own action, never by whatever a slot key sharing the slug's
+        # spelling resolves to.
+        if minted is not None:
+            minted[slug] = urn
 
 
-def _urn_for_binding(plan: dict[str, dict[str, Any]], binding_id: str) -> str | None:
+def _urn_for_binding(
+    plan: dict[str, dict[str, Any]],
+    binding_id: str,
+    slot_urns: Mapping[str, str] | None = None,
+) -> str | None:
+    """The action a binding id names. The class convention is binding id ==
+    action slug; a placed slot key (#556 B4) may name its slot anything the
+    schema admits, so the page-placed slot map wins when carried — the map
+    a caller passes covers exactly the slot keys placed on the page under
+    construction (the B4 fold's F1: a slot key placed elsewhere must not
+    capture a binding id that only shares its spelling) — and the slug scan
+    stays the founding fallback for binding ids no placed slot holds (the
+    authored sections' conventions). Expander-MINTED buttons never come
+    here: the mint site knows its own URN and records it (see
+    ``_insert_ladder_numerics``)."""
+    if slot_urns is not None and binding_id in slot_urns:
+        return slot_urns[binding_id]
     for urn in plan:
         if urn.split("/")[0].rsplit(".", 1)[-1] == binding_id:
             return urn
@@ -3508,7 +3762,10 @@ def _urn_for_binding(plan: dict[str, dict[str, Any]], binding_id: str) -> str | 
 
 
 def _insert_ladder_numerics(
-    sections: list[dict[str, Any]], plan: dict[str, dict[str, Any]]
+    sections: list[dict[str, Any]],
+    plan: dict[str, dict[str, Any]],
+    slot_urns: Mapping[str, str] | None = None,
+    minted: Mapping[str, str] | None = None,
 ) -> None:
     """Authored button nodes for an L2 action gain the action's numeric
     field nodes immediately before the button (the staging pair order).
@@ -3516,7 +3773,15 @@ def _insert_ladder_numerics(
     #541 W8 fold: a numeric node the section already carries — a derived
     page's staging emission, or a layout that authored its own numerics —
     is not re-emitted: one field, one control (the pair used to render
-    twice on every derived page, catalogued pairs included)."""
+    twice on every derived page, catalogued pairs included).
+
+    #556 B4 fold F1: ``minted`` carries the binding ids the EXPANDER minted
+    on this page mapped to the URN each was minted for — resolution
+    consults it first, so a slug-minted button keeps its own action even
+    when its slug spells a slot key placed on another page (the slot map
+    would otherwise weld the slot action's numerics onto the vendor
+    button). Authored nodes — no mint record — resolve through the
+    page-placed slot map and the founding slug scan as before."""
     for section in sections:
         children = section.get("children", [])
         present = {
@@ -3530,7 +3795,12 @@ def _insert_ladder_numerics(
                 node.get("kind") == "button"
                 and isinstance(node.get("binding_id"), str)
             ):
-                urn = _urn_for_binding(plan, str(node["binding_id"]))
+                binding_id = str(node["binding_id"])
+                urn = (
+                    minted.get(binding_id)
+                    if minted is not None and binding_id in minted
+                    else _urn_for_binding(plan, binding_id, slot_urns)
+                )
                 row = plan.get(urn or "", {}) if urn else {}
                 for field_row in row.get("fields", []):
                     if field_row["mode"] != "numeric":
@@ -3595,6 +3865,7 @@ def _build_expectation(
     run_actions: list[str],
     channel_count: int,
     variable_count: int,
+    composed_settings: int = 0,
 ) -> dict[str, Any]:
     """Resolve the reference's expect expressions into the gate's numeric
     assertion document (record §3.4; closed vocabulary)."""
@@ -3639,6 +3910,17 @@ def _build_expectation(
         resolved_row: dict[str, Any] = {"count": resolved}
         if row.get("per_page") is not None:
             resolved_row["per_page"] = str(row["per_page"])
+        # (#556 B4, V6) The resolved expectation states THIS device's render,
+        # never the class document's raw contract (that stays frozen in the
+        # corpus): a composed settings member contributes one data-table the
+        # class's literal pooled count cannot see — the one component kind
+        # the settings vocabulary adds, added here by the member walk's own
+        # applied count. The templated rows ({n_run_actions},
+        # {n_configure_fields}) absorb their members through the plan
+        # already; a literal pooled count is the one shape that needs the
+        # explicit contribution.
+        if name == "data-table" and composed_settings:
+            resolved_row = {**resolved_row, "count": resolved + composed_settings}
         attribute = {}
         for key, expr in (row.get("attribute") or {}).items():
             match = re.fullmatch(r"\{([a-z_]+)\}", str(expr))
@@ -3690,6 +3972,22 @@ def _build_declaration(
                         ),
                     }
                 )
+    # (#556 §4 V6; M5) A02 carries unchanged onto the composed surface: the
+    # birth deviation rides every APPLIED settings member exactly as it
+    # rides a class slot's — same reason string, one row per settings
+    # surface — keyed off the applied-set ledger rows (the walk's one
+    # writer), never a second derivation of application.
+    for row in (composed_members or {}).get("settings", ()):
+        preset_deviations.append(
+            {
+                "expectation_id": str(row["action"]),
+                "reason": (
+                    "preset surface derived with no commissioned "
+                    "presets at birth; author ui/presets/ and validate "
+                    "via check-preset"
+                ),
+            }
+        )
     ladder_deviations = [
         {
             "expectation_id": urn,

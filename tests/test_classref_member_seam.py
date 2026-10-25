@@ -29,8 +29,9 @@ from pathlib import Path
 from typing import Any
 
 from jsonschema import Draft202012Validator
+from pytest import raises
 
-from benchweave_sdk.presentation import _contract, _pinned_schemas
+from benchweave_sdk.presentation import _contract, _pinned_schemas, check_ui
 from benchweave_sdk.served import active_version
 from benchweave_sdk.validation import contract_documents, validate_descriptor
 
@@ -342,3 +343,328 @@ def test_a_declaration_redeclaring_a_corpus_id_divergently_shadows(tmp_path: Pat
         f'Profile id "{corpus_profile_id}" is declared with divergent rows '
         "by multiple documents",
     ) in report.findings
+
+
+# ---------------------------------------------------------------------------
+# B4 motion 1 — the seam wired into the production call (#556 Track B record,
+# B3 fold's recorded fact 1: ``validate_presentation`` still passed the
+# served-only document map, so a vendor target failed the REAL ``check-ui``
+# with ``capability_mismatch`` until the pinned-document merge rides that
+# path). These arms drive ``check_ui`` — the shipped call the CLI's
+# ``check-ui`` runs, loading every byte from disk — never the test-side
+# manual merge above.
+# ---------------------------------------------------------------------------
+
+
+def _check_ui_package(
+    scratch: Path,
+    *,
+    with_declaration_pin: bool = True,
+    descriptor: JsonObject | None = None,
+    extra_pins: dict[str, JsonObject] | None = None,
+) -> Path:
+    """A real presentation package on disk: envelope, descriptor with its
+    digest-pinned plugin documents beside it, binding catalogue carrying the
+    vendor configuration target, and the ui/ resource tree — the layout
+    ``check_ui`` loads. ``descriptor`` substitutes a pre-built descriptor
+    (every digest below is computed over the substituted bytes, so a variant
+    package stays internally consistent); ``extra_pins`` writes additional
+    pinned documents beside the package.
+    """
+    descriptor = descriptor if descriptor is not None else _seam_descriptor()
+    if descriptor is not None and not with_declaration_pin:
+        descriptor["contracts"] = [
+            row
+            for row in descriptor["contracts"]
+            if row["path"] != MEMBER_DECLARATION_NAME
+        ]
+    schema_raw = _raw(_vendor_input_schema())
+    version = active_version("plugin-ui")
+    manifest = {
+        "contract_version": version,
+        "plugin_id": descriptor["id"],
+        "descriptor_sha256": _digest(_raw(descriptor)),
+        "bindings": [
+            {"id": "calibrate", "kind": "configuration", "target_id": "calibrate"}
+        ],
+        "pages": [
+            {
+                "id": "settings",
+                "kind": "configuration",
+                "title": "Settings",
+                "bindings": ["calibrate"],
+                "required": True,
+            }
+        ],
+        "assets": [
+            {"id": "settings", "path": "settings.json", "sha256": _digest(schema_raw)}
+        ],
+    }
+    catalogue = {
+        "contract_version": version,
+        "descriptor_sha256": _digest(_raw(descriptor)),
+        "targets": [_vendor_target()],
+    }
+    envelope = {
+        "contract_version": version,
+        "descriptor_sha256": _digest(_raw(descriptor)),
+        "resource_root": "ui",
+        "manifest": {"path": "manifest.json", "sha256": _digest(_raw(manifest))},
+    }
+    package = scratch / "pkg"
+    (package / "ui").mkdir(parents=True)
+    (package / "descriptor.json").write_bytes(_raw(descriptor))
+    (package / MEMBER_DECLARATION_NAME).write_bytes(_raw(_member_declaration()))
+    (package / VENDOR_CATALOG_NAME).write_bytes(_raw(_vendor_catalog()))
+    for name, document in (extra_pins or {}).items():
+        (package / name).write_bytes(_raw(document))
+    # The f1 fixture body's own pin: its file rides the package so the
+    # descriptor-relative pin walk verifies every digest it names.
+    (package / "vendor-catalog.json").write_bytes(
+        (FIXTURES / "vendor-catalog.json").read_bytes()
+    )
+    (package / "presentation.json").write_bytes(_raw(envelope))
+    (package / "binding-catalogue.json").write_bytes(_raw(catalogue))
+    (package / "ui" / "manifest.json").write_bytes(_raw(manifest))
+    (package / "ui" / "settings.json").write_bytes(schema_raw)
+    return package
+
+
+def test_the_real_check_ui_resolves_the_vendor_target(tmp_path: Path) -> None:
+    """The production arm (#556 B4 motion 1): through the SHIPPED
+    ``check_ui`` call — bytes loaded from disk, the served map built
+    in-process — a vendor configuration target the declaration's profile
+    row admits resolves with ZERO findings. The B3 arms above prove the
+    validator, the vendored schema and the merge agree; this arm proves
+    the route a plugin author actually runs carries them."""
+    package = _check_ui_package(tmp_path)
+    report = check_ui(
+        package / "presentation.json",
+        package / "descriptor.json",
+        package,
+        package / "binding-catalogue.json",
+        firmware="1.0",
+        features=frozenset(),
+        panels=frozenset(),
+    )
+    assert report.valid, [(f.code, f.path, f.message) for f in report.findings]
+
+
+def test_the_real_check_ui_without_the_pin_still_refuses(tmp_path: Path) -> None:
+    """The production negative control: the same package with the
+    member-declaration pin absent from the descriptor (the profile id
+    stays claimed, the vendor catalog pin stays) reports
+    ``capability_mismatch`` — the pinned profile row is what closes the
+    target's admission, so the wiring is load-bearing, not decorative."""
+    package = _check_ui_package(tmp_path, with_declaration_pin=False)
+    report = check_ui(
+        package / "presentation.json",
+        package / "descriptor.json",
+        package,
+        package / "binding-catalogue.json",
+        firmware="1.0",
+        features=frozenset(),
+        panels=frozenset(),
+    )
+    assert not report.valid
+    assert contract.Finding(
+        "capability_mismatch",
+        "targets.calibrate",
+        "Target exceeds descriptor capabilities",
+    ) in report.findings
+
+
+# ---------------------------------------------------------------------------
+# #556 B4 fold F3 — derive and check-ui agree on colliding pinned $ids. The
+# vendored merge guard refuses a pin whose embedded $id shadows a served $id
+# or aliases a sibling pin's (#446 slice 2) — but only check-ui ran it, so
+# two pinned catalogs sharing an input-schema $id derived GREEN (the walk
+# keys actions by URN and never reads $ids) and the author learned at
+# check-ui, packages already derived. The walk now runs the SAME vendored
+# guard over the accepted pin set, under the guard's own code.
+# ---------------------------------------------------------------------------
+
+
+def _shared_id_catalogs() -> tuple[JsonObject, JsonObject]:
+    """Two vendor catalogs whose actions share one input-schema $id."""
+    shared = "urn:meridian:action:shared:1.0.0:input"
+
+    def catalog(urn: str, field: str) -> JsonObject:
+        return {
+            "catalog_version": "1.0.0",
+            "vendor": "com.meridian",
+            "actions": {
+                urn: {
+                    "description": f"Vendor {field}.",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {field: {"type": "number"}},
+                        "required": [field],
+                        "$id": shared,
+                    },
+                    "output_schema": {"type": "object"},
+                    "side_effect": "state_change",
+                }
+            },
+        }
+
+    return (
+        catalog("com.meridian.m400.capture/1.0.0", "shots"),
+        catalog("com.meridian.m400.digitize/1.0.0", "frames"),
+    )
+
+
+def test_two_pins_sharing_an_input_schema_id_refuse_at_derive(
+    tmp_path: Path,
+) -> None:
+    """The two halves agree: two pinned catalogs sharing an input-schema
+    $id refuse the DERIVE under the vendored guard's own code — the same
+    refusal check-ui's merge reports — never a green derivation that only
+    the validator catches later."""
+    from benchweave_sdk.classref import derive_ui, find_reference
+
+    capture, digitize = _shared_id_catalogs()
+    descriptor = json.loads((FIXTURES / "descriptor-f1.json").read_bytes())
+    scratch = tmp_path / "shared-id"
+    scratch.mkdir()
+    for name, document in (
+        ("meridian-capture.json", capture),
+        ("meridian-digitize.json", digitize),
+    ):
+        (scratch / name).write_bytes(_raw(document))
+        for urn in document["actions"]:
+            descriptor["actions"][urn] = {
+                "binding": {"kind": "adapter", "key": "fixture"},
+                "input_constraints": {},
+                "timeout_ms": 30000,
+                "side_effect": "state_change",
+                "cancellable": True,
+                "retry": "never",
+            }
+        descriptor["contracts"].append(
+            {
+                "id": f"urn:meridian:{name.removesuffix('.json')}:1.0.0",
+                "path": name,
+                "sha256": _digest(_raw(document)),
+            }
+        )
+    for pin in ("vendor-catalog.json", "vectors-f1.json"):
+        (scratch / pin).write_bytes((FIXTURES / pin).read_bytes())
+    (scratch / "descriptor.json").write_bytes(_raw(descriptor))
+    with raises(ValueError, match="^pinned_id_shadow:") as raised:
+        derive_ui(
+            (scratch / "descriptor.json").read_bytes(),
+            find_reference("otdp.logic_analyser/1.0.0"),
+            descriptor_path=scratch / "descriptor.json",
+        )
+    assert "urn:meridian:action:shared:1.0.0:input" in str(raised.value)
+
+
+def test_check_ui_reports_the_shared_id_as_the_same_code(tmp_path: Path) -> None:
+    """The check-ui half, unchanged by the fold and asserted beside it: the
+    same two pins through the SHIPPED check_ui call report the finding under
+    the guard's code — derive and check-ui now refuse the same shape with
+    the same name."""
+    capture, digitize = _shared_id_catalogs()
+    descriptor = _seam_descriptor()
+    for name, document in (
+        ("meridian-capture.json", capture),
+        ("meridian-digitize.json", digitize),
+    ):
+        descriptor["contracts"].append(
+            {
+                "id": f"urn:meridian:{name.removesuffix('.json')}:1.0.0",
+                "path": name,
+                "sha256": _digest(_raw(document)),
+            }
+        )
+    package = _check_ui_package(
+        tmp_path / "shared-id-ui",
+        descriptor=descriptor,
+        extra_pins={
+            "meridian-capture.json": capture,
+            "meridian-digitize.json": digitize,
+        },
+    )
+    report = check_ui(
+        package / "presentation.json",
+        package / "descriptor.json",
+        package,
+        package / "binding-catalogue.json",
+        firmware="1.0",
+        features=frozenset(),
+        panels=frozenset(),
+    )
+    assert not report.valid
+    assert [finding.code for finding in report.findings] == ["pinned_id_shadow"]
+
+
+# ---------------------------------------------------------------------------
+# #556 B4 fold F4 — an ignored pin contributes nothing anywhere. A
+# digest-verified document matching none of the walk's pin shapes is
+# disclosed as ignored ("contributed nothing") — yet its profile row still
+# landed in the validator's admission map, so a target naming that profile
+# validated: the disclosure's claim was false at check-ui. Only documents
+# the walk accepts may reach the map; the declaration shape (``members``,
+# with its optional profile row) is what carries a row.
+# ---------------------------------------------------------------------------
+
+
+def _profiles_only_package(tmp_path: Path) -> Path:
+    """The check-ui package with the member-declaration pin replaced by a
+    profiles-ONLY document — the same vendor row, no members, the shape the
+    walk ignores and discloses every run."""
+    profiles_only = {
+        "contract_version": "0.1.0",
+        "profiles": [_vendor_profile_row()],
+    }
+    descriptor = _seam_descriptor()
+    for row in descriptor["contracts"]:
+        if row["path"] == MEMBER_DECLARATION_NAME:
+            row["path"] = "profiles-only.json"
+            row["sha256"] = _digest(_raw(profiles_only))
+    return _check_ui_package(
+        tmp_path / "profiles-only",
+        descriptor=descriptor,
+        extra_pins={"profiles-only.json": profiles_only},
+    )
+
+
+def test_an_ignored_shape_pin_stops_admitting_the_target(tmp_path: Path) -> None:
+    """The ignored-shape pin must stop admitting the target: the walk
+    discloses it as having contributed nothing, and after the fold the
+    validator's map agrees — the same package that admitted the vendor
+    target now reports capability_mismatch, exactly as the negative control
+    with no pin at all."""
+    package = _profiles_only_package(tmp_path)
+    report = check_ui(
+        package / "presentation.json",
+        package / "descriptor.json",
+        package,
+        package / "binding-catalogue.json",
+        firmware="1.0",
+        features=frozenset(),
+        panels=frozenset(),
+    )
+    assert not report.valid
+    assert contract.Finding(
+        "capability_mismatch",
+        "targets.calibrate",
+        "Target exceeds descriptor capabilities",
+    ) in report.findings
+
+
+def test_the_walk_still_ignores_the_profiles_only_pin(tmp_path: Path) -> None:
+    """The disclosure keeps its truth's other half: the same profiles-only
+    document rides the DERIVE as an ignored pin — disclosed on every run,
+    contributing nothing — so the fold made the disclosure true everywhere
+    rather than silencing it."""
+    from benchweave_sdk.classref import derive_ui, find_reference
+
+    package = _profiles_only_package(tmp_path / "ignored-derive")
+    derived = derive_ui(
+        (package / "descriptor.json").read_bytes(),
+        find_reference("otdp.logic_analyser/1.0.0"),
+        descriptor_path=package / "descriptor.json",
+    )
+    assert "profiles-only.json" in derived.ignored_pins, derived.ignored_pins

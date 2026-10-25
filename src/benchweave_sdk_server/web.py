@@ -643,7 +643,7 @@ def _layout_region(
             from benchweave_ui_html.data import TableData, TableDataRow
             from benchweave_ui_html.partials import render_data_table
 
-            return render_data_table(
+            table_html = render_data_table(
                 TableData(
                     caption=f"{binding_id} effective admittance",
                     headers=("field", "constraint"),
@@ -653,6 +653,20 @@ def _layout_region(
                     ),
                 )
             )
+            # (#556 B4 fold F2) A data-table node carries its binding as an
+            # attribute so the gate's census attributes the served table to
+            # its surface (the staged_control_ids precedent): a page's
+            # pooled table count launders a strip-plus-pad, per-surface
+            # attribution cannot. Reading tiles render through this branch
+            # too and carry no binding attribution.
+            if node.get("kind") == "data-table":
+                table_html = table_html.replace(
+                    '<table class="bw-data-table">',
+                    f'<table class="bw-data-table" '
+                    f'data-bw-binding="{escape(binding_id)}">',
+                    1,
+                )
+            return table_html
         return ""
 
     section_parts: list[str] = []

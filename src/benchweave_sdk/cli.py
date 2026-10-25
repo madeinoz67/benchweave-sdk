@@ -579,7 +579,12 @@ def derive_ui_command(project: Path, force: bool) -> None:
     (package_dir / "binding-catalogue.json").write_bytes(raw(derived.catalogue))
     settings = ui / "settings"
     settings.mkdir(exist_ok=True)
-    (settings / "configure.schema.json").write_bytes(raw(derived.settings_schema))
+    # (#556 B4, V6) One settings asset per configuration surface — the
+    # manifest's asset rows name each; a single hardcoded write left a
+    # composed settings member's schema absent from the package and the
+    # host load refused it.
+    for slot_key, schema in derived.settings_schemas.items():
+        (settings / f"{slot_key}.schema.json").write_bytes(raw(schema))
     presets = ui / "presets"
     presets.mkdir(exist_ok=True)
     for slug, scaffold in derived.preset_scaffolds.items():

@@ -189,8 +189,11 @@ def test_composed_channels_lanes_land_on_the_named_pages_plot(
     assert [row for row in report.reported_deviations if "channel" in row] == [], (
         report.reported_deviations
     )
+    # MOVED DELIBERATELY 2026-10-25 (#556 B4, V6 layer 3): the f1 fixture's
+    # unclaimed staged vendor action gains its settings residual row beside
+    # the two standing birth deviations.
     assert (
-        len(report.reported_deviations) == 2
+        len(report.reported_deviations) == 3
     ), report.reported_deviations
 
 

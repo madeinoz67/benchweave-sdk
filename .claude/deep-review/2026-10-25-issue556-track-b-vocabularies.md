@@ -837,3 +837,181 @@ rewording buys nothing and risks the arms (the refute's own note).
    injects nothing, so no vocabulary's residual walk sees it) — the
    per-member REPORTED row this fold adds IS the guard, and M1's
    100%-coverage claim must not be read as covering it.
+
+### 2026-10-25 — B4: the seam wired into production, the two admission refusals, and the V6 classifier
+
+B4 landed in four motions. The corrections the code forced, recorded here
+because two are rules, not code:
+
+**The seam rides the production call (the B3 fold's fact 1, answered).**
+`presentation.validate_presentation` gains `pinned_documents` — the
+descriptor's digest-verified plugin contract documents, read by
+`pinned_contract_documents` with the classref walk's own integrity codes
+(plus one strict improvement: a pin that is not valid JSON refuses typed
+here, where the walk lets the bare decoder error escape — the walk's own
+gap is not changed in this slice). `_load_ui_candidate` reads the pins
+beside the descriptor and passes them, so `check-ui`, every preview built
+from it and the gate's own render carry the merged set. The arm drives
+the SHIPPED `check_ui` call from disk; the negative control (the same
+package, the member-declaration pin absent from the descriptor) still
+reports `capability_mismatch`, so the pinned row is load-bearing in
+production, not decorative.
+
+**Two admission refusals, both application-scoped.** An APPLIED
+procedure or configuration member composes a target with two admission
+requirements the canonical validator enforces: a vendor profile row
+naming the claim, and a catalogue side for `input_schema_id`. The walk
+refuses the missing half under existing codes — `classref_invalid_member_declaration`
+for a declaration with no profile row (a cross-array conditional the
+0.1.0 dialect schema cannot express; NOT caught: a row whose
+required/optional actions omit the claim — the validator's
+`capability_mismatch` finding at check-ui), and `classref_unknown_action`
+for a claim no served or pinned catalog describes (the D4 rule's member
+half — without the catalogue side the derived target carries
+`input_schema_id: None` and the validator refuses it twice over, so the
+derivation refuses at the claim instead of emitting a document the
+validator rejects). Both refusals are APPLICATION-scoped: a member that
+applies nowhere composes nothing and stays the applied-nowhere
+disclosure, so the B3 dead-member arms are untouched. Dataset members
+are exempt from both until B5 composes their targets; the exemption is
+stated where it is enforced.
+
+**V6's residual classifier is the derived state — a design correction.**
+§4 V6 says the row fires for "a configuration-shaped declared action";
+OTDP types no verbs, and no descriptor-side signal distinguishes a
+configuration verb from a run verb. The classifier is what the
+derivation can honestly read: unclaimed by any slot (plan page
+device-features) AND level L2 (staged). This also names class run-verbs
+that stage on device-features (`otdp.smu.arm`, `otdp.smu.fetch` in the
+render arms) — accepted because the row's STATEMENT is true of
+everything it names and the row is advisory REPORTED, never a failure;
+the alternative was silence on a real gap. The row disappears when a
+settings member claims the action (armed).
+
+**Binding resolution consults slot keys.** `_urn_for_binding` resolved
+by action slug alone — the class convention binding id == slug — so a
+member slot named anything else rendered no control while a sibling
+data-table satisfied the per-page L3 coverage check (the laundering
+shape risk #6 names, L3 flavor; the pooled `data-table` expect caught it
+because B4's arithmetic counts composed members). The slot-keyed map now
+wins; the slug scan stays the founding fallback.
+
+**Both writers write every settings asset.** `create_ui_resources` and
+the CLI's `derive-ui` each carried a single hardcoded
+`settings/configure.schema.json` write; with a second configuration
+surface the manifest named an asset no writer produced (a check-ui
+`unresolved_reference` and a host-load refusal). Both now write one
+asset per surface from `DerivedUI.settings_schemas` (slot-keyed, the
+map mirroring `preset_scaffolds`); `settings_schema` keeps the founding
+single-slot semantics for single-surface consumers.
+
+**V1's REPORTED surface, stated plainly (§4 V1's own instruction):** a
+declared procedure member always derives at least its control, so V1
+carries NO derives-nothing residual row and none was invented — its
+disclosure surface is the applied-nowhere family alone (the walk's rows)
+plus the action track's `custom|composed` rows.
+
+**The M-400 fixture extension** carries a vendor configure slot
+(`vendor-configure`, naming `com.meridian.m400.profile_mode/1.0.0`) and
+a sweep procedure slot (`sweep`, naming `com.meridian.m400.sweep/1.0.0`)
+on one descriptor, with the vendor catalog pin beside the member
+declaration — the production shape the refusals above describe. The
+acceptance arms that moved are marked in place; both new B4 arms drive
+the real derive, the real gate, the real host render and the production
+`check_ui` over the derived package.
+
+### 2026-10-26 — the B4 refute fold: five findings, one commit
+
+One adversarial lane reviewed the slice; it confirmed the seam is
+production-reachable and load-bearing, found no kill condition, and raised
+one MEDIUM-HIGH plus four lower findings. All five fold here, each with a
+RED arm quoted in the commit message.
+
+**F1 (MEDIUM-HIGH) — the binding-id map hijacked slug-minted nodes.** The
+B4 slot-keyed map (the M-400's `vendor-configure` fix) resolved by binding
+id ALONE, so an unclaimed vendor action whose slug spells a reference slot
+key (`capture`, `configure`: natural vendor verbs) had its
+device-features button re-resolved to the SLOT's action, and the
+ladder-numeric insert welded the slot action's numeric fields onto the
+vendor button — the arm shows `otdp.logic_analyser.fetch`'s `max_bytes`
+riding `com.meridian.m400.capture`'s button beside its own `shots`. The
+mint sites know their own URN, so the fix records it: the unclaimed-slug
+loop and `_complete_authored_buttons` write a per-page
+`minted: binding_id -> urn` consumed FIRST by `_insert_ladder_numerics`,
+and the slot-key map a page's nodes resolve through is scoped to the slot
+keys PLACED on that page (`_urn_for_binding` keeps the founding slug scan
+for authored nodes). Byte stability held: all nine derivations
+identical.
+
+**F2 (MEDIUM) — the pooled data-table count laundered coverage, two
+shapes.** (a) Strip the member's table, pad a data-table node on another
+page: the pooled expect row re-satisfied, check-ui clean, gate clean. (b)
+The logic_analyser class carries no `data-table` expect row at all, and
+its L3 coverage rows ride the A02 birth deviation — stripping every
+configuration table left the gate clean. The fix follows the L2
+precedent (`staged_control_ids` censuses per action, the gateway #463 RC
+fold): the render attributes every data-table to its binding
+(`data-bw-binding`, the numeric-branch flags precedent in `web.py`), the
+census collects `data_table_bindings`, and the gate's new
+`_data_table_surface_findings` compares (page, binding) SETS against the
+derived layout's own minted surfaces — never sums. The MISSING direction
+is not ledger-downgradable (the W6 ruling: an overlay that drops what the
+derivation minted does not clear the debt); the EXCESS direction
+downgrades under a declared `data-table` expectation row like every
+additive count drift (A6). The L3 coverage row keeps its per-page test —
+the per-surface arm is the teeth, not a rewrite of the coverage question.
+The `test_red_sanity_neutralized_detector` arm now neutralizes BOTH
+detectors, with the move marked in its docstring: the per-surface arm
+reds the function_generator strip independently of `_assert_expect`, so
+neutralizing the count detector alone would prove nothing about either.
+
+**F3 (LOW-MEDIUM) — derive and check-ui disagreed on colliding pinned
+`$id`s.** Two pinned catalogs sharing an input-schema `$id` derived green
+(the walk keys actions by URN and never read `$id`s) while check-ui's
+vendored merge refused `pinned_id_shadow`. The walk now runs the SAME
+vendored guard (`merge_pinned_documents` through
+`presentation.check_pinned_id_shadows`) over exactly the accepted pin
+set, under the guard's own code — one shared enforcement point for both
+composition surfaces, as the vendored docstring already intended.
+Inventory note: `pinned_id_shadow` joins this record's committed refusal
+inventory as a walk-side code that is NOT `classref_*`-prefixed — it
+names the vendored guard's own code so the two surfaces agree by
+construction; the walk's integrity codes stay prefixed as they were.
+
+**F4 (LOW-MEDIUM) — an ignored pin still contributed a profile row.** A
+digest-verified document matching no pin shape was disclosed as having
+contributed nothing, yet its profile row landed in the validator's
+admission map and a target naming that profile validated — the
+disclosure's claim was false at check-ui. The shape discriminator now
+lives in ONE place (`classref._pin_shape_groups`) shared by the walk and
+`pinned_contract_documents`, and the reader drops ignored-shape pins: only
+documents the walk accepts may contribute anywhere. The declaration shape
+(`members`, with its optional profile row) is what carries a row.
+Residual, named: an AMBIGUOUS pin (two shape groups) refuses the derive
+but would still merge at check-ui — pre-existing, unchanged by this fold,
+and unreachable from a green derive.
+
+**F5 (LOW) — the V6 classifier named class run-verbs as vendor settings
+members.** `otdp.smu.arm` and `otdp.smu.fetch` reported as settings
+members on every SMU plugin. The served profile row's required/optional
+actions are the one honest class-action signal: an action a claimed
+profile's served row lists is a class action, never a vendor settings
+member, whatever its derived level. The motion is measured: the smu
+fixture's `residual_members` digest moves
+`3da8f5d5a1eb963b -> 37517e5f3dc66819` (the family's empty-residual
+digest) and every other derivation is byte-identical — the keep direction
+(the logic_analyser's `com.veridian-labs.auto-threshold`, the M-400's
+staged vendor actions) still reports.
+
+**NIT.** `check_ui`'s `Raises:` docstring lists the pinned-document
+`ValueError` (`classref_vendor_catalog_*:`) the B4 motion 1 wiring added.
+
+**Test-harness motions, named:** `helpers_classref.build_classref_project`
+writes every settings asset from the per-slot map (the single-slot
+convenience pins the WRONG bytes on a composed project — the M-400's
+manifest digests the map's bytes, not the convenience's), and
+`_check_ui_clean` feeds the production pinned-document seam plus every
+settings asset — a composed package cannot be check-ui-clean through the
+bytes-only call without them. `test_classref_member_seam._check_ui_package`
+gains `descriptor`/`extra_pins` substitution so variant packages stay
+internally digest-consistent.

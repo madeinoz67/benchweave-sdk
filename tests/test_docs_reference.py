@@ -24,6 +24,9 @@ EXCLUDED = {
     "authoring entry point",
     "presentation.create_ui_resources": "the scaffold step behind `new --with-ui`; reached "
     "through the CLI, whose reference documents it",
+    "presentation.pinned_contract_documents": "the descriptor's digest-verified plugin "
+    "documents for the check-ui seam (#556 track B B4); reached through check-ui and every "
+    "preview built from it, never called by an author",
     "validation.YankedPinWarning": "a warnings category raised by validate_descriptor on a "
     "yanked pin (issue #203 slice 1); authors catch it from the check lane, whose output "
     "renders the message — not an entry point to call",

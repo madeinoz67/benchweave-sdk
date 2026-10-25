@@ -301,9 +301,15 @@ def _scaffold(
     (package / "descriptor.json").write_bytes(
         (FIXTURES / "descriptor-m400.json").read_bytes()
     )
-    (package / "composed-burst.json").write_bytes(
-        (FIXTURES / "composed-burst.json").read_bytes()
-    )
+    # (#556 B4) The extended fixture pins the composed-member declaration
+    # and its vendor catalog beside the composed class; the loop's package
+    # carries every authored byte the descriptor names.
+    for pinned in (
+        "composed-burst.json",
+        "member-declaration-m400.json",
+        "meridian-actions.json",
+    ):
+        (package / pinned).write_bytes((FIXTURES / pinned).read_bytes())
     return destination, created
 
 
@@ -499,6 +505,8 @@ def test_derive_ui_writes_the_derived_set(loop: LoopRun) -> None:
         "binding-catalogue.json",
         "ui/manifest.json",
         "ui/settings/configure.schema.json",
+        # (#556 B4) the vendor-configure member's settings asset.
+        "ui/settings/vendor-configure.schema.json",
         "ui/presets",
     ):
         assert (loop.package / member).exists(), member

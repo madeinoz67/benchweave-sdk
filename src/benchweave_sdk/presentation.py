@@ -109,6 +109,96 @@ def _pinned_schemas(descriptor: dict[str, Any]) -> dict[str, Any]:
     return scoped
 
 
+def pinned_contract_documents(
+    descriptor: dict[str, Any], descriptor_path: Path
+) -> dict[str, dict[str, Any]]:
+    """The descriptor's digest-pinned plugin contract documents, read and
+    verified (#556 track B B4: the seam the composed-member mechanism rides).
+    Every non-``urn:otdp:`` contracts row names a plugin-authored document
+    beside the descriptor; the same integrity discipline as the classref
+    walk's ``_vendor_documents`` applies here — unreadable, digest-mismatched
+    and non-object pins refuse with the walk's own codes, and a pin that is
+    not valid JSON refuses typed rather than surfacing the bare decoder
+    error (the walk lets that one escape; this reader does not). The
+    documents feed ``merge_pinned_documents`` so the validator's profile map
+    and $id aliases see the pinned rows exactly as the served corpus's.
+
+    #556 B4 fold F4: only documents the WALK accepts may contribute —
+    a digest-verified document matching none of the walk's pin shapes
+    (``_pin_shape_groups`` empty: no members, no urn/claims, no actions) is
+    ignored by the derivation and disclosed as contributing nothing, so it
+    contributes nothing HERE either; before the filter its profile row
+    still landed in the validator's admission map and a target naming that
+    profile validated — the disclosure's claim was false at check-ui. The
+    declaration shape (``members``, with its optional profile row) is what
+    carries a row into the map."""
+    import hashlib
+
+    # Deferred import: classref imports this module at import time, so the
+    # shared discriminator (the walk's own) is pulled in here, never at
+    # module load.
+    from .classref import _pin_shape_groups
+
+    documents: dict[str, dict[str, Any]] = {}
+    for row in descriptor.get("contracts", []):
+        identifier = str(row.get("id", ""))
+        if identifier.startswith("urn:otdp:") or not identifier:
+            continue
+        path = descriptor_path.parent / str(row.get("path", ""))
+        try:
+            raw = read_file(path)
+        except (ValueError, OSError) as exc:
+            raise ValueError(
+                "classref_vendor_catalog_unreadable: "
+                f"pinned vendor catalog {row.get('path')} unreadable ({exc})"
+            ) from exc
+        if hashlib.sha256(raw).hexdigest() != row.get("sha256"):
+            raise ValueError(
+                "classref_vendor_catalog_digest_mismatch: "
+                f"pinned vendor catalog {row.get('path')} digest mismatch"
+            )
+        try:
+            document = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                "classref_vendor_catalog_invalid: "
+                f"pinned vendor catalog {row.get('path')} is not valid JSON"
+            ) from exc
+        if not isinstance(document, dict):
+            raise ValueError(
+                "classref_vendor_catalog_invalid: "
+                f"pinned vendor catalog {row.get('path')} is not a JSON object"
+            )
+        if not _pin_shape_groups(document):
+            continue
+        documents[str(row.get("path", ""))] = document
+    return documents
+
+
+def _check_pinned_id_shadows(
+    descriptor: dict[str, Any], documents: dict[str, dict[str, Any]]
+) -> None:
+    """The walk-side half of the vendored ``pinned_id_shadow`` guard (#556
+    B4 fold F3): the classref walk runs the SAME ``merge_pinned_documents``
+    check-ui runs, over the accepted pin set, so a pin whose embedded $id
+    shadows a served schema $id or aliases a sibling pin's refuses the
+    DERIVE under the guard's own code — both surfaces name the defect
+    identically, and the author learns before a package exists, not at
+    check-ui over derived bytes.
+
+    Raises
+    ------
+    ValueError
+        ``pinned_id_shadow: ...`` — the vendored guard's own code and
+        message, unchanged.
+    """
+    contract = _contract()
+    try:
+        contract.merge_pinned_documents(_pinned_schemas(descriptor), documents)
+    except contract.DocumentError as exc:
+        raise ValueError(f"{exc.code}: {exc}") from exc
+
+
 def _open_no_follow(part: str, flags: int, directory: int) -> int:
     """Open one strict component, naming symlink refusals over raw errno prose.
 
@@ -344,6 +434,7 @@ def validate_presentation(
     supported_features: frozenset[str] = frozenset(),
     supported_panels: frozenset[str] = frozenset(),
     firmware: str | None = None,
+    pinned_documents: dict[str, dict[str, Any]] | None = None,
 ) -> Any:
     """Validate a presentation candidate, offline, from bytes already in hand.
 
@@ -366,6 +457,17 @@ def validate_presentation(
         as unavailable rather than invalid.
     firmware
         Firmware version the candidate is judged against, or None.
+    pinned_documents
+        The descriptor's digest-verified plugin contract documents, keyed by
+        pin path (``pinned_contract_documents``); when supplied they merge
+        into the served document set through the vendored
+        ``merge_pinned_documents`` guard, so a composed-member declaration's
+        vendor profile row and a vendor catalog's action schemas resolve for
+        the targets that name them (#556 track B B4 — without the merge a
+        vendor target reports ``capability_mismatch`` at the real
+        ``check-ui``). A pin that shadows a served ``$id`` reports as a
+        ``pinned_id_shadow`` finding, the same posture as every other
+        reader-refused document.
 
     Returns
     -------
@@ -381,12 +483,22 @@ def validate_presentation(
             (contract.Finding(exc.code, "descriptor", str(exc)),)
         )
     validate_descriptor(descriptor)
+    documents: dict[str, Any] = _pinned_schemas(descriptor)
+    if pinned_documents:
+        try:
+            documents = contract.merge_pinned_documents(
+                documents, pinned_documents
+            )
+        except contract.DocumentError as exc:
+            return contract.ValidationReport(
+                (contract.Finding(exc.code, "descriptor.contracts", str(exc)),)
+            )
     return contract.validate_presentation(
         envelope_raw,
         descriptor_raw=descriptor_raw,
         resources=resources,
         binding_catalogue=binding_catalogue,
-        schema_documents=_pinned_schemas(descriptor),
+        schema_documents=documents,
         supported_features=supported_features,
         supported_panels=supported_panels,
         firmware=firmware,
@@ -430,14 +542,26 @@ def _load_ui_candidate(
                 resources[name] = raw
                 total += len(raw)
         catalogue = contract.parse_document(read_file(catalogue_path))
+        descriptor_bytes = read_file(descriptor_path)
+        # (#556 track B B4) The pinned-document merge rides the production
+        # path: the descriptor's digest-verified plugin documents join the
+        # served set here, so a composed-member declaration's vendor profile
+        # row — and a vendor catalog's action schemas — resolve for the
+        # targets that name them. Integrity refusals carry the walk's own
+        # codes: a broken pin refuses the check exactly as it refuses the
+        # derive.
+        descriptor_document = contract.parse_document(descriptor_bytes)
         report = validate_presentation(
             envelope_raw,
-            descriptor_raw=read_file(descriptor_path),
+            descriptor_raw=descriptor_bytes,
             resources=resources,
             binding_catalogue=catalogue,
             supported_features=features,
             supported_panels=panels,
             firmware=firmware,
+            pinned_documents=pinned_contract_documents(
+                descriptor_document, descriptor_path
+            ),
         )
         return report, ValidatedPreviewInputs(envelope, manifest, catalogue, base)
     except (KeyError, TypeError) as exc:
@@ -481,7 +605,10 @@ def check_ui(
     ------
     ValueError
         For an unsafe resource path, a symlinked component
-        (``path_symlink_component:``) or an oversize input.
+        (``path_symlink_component:``) or an oversize input. Also for a
+        pinned plugin document that is unreadable, digest-mismatched or
+        not valid JSON (``classref_vendor_catalog_*:``) — the descriptor's
+        pins are read beside it (#556 B4), with the walk's own codes.
     OSError
         For a file that is absent or unreadable.
     """
@@ -1271,9 +1398,14 @@ def create_ui_resources(destination: Path, package: str) -> list[dict[str, str]]
         (root / "binding-catalogue.json").write_bytes(raw_bytes(derived.catalogue))
         settings = ui / "settings"
         settings.mkdir(exist_ok=True)
-        (settings / "configure.schema.json").write_bytes(
-            raw_bytes(derived.settings_schema)
-        )
+        # (#556 B4, V6) One settings asset per configuration surface
+        # (settings/<slot>.schema.json, the asset ids the manifest names):
+        # a composed settings member beside the class slot makes two exist,
+        # and a single hardcoded write left the member's asset missing from
+        # the package — a check-ui unresolved_reference. The single-slot
+        # derivations write the same one file as before, byte-identical.
+        for slot_key, schema in derived.settings_schemas.items():
+            (settings / f"{slot_key}.schema.json").write_bytes(raw_bytes(schema))
         presets = ui / "presets"
         presets.mkdir(exist_ok=True)
         for slug, scaffold in derived.preset_scaffolds.items():

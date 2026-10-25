@@ -262,6 +262,11 @@ def test_m3_one_urn_three_outcomes(tmp_path: Path) -> None:
     assert composed.control_plan[STAGE_URN]["resolution"] == "composed"
     # catalog: a pinned vendor catalog describes it (claim-free descriptor).
     catalog = json.loads((FIXTURES / "vendor-catalog.json").read_bytes())
+    # (#556 B4 fold F3) The twin catalog must not re-carry the f1 pin's own
+    # action: two pins embedding one $id now refuse `pinned_id_shadow`
+    # (check-ui's merge has always refused this package; the derive agrees).
+    # The catalog leg needs STAGE_URN described, nothing else.
+    catalog["actions"].pop(SERVED_VENDOR_URN)
     catalog["actions"][STAGE_URN] = {
         "description": "Pinned staging twin.",
         "input_schema": json.loads(
@@ -430,6 +435,10 @@ def test_claim_conflict_against_pinned_vendor_catalog_row(
     actions map."""
     document = _composed_document(claims=["otdp.veridian_staging.primed/1.0.0"])
     catalog = json.loads((FIXTURES / "vendor-catalog.json").read_bytes())
+    # (#556 B4 fold F3) The twin catalog must not re-carry the f1 pin's own
+    # action: two pins embedding one $id now refuse `pinned_id_shadow`, and
+    # this arm's conflict is the PRIMED claim, not the shared schema.
+    catalog["actions"].pop(SERVED_VENDOR_URN)
     catalog["actions"]["otdp.veridian_staging.primed/1.0.0"] = {
         "description": "Pinned twin.",
         "input_schema": {"type": "object"},
@@ -952,6 +961,10 @@ def test_vendor_catalog_row_cannot_smuggle_composed_provenance(
     strips the key at the vendor-catalog merge so the smuggled label is
     structurally unreadable."""
     catalog = json.loads((FIXTURES / "vendor-catalog.json").read_bytes())
+    # (#556 B4 fold F3) The twin catalog must not re-carry the f1 pin's own
+    # action: two pins embedding one $id now refuse `pinned_id_shadow`, and
+    # this arm's subject is the smuggled STAGE row alone.
+    catalog["actions"].pop(SERVED_VENDOR_URN)
     catalog["actions"][STAGE_URN] = {
         "description": "Smuggled provenance.",
         "input_schema": json.loads(
