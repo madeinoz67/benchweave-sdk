@@ -496,6 +496,11 @@ separate fixture roots left on disk — the same work, repeated per worker.
    the only OS with budget headroom for it. It is not added to the macOS or Windows legs.
 4. A plain `uv run pytest tests/test_standalone_dev_loop.py` still runs the module: markers
    filter only when `-m` is passed, so the local developer loop is not narrowed.
+5. `tests/test_ci_marker_partition.py` guards both halves against the workflow file: every
+   parallel pytest invocation must exclude the marker, and a step gated to `ubuntu-latest`
+   alone must select it without `-n`. It parses the `-m` expressions out of each step's
+   `run` block rather than searching the file, so a comment cannot satisfy it, and each
+   failure message names the half that moved.
 
 The module's own prose moved with the mechanism: its docstring and its Windows skip reason
 both said the non-spawn arms run on all three OSes in CI. Both now say the three-OS run is
@@ -509,7 +514,9 @@ run as their own serial pytest step rather than a shell re-implementation. The r
 the corpus's own — a bash copy of the fill-and-grep would be a second implementation of the
 same claim, free to drift from the assertions it duplicates, and its evidence would live in
 shell exit codes rather than junitxml. Recorded as a deviation from the pre-committed rule;
-the rule's substance (the lane runs in CI, and the budget is met) is unchanged.
+the rule's substance (the lane runs in CI, and the budget is met) is unchanged. The form
+was taken deliberately and stands: one implementation of the loop in CI, not two that can
+drift.
 
 **What the fallback does not fix.**
 
@@ -527,9 +534,14 @@ the rule's substance (the lane runs in CI, and the budget is met) is unchanged.
 **How the evidence could rot without a red.**
 
 1. Delete the ubuntu step while the parallel expression still says `not loop`: the lane
-   stops running and every lane stays green. Nothing in the tree asserts that the step
-   exists — the standing guard is the CI map row in `docs/internal/drift-and-obligations.md`
-   and review (G5), not a test.
+   stops running and every lane stays green. `tests/test_ci_marker_partition.py` reds on
+   exactly this shape (`half B missing: no sdk step selects -m loop`), and it also reds a
+   selecting step that is not gated to ubuntu-latest alone, a selecting step that passes
+   `-n` (`half B is parallelised`), and a parallel leg that stops excluding the marker
+   (`half A missing`). It does not guard itself: deleting that module removes the guard
+   silently, and nothing pins the guard's existence — that remains review's (G5) job. The
+   module's own docstring states its further limits (the module's `pytestmark`, the
+   selecting step's position in the job).
 2. Remove `pytestmark`: the module returns to the parallel leg. It still runs (not
    vacuous), but the per-worker multiplication — and the budget breach — returns with it.
 3. Rename the marker on one side only: the serial step then selects nothing and exits 5

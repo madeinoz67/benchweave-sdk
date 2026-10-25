@@ -76,7 +76,7 @@ jobs:
           uv run pytest -q -m "not browser and not timing and not loop" -n auto
           uv run pytest -q -m "timing"
 
-      - name: Standalone dev loop — serial, ubuntu-only (issue #556)
+      - name: "Standalone dev loop — serial, ubuntu-only (issue #556)"
         # The pre-committed fallback for the CI budget (design record §13).
         # The module's session fixtures build this repository's wheel and a
         # fresh venv, so the parallel leg above deselects the `loop` marker and
