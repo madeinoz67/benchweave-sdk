@@ -342,3 +342,215 @@ command exists.
   friction is ever measured — the composed class is the loop's new surface.
 - **Gateway anything**: the leg is SDK-only by the owner's disambiguation; Track A owns
   the mirror.
+
+## 11. Addendum (2026-10-25) — the original green measured presentation only
+
+Lane: `feat/556-standalone-fixes`, base `5c73f5b`. This section corrects the record; it
+does not rewrite it. §8's acceptance rule and the arms landed by Commit 1 were honestly
+measured, and what they measured was the composed **presentation**.
+
+**State when the original arms ran.** The M-400 project loaded DEGRADED: the loader
+validated every document, then failed the adapter entry point
+(`adapter_factory: None`, `load_diagnostic: standalone_plugin_entry_point:
+meridian_m400_plugin:create_plugin does not name a factory inside the
+meridian_m400_plugin package`). Every green arm in this leg — the loop, the control
+flip, the served page — passes over that degraded load, because
+`classref_gate_render.render_pages` and the spawned listener both go through
+`load_plugin_project`, and §4.5 degrades rather than refuses: the composed pages render
+from the derived documents whether or not an adapter exists. The lane proved the
+derivation and its rendering; it did not prove the plugin.
+
+**Two causes, both fixed in this lane.**
+
+1. The host's entry-point rule required the module to begin with `<package>.`, rejecting
+   the package-root form `<package>:create_plugin`. The frozen descriptor schema admits
+   that form (its entry-point pattern has no dot requirement) and every shipped
+   standards example uses it, so the rule was stricter than the contract it serves.
+   `load_plugin_project` now accepts the package itself or a module beneath it
+   (`module == package or module.startswith(f"{package}.")`). A genuinely foreign
+   module still diagnoses — including a sibling whose name merely shares the prefix
+   (`example_plugin_extra.adapter`), which pins the dot in the boundary test — and a
+   string naming no factory is still refused by the descriptor schema.
+2. The scaffold's package root did not export the factory: `__init__.py` was a bare
+   docstring while `create_plugin` lived in `adapter.py`. Admitting the package-root
+   shape without that export would only have changed the diagnostic
+   (`standalone_plugin_import: ... has no attribute 'create_plugin'`) while the adapter
+   still never loaded. `template/src/{{ package_name }}/__init__.py.jinja` now
+   re-exports the factory from `.adapter`, and the R-2 byte-parity fixtures under
+   `tests/fixtures/scaffold_expected/` were regenerated from the renderer — the two
+   fixture trees differ from their predecessors only in that file.
+
+**What now guards it.** `test_the_loop_loads_the_plugin_adapter_not_only_the_presentation`
+(in `tests/test_standalone_dev_loop.py`) asserts that the spawned listener prints no
+`standalone_plugin_*` diagnostic of any kind, and that the INSTALLED SDK resolves a real
+factory for the same project with no diagnostic. Neutralizing either half reddens it:
+restoring the docstring-only template reproduces `standalone_plugin_import: ... has no
+attribute 'create_plugin'`; restoring the strict module check reproduces
+`standalone_plugin_entry_point: ... does not name a factory inside the ... package`.
+
+**What that arm does not prove, so its claim does not outrun it.** It proves factory
+RESOLUTION (import plus attribute), not a live connect: the fixture descriptor declares a
+Meridian M-400 while the scaffold adapter answers the SDK's synthetic identity, so a
+connect raises `standalone_connect_identity_mismatch` by design. It does not cover any
+transport but the scripted mock, does not judge visual correctness, and says nothing
+gateway-side — unchanged from §"What this module does NOT catch".
+
+**`test_classref_acceptance.py` A1–A4 remain presentation-only, by design.** They render
+through `render_pages` over the same degraded-adapter path and assert derived documents
+and page content, not a loaded plugin. A later reader must not mistake them for load
+proofs. Strengthening them is a separate arm's job, not an edit to those assertions —
+none of them was weakened or replaced here.
+
+## 12. Fold wave (2026-10-25) — the refute's F1-F3
+
+An adversarial pass over the addendum's commits confirmed the string-level rule is
+airtight and found that containment was still spelling-deep, plus two weaker arms. This
+section records what changed; it does not rewrite §11.
+
+**F1 — containment is provenance.** The string rule proves the entry point NAMES a
+member of the package; it cannot prove the import resolved THIS project's bytes. Three
+hand-reachable shapes defeat it with no diagnostic: (a) a package directory renamed to a
+frozen stdlib name (`src/os` + `os:putenv`) — the frozen finder precedes the path finder,
+so the factory is the builtin; (b) a namespace-only directory named for an installed
+distribution — a namespace portion never beats a later regular package; (c) a second
+project's namespace-only same-named package — the loader prepends each project's `src`
+and never removes it, so project two resolves project one's regular package.
+`load_plugin_project` now requires the imported module's file origin to be under this
+project's `src`; a failure sets the `standalone_plugin_entry_point` diagnostic and leaves
+`adapter_factory` None — the existing degrade path, not a refusal. The string rule is
+unchanged.
+
+Load ordering is now deterministic as well: the project's `src` is re-prepended on every
+load (it was inserted only when absent), so the project being loaded is the first path
+the import searches. Without that, a module-scoped project loaded again after other
+projects had prepended their own `src` resolved another project's regular package — the
+same cross-project shape as (c), on a project that is healthy, which the provenance check
+would otherwise degrade.
+
+The eviction that precedes the import is now guarded against builtin and frozen modules
+and cache aliases: deleting a frozen `os` from the import cache re-executes it and
+replaces the module object and its `environ`, so a directory NAME could corrupt the host
+even though the provenance check would then degrade the load.
+
+What the provenance check does not catch, stated in the module docstring: it runs AFTER
+the import, so a foreign module's import-time code executes before the degrade; and it
+says nothing about what the plugin imports itself — that is the plugin's own trust
+boundary, not the entry-point rule.
+
+**F2 — the A5 exclusion is existence-aware.** `_skip_if_exists` protects files that
+already exist, so a template release that ADDS a path under `src/**` writes it; the
+pattern-only exclusion excluded it from the required footprint and asserted it untouched,
+reddening on correct behaviour. Excluded-and-asserted-untouched is now limited to deltas
+whose project path exists before the update; an addition under `src/**` is a real change
+in the footprint. Honest limit, recorded on the arm: at every COMMITTED state the base
+ancestor equals the target tree, so `changed` — and every clause derived from it — is
+vacuous in CI; the fix is proven by injecting a template delta, and the standing teeth
+for template motion are A1 and A3.
+
+**F3 — the installed-SDK probe asserts callable.** `adapter_factory is not None` passes
+for a non-callable module attribute; the probe now reports `loaded` only for
+`callable(adapter_factory)`, matching the checkout-side arm's callable-and-openable
+assertion.
+
+All four new/repointed arms are RED before their change and green after; the RED output
+is quoted in the fold commit's message.
+
+## 13. Addendum (2026-10-25) — the CI-cost fallback, in force
+
+§8's kill (c) fired on measurement. This section records the numbers, the mechanism they
+exposed, and the fallback now in force. It does not rewrite §8, and it changes no
+assertion in the lane: this is a placement change, not a strength change.
+
+**The measurement.** §8 budgeted a CI `sdk`-job wall-clock delta of ≤3 min per OS against
+the parent commit. Read from the CI run pages, against parent `dc6e429` (176 s ubuntu,
+309 s macOS, 445 s Windows):
+
+| run | ubuntu | macOS | Windows |
+|---|---|---|---|
+| `#206` | 249 s (Δ +73) | 332 s (Δ +23) | 654 s (Δ +209) |
+| `#207` | 210 s (Δ +34) | 448 s (Δ +139) | 820 s (Δ +375) |
+
+Windows breaches the budget in both runs; ubuntu and macOS do not.
+
+**The Windows number is partly confounded, and this addendum does not claim otherwise.**
+The sibling B1 branch measured +281 s on the same Windows runner with none of this leg's
+code, so the excess is not established as this lane's to account for. What the record does
+establish is the mechanism below: the lane's cost multiplies with the number of workers
+that hold one of its tests.
+
+**Why `-n auto` multiplies it.** Each xdist worker is its own pytest session, so a
+session-scoped fixture is paid once PER WORKER. The module's `installed` fixture builds
+this repository's wheel, creates a fresh venv, and installs `<wheel>[server,scaffold]`
+from the index; every worker that holds even one of the module's ten tests repeats that.
+The refute probe measured `-n 4` at 33.6 s against 15-16 s serial, with three to four
+separate fixture roots left on disk — the same work, repeated per worker.
+
+**The fallback now in force.**
+
+1. `tests/test_standalone_dev_loop.py` carries a module-level `pytestmark =
+   pytest.mark.loop`; the marker is registered in `pyproject.toml`'s `markers` list.
+2. The `sdk` job's parallel leg selects `-m "not browser and not timing and not loop"` —
+   the `timing` partition's shape, applied to cost rather than to flakes.
+3. A dedicated ubuntu-only step, `Standalone dev loop — serial, ubuntu-only (issue #556)`,
+   runs `uv run pytest -q -m loop` with no `-n`: one worker, the expensive proof run on
+   the only OS with budget headroom for it. It is not added to the macOS or Windows legs.
+4. A plain `uv run pytest tests/test_standalone_dev_loop.py` still runs the module: markers
+   filter only when `-m` is passed, so the local developer loop is not narrowed.
+5. `tests/test_ci_marker_partition.py` guards both halves against the workflow file: every
+   parallel pytest invocation must exclude the marker, and a step gated to `ubuntu-latest`
+   alone must select it without `-n`. It parses the `-m` expressions out of each step's
+   `run` block rather than searching the file, so a comment cannot satisfy it, and each
+   failure message names the half that moved.
+
+The module's own prose moved with the mechanism: its docstring and its Windows skip reason
+both said the non-spawn arms run on all three OSes in CI. Both now say the three-OS run is
+what a direct local invocation gives, and that CI runs the module ubuntu-only. A prose
+claim left unedited is exactly what G4 forbids.
+
+**A deviation from §8's pre-named form, recorded.** §8 named the fallback as "mark the
+module `loop` and append the composed fill + control grep to the existing ubuntu
+wheel-smoke bash block". The marker half is as pre-named. The second half is not: the arms
+run as their own serial pytest step rather than a shell re-implementation. The reason is
+the corpus's own — a bash copy of the fill-and-grep would be a second implementation of the
+same claim, free to drift from the assertions it duplicates, and its evidence would live in
+shell exit codes rather than junitxml. Recorded as a deviation from the pre-committed rule;
+the rule's substance (the lane runs in CI, and the budget is met) is unchanged. The form
+was taken deliberately and stands: one implementation of the loop in CI, not two that can
+drift.
+
+**What the fallback does not fix.**
+
+- macOS and Windows no longer measure this lane AT ALL. Before, the non-spawn arms
+  (install, scaffold, derive, verify, ledger) ran on all three OSes; now the ubuntu serial
+  step is the only CI evidence. The module's Windows-specific code (the `Scripts` bin
+  directory, `os.name == "nt"`) and the macOS canonical-path caveat its docstring records
+  are not exercised by CI any more.
+- It does not lower the cost of one run; it removes the per-worker multiplication. The
+  ubuntu serial step still builds a wheel and installs from the index, so its wall-clock
+  still moves with index latency.
+- It does not restore the ≤3 min measurement on macOS or Windows for this lane. The budget
+  applies to what CI runs, and CI now runs the lane once, on ubuntu.
+
+**How the evidence could rot without a red.**
+
+1. Delete the ubuntu step while the parallel expression still says `not loop`: the lane
+   stops running and every lane stays green. `tests/test_ci_marker_partition.py` reds on
+   exactly this shape (`half B missing: no sdk step selects -m loop`), and it also reds a
+   selecting step that is not gated to ubuntu-latest alone, a selecting step that passes
+   `-n` (`half B is parallelised`), and a parallel leg that stops excluding the marker
+   (`half A missing`). It does not guard itself: deleting that module removes the guard
+   silently, and nothing pins the guard's existence — that remains review's (G5) job. The
+   module's own docstring states its further limits (the module's `pytestmark`, the
+   selecting step's position in the job).
+2. Remove `pytestmark`: the module returns to the parallel leg. It still runs (not
+   vacuous), but the per-worker multiplication — and the budget breach — returns with it.
+3. Rename the marker on one side only: the serial step then selects nothing and exits 5
+   (verified against this module: a marker matching no test returns 5 with
+   `10 deselected`), so that direction reds rather than passing quietly. The parallel leg
+   would run the module in the meantime.
+4. Rename the module's file: `-m loop` selects over `testpaths`, not a path literal, so a
+   renamed module is still found — the `timing` precedent this copies has the same
+   property.
+5. Drop the marker's registration from `pyproject.toml`: `--strict-markers` is not enabled,
+   so an unregistered marker warns (`PytestUnknownMarkWarning`) and still filters.
+   Registration is hygiene; the mechanism is `pytestmark` plus the two `-m` expressions.

@@ -68,9 +68,25 @@ jobs:
         # asserts wall-clock structural bounds) run serial and unloaded after
         # the parallel leg — the gateway's #247/#280 pattern: order-dependence
         # and load-sensitivity surface HERE first, at PR time, in every lane.
+        # The `loop` marker is the same partition for cost, not flakes: that
+        # module builds a wheel and a venv per pytest session, so under -n auto
+        # every xdist worker holding one of its tests repeated the build. It
+        # runs in the ubuntu-only serial step below (design record §13).
         run: |
-          uv run pytest -q -m "not browser and not timing" -n auto
+          uv run pytest -q -m "not browser and not timing and not loop" -n auto
           uv run pytest -q -m "timing"
+
+      - name: "Standalone dev loop — serial, ubuntu-only (issue #556)"
+        # The pre-committed fallback for the CI budget (design record §13).
+        # The module's session fixtures build this repository's wheel and a
+        # fresh venv, so the parallel leg above deselects the `loop` marker and
+        # this one-worker run is where the installed-wheel loop is measured.
+        # It stays in CI — never vacuous — but macOS and Windows no longer run
+        # it; §13 records what that gives up. No -n: one worker by design. A
+        # selection that matches no test exits 5, so a marker that stopped
+        # selecting the module reds this step instead of passing quietly.
+        if: matrix.os == 'ubuntu-latest'
+        run: uv run pytest -q -m loop
 
       - name: Standards self-check
         # lock <-> vendored tree <-> stamps with no bundle: the committed

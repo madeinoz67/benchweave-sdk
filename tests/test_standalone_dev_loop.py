@@ -35,8 +35,10 @@ What this module does NOT catch, stated so the claim does not outrun it:
   loader's own banner wordings — a control can be present, derived and
   mis-styled and every arm here stays green.
 * The spawned-serve arms are skipped on Windows (the skip reason names the
-  coverage that remains). The non-spawn arms — install, scaffold, derive,
-  verify, ledger — run on all three OSes.
+  coverage that remains). Locally that leaves the non-spawn arms — install,
+  scaffold, derive, verify, ledger — on all three OSes. CI runs this module as
+  the ``loop`` partition in a serial ubuntu-only step (design record §13), so
+  macOS and Windows no longer measure it there.
 * The pin's authoring friction: until ``pin-class`` lands, the pin row and its
   digest are hand-written and this lane consumes them as authored input. The
   lane would not notice a stale hand-computed digest — ``derive_ui`` would
@@ -71,6 +73,15 @@ import pytest
 from benchweave_sdk.classref_gate import census
 from benchweave_sdk.served import active_version
 
+#: The whole module is CI's ``loop`` partition (issue #556, design record
+#: §13). The session fixtures below build this repository's wheel and a fresh
+#: venv, so under ``-n auto`` every xdist worker that holds one of these tests
+#: repeats that build. The parallel leg deselects the marker and a serial
+#: ubuntu-only step runs it. A plain ``uv run pytest
+#: tests/test_standalone_dev_loop.py`` still runs the module: markers filter
+#: only when ``-m`` is passed.
+pytestmark = pytest.mark.loop
+
 REPO = Path(__file__).resolve().parents[1]
 FIXTURES = Path(__file__).parent / "fixtures" / "classref"
 
@@ -90,6 +101,24 @@ BUILD_TIMEOUT_S = 600
 CLI_TIMEOUT_S = 300
 SERVE_TIMEOUT_S = 60
 
+#: The adapter-load probe, run in the clean venv: the INSTALLED SDK's loader
+#: opens this project and reports whether the factory resolved. Running it in
+#: the installed interpreter is what keeps the fact the shipped loader's
+#: rather than this checkout's.
+LOADER_PROBE = """\
+import sys
+from pathlib import Path
+
+from benchweave_sdk_server.session import load_plugin_project
+
+plugin = load_plugin_project(Path(sys.argv[1]))
+# ``callable``, not ``is not None``: an attribute that merely exists (a
+# module-level string, a sentinel) is not a factory, and this probe is the
+# half of the arm the whole leg's load claim rests on.
+print(f"adapter_factory={'loaded' if callable(plugin.adapter_factory) else 'none'}")
+print(f"load_diagnostic={plugin.load_diagnostic}")
+"""
+
 #: The skipped arm's reason names the remaining coverage, so a reader can tell
 #: "not proven here" from "not proven at all".
 SPAWN_SKIPPED_ON_WINDOWS = pytest.mark.skipif(
@@ -98,7 +127,8 @@ SPAWN_SKIPPED_ON_WINDOWS = pytest.mark.skipif(
         "the spawned arm stops the server with SIGINT (POSIX signal semantics); "
         "the ubuntu-only installed-wheel spawn smokes in .github/workflows/ci.yml "
         "and publish.yml are the spawned-shape coverage on Windows-hosted CI, and "
-        "the non-spawn arms of this module still run there"
+        "a direct invocation on Windows still runs this module's non-spawn arms "
+        "(CI itself runs the `loop` module ubuntu-only — design record §13)"
     ),
 )
 
@@ -564,6 +594,44 @@ def test_the_console_script_announces_the_listener_and_stops_cleanly(
         loop_page.stdout
     )
     assert loop_page.exit_code == 0, loop_page.stdout
+
+
+@SPAWN_SKIPPED_ON_WINDOWS
+def test_the_loop_loads_the_plugin_adapter_not_only_the_presentation(
+    installed: Installed, loop: LoopRun, loop_page: ServedPage
+) -> None:
+    """The loop's green must not be a presentation-only green.
+
+    A degraded load (§4.5) renders the composed pages exactly like a healthy
+    one — the loader validates the documents first and only then tries the
+    adapter, so every other arm in this module passes with
+    ``adapter_factory`` None. Two facts close that hole:
+
+    * the spawned listener prints no ``standalone_plugin_*`` diagnostic of
+      any kind (the bearer line and the serving banner are expected output,
+      not diagnostics), and
+    * the INSTALLED SDK resolves a real factory for the same project with no
+      diagnostic.
+
+    What this proves is factory RESOLUTION (import + attribute), not a live
+    connect: the fixture descriptor declares a Meridian M-400, while the
+    scaffold adapter answers the SDK's synthetic identity, so a connect
+    would raise ``standalone_connect_identity_mismatch`` by design. The
+    loop never connects; its pages are the composed presentation.
+    """
+    assert "standalone_plugin_" not in loop_page.stdout, loop_page.stdout
+
+    probe = _run(
+        [str(installed.python), "-c", LOADER_PROBE, str(loop.project)],
+        cwd=installed.root,
+        timeout=CLI_TIMEOUT_S,
+        env=_child_env(),
+    )
+    assert probe.returncode == 0, probe.stderr
+    assert probe.stdout.splitlines() == [
+        "adapter_factory=loaded",
+        "load_diagnostic=None",
+    ], probe.stdout
 
 
 # ---------------------------------------------------------------------------
