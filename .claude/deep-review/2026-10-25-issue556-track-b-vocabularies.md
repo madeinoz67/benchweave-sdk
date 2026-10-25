@@ -656,3 +656,59 @@ drops the overflow and discloses it, in the same wording family B1 minted.
 If B5 finds a case where a member's own declaration is *malformed* rather
 than merely oversized, that is a declaration conflict and refuses under the
 existing conflict codes, not a capacity rule.
+
+### 2026-10-25 — the bound tie: the exclusive end wins (M5/D13 narrowing)
+
+An adversarial lane on the gateway mirror reproduced a **widening** in
+`_intersect_property`'s bound selection, and the SDK carries the identical
+defect. The side is chosen by comparing `(value, exclusive)` tuples: the
+low side used `max()` and the high side `min()`. On a value TIE the tuple
+ordering puts the INCLUSIVE end first for both, so `max()` happened to pick
+the exclusive low end (correct) while `min()` picked the inclusive high end
+(wrong). A catalogue `maximum: 5` met by a constraint `exclusiveMaximum: 5`
+therefore produced an effective `maximum: 5`, admitting `5` — a value the
+plugin's own constraint refuses. That is the one direction D13 does not
+tolerate, and neither `_check_admittance` (which only sees both-ends ties)
+nor a span test catches it. The docstring's "the tighter end of each side
+wins" was false on the high side.
+
+**The fix** replaces tuple ordering with an explicit comparator pair used by
+both sides, so one restatement cannot drift from the other:
+`_tighter_low` keeps the larger value and, on an equal value, the exclusive
+end; `_tighter_high` keeps the smaller value and, on an equal value, the
+exclusive end. Before: `low = max(cat, con)`, `high = min(cat, con)`. After:
+`low = _tighter_low(cat, con)`, `high = _tighter_high(cat, con)`.
+
+**Arms (2, both through `derive_ui`'s real effective-schema path on
+`tests/fixtures/classref/descriptor-f3b.json`):**
+`test_m6_high_bound_tie_takes_the_exclusive_end` — catalogue
+`sample_count` (`minimum: 1, maximum: 1000000`) met by a constraint
+`exclusiveMaximum: 1000000`; the row must carry `exclusiveMaximum`, and the
+test's own row-admittance predicate admits `999999` and refuses `1000000`.
+`test_m6_low_bound_tie_takes_the_exclusive_end` — the mirrored floor tie;
+same predicate, admits `2`, refuses `1`. RED on the unmodified production
+file: the high arm raised `KeyError: 'exclusiveMaximum'` (the inclusive
+`maximum` survived); `tests=2 failures=1 errors=0`. The low arm passed
+pre-fix, because the low side was already correct — the mirror arm is a
+regression guard on the restated comparator, not a second defect. Both arms
+were separately shown live by neutralizing the tie rule to prefer the
+inclusive end on BOTH sides (`cp` backup, never `git checkout`):
+`tests=2 failures=2 errors=0`, each raising the corresponding
+`KeyError`; restore, then `tests=2 failures=0 errors=0`. The focused
+classref suite (`test_classref_effective`, `_composed`, `_residual`,
+`_acceptance`) is green at 140 passed. The arms cover value ties at a
+single property's numeric bounds; they do not re-derive every catalogue
+field, and no fixture byte moves.
+
+**The cross-half obligation.** The gateway mirror at
+`src/benchweave/presentation/classref.py::_intersect_property` (its own
+`_bound` + `min()` at the high end) carries this same defect and is being
+fixed in the same arc, gateway-side. This SDK commit only fixes the SDK
+half. The #408 order governs the pairing: SDK PRs merge → release cut →
+gateway pointer PR. **A release carrying this fix must be followed by the
+pointer PR before the gateway and SDK diverge for long** — until the
+pointer moves, the gateway renders an effective schema that admits the tied
+high value the vendored class reference refuses. The gateway equivalence
+census (`tests/sdk/test_descriptor_equivalence.py`) carries no
+effective-schema bound arm today, so no census expectation moves with this
+commit; the gateway half's census arm lands with B7.

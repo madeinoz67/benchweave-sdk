@@ -648,6 +648,26 @@ def _intersect_property(
             return source[plain_key], False
         return None
 
+    # Both sides break a value TIE the same way: the EXCLUSIVE end is the
+    # tighter one. Tuple ordering cannot express that — (v, False) sorts
+    # before (v, True), so min() at the high end kept the inclusive
+    # catalogue ceiling and ADMITTED the shared value the constraint
+    # refuses (the widening direction). Compare the pair explicitly on
+    # both sides so one restatement cannot drift from the other.
+    def _tighter_low(
+        left: tuple[Any, bool], right: tuple[Any, bool]
+    ) -> tuple[Any, bool]:
+        if left[0] != right[0]:
+            return left if left[0] > right[0] else right
+        return (left[0], True) if left[1] or right[1] else (left[0], False)
+
+    def _tighter_high(
+        left: tuple[Any, bool], right: tuple[Any, bool]
+    ) -> tuple[Any, bool]:
+        if left[0] != right[0]:
+            return left if left[0] < right[0] else right
+        return (left[0], True) if left[1] or right[1] else (left[0], False)
+
     low_catalogue = _bound(effective, "exclusiveMinimum", "minimum")
     high_catalogue = _bound(effective, "exclusiveMaximum", "maximum")
     low_constraint = _bound(constraint, "exclusiveMinimum", "minimum")
@@ -661,15 +681,19 @@ def _intersect_property(
                 f"applied to catalogue type {declared_type!r}",
             )
     low: tuple[Any, bool] | None
-    if low_catalogue is None or low_constraint is None:
-        low = low_catalogue if low_constraint is None else low_constraint
+    if low_catalogue is None:
+        low = low_constraint
+    elif low_constraint is None:
+        low = low_catalogue
     else:
-        low = max(low_catalogue, low_constraint)
+        low = _tighter_low(low_catalogue, low_constraint)
     high: tuple[Any, bool] | None
-    if high_catalogue is None or high_constraint is None:
-        high = high_catalogue if high_constraint is None else high_constraint
+    if high_catalogue is None:
+        high = high_constraint
+    elif high_constraint is None:
+        high = high_catalogue
     else:
-        high = min(high_catalogue, high_constraint)
+        high = _tighter_high(high_catalogue, high_constraint)
     for keyword in ("minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"):
         effective.pop(keyword, None)
     if low is not None:
