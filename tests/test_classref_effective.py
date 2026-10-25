@@ -263,6 +263,69 @@ def test_m6_exclusive_bounds_carry_on_control_rows() -> None:
     assert row["maximum"] == 60000
 
 
+def _admits_bound(row: dict, value: float) -> bool:
+    """Admittance of ``value`` under a rendered row's own bound keys."""
+    if "minimum" in row and value < row["minimum"]:
+        return False
+    if "exclusiveMinimum" in row and value <= row["exclusiveMinimum"]:
+        return False
+    if "maximum" in row and value > row["maximum"]:
+        return False
+    return not ("exclusiveMaximum" in row and value >= row["exclusiveMaximum"])
+
+
+def _tied_bound_row(fragment: dict, field: str) -> dict:
+    """The derived control row for a constraint bound that TIES the
+    catalogue's own end at the same value (configure's sample_count is
+    catalogue ``minimum: 1, maximum: 1000000``)."""
+    action = "otdp.logic_analyser.configure/1.0.0"
+    descriptor = json.loads((FIXTURES / "descriptor-f3b.json").read_bytes())
+    descriptor["actions"][action]["input_constraints"] = {
+        "type": "object",
+        "properties": {field: fragment},
+    }
+    derived = derive_ui(
+        json.dumps(descriptor).encode(), REFERENCE,
+        descriptor_path=FIXTURES / "descriptor-f3b.json",
+    )
+    return next(
+        row for row in derived.control_plan[action]["fields"] if row["field"] == field
+    )
+
+
+def test_m6_high_bound_tie_takes_the_exclusive_end() -> None:
+    """M6 (#556 B1 refute): the catalogue ceiling met by the plugin's own
+    exclusive ceiling at the SAME value is a tie, and the exclusive end is
+    the tighter one. Comparing ``(value, exclusive)`` tuples put the
+    inclusive end first on a tie, so the effective schema admitted the
+    shared value the constraint refuses — the widening direction."""
+    row = _tied_bound_row({"type": "integer", "exclusiveMaximum": 1000000}, "sample_count")
+    assert row["exclusiveMaximum"] == 1000000
+    assert "maximum" not in row, "the inclusive catalogue end must not survive the tie"
+    assert row["minimum"] == 1, "the untouched catalogue low end still carries"
+    assert _admits_bound(row, 999999)
+    assert not _admits_bound(row, 1000000), (
+        "the constraint refuses 1000000; the effective schema must never admit "
+        "a value the constraint refuses"
+    )
+
+
+def test_m6_low_bound_tie_takes_the_exclusive_end() -> None:
+    """M6 low-side mirror: the catalogue floor met by the plugin's own
+    exclusive floor at the same value carries the exclusive end. This side
+    was already correct; the arm pins the restated comparator so the two
+    sides cannot drift apart again."""
+    row = _tied_bound_row({"type": "integer", "exclusiveMinimum": 1}, "sample_count")
+    assert row["exclusiveMinimum"] == 1
+    assert "minimum" not in row, "the inclusive catalogue end must not survive the tie"
+    assert row["maximum"] == 1000000, "the untouched catalogue ceiling still carries"
+    assert _admits_bound(row, 2)
+    assert not _admits_bound(row, 1), (
+        "the constraint refuses 1; the effective schema must never admit a "
+        "value the constraint refuses"
+    )
+
+
 def test_m7_required_actions_checked_across_all_profiles() -> None:
     """M7: the §3.8 merge path checks every claimed profile's required
     actions, not references[0]'s row — the dmm-first sort must not skip

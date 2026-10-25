@@ -43,7 +43,7 @@ from typing import Any
 import pytest
 from click.testing import CliRunner
 
-from benchweave_sdk.classref import derive_ui, find_reference
+from benchweave_sdk.classref import ResidualMember, derive_ui, find_reference
 from benchweave_sdk.classref_gate import census, verify_ui
 from benchweave_sdk.classref_gate_render import render_pages
 from benchweave_sdk.cli import cli
@@ -559,19 +559,11 @@ def test_the_composed_pin_names_the_fixture_bytes() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_scope_computed_measurement_declares_without_refusal_but_no_surface() -> None:
-    """A computed measurement (``derived_variables``, the descriptor's own
-    measurement vocabulary — measurement-model.md §8, S19) is admitted and
-    validated with no refusal, and the derived UI carries no surface for it.
-
-    That is the issue's "custom measurement" reading this increment cannot
-    prove: the vocabulary admits the declaration without new machinery, but
-    the derivation has no surface machinery for it (deferral D1, "datasets
-    and capture shapes"). Asserted so the gap is measured, not asserted away.
-    """
-    reference = find_reference(PROFILE)
-    assert reference is not None
-    descriptor = _fixture_descriptor()
+def _computed_descriptor(fixture: str = "descriptor-m400.json") -> dict[str, Any]:
+    """A fixture descriptor carrying one computed measurement — V2's
+    descriptor-owned layer-2 declaration (``derived_variables``, the
+    measurement vocabulary measurement-model.md §8 owns)."""
+    descriptor = json.loads((FIXTURES / fixture).read_bytes())
     descriptor["derived_variables"] = [
         {
             "id": "rms_v",
@@ -580,11 +572,350 @@ def test_scope_computed_measurement_declares_without_refusal_but_no_surface() ->
             "expression": "ch1_voltage * 0.707",
         }
     ]
+    return descriptor
+
+
+def _dataset_targets(derived: Any) -> list[dict[str, Any]]:
+    return [row for row in derived.catalogue["targets"] if row["kind"] == "dataset"]
+
+
+def test_scope_b1_computed_measurement_derives_into_every_dataset_target() -> None:
+    """(#556 Track B §4 V2) A computed measurement derives into the variable
+    set of EVERY dataset target the derivation mints, as an ordinary value
+    variable — the descriptor's ``derived_variables`` row is its layer-2
+    declaration, and the host computes the value INTO the dataset, so the
+    derived wire shape asserting it is honest.
+
+    MOVED DELIBERATELY 2026-10-25 (issue #556 B1): this arm previously pinned
+    the honest negative — admitted, derives nothing (D1, "datasets and
+    capture shapes"). The design record §4 V2 states the surface, and the old
+    arm's own docstring named the condition — "a later slice that adds the
+    surface must move them deliberately". Metric: the denominator is
+    ``len(descriptor["derived_variables"]) × len(dataset targets)``, both read
+    from the derivation, never a literal; the numerator is asserted by
+    membership per pair.
+
+    The LA fixture carries TWO dataset targets (the capture slot and the
+    decode slot), so "every" is measured over a denominator of two.
+    """
+    reference = find_reference("otdp.logic_analyser/1.0.0")
+    assert reference is not None
+    descriptor = _computed_descriptor("descriptor-f1-da.json")
+    derived = derive_ui(
+        _raw(descriptor),
+        reference,
+        descriptor_path=FIXTURES / "descriptor-f1-da.json",
+    )
+    computed = {str(row["id"]) for row in descriptor["derived_variables"]}
+    assert computed == {"rms_v"}
+    targets = _dataset_targets(derived)
+    assert len(targets) == 2, [row["id"] for row in targets]
+    pairs = [(member, target["id"]) for target in targets for member in computed]
+    assert len(pairs) == len(computed) * len(targets)
+    for target in targets:
+        variables = {row["id"]: row for row in target["variables"]}
+        value_shapes = {
+            row["shape"]
+            for row in target["variables"]
+            if row.get("axis_role") not in ("x", "receipt_time")
+        }
+        assert len(value_shapes) == 1, target["variables"]
+        for member in computed:
+            assert member in variables, (member, target["id"], target["variables"])
+            # The wire shape decides the variable's shape: a digital-lanes
+            # dataset carries vectors, so the computed variable is a vector
+            # too — a scalar row would assert a wire shape the dataset does
+            # not carry.
+            assert variables[member]["shape"] == value_shapes.pop()
+
+
+def test_scope_b1_computed_measurement_never_derives_an_observation_tile() -> None:
+    """KILL (d) guard (#556 Track B §4 V2): a tile is an observation target,
+    and the canonical validator requires ``parameter_id`` to name a declared
+    readable parameter. A computed variable has no parameter; a tile for it
+    would assert a data path that does not exist.
+
+    The DMM fixture is the one with observation tiles, so it is the fixture
+    where the guard has something to guard.
+    """
+    reference = find_reference("otdp.dmm/1.0.0")
+    assert reference is not None
+    descriptor = _computed_descriptor("descriptor-dmm.json")
     derived = derive_ui(_raw(descriptor), reference, descriptor_path=None)
-    manifest_blob = json.dumps(derived.manifest)
-    assert "rms_v" not in manifest_blob
-    catalogue_blob = json.dumps(derived.catalogue)
-    assert "rms_v" not in catalogue_blob
+    observations = [
+        row for row in derived.catalogue["targets"] if row["kind"] == "observation"
+    ]
+    assert observations, "the DMM fixture derives observation tiles"
+    computed = {str(row["id"]) for row in descriptor["derived_variables"]}
+    declared = {str(row["name"]) for row in descriptor.get("parameters", [])}
+    for target in observations:
+        assert target["parameter_id"] in declared
+        assert computed.isdisjoint(json.dumps(target).split('"'))
+    assert computed.isdisjoint(
+        json.dumps(derived.manifest["bindings"]).split('"')
+    ), derived.manifest["bindings"]
+
+
+def test_scope_b1_computed_measurement_rides_the_series_rule_where_the_kind_allows() -> None:
+    """(#556 Track B §4 V2) The computed variable rides the numeric series
+    rule where the plot kind admits it, and nowhere else.
+
+    A waveform dataset page carries numeric vector series, so the computed
+    variable is one of the capture plot's y series (the Meridian fixture). A
+    digital-lanes plot's y channels are the wire's logic alphabet
+    (string/vector, the canonical validator's rule), so the computed variable
+    stays in the dataset's variable set and off the plot — the dataset still
+    carries it on the wire. The corpus hosts no time_series plot on a dataset
+    page (every one is a readings-page plot bound to an observation), so no
+    arm here claims a time_series series; the shape rule is pinned by the
+    dataset arm above and by the waveform arm here.
+    """
+    daq_reference = find_reference(PROFILE)
+    assert daq_reference is not None
+    daq = derive_ui(
+        _raw(_computed_descriptor()), daq_reference, descriptor_path=None
+    )
+    (capture,) = _dataset_targets(daq)
+    assert "rms_v" in {row["id"] for row in capture["variables"]}
+    waveforms = [
+        plot
+        for page in daq.manifest["pages"]
+        for plot in (page.get("plots") or [])
+        if plot["kind"] == "waveform"
+    ]
+    assert waveforms, "the DAQ fixture derives a waveform plot"
+    for plot in waveforms:
+        assert "rms_v" in plot["y"], plot
+
+    la_reference = find_reference("otdp.logic_analyser/1.0.0")
+    assert la_reference is not None
+    la = derive_ui(
+        _raw(_computed_descriptor("descriptor-f1-da.json")),
+        la_reference,
+        descriptor_path=FIXTURES / "descriptor-f1-da.json",
+    )
+    for target in _dataset_targets(la):
+        assert "rms_v" in {row["id"] for row in target["variables"]}, target
+    lane_plots = [
+        plot
+        for page in la.manifest["pages"]
+        for plot in (page.get("plots") or [])
+        if plot["kind"] == "digital_lanes"
+    ]
+    assert lane_plots, "the LA fixture derives a digital-lanes plot"
+    for plot in lane_plots:
+        assert "rms_v" not in plot["y"], plot
+        assert "rms_v" not in {hint["variable_id"] for hint in plot["channel_hints"]}
+
+
+# ---------------------------------------------------------------------------
+# #556 B1 fold (2026-10-25) — the two schema roads B1's composition opened.
+# ---------------------------------------------------------------------------
+
+
+def test_scope_b1_a_computed_id_colliding_with_a_dataset_variable_is_dropped_and_disclosed(
+    tmp_path: Path,
+) -> None:
+    """(#556 B1 fold F1) A computed id that equals ANY variable id a
+    dataset's wire shape already carries — the axis, a lane, a quantity or a
+    trace — cannot compose into that dataset: the emitted variable set would
+    carry a duplicate id, the canonical validator refuses the document
+    (``contracts.py::_unique_rows``), and the refusal escaped ``verify_ui``
+    as an unhandled ``PluginLoadError`` on the pre-fold code. The axis rule
+    now covers every base variable id: the variable is dropped from the
+    affected targets and the REPORTED row names the id and those targets —
+    never a typed refusal, never a silent drop.
+
+    Metric: the fixture derives two dataset targets (asserted from the
+    derivation, never a literal); the computed id is the fixture's own first
+    lane id (asserted against ``descriptor.channels``), so the collision is
+    measured against a base id the wire actually carries.
+    """
+    from helpers_classref import build_classref_project, raw
+
+    project, _stale = build_classref_project(
+        tmp_path / "f1da", descriptor_fixture="descriptor-f1-da.json"
+    )
+    package = next((project / "src").iterdir())
+    descriptor = _computed_descriptor("descriptor-f1-da.json")
+    lane_id = str(descriptor["channels"][0]["id"])
+    assert lane_id == "d0"
+    descriptor["derived_variables"][0]["id"] = lane_id
+    raw_descriptor = raw(descriptor)
+    (package / "descriptor.json").write_bytes(raw_descriptor)
+    reference = find_reference("otdp.logic_analyser/1.0.0")
+    assert reference is not None
+    derived = derive_ui(
+        raw_descriptor, reference, descriptor_path=FIXTURES / "descriptor-f1-da.json"
+    )
+    # Persist and verify FIRST: on the pre-fold code the emitted duplicate id
+    # is refused by the canonical validator and the host load escapes here as
+    # an unhandled ``PluginLoadError`` — the failure this arm pins.
+    _write_derived(package, derived)
+    report = verify_ui(project)
+    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
+    assert (
+        f"observation variable {lane_id}: id collides with a dataset variable "
+        "on capture, decode; no tile (no parameter to read)"
+        in report.reported_deviations
+    ), report.reported_deviations
+    targets = _dataset_targets(derived)
+    assert len(targets) == 2, [row["id"] for row in targets]
+    for target in targets:
+        identifiers = [row["id"] for row in target["variables"]]
+        assert len(identifiers) == len(set(identifiers)), target
+        # The id survives exactly once — as the base lane the wire carries.
+        # The computed row is the one that was not appended beside it.
+        assert identifiers.count(lane_id) == 1, target
+    assert derived.residual_members == (
+        ResidualMember(
+            "observation variable",
+            "observation variables",
+            lane_id,
+            "id collides with a dataset variable on capture, decode; "
+            "no tile (no parameter to read)",
+        ),
+    ), derived.residual_members
+
+
+def _computed_waveform_project(
+    tmp_path: Path, count: int
+) -> tuple[Path, Path, Any]:
+    """The Meridian project with ``count`` computed variables. The DAQ
+    fixture's waveform plot carries its class traces, so ``count`` composes
+    onto that base — the measured denominator, never a literal."""
+    project = _m400_project(tmp_path / f"m400-{count}", with_ui=False)
+    package = project / "src" / PACKAGE
+    descriptor = _fixture_descriptor()
+    descriptor["derived_variables"] = [
+        {
+            "id": f"cv{index}",
+            "quantity": "voltage",
+            "unit": "V",
+            "expression": "ch1_voltage * 0.5",
+        }
+        for index in range(1, count + 1)
+    ]
+    descriptor_path = package / "descriptor.json"
+    descriptor_path.write_bytes(_raw(descriptor))
+    reference = find_reference(PROFILE)
+    assert reference is not None
+    derived = derive_ui(_raw(descriptor), reference, descriptor_path=descriptor_path)
+    return project, package, derived
+
+
+def _waveform_plot(derived: Any) -> dict[str, Any]:
+    plots = [
+        plot
+        for page in derived.manifest["pages"]
+        for plot in (page.get("plots") or [])
+        if plot["kind"] == "waveform"
+    ]
+    assert len(plots) == 1, plots
+    return plots[0]
+
+
+def test_scope_b1_the_series_ceiling_drops_only_composed_series(
+    tmp_path: Path,
+) -> None:
+    """(#556 B1 fold F2) The analog plot kinds cap ``y`` at 16 in the
+    manifest schema, and a composed series that would breach the cap is
+    dropped from the plot and disclosed — never emitted into a document the
+    canonical validator refuses. The class's OWN traces are untouched: the
+    pre-existing shape where a descriptor's own traces exceed the cap is
+    outside this slice (design record addendum, 2026-10-25).
+
+    The boundary is measured both ways: exactly at the ceiling nothing is
+    dropped and no cap row appears; one composed series past it, the tail
+    row is dropped and named. Denominators come from the derivation — the
+    no-computed derivation measures the class's own trace count.
+    """
+    _, _, bare = _computed_waveform_project(tmp_path, 0)
+    base_y = _waveform_plot(bare)["y"]
+    assert len(base_y) == 3, base_y
+
+    project, package, over = _computed_waveform_project(tmp_path, 14)
+    # Persist and verify FIRST: on the pre-fold code the 17-entry ``y`` is
+    # refused by the manifest schema and the host load escapes here as an
+    # unhandled ``PluginLoadError`` — the failure this arm pins.
+    _write_derived(package, over)
+    report = verify_ui(project)
+    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
+    from benchweave_sdk.classref import _PLOT_SERIES_CEILING
+
+    _, _, at_ceiling = _computed_waveform_project(tmp_path, 13)
+    at_ceiling_plot = _waveform_plot(at_ceiling)
+    assert len(at_ceiling_plot["y"]) == _PLOT_SERIES_CEILING, at_ceiling_plot
+    assert at_ceiling_plot["y"][: len(base_y)] == base_y, at_ceiling_plot
+    assert at_ceiling_plot["y"][len(base_y):] == [
+        f"cv{index}" for index in range(1, 14)
+    ]
+    assert not any(
+        "no plot series" in row.detail for row in at_ceiling.residual_members
+    ), at_ceiling.residual_members
+    plot = _waveform_plot(over)
+    assert len(plot["y"]) == _PLOT_SERIES_CEILING, plot
+    assert plot["y"][: len(base_y)] == base_y, plot
+    assert plot["y"][len(base_y):] == [f"cv{index}" for index in range(1, 14)]
+    assert "cv14" not in plot["y"], plot
+    # Dropped from the PLOT alone: the wire still carries the computed
+    # variable, so the dataset's variable set holds it.
+    (capture,) = _dataset_targets(over)
+    assert "cv14" in {row["id"] for row in capture["variables"]}, capture
+    detail = (
+        "computed variable derives into dataset variables (no tile; no "
+        "parameter to read); no plot series on capture (the plot's y admits "
+        f"{_PLOT_SERIES_CEILING} numeric series)"
+    )
+    # Every computed variable carries its composed-state row (the denominator
+    # is the descriptor's own declaration, 14 here); only the one dropped
+    # from the plot carries the ceiling clause.
+    assert len(over.residual_members) == 14, over.residual_members
+    rows = {row.member: row.detail for row in over.residual_members}
+    assert rows["cv14"] == detail, rows["cv14"]
+    assert [member for member, row_detail in rows.items() if "no plot series" in row_detail] == [
+        "cv14"
+    ], rows
+    assert f"observation variable cv14: {detail}" in report.reported_deviations, (
+        report.reported_deviations
+    )
+
+
+def test_scope_b1_the_series_ceiling_matches_the_manifest_schema() -> None:
+    """The ceiling the derivation applies is the manifest schema's own ``y``
+    cap for the analog kinds, read from the vendored corpus at test time —
+    a hand-typed constant cannot drift from the authority silently. The
+    digital-lanes cap is anchored the same way against the lane ceiling the
+    derivation already refuses at."""
+    from benchweave_sdk.classref import _LANE_CEILING, _PLOT_SERIES_CEILING
+    from benchweave_sdk.served import active_version
+    from benchweave_sdk.validation import contract_documents
+
+    active = active_version("plugin-ui")
+    matches = [
+        key
+        for key in contract_documents()
+        if key.startswith(f"plugin-ui/{active}/")
+        and key.endswith("/ui-manifest.schema.json")
+    ]
+    assert len(matches) == 1, matches
+    plot = contract_documents()[matches[0]]["$defs"]["plot"]
+    caps: dict[str, int] = {}
+    for branch in plot["allOf"]:
+        kinds = branch.get("if", {}).get("properties", {}).get("kind", {})
+        cap = (
+            branch.get("then", {})
+            .get("properties", {})
+            .get("y", {})
+            .get("maxItems")
+        )
+        if cap is None:
+            continue
+        for kind in [kinds["const"]] if "const" in kinds else kinds.get("enum", []):
+            caps[str(kind)] = int(cap)
+    assert caps["time_series"] == _PLOT_SERIES_CEILING
+    assert caps["waveform"] == _PLOT_SERIES_CEILING
+    assert caps["digital_lanes"] == _LANE_CEILING
 
 
 def _decoded_daq(tmp_path: Path) -> tuple[Path, Any, Any]:
@@ -700,28 +1031,21 @@ def test_scope_r9_the_claim_stands_when_the_lanes_land() -> None:
     assert lanes, "the lanes the claim names actually derived"
 
 
-def test_scope_r10_declared_members_without_a_derivation_are_reported(
+def test_scope_b1_residual_members_are_reported(
     tmp_path: Path,
 ) -> None:
-    """R10: layer 3's promise is two-sided — never refuses AND never silent.
-    A computed measurement and a custom decoder declare cleanly and derive no
-    surface, so they are disclosed on the gate's REPORTED channel every run,
-    naming the member and the vocabulary whose derivation is deferred (D1).
-    Silence here is indistinguishable from "we rendered it and it looked
-    fine"."""
+    """Layer 3's promise is two-sided — never refuses AND never silent. The
+    gate's REPORTED channel carries a row for every declared member that
+    derives no surface of its vocabulary, and (since #556 B1) V2's
+    composed-state row: the computed measurement DOES derive into dataset
+    variables and never a tile, so its row states that instead of naming a
+    deferral. Silence here is indistinguishable from "we rendered it and it
+    looked fine"."""
     project = _m400_project(tmp_path / "m400", with_ui=False)
     package = project / "src" / PACKAGE
     decoder_raw = (FIXTURES / "decoder-uart.json").read_bytes()
     (package / "decoder-uart.json").write_bytes(decoder_raw)
-    descriptor = _fixture_descriptor()
-    descriptor["derived_variables"] = [
-        {
-            "id": "rms_v",
-            "quantity": "voltage",
-            "unit": "V",
-            "expression": "ch1_voltage * 0.707",
-        }
-    ]
+    descriptor = _computed_descriptor()
     descriptor["decoders"] = [
         {
             "id": "uart",
@@ -736,15 +1060,21 @@ def test_scope_r10_declared_members_without_a_derivation_are_reported(
     report = verify_ui(project)
     assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
     joined = " | ".join(report.reported_deviations)
-    assert "custom measurement rms_v" in joined, report.reported_deviations
+    # #556 B1: V2's row flips from "derivation deferred" to the composed-state
+    # disclosure — the computed variable DOES derive, into dataset variables,
+    # and never a tile (no parameter to read).
+    assert (
+        "observation variable rms_v: computed variable derives into dataset "
+        "variables (no tile; no parameter to read)" in joined
+    ), report.reported_deviations
     assert "custom decoder uart" in joined, report.reported_deviations
-    assert joined.count("derivation deferred") >= 2, report.reported_deviations
 
 
-def test_scope_r10_the_reference_less_arm_reports_them_too(tmp_path: Path) -> None:
+def test_scope_b1_the_reference_less_arm_reports_them_too(tmp_path: Path) -> None:
     """Both gate arms carry the disclosure (the B6/B7/R3 discipline): the
-    reference-less path derives no decoder lanes at all, so every declared
-    decoder and every computed measurement is deferred there too."""
+    reference-less path derives no decoder lanes and no dataset target at
+    all, so every declared decoder is a residual member there and every
+    computed measurement reports its no-dataset terminal state."""
     from benchweave_sdk.presentation import create_ui_resources
     from benchweave_sdk.scaffold import create_project
 
@@ -760,33 +1090,139 @@ def test_scope_r10_the_reference_less_arm_reports_them_too(tmp_path: Path) -> No
             "expression": "voltage * 0.707",
         }
     ]
+    decoder_raw = (FIXTURES / "decoder-uart.json").read_bytes()
+    (package / "decoder-uart.json").write_bytes(decoder_raw)
+    descriptor["decoders"] = [
+        {
+            "id": "uart",
+            "path": "decoder-uart.json",
+            "sha256": hashlib.sha256(decoder_raw).hexdigest(),
+        }
+    ]
     (package / "descriptor.json").write_bytes(_raw(descriptor))
     create_ui_resources(project, "veridian_refless_plugin")
     report = verify_ui(project, reference=None)
     joined = " | ".join(report.reported_deviations)
-    assert "custom measurement rms_v" in joined, report.reported_deviations
-    assert "derivation deferred" in joined, report.reported_deviations
+    # No class reference, so no dataset target derives: V2's row states that
+    # terminal state rather than claiming a dataset variable that no target
+    # carries. F5 (#556 B1 fold): this arm resolves no class reference, so
+    # the row must not claim "this class" — it does not have one.
+    assert (
+        "observation variable rms_v: computes no dataset variable (no dataset "
+        "target derives); no tile (no parameter to read)"
+    ) in joined, report.reported_deviations
+    assert (
+        "custom decoder uart: no lane host (no derived plot carries its "
+        "lanes; lanes host in digital_lanes plots alone)"
+    ) in joined, report.reported_deviations
 
 
-def test_scope_r10_a_decoder_whose_lanes_never_land_is_still_disclosed(
+def test_scope_b1_v3_a_channel_matching_no_resolved_slot_is_reported(
     tmp_path: Path,
 ) -> None:
-    """R10's decoder condition, exactly: a member is disclosed when nothing
-    DERIVED renders it — not merely when no lane was built. The decode-
-    annotated overlay on a DAQ-class device BUILDS decoder lanes (the
-    overlay fires, so a "was it built?" test would wrongly call it served)
-    but no derived plot carries them: the plot is a waveform, and lanes land
-    only in a digital-lanes plot. Nothing rendered the decoder, so it is
-    disclosed."""
-    project, package, derived = _decoded_daq(tmp_path)
-    assert derived.deferred_members == (
-        ("custom decoder", "channels and decoders", "uart"),
-    ), derived.deferred_members
+    """(#556 Track B §4 V3 layer 3, first bullet) A channel whose role matches
+    no channels slot the derivation resolves lanes for used to disappear
+    without a word anywhere — no lanes and no disclosure. It now yields a
+    REPORTED row every run, and a channel that DOES resolve never does.
+
+    Metric: the denominator is ``descriptor.channels`` (asserted from the
+    fixture, never a literal); the numerator is channels with a derived lanes
+    surface plus channels carrying a row naming the vocabulary. The fixture
+    declares four channels and one channels slot (role ``analogue_input``), so
+    three resolve and one reports.
+    """
+    project = _m400_project(tmp_path / "m400", with_ui=False)
+    package = project / "src" / PACKAGE
+    descriptor = _fixture_descriptor()
+    descriptor["channels"].append(
+        {
+            "id": "clk",
+            "label": "Clock lane",
+            "role": "digital_input",
+            "quantities": ["edge"],
+            "parameter_names": [],
+        }
+    )
+    (package / "descriptor.json").write_bytes(_raw(descriptor))
+    reference = find_reference(PROFILE)
+    assert reference is not None
+    derived = derive_ui(
+        _raw(descriptor),
+        reference,
+        descriptor_path=package / "descriptor.json",
+    )
+    declared = {str(row["id"]) for row in descriptor["channels"]}
+    assert len(declared) == 4
+    reported = [row for row in derived.residual_members if row.kind == "channel"]
+    assert [row.member for row in reported] == ["clk (role digital_input)"]
+    assert declared - {"clk"} == {"ch1", "ch2", "ch3"}
     _write_derived(package, derived)
     report = verify_ui(project)
-    assert "custom decoder uart" in " | ".join(report.reported_deviations), (
-        report.reported_deviations
-    )
+    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
+    assert (
+        "channel clk (role digital_input): resolves to no lanes surface"
+        in report.reported_deviations
+    ), report.reported_deviations
+
+
+def test_scope_b1_v3_the_reference_less_arm_reports_every_channel(
+    tmp_path: Path,
+) -> None:
+    """The closure runs on both gate arms: a descriptor whose profile matches
+    no vendored class resolves no channels slot, so every declared channel
+    reports — the B6/B7/R3 discipline that every disclosure rides both
+    arms."""
+    from benchweave_sdk.presentation import create_ui_resources
+    from benchweave_sdk.scaffold import create_project
+
+    project = tmp_path / "refless"
+    create_project(project, "veridian_refless_plugin", with_ui=False)
+    package = project / "src" / "veridian_refless_plugin"
+    descriptor = json.loads((package / "descriptor.json").read_bytes())
+    descriptor["channels"] = [
+        {
+            "id": "a1",
+            "label": "Analog input 1",
+            "role": "analogue_input",
+            "quantities": ["voltage"],
+            "parameter_names": [],
+        }
+    ]
+    (package / "descriptor.json").write_bytes(_raw(descriptor))
+    create_ui_resources(project, "veridian_refless_plugin")
+    report = verify_ui(project, reference=None)
+    joined = " | ".join(report.reported_deviations)
+    assert (
+        "channel a1 (role analogue_input): resolves to no lanes surface" in joined
+    ), report.reported_deviations
+
+
+def test_scope_b1_v3_a_decoder_with_no_lane_host_reports_its_reason(
+    tmp_path: Path,
+) -> None:
+    """(#556 Track B §4 V3 layer 3) The decoder disclosure speaks the residual
+    vocabulary and names the structural reason: this class's plot is a
+    waveform, and lanes host in digital_lanes plots alone. The decoder
+    document and its annotation action ARE present — the lanes are built and
+    then hosted nowhere — so the row is the only surface that can tell the
+    author the decoder has no lane host."""
+    project, package, derived = _decoded_daq(tmp_path)
+    assert derived.residual_members == (
+        ResidualMember(
+            "custom decoder",
+            "channels and decoders",
+            "uart",
+            "no lane host (this class's plot is waveform; lanes host in "
+            "digital_lanes plots alone)",
+        ),
+    ), derived.residual_members
+    _write_derived(package, derived)
+    report = verify_ui(project)
+    assert (
+        "custom decoder uart: no lane host (this class's plot is waveform; "
+        "lanes host in digital_lanes plots alone)"
+        in report.reported_deviations
+    ), report.reported_deviations
 
 
 def test_scope_r10_a_decoder_that_renders_is_not_disclosed() -> None:
@@ -800,7 +1236,7 @@ def test_scope_r10_a_decoder_that_renders_is_not_disclosed() -> None:
         reference,
         descriptor_path=FIXTURES / "descriptor-f1-da.json",
     )
-    assert derived.deferred_members == (), derived.deferred_members
+    assert derived.residual_members == (), derived.residual_members
     landed = [
         lane["decoder"]
         for page in derived.manifest["pages"]

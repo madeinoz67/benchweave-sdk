@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Iterable
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
@@ -36,6 +36,13 @@ from .validation import contract_documents, validate_descriptor
 LAYOUT_EXTENSION_KEY = "plugin-ui-class-reference:layout"
 
 _LANE_CEILING = 64
+#: The ``y`` ceiling the manifest schema puts on a time_series/waveform plot
+#: (``ui-manifest.schema.json`` ``$defs.plot`` allOf, the analog branch:
+#: ``y.maxItems`` 16). ``_LANE_CEILING`` is the same pattern for the
+#: digital-lanes branch's 64; the vendored schema is the authority and
+#: ``test_scope_b1_the_series_ceiling_matches_the_manifest_schema`` reads it
+#: so this constant cannot drift from it silently.
+_PLOT_SERIES_CEILING = 16
 _GROUP_SIZE = 8
 _HOST_SUPPLIED_UNIVERSAL = ("acquisition_id", "configuration_id")
 _NUMERIC_TYPES = ("number", "integer")
@@ -85,6 +92,23 @@ def _refuse(prefix: str, detail: str) -> ValueError:
 
 
 @dataclass(frozen=True)
+class ResidualMember:
+    """(#556 Track B §3 rule 3) One row on the gate's REPORTED channel.
+
+    ``kind`` names the member's vocabulary surface (``observation variable``,
+    ``channel``, ``custom decoder``); ``member`` identifies the member
+    (a channel row carries its role beside the id); ``detail`` states what
+    the derivation did not produce, or — V2's composed-state row — what it
+    did produce instead. The gate renders ``"<kind> <member>: <detail>"``.
+    """
+
+    kind: str
+    vocabulary: str
+    member: str
+    detail: str
+
+
+@dataclass(frozen=True)
 class DerivedUI:
     """Everything one expander run emits; the gate's assertion input."""
 
@@ -114,15 +138,18 @@ class DerivedUI:
     #: (R5): shape-valid, contributed nothing — disclosed beside the
     #: unapplied classes, never silent.
     empty_action_pins: tuple[str, ...] = ()
-    #: Declared members whose vocabulary has no derivation in this run (R10,
-    #: 2026-10-23 fold), as ``(kind, vocabulary, member_id)`` rows: a
-    #: computed measurement (``derived_variables``) or a decoder pin that
-    #: produced no lane. Layer 3's promise is two-sided — never refuses AND
-    #: never silent — so these are disclosed through the gate's REPORTED
-    #: channel on every run, naming the member and the vocabulary whose
-    #: derivation is deferred (D1). Silence there is indistinguishable from
-    #: "we rendered it and it looked fine".
-    deferred_members: tuple[tuple[str, str, str], ...] = ()
+    #: Declared members carried on the gate's REPORTED channel every run
+    #: (R10, 2026-10-23 fold; #556 Track B §3 rule 3). Two kinds of row ride
+    #: this inventory: a member that derives NO surface of its vocabulary (a
+    #: decoder no derived plot hosts, a channel whose role matches no resolved
+    #: lanes slot), and V2's composed-state disclosure — a computed variable
+    #: DOES derive, into dataset variables, and never a tile, so its row
+    #: states what it derives instead of naming a deferral (including the
+    #: targets it was dropped from: a base-id collision, or a plot ``y``
+    #: ceiling, both named in the row's detail). Layer 3's promise
+    #: is two-sided — never refuses AND never silent — and silence here is
+    #: indistinguishable from "we rendered it and it looked fine".
+    residual_members: tuple[ResidualMember, ...] = ()
 
 
 @cache
@@ -621,6 +648,26 @@ def _intersect_property(
             return source[plain_key], False
         return None
 
+    # Both sides break a value TIE the same way: the EXCLUSIVE end is the
+    # tighter one. Tuple ordering cannot express that — (v, False) sorts
+    # before (v, True), so min() at the high end kept the inclusive
+    # catalogue ceiling and ADMITTED the shared value the constraint
+    # refuses (the widening direction). Compare the pair explicitly on
+    # both sides so one restatement cannot drift from the other.
+    def _tighter_low(
+        left: tuple[Any, bool], right: tuple[Any, bool]
+    ) -> tuple[Any, bool]:
+        if left[0] != right[0]:
+            return left if left[0] > right[0] else right
+        return (left[0], True) if left[1] or right[1] else (left[0], False)
+
+    def _tighter_high(
+        left: tuple[Any, bool], right: tuple[Any, bool]
+    ) -> tuple[Any, bool]:
+        if left[0] != right[0]:
+            return left if left[0] < right[0] else right
+        return (left[0], True) if left[1] or right[1] else (left[0], False)
+
     low_catalogue = _bound(effective, "exclusiveMinimum", "minimum")
     high_catalogue = _bound(effective, "exclusiveMaximum", "maximum")
     low_constraint = _bound(constraint, "exclusiveMinimum", "minimum")
@@ -634,15 +681,19 @@ def _intersect_property(
                 f"applied to catalogue type {declared_type!r}",
             )
     low: tuple[Any, bool] | None
-    if low_catalogue is None or low_constraint is None:
-        low = low_catalogue if low_constraint is None else low_constraint
+    if low_catalogue is None:
+        low = low_constraint
+    elif low_constraint is None:
+        low = low_catalogue
     else:
-        low = max(low_catalogue, low_constraint)
+        low = _tighter_low(low_catalogue, low_constraint)
     high: tuple[Any, bool] | None
-    if high_catalogue is None or high_constraint is None:
-        high = high_catalogue if high_constraint is None else high_constraint
+    if high_catalogue is None:
+        high = high_constraint
+    elif high_constraint is None:
+        high = high_catalogue
     else:
-        high = min(high_catalogue, high_constraint)
+        high = _tighter_high(high_catalogue, high_constraint)
     for keyword in ("minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"):
         effective.pop(keyword, None)
     if low is not None:
@@ -1522,13 +1573,21 @@ def _merge_references(references: list[dict[str, Any]]) -> dict[str, Any]:
     return merged
 
 
-def _resolve_channels(descriptor: dict[str, Any], merged: dict[str, Any]) -> list[dict[str, Any]]:
-    """The class-role lanes, in declaration order; fail-closed count
-    refusals (record §3.3)."""
-    slot = next(
+def _channels_slot(merged: dict[str, Any]) -> dict[str, Any] | None:
+    """The ONE channels slot this derivation resolves lanes for — the first
+    in merge order (#556 B1 keeps the founding one-slot rule; the per-slot
+    channels generalization is a later slice). ``residual_members`` uses it to
+    name the one role a channel can still resolve against."""
+    return next(
         (slot for slot in merged["slots"].values() if slot.get("kind") == "channels"),
         None,
     )
+
+
+def _resolve_channels(descriptor: dict[str, Any], merged: dict[str, Any]) -> list[dict[str, Any]]:
+    """The class-role lanes, in declaration order; fail-closed count
+    refusals (record §3.3)."""
+    slot = _channels_slot(merged)
     if slot is None:
         return []
     role = str(slot.get("where_role", ""))
@@ -1601,42 +1660,181 @@ def _assemble(
     )
 
 
-def deferred_members(
-    descriptor: dict[str, Any], derived_decoder_ids: Iterable[str]
-) -> tuple[tuple[str, str, str], ...]:
-    """(#541 slice 3 fold R10) Declared members whose vocabulary has no
-    derivation in this run, as ``(kind, vocabulary, member_id)`` rows.
+def residual_members(
+    descriptor: dict[str, Any],
+    derived_decoder_ids: Iterable[str],
+    *,
+    channel_roles: Iterable[str] = (),
+    dataset_variables: Mapping[str, Collection[str]] | None = None,
+    series_overflow: Mapping[str, Collection[str]] | None = None,
+    plot_kinds: Iterable[str] = (),
+) -> tuple[ResidualMember, ...]:
+    """(#541 slice 3 fold R10; #556 Track B §3 rule 3) declared members whose
+    surface the derivation owes an account of, as REPORTED rows.
 
-    Layer 3's promise is two-sided — never refuses AND never silent. A
-    computed measurement (``derived_variables``, the measurement vocabulary
-    measurement-model.md §8 owns) and a decoder no derived plot renders
-    both declare cleanly and derive nothing; silence there is
-    indistinguishable from "we rendered it and it looked fine". Each row
-    names the member and the vocabulary whose derivation is deferred (D1),
-    so the gate can disclose it on the same REPORTED channel that carries
-    custom members.
+    Layer 3's promise is two-sided — never refuses AND never silent. Silence
+    is indistinguishable from "we rendered it and it looked fine", so every
+    declared member lands either a derived surface or a row here.
 
-    The decoder condition is "declared and nothing rendered it" — never
-    "the decoder member exists". ``derived_decoder_ids`` is the set whose
-    lanes a derived PLOT carries, so a decoder that renders is never
-    reported as missing: the lane machinery can build lanes that no plot
-    hosts (a waveform or time-series plot has no ``decoder_lanes`` key —
-    they land in a digital-lanes plot alone), and building is not
-    rendering.
+    Computed variables (``derived_variables``, the measurement vocabulary
+    measurement-model.md §8 owns — V2): since #556 B1 the derivation composes
+    them into every dataset target's variable set (``_dataset_shape``), so
+    their row is a COMPOSED-STATE disclosure, never a deferral: it states the
+    surface that exists and the one that must not (a tile names a
+    ``parameter_id``; a computed variable has no parameter to read). When no
+    dataset target derives — the reference-less arm, or a class with no
+    dataset slot — the row states that terminal state instead of claiming a
+    dataset variable no wire carries. A computed id that collides with ANY
+    variable id a dataset's wire shape already carries — the axis, a lane, a
+    quantity or a trace variable — cannot be composed into that dataset (the
+    emitted variable set would carry a duplicate id); the row names the id's
+    targets. A composed series the plot kind's ``y`` ceiling forces off the
+    plot is named too: the variable still derives into the dataset, the plot
+    just cannot carry it inside the manifest schema.
+
+    Decoders (V3): ``derived_decoder_ids`` is the set whose lanes a derived
+    PLOT carries, never the set that was BUILT — the lane machinery can build
+    lanes that no plot hosts (a waveform or time-series plot has no
+    ``decoder_lanes`` key; they land in a digital-lanes plot alone), and
+    building is not rendering. ``plot_kinds`` is the kinds the derived plots
+    carry, so the row can name the structural reason lanes did not land.
+
+    Channels (V3, #556 B1): a channel whose role matches no channels slot the
+    derivation resolves lanes for derives nothing, and used to disappear
+    without a word anywhere. It now reports every run against
+    ``channel_roles`` — the role(s) the run actually resolved lanes for — and
+    a channel that resolves never reports.
     """
-    rows: list[tuple[str, str, str]] = []
+    rows: list[ResidualMember] = []
+    base_ids = dict(dataset_variables or {})
+    overflow = dict(series_overflow or {})
     for row in descriptor.get("derived_variables") or []:
         member = str(row.get("id", "")) if isinstance(row, dict) else ""
-        if member:
-            rows.append(
-                ("custom measurement", "datasets and capture shapes", member)
+        if not member:
+            continue
+        rows.append(
+            ResidualMember(
+                "observation variable",
+                "observation variables",
+                member,
+                _computed_variable_detail(member, base_ids, overflow),
             )
+        )
+    resolved_roles = {str(role) for role in channel_roles}
+    for row in descriptor.get("channels") or []:
+        if not isinstance(row, dict) or not row.get("id"):
+            continue
+        role = str(row.get("role", ""))
+        if role in resolved_roles:
+            continue
+        rows.append(
+            ResidualMember(
+                "channel",
+                "channels and decoders",
+                f"{row['id']} (role {role})",
+                "resolves to no lanes surface",
+            )
+        )
     derived_ids = {str(value) for value in derived_decoder_ids}
+    decoder_detail = _decoder_no_host_detail(plot_kinds)
     for pin in descriptor.get("decoders") or []:
         member = str(pin.get("id", "")) if isinstance(pin, dict) else ""
         if member and member not in derived_ids:
-            rows.append(("custom decoder", "channels and decoders", member))
+            rows.append(
+                ResidualMember(
+                    "custom decoder",
+                    "channels and decoders",
+                    member,
+                    decoder_detail,
+                )
+            )
     return tuple(rows)
+
+
+def _decoder_no_host_detail(plot_kinds: Iterable[str]) -> str:
+    """V3's decoder row detail (#556 Track B §4 V3 layer 3): the structural
+    reason the decoder's lanes have no host.
+
+    The canonical manifest schema admits ``decoder_lanes`` on a
+    ``digital_lanes`` plot alone (the 0.4.0 ``$defs.plot`` allOf bans them on
+    the analog kinds), so only a class whose plot IS digital_lanes can host a
+    decoder at all. When such a plot derives and the lanes still do not land,
+    the reason is not the kind — the row says no derived plot carries them
+    rather than blaming a plot kind that admits them.
+    """
+    kinds = sorted({str(kind) for kind in plot_kinds if kind})
+    if not kinds or "digital_lanes" in kinds:
+        return (
+            "no lane host (no derived plot carries its lanes; lanes host in "
+            "digital_lanes plots alone)"
+        )
+    if len(kinds) == 1:
+        return (
+            f"no lane host (this class's plot is {kinds[0]}; lanes host in "
+            "digital_lanes plots alone)"
+        )
+    return (
+        f"no lane host (this class's plots are {', '.join(kinds)}; lanes host "
+        "in digital_lanes plots alone)"
+    )
+
+
+def _computed_variable_detail(
+    member: str,
+    dataset_variables: Mapping[str, Collection[str]],
+    series_overflow: Mapping[str, Collection[str]],
+) -> str:
+    """V2's row detail (#556 Track B §4 V2), naming what the computed
+    variable actually derives into and what it was dropped from.
+
+    ``dataset_variables`` maps each derived dataset target's id to the
+    variable ids its wire shape carries WITHOUT the computed rows — the
+    axis, the lane or the quantity/trace variables. A target whose base set
+    already holds the computed id cannot compose it: the dataset shape would
+    then hold two rows with one id, which the canonical validator refuses
+    (``contracts.py::_unique_rows``).
+
+    ``series_overflow`` maps a target whose PLOT ``y`` set the kind's schema
+    ceiling forced to drop composed series, to the ids dropped. The variable
+    still derives into the dataset's variable set — the wire carries it —
+    but the plot cannot show it without breaching the manifest schema
+    (``ui-manifest.schema.json`` allOf: time_series/waveform ``y.maxItems``
+    16, mirrored by ``_PLOT_SERIES_CEILING``).
+    """
+    if not dataset_variables:
+        return (
+            "computes no dataset variable (no dataset target derives); "
+            "no tile (no parameter to read)"
+        )
+    collided = sorted(
+        target for target, ids in dataset_variables.items() if member in ids
+    )
+    total = len(dataset_variables)
+    if len(collided) == total:
+        detail = (
+            f"id collides with a dataset variable on {', '.join(collided)}; "
+            "no tile (no parameter to read)"
+        )
+    elif collided:
+        detail = (
+            f"id collides with a dataset variable on {', '.join(collided)}; "
+            f"derives into {total - len(collided)} of {total} dataset targets "
+            "(no tile; no parameter to read)"
+        )
+    else:
+        detail = (
+            "computed variable derives into dataset variables "
+            "(no tile; no parameter to read)"
+        )
+    overflow = sorted(
+        target for target, ids in series_overflow.items() if member in ids
+    )
+    if overflow:
+        detail += (
+            f"; no plot series on {', '.join(overflow)} (the plot's y admits "
+            f"{_PLOT_SERIES_CEILING} numeric series)"
+        )
+    return detail
 
 
 def _finish(
@@ -1757,13 +1955,59 @@ def _finish(
         "shape": "scalar", "axis_role": "receipt_time",
     }
 
-    def _dataset_shape(slot_key: str) -> list[dict[str, Any]]:
+    # (#556 Track B §4 V2) A computed measurement — the descriptor's own
+    # ``derived_variables`` declaration — is an ordinary value variable of
+    # EVERY dataset target: the host computes the value into the dataset, so
+    # the wire carries it and the derived shape asserting it is honest. The
+    # shape follows the dataset's own wire shape: a time_series dataset's
+    # value variables are scalars (one sample per receipt time), while a
+    # waveform or digital-lanes dataset carries a vector per sample, so the
+    # computed variable is a vector there. A scalar row on a waveform dataset
+    # would describe a wire shape the dataset does not carry — and the
+    # canonical validator refuses a scalar y series on a waveform plot
+    # (contracts.py `_plot_findings`: y's shape must match the kind's).
+    # The variable rides the numeric series rule where the kind admits it
+    # (time_series and waveform y sets; a digital-lanes plot's y channels are
+    # the wire's string logic alphabet, so it stays in the dataset alone).
+    computed_rows = [
+        {
+            "id": str(row["id"]),
+            "type": "number",
+            "unit": str(row["unit"]),
+        }
+        for row in descriptor.get("derived_variables") or []
+        if isinstance(row, dict) and row.get("id")
+    ]
+    computed_ids = {str(row["id"]) for row in computed_rows}
+
+    def _dataset_base(slot_key: str) -> tuple[list[dict[str, Any]], str]:
+        """The wire shape a dataset slot carries WITHOUT the computed rows,
+        and its axis variable id."""
         kind = plot_kind_for_slot.get(slot_key, "digital_lanes")
         if kind == "time_series":
-            return [receipt_var, *quantity_vars]
+            return [receipt_var, *quantity_vars], str(receipt_var["id"])
         if kind == "waveform":
-            return [x_var, *trace_vars]
-        return [x_var, *lane_vars]
+            return [x_var, *trace_vars], str(x_var["id"])
+        return [x_var, *lane_vars], str(x_var["id"])
+
+    def _dataset_shape(slot_key: str) -> list[dict[str, Any]]:
+        kind = plot_kind_for_slot.get(slot_key, "digital_lanes")
+        wire_shape = "scalar" if kind == "time_series" else "vector"
+        base, _axis = _dataset_base(slot_key)
+        # A computed id equal to ANY variable id the base wire shape carries
+        # — the axis, a lane, a quantity or a trace variable — would put two
+        # rows with one id into the variable set; the residual channel names
+        # that collision (_computed_variable_detail) rather than emitting a
+        # document the canonical validator refuses.
+        base_ids = {row["id"] for row in base}
+        return [
+            *base,
+            *[
+                {**row, "shape": wire_shape}
+                for row in computed_rows
+                if row["id"] not in base_ids
+            ],
+        ]
 
     if capture_key:
         targets.append(
@@ -2061,6 +2305,11 @@ def _finish(
                     page["bindings"].append(decode_key)
                 break
     plots: list[dict[str, Any]] = []
+    # Slots whose plot ``y`` set the kind's schema ceiling forced to drop
+    # composed series: slot key -> the ids dropped (#556 B1 fold F2). The
+    # residual channel names them; the dataset's variable set still carries
+    # them.
+    series_overflow: dict[str, tuple[str, ...]] = {}
     for page in pages_out:
         template = next(
             (row for row in merged["pages"] if str(row["id"]) == page["id"]), None
@@ -2093,6 +2342,33 @@ def _finish(
                 shape = _dataset_shape(over_key)
                 x_id = "time" if kind == "time_series" else "t"
                 y_ids = [row["id"] for row in shape if row["id"] != x_id]
+                # (#556 B1 fold F2) The analog kinds cap ``y`` at the
+                # manifest schema's ceiling, and B1's road is the COMPOSED
+                # series: the overflow drops composed rows and nothing else.
+                # A class whose own traces already exceed the ceiling is the
+                # pre-existing shape (design record addendum 2026-10-25) and
+                # is left untouched — dropping a class-declared trace would
+                # be a behaviour change outside this slice.
+                base_y = [
+                    identifier
+                    for identifier in y_ids
+                    if identifier not in computed_ids
+                ]
+                budget = max(0, _PLOT_SERIES_CEILING - len(base_y))
+                composed_y = [
+                    identifier
+                    for identifier in y_ids
+                    if identifier in computed_ids
+                ]
+                if len(composed_y) > budget:
+                    overflow = composed_y[budget:]
+                    dropped = set(overflow)
+                    y_ids = [
+                        identifier
+                        for identifier in y_ids
+                        if identifier not in dropped
+                    ]
+                    series_overflow[str(over_key)] = tuple(overflow)
                 bound = over_key
             plots.append(
                 {
@@ -2194,6 +2470,38 @@ def _finish(
         references, divergences, plan, ignored_pins
     )
     cannot = list(merged["cannot_derive"])
+    # The residual inventory (#556 Track B §3 rule 3) needs four facts about
+    # THIS run: which channel roles resolved lanes, which dataset targets
+    # derived (and the base variable ids their wire shape carries), which
+    # composed series the plot ceiling forced off a plot, and which plot
+    # kinds derived.
+    channels_slot = _channels_slot(merged)
+    residual = residual_members(
+        descriptor,
+        # The rendered set, not the built set (R10's condition): lanes a
+        # derived PLOT carries. Building a lane is not rendering it.
+        {
+            str(lane.get("decoder", ""))
+            for plot in plots
+            for lane in (plot.get("decoder_lanes") or [])
+        },
+        # The founding rule resolves ONE channels slot, so at most one role
+        # resolves lanes here; a channel of another role reports (#556 B1).
+        channel_roles=(
+            (str(channels_slot.get("where_role", "")),)
+            if channels_slot is not None
+            else ()
+        ),
+        dataset_variables={
+            str(target["id"]): frozenset(
+                str(row["id"]) for row in _dataset_base(str(target["id"]))[0]
+            )
+            for target in targets
+            if target["kind"] == "dataset"
+        },
+        series_overflow=series_overflow,
+        plot_kinds=[str(plot.get("kind", "")) for plot in plots],
+    )
     result = DerivedUI(
         manifest=manifest,
         envelope=envelope,
@@ -2209,16 +2517,7 @@ def _finish(
         ignored_pins=ignored_pins,
         unapplied_classes=unapplied_classes,
         empty_action_pins=empty_action_pins,
-        deferred_members=deferred_members(
-            descriptor,
-            # The rendered set, not the built set (R10's condition): lanes a
-            # derived PLOT carries. Building a lane is not rendering it.
-            {
-                str(lane.get("decoder", ""))
-                for plot in plots
-                for lane in (plot.get("decoder_lanes") or [])
-            },
-        ),
+        residual_members=residual,
     )
     return result
 
