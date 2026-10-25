@@ -583,3 +583,49 @@ by path rules regardless of the scan.
   named-outside motion (dual family + host arm). If the owner wants it
   in-run, the track grows a B5b slice and a plugin-ui family bump —
   flagged now so "no deferrals" is decided with the cost visible.
+
+## Addenda
+
+Corrections to a committed record are addenda, never retrofits.
+
+### 2026-10-25 — F4: the arm-move pre-authorization's actual location
+
+§4 V2 says the acceptance scope arms' pre-authorization is "the arms'
+own docstrings". It is not. The sentence lives in the section header
+comment above the scope arms — `tests/test_classref_acceptance.py`
+lines 553–559 at the B1 fold base (`65c1e5a`) — quoted verbatim:
+
+> Scope arms — the issue's other two custom members, measured. These are
+> the honest negative results (project principle 11): the vocabulary
+> admits the declaration, the derivation refuses nothing, and no surface
+> comes out. They pin that state so a later slice that adds the surface
+> must move them deliberately. Not the acceptance claim — named in the
+> report as NOT proved.
+
+The individual arms' docstrings describe their own measurements; the
+authorization sentence is the section comment's. No code or behaviour
+changes with this correction.
+
+### 2026-10-25 — F2: a pre-existing ceiling defect, recorded and not touched
+
+Measured while folding B1's refute findings. B1 added a road — a
+descriptor's `derived_variables[]` compose into the dataset shape and,
+on time_series/waveform plots, into `y` — and a composed series past the
+manifest schema's `y.maxItems: 16` breached the schema, escaping
+`verify_ui` as an unhandled `PluginLoadError`. **The class pre-exists on
+`origin/main` (`dc6e429`) independently of B1:** a descriptor with more
+analogue channels than the kind admits derives that many trace variables
+and breaches the same ceiling. Measured on the B1 worktree with a
+Meridian M-400-shaped descriptor carrying 17 `analogue_input` channels:
+`plot waveform y count: 17`; `verify_ui` raised
+`benchweave_sdk_server.session.PluginLoadError:
+standalone_plugin_invalid: preview_invalid_presentation:
+invalid_document: ui-manifest: Document does not satisfy its schema`.
+
+B1's fold fixes only the road it added: a composed overflow is dropped
+from the plot and disclosed on the REPORTED channel, and the class's own
+traces are never dropped. The pre-existing class — a class whose own
+traces exceed the kind's ceiling — stays as-is; dropping class-declared
+traces is a behaviour change outside this slice's licence. Recorded here
+so the known defect is a disclosure, not a silent drop. Tagged
+PRE-EXISTING, outside B1's scope.
