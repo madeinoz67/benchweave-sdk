@@ -854,6 +854,33 @@ def test_b6_forged_member_mapping_refuses_drift(
     assert _tree(package) == before
 
 
+def test_b6_duplicated_member_row_refuses_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """(#556 B6 fold F1) The second consumer of the ONE arithmetic: a
+    verbatim duplicate ``composed_members`` row — the same slot and the
+    same mapping twice — re-stamped green with "nothing to do", because
+    the comparison had no multiplicity. The authored row count against
+    the derived count is part of the drift arithmetic now."""
+
+    def forge(document: dict[str, Any]) -> None:
+        applied = dict(document["composed_members"]["channels"][0])
+        document["composed_members"]["channels"] = [applied, dict(applied)]
+
+    package = _member_project(tmp_path / "member-duplicated", ledger_edits=forge)
+    _downstamp_ledger(package)
+    before = _tree(package)
+    capsys.readouterr()
+    assert _migrate(monkeypatch, package) == 1
+    rendered = capsys.readouterr().err
+    assert "migrate_ui_ledger_drift:" in rendered
+    assert (
+        "composed_members.channels carries 2 channels rows, but the "
+        "derivation applied 1"
+    ) in rendered
+    assert _tree(package) == before
+
+
 def test_b6_unknown_member_ledger_key_refuses_drift(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

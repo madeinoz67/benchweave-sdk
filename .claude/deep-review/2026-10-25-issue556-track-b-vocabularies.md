@@ -1323,6 +1323,8 @@ sites for `plugin-sdk.qmd`, its share of the 82-site, 11-file census.
 two-sided dialect guard), `tests/test_migrate_ui_composed.py` (thirteen
 B6 arms), `user_guide/plugin-sdk.qmd`.
 
+**Boundary.** The shared inventory computes an applied row from the member's claim or role alone, so on a project whose derivation refuses it can name a member the walk rejected; no green path reaches that state, because the protection is downstream — the descriptor-digest guard refuses with nothing written (`derive_ui_dirty_tree`) and copy-never-move keeps reference pages stable — so the inventory's docstring is the applied-set definition, never a structural guarantee.
+
 **Deferred.** Nothing in this slice. B7 (the gateway mirror) and B8
 (docs and close-out) remain as §5 plans; the B7 mirror must carry this
 slice's member-inventory drift and the dialect guard when Track A's

@@ -615,11 +615,14 @@ def composed_member_mismatches(
     ``derived_members`` is the APPLIED set the derivation wrote (R1's rule
     carried onto the member vocabulary). An authored row naming a member
     the derivation did not apply is a mismatch, and an applied member the
-    authored set omits is the other direction. A member that applies
-    NOWHERE is absent from both sides by construction (its disclosure is
-    the applied-nowhere row), so this arithmetic never demands it —
-    keying to the PIN-DECLARED set instead refused a ledger the derivation
-    itself had just written.
+    authored set omits is the other direction. The comparison carries
+    MULTIPLICITY as well as the set and the mapping (the B6 fold's F1): a
+    verbatim duplicate row is invisible to a per-slot set comparison, and
+    the authored row count above the derived count names it. A member that
+    applies NOWHERE is absent from both sides by construction (its
+    disclosure is the applied-nowhere row), so this arithmetic never
+    demands it — keying to the PIN-DECLARED set instead refused a ledger
+    the derivation itself had just written.
 
     Every mismatch lands in the caller's REPORTED/drift channel, never a
     findings failure — the no-schema-yet posture (D8). The strings are the
@@ -660,6 +663,7 @@ def composed_member_mismatches(
             )
             continue
         authored_slots: set[str] = set()
+        authored_count = 0
         for row in authored_rows:
             if not isinstance(row, dict) or not row.get("slot"):
                 reported.append(
@@ -667,6 +671,7 @@ def composed_member_mismatches(
                     f"row {row!r}"
                 )
                 continue
+            authored_count += 1
             slot = str(row["slot"])
             authored_slots.add(slot)
             derived = derived_rows.get(slot)
@@ -692,6 +697,24 @@ def composed_member_mismatches(
                 f"composed members mismatch: {vocabulary} member {slot} "
                 "derives applied but the authored declaration's "
                 "composed_members omits it"
+            )
+        # (#556 B6 fold F1) The per-slot comparison has no MULTIPLICITY:
+        # a verbatim duplicate row — the same slot carrying the same
+        # mapping, twice — passed every check above, so a ledger claiming
+        # two applied members where the derivation applied one verified
+        # clean here and re-stamped green on migrate-ui. The authored row
+        # count against the derived count is part of the arithmetic now,
+        # in this channel's own wording; it is the only row that can name
+        # a duplicate. Only WELL-FORMED authored rows count — a malformed
+        # row already REPORTed above, and counting it here would report
+        # one defect twice.
+        derived_count = len(derived_members.get(vocabulary, ()))
+        if authored_count != derived_count:
+            reported.append(
+                "composed members mismatch: the authored declaration's "
+                f"composed_members.{vocabulary} carries {authored_count} "
+                f"{vocabulary} rows, but the derivation applied "
+                f"{derived_count}"
             )
     return reported
 

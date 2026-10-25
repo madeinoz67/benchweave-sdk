@@ -244,12 +244,16 @@ A `dataset` member does not need a catalog row: its target carries the descripto
 | `slot` | required | required | required | required |
 | `kind` | required | required | required | required |
 | `page` | required | required | required | required |
-| `where_role` | required | - | - | - |
+| `where_role` | optional | - | - | - |
 | `claims` | - | required | required | required |
 | `plot` | - | optional | - | - |
-| `schema_source` | - | - | optional | optional |
-| `host_supplied` | - | - | optional | optional |
-| `when_declared` | - | - | optional | optional |
+| `schema_source` | - | optional | optional | optional |
+| `host_supplied` | - | optional | optional | optional |
+| `when_declared` | - | optional | optional | optional |
+
+A `channels` member with no `where_role` applies nowhere. It discloses as an applied-nowhere row. It does not refuse.
+
+The schema admits `schema_source`, `host_supplied` and `when_declared` on every action kind. The derivation copies them into the composed slot.
 
 A `plot` block carries a `kind` and an `over_slot`. The `kind` is `digital_lanes`, `time_series` or `waveform`. The `over_slot` must name the member's own slot. A `time_series` or `waveform` plot also carries `series` with the value `numeric_variables`. A `digital_lanes` plot can carry `group_size`, `group_label_pattern` and `group_radix`. The plot kind decides the shape of the dataset variables.
 
@@ -259,7 +263,7 @@ Every closed set in the document comes from a document that already ships it. Th
 
 Conflicts refuse. They never merge. These refusals can stop the derivation:
 
-- A slot key that a reference slot, another member or a composed action class already uses refuses with `classref_composed_slot_conflict:`.
+- A slot key that a reference slot or another member already uses refuses with `classref_composed_slot_conflict:`.
 - A claim that a reference slot, another member or a composed action class already holds refuses with `classref_composed_slot_conflict:`.
 - A `page` that names no existing page refuses with `classref_composed_slot_conflict:`.
 - A `plot.over_slot` that names another slot refuses with `classref_composed_plot_slot_mismatch:`.
@@ -270,7 +274,7 @@ Conflicts refuse. They never merge. These refusals can stop the derivation:
 - A member id that the derivation already owns on a readings page refuses with `classref_composed_slot_conflict:`.
 - An unreadable pin refuses with `classref_vendor_catalog_unreadable:`. A digest that does not match refuses with `classref_vendor_catalog_digest_mismatch:`. A pin that is not a JSON object refuses with `classref_vendor_catalog_invalid:`.
 
-A member that applies nowhere composes nothing. The derivation never refuses it. The gate discloses it. The verify-ui section below gives the disclosure rows.
+A member that applies nowhere composes nothing. A malformed declaration still refuses, whether or not the member applies. The shape, self-reference, page and conflict refusals over the declaration itself cover every declared member. Three refusals need the composed surface and therefore depend on the member's application: the vendor profile row, the claimed action's catalogue entry and the derived-id collision. The gate discloses a member that applies nowhere. The verify-ui section below gives the disclosure rows.
 
 The composed member surface is not an admission claim. A clean derivation proves the declaration well-formed and self-consistent only.
 
