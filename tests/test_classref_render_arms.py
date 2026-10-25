@@ -247,9 +247,17 @@ def test_clean_arm_renders_green(profile_id: str, tmp_path: Path) -> None:
     birth_ids = {
         row["expectation_id"] for row in derived.declaration["deviations"]
     }
-    assert set(report.reported_deviations) == birth_ids, (
+    # MOVED DELIBERATELY 2026-10-25 (#556 B4, V6 layer 3): the fixture's
+    # unclaimed staged actions gain their settings residual rows on the
+    # REPORTED channel — expected alongside the birth ledger's rows, both
+    # computed from the derivation, never literals.
+    residual_rows = {
+        f"{row.kind} {row.member}: {row.detail}"
+        for row in derived.residual_members
+    }
+    assert set(report.reported_deviations) == birth_ids | residual_rows, (
         sorted(report.reported_deviations),
-        sorted(birth_ids),
+        sorted(birth_ids | residual_rows),
     )
 
 

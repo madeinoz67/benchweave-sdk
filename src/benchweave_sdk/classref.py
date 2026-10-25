@@ -124,6 +124,15 @@ class DerivedUI:
     reference: dict[str, Any]
     cannot_derive: list[dict[str, str]]
     declaration: dict[str, Any]
+    #: (#556 B4, V6) Every configuration slot's effective settings schema,
+    #: keyed by slot — the map the writer consumes (one asset per surface:
+    #: ``settings/<slot>.schema.json``). ``settings_schema`` above keeps the
+    #: founding single-slot semantics (the last configuration slot's schema)
+    #: for the single-surface consumers; a composed settings member beside a
+    #: class slot makes the two differ and the map the honest one.
+    settings_schemas: dict[str, dict[str, Any]] = dataclass_field(
+        default_factory=dict
+    )
     #: Pins whose documents matched neither shape discriminator (B7):
     #: digest-verified, contributed nothing, disclosed — never dropped
     #: silently. Empty tuple on derivations with no such pins.
@@ -2774,6 +2783,7 @@ def _finish(
         if slot.get("kind") == "configuration"
     }
     settings_schema: dict[str, Any] = {"type": "object", "properties": {}}
+    settings_schemas: dict[str, dict[str, Any]] = {}
     preset_scaffolds: dict[str, dict[str, Any]] = {}
     config_binding_ids: list[str] = []
     for config_key, config_slot in configuration_slots.items():
@@ -2799,6 +2809,9 @@ def _finish(
             "$schema": "https://json-schema.org/draft/2020-12/schema",
             "type": "object",
         }
+        # (#556 B4, V6) Every configuration surface's schema, keyed by its
+        # slot — one asset per surface, the writer's map.
+        settings_schemas[config_key] = settings_schema
         schema_name = f"settings/{config_key}.schema.json"
         assets.append(
             {
@@ -3134,6 +3147,7 @@ def _finish(
         variable_count=sum(
             len(row.get("quantities") or ()) for row in rendered_lanes
         ),
+        composed_settings=len((composed_members or {}).get("settings", ())),
     )
     declaration = _build_declaration(
         references, divergences, plan, ignored_pins,
@@ -3204,6 +3218,26 @@ def _finish(
                     f"{joined} lanes; the plot's y admits {_LANE_CEILING})",
                 )
             )
+    # (#556 §4 V6 layer 3) A declared action whose controls render STAGED on
+    # device-features carries the settings idiom's control shape without
+    # the idiom — no schema asset, no preset scaffold, no data-table — and
+    # REPORTs every run. The design's "configuration-shaped" has no
+    # descriptor-side signal (verbs are not typed in OTDP), so the
+    # classifier is the derived state: unclaimed by any slot (page
+    # device-features) AND level L2 (staged). A settings member that claims
+    # the action moves its row off device-features and this row disappears
+    # — the R10 two-sided rule's direction, asserted by the surfaces arms.
+    for urn, row in sorted(plan.items()):
+        if row.get("page") == "device-features" and row.get("level") == "L2":
+            member_residual_rows.append(
+                ResidualMember(
+                    "settings member",
+                    "settings idioms",
+                    urn,
+                    "no settings surface declared "
+                    "(controls render staged on device-features)",
+                )
+            )
     # The residual inventory (#556 Track B §3 rule 3) needs four facts about
     # THIS run: which channel roles rendered lanes, which dataset targets
     # derived (and the base variable ids their wire shape carries), which
@@ -3244,6 +3278,7 @@ def _finish(
         envelope=envelope,
         catalogue=catalogue,
         settings_schema=settings_schema,
+        settings_schemas=settings_schemas,
         preset_scaffolds=preset_scaffolds,
         layout_block=layout_block,
         expectation=expectation,
@@ -3356,10 +3391,19 @@ def _capture_page_id(pages: list[dict[str, Any]]) -> str:
 
 
 def _configure_numeric_count(plan: dict[str, dict[str, Any]]) -> int:
-    for row in plan.values():
-        if row["level"] == "L3":
-            return sum(1 for field in row["fields"] if field["mode"] == "numeric")
-    return 0
+    """(#556 B4, V6) Every configuration surface's numeric fields — the sum
+    over ALL L3 rows, never the first row alone: a composed settings member
+    beside a class slot makes two exist, and first-wins under-counted the
+    ``{n_configure_fields}`` inventory from that moment. Every committed
+    class reference carries exactly one configuration slot, so the founding
+    derivations are unchanged by the sum."""
+    return sum(
+        1
+        for row in plan.values()
+        if row["level"] == "L3"
+        for field in row["fields"]
+        if field["mode"] == "numeric"
+    )
 
 
 def _numeric_nodes(binding_id: str, fields: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -3700,6 +3744,7 @@ def _build_expectation(
     run_actions: list[str],
     channel_count: int,
     variable_count: int,
+    composed_settings: int = 0,
 ) -> dict[str, Any]:
     """Resolve the reference's expect expressions into the gate's numeric
     assertion document (record §3.4; closed vocabulary)."""
@@ -3744,6 +3789,17 @@ def _build_expectation(
         resolved_row: dict[str, Any] = {"count": resolved}
         if row.get("per_page") is not None:
             resolved_row["per_page"] = str(row["per_page"])
+        # (#556 B4, V6) The resolved expectation states THIS device's render,
+        # never the class document's raw contract (that stays frozen in the
+        # corpus): a composed settings member contributes one data-table the
+        # class's literal pooled count cannot see — the one component kind
+        # the settings vocabulary adds, added here by the member walk's own
+        # applied count. The templated rows ({n_run_actions},
+        # {n_configure_fields}) absorb their members through the plan
+        # already; a literal pooled count is the one shape that needs the
+        # explicit contribution.
+        if name == "data-table" and composed_settings:
+            resolved_row = {**resolved_row, "count": resolved + composed_settings}
         attribute = {}
         for key, expr in (row.get("attribute") or {}).items():
             match = re.fullmatch(r"\{([a-z_]+)\}", str(expr))
@@ -3795,6 +3851,22 @@ def _build_declaration(
                         ),
                     }
                 )
+    # (#556 §4 V6; M5) A02 carries unchanged onto the composed surface: the
+    # birth deviation rides every APPLIED settings member exactly as it
+    # rides a class slot's — same reason string, one row per settings
+    # surface — keyed off the applied-set ledger rows (the walk's one
+    # writer), never a second derivation of application.
+    for row in (composed_members or {}).get("settings", ()):
+        preset_deviations.append(
+            {
+                "expectation_id": str(row["action"]),
+                "reason": (
+                    "preset surface derived with no commissioned "
+                    "presets at birth; author ui/presets/ and validate "
+                    "via check-preset"
+                ),
+            }
+        )
     ladder_deviations = [
         {
             "expectation_id": urn,

@@ -35,6 +35,11 @@ REFERENCE = find_reference("otdp.logic_analyser/1.0.0")
 VENDOR_PROFILE_ID = "com.meridian.m400/1.0.0"
 SWEEP_URN = "com.meridian.m400.sweep/1.0.0"
 SWEEP_SCHEMA_ID = "urn:meridian:action:sweep:1.0.0:input"
+CONFIGURE_URN = "com.meridian.m400.profile_mode/1.0.0"
+CONFIGURE_SCHEMA_ID = "urn:meridian:action:profile-mode:1.0.0:input"
+#: A configuration-shaped residual: numeric, expressible, unclaimed — the
+#: staged-form signature on device-features.
+STAGED_URN = "com.meridian.m400.audit_log/1.0.0"
 
 MEMBER_PIN = "member-actions.json"
 CATALOG_PIN = "meridian-actions.json"
@@ -74,6 +79,40 @@ def _vendor_catalog() -> dict[str, Any]:
                 "output_schema": {"type": "object"},
                 "side_effect": "state_change",
             },
+            CONFIGURE_URN: {
+                "description": "Set the M-400 profile mode.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "profile": {
+                            "type": "string",
+                            "enum": ["short", "long"],
+                        },
+                        "aperture_s": {
+                            "type": "number",
+                            "minimum": 0.01,
+                            "maximum": 10.0,
+                        },
+                    },
+                    "required": ["profile", "aperture_s"],
+                    "$id": CONFIGURE_SCHEMA_ID,
+                },
+                "output_schema": {"type": "object"},
+                "side_effect": "state_change",
+            },
+            STAGED_URN: {
+                "description": "Set the M-400 audit-log retention.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "retain_days": {"type": "integer", "minimum": 1},
+                    },
+                    "required": ["retain_days"],
+                    "$id": "urn:meridian:action:audit-log:1.0.0:input",
+                },
+                "output_schema": {"type": "object"},
+                "side_effect": "state_change",
+            },
         },
     }
 
@@ -109,6 +148,18 @@ def _sweep_member(page: str = "capture") -> dict[str, Any]:
     }
 
 
+def _settings_member(
+    *, slot: str = "vendor-configure", claim: str = CONFIGURE_URN
+) -> dict[str, Any]:
+    return {
+        "slot": slot,
+        "kind": "configuration",
+        "claims": [claim],
+        "schema_source": "input_schema",
+        "page": "configuration",
+    }
+
+
 def _project(
     tmp_path: Path,
     *,
@@ -122,6 +173,14 @@ def _project(
     descriptor["profiles"].append(VENDOR_PROFILE_ID)
     descriptor["actions"].update(actions or {})
     descriptor["actions"][SWEEP_URN] = {
+        "binding": {"kind": "adapter", "key": "fixture"},
+        "input_constraints": {},
+        "timeout_ms": 30000,
+        "side_effect": "state_change",
+        "cancellable": True,
+        "retry": "never",
+    }
+    descriptor["actions"][CONFIGURE_URN] = {
         "binding": {"kind": "adapter", "key": "fixture"},
         "input_constraints": {},
         "timeout_ms": 30000,
@@ -258,3 +317,167 @@ def test_an_applied_member_claiming_an_uncatalogued_action_refuses(
             with_catalog=False,
         )
     assert SWEEP_URN in str(raised.value)
+
+
+# ---------------------------------------------------------------------------
+# V6 — settings idioms (#556 §4 V6): the FULL existing idiom, driven by the
+# composed slot — the settings schema asset, the preset scaffold with its
+# A02 birth deviation, the configuration target and binding, and the L3
+# data-table. A02 carries unchanged: the deviation rides every composed
+# settings member exactly as it rides a class slot's.
+# ---------------------------------------------------------------------------
+
+
+def test_a_settings_member_composes_the_full_idiom(tmp_path: Path) -> None:
+    """(#556 §4 V6 layer 2) The composed configuration slot drives the
+    existing configuration arm end to end: the settings schema ASSET rides
+    the manifest beside the class's own, the effective schema is the
+    composed catalogue side (D13 unchanged), the preset scaffold names the
+    vendor profile id, and the target+binding compose with the same id —
+    no partial idiom, no new surface kind."""
+    derived = _project(
+        tmp_path,
+        declaration=_member_declaration(
+            [_sweep_member(), _settings_member()],
+        ),
+    )
+    targets = [
+        row for row in derived.catalogue["targets"] if row["action_id"] == CONFIGURE_URN
+    ]
+    assert targets == [
+        {
+            "id": "vendor-configure",
+            "kind": "configuration",
+            "action_id": CONFIGURE_URN,
+            "profile_ids": [VENDOR_PROFILE_ID],
+            "input_schema_id": CONFIGURE_SCHEMA_ID,
+            "schema_asset_id": "settings/vendor-configure.schema.json",
+            "preset_asset_ids": [],
+        }
+    ], derived.catalogue["targets"]
+    asset_ids = {row["id"] for row in derived.manifest["assets"]}
+    assert "settings/vendor-configure.schema.json" in asset_ids
+    assert "settings/configure.schema.json" in asset_ids
+    # The per-slot map the writer consumes: every configuration slot's
+    # effective schema, keyed by its slot.
+    assert set(derived.settings_schemas) == {"configure", "vendor-configure"}
+    scaffold = derived.preset_scaffolds["vendor-configure"]
+    assert scaffold["profile_ids"] == [VENDOR_PROFILE_ID]
+    assert scaffold["settings_schema"]["id"] == CONFIGURE_SCHEMA_ID
+    assert scaffold["provenance"]["evidence"] == "synthetic"
+    assert {"id": "vendor-configure", "kind": "configuration",
+            "target_id": "vendor-configure"} in derived.manifest["bindings"]
+    assert derived.composed_members["settings"] == (
+        {"slot": "vendor-configure", "action": CONFIGURE_URN,
+         "page": "configuration"},
+    )
+
+
+def test_the_a02_birth_deviation_rides_composed_settings_members(
+    tmp_path: Path,
+) -> None:
+    """A02 carries unchanged (§4 V6; KILL (d) guards a settings surface
+    without the deviation): the preset surface's birth deviation rides the
+    composed settings member EXACTLY as it rides the class slot's — same
+    reason string, one row per configuration surface, on the ledger the
+    gate reads back."""
+    derived = _project(
+        tmp_path,
+        declaration=_member_declaration(
+            [_sweep_member(), _settings_member()],
+        ),
+    )
+    deviation_rows = {
+        row["expectation_id"]: row["reason"]
+        for row in derived.declaration["deviations"]
+    }
+    expected_reason = (
+        "preset surface derived with no commissioned presets at birth; "
+        "author ui/presets/ and validate via check-preset"
+    )
+    assert deviation_rows.get("otdp.logic_analyser.configure/1.0.0") == (
+        expected_reason
+    ), deviation_rows
+    assert deviation_rows.get(CONFIGURE_URN) == expected_reason, deviation_rows
+
+
+def test_the_configure_numeric_count_sums_every_l3_row(tmp_path: Path) -> None:
+    """The expect arithmetic stays true of the COMPOSED device: the
+    ``{n_configure_fields}`` inventory names every configuration surface's
+    numeric fields — the class slot's and the member's — never the first
+    row alone (first-wins under-counted the moment a second settings
+    surface existed)."""
+    derived = _project(
+        tmp_path,
+        declaration=_member_declaration(
+            [_sweep_member(), _settings_member()],
+        ),
+    )
+    l3_numeric = {
+        urn: sum(1 for field in row.get("fields", ()) if field["mode"] == "numeric")
+        for urn, row in derived.control_plan.items()
+        if row["level"] == "L3"
+    }
+    assert set(l3_numeric) == {
+        "otdp.logic_analyser.configure/1.0.0",
+        CONFIGURE_URN,
+    }, l3_numeric
+    assert all(count > 0 for count in l3_numeric.values()), l3_numeric
+    assert derived.expectation["inventory"]["n_configure_fields"] == sum(
+        l3_numeric.values()
+    )
+
+
+def test_a_configuration_shaped_residual_action_reports_no_settings_surface(
+    tmp_path: Path,
+) -> None:
+    """(#556 §4 V6 layer 3) A declared action whose controls render STAGED on
+    device-features — the settings idiom's control shape without the idiom
+    — REPORTs every run: no schema asset, no preset scaffold, no
+    data-table. The design's 'configuration-shaped' has no descriptor-side
+    signal (verbs are not typed), so the classifier is the derived state:
+    unclaimed by any slot AND level L2. The row DISAPPEARS when a settings
+    member claims the action (the R10 two-sided rule's direction)."""
+    staged = {
+        STAGED_URN: {
+            "binding": {"kind": "adapter", "key": "fixture"},
+            "input_constraints": {
+                "properties": {"retain_days": {"type": "integer"}},
+                "required": ["retain_days"],
+            },
+            "timeout_ms": 5000,
+            "side_effect": "state_change",
+            "cancellable": True,
+            "retry": "never",
+        }
+    }
+    residual = _project(
+        tmp_path,
+        declaration=_member_declaration([_sweep_member()]),
+        actions=staged,
+    )
+    row = next(
+        (
+            row
+            for row in residual.residual_members
+            if row.member == STAGED_URN
+        ),
+        None,
+    )
+    assert row is not None, residual.residual_members
+    assert row.kind == "settings member"
+    assert row.vocabulary == "settings idioms"
+    assert row.detail == (
+        "no settings surface declared (controls render staged on device-features)"
+    )
+    composed = _project(
+        tmp_path / "claimed",
+        declaration=_member_declaration(
+            [_sweep_member(), _settings_member(claim=STAGED_URN)]
+        ),
+        actions=staged,
+    )
+    assert not any(
+        row.member == STAGED_URN for row in composed.residual_members
+    ), composed.residual_members
+    assert composed.composed_members["settings"][-1]["action"] == STAGED_URN

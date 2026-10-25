@@ -1354,9 +1354,14 @@ def create_ui_resources(destination: Path, package: str) -> list[dict[str, str]]
         (root / "binding-catalogue.json").write_bytes(raw_bytes(derived.catalogue))
         settings = ui / "settings"
         settings.mkdir(exist_ok=True)
-        (settings / "configure.schema.json").write_bytes(
-            raw_bytes(derived.settings_schema)
-        )
+        # (#556 B4, V6) One settings asset per configuration surface
+        # (settings/<slot>.schema.json, the asset ids the manifest names):
+        # a composed settings member beside the class slot makes two exist,
+        # and a single hardcoded write left the member's asset missing from
+        # the package — a check-ui unresolved_reference. The single-slot
+        # derivations write the same one file as before, byte-identical.
+        for slot_key, schema in derived.settings_schemas.items():
+            (settings / f"{slot_key}.schema.json").write_bytes(raw_bytes(schema))
         presets = ui / "presets"
         presets.mkdir(exist_ok=True)
         for slug, scaffold in derived.preset_scaffolds.items():

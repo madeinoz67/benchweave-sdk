@@ -774,6 +774,9 @@ def test_scope_b1_a_computed_id_colliding_with_a_dataset_variable_is_dropped_and
         # The id survives exactly once — as the base lane the wire carries.
         # The computed row is the one that was not appended beside it.
         assert identifiers.count(lane_id) == 1, target
+    # MOVED DELIBERATELY 2026-10-25 (#556 B4, V6 layer 3): the f1-da
+    # fixture's unclaimed staged vendor action gains its settings residual
+    # row beside the computed-variable row this arm pins.
     assert derived.residual_members == (
         ResidualMember(
             "observation variable",
@@ -781,6 +784,13 @@ def test_scope_b1_a_computed_id_colliding_with_a_dataset_variable_is_dropped_and
             lane_id,
             "id collides with a dataset variable on capture, decode; "
             "no tile (no parameter to read)",
+        ),
+        ResidualMember(
+            "settings member",
+            "settings idioms",
+            "com.veridian-labs.auto-threshold/1.0.0",
+            "no settings surface declared "
+            "(controls render staged on device-features)",
         ),
     ), derived.residual_members
 
@@ -877,7 +887,21 @@ def test_scope_b1_the_series_ceiling_drops_only_composed_series(
     # Every computed variable carries its composed-state row (the denominator
     # is the descriptor's own declaration, 14 here); only the one dropped
     # from the plot carries the ceiling clause.
-    assert len(over.residual_members) == 14, over.residual_members
+    # MOVED DELIBERATELY 2026-10-25 (#556 B4, V6 layer 3): the fixture's
+    # two unclaimed staged actions gain their settings residual rows — 14
+    # computed rows plus the two named here, both counted, never filtered.
+    settings_rows = [
+        row
+        for row in over.residual_members
+        if row.kind == "settings member"
+    ]
+    assert [row.member for row in settings_rows] == [
+        "com.meridian.m400.burst_mode/1.0.0",
+        "com.meridian.m400.self_cal/1.0.0",
+    ], over.residual_members
+    assert len(over.residual_members) == 14 + len(settings_rows), (
+        over.residual_members
+    )
     rows = {row.member: row.detail for row in over.residual_members}
     assert rows["cv14"] == detail, rows["cv14"]
     assert [member for member, row_detail in rows.items() if "no plot series" in row_detail] == [
@@ -1214,6 +1238,9 @@ def test_scope_b1_v3_a_decoder_with_no_lane_host_reports_its_reason(
     then hosted nowhere — so the row is the only surface that can tell the
     author the decoder has no lane host."""
     project, package, derived = _decoded_daq(tmp_path)
+    # MOVED DELIBERATELY 2026-10-25 (#556 B4, V6 layer 3): the fixture's
+    # two unclaimed staged actions (burst_mode, self_cal) gain their
+    # settings residual rows beside the decoder row this arm pins.
     assert derived.residual_members == (
         ResidualMember(
             "custom decoder",
@@ -1221,6 +1248,20 @@ def test_scope_b1_v3_a_decoder_with_no_lane_host_reports_its_reason(
             "uart",
             "no lane host (this class's plot is waveform; lanes host in "
             "digital_lanes plots alone)",
+        ),
+        ResidualMember(
+            "settings member",
+            "settings idioms",
+            "com.meridian.m400.burst_mode/1.0.0",
+            "no settings surface declared "
+            "(controls render staged on device-features)",
+        ),
+        ResidualMember(
+            "settings member",
+            "settings idioms",
+            "com.meridian.m400.self_cal/1.0.0",
+            "no settings surface declared "
+            "(controls render staged on device-features)",
         ),
     ), derived.residual_members
     _write_derived(package, derived)
@@ -1243,7 +1284,18 @@ def test_scope_r10_a_decoder_that_renders_is_not_disclosed() -> None:
         reference,
         descriptor_path=FIXTURES / "descriptor-f1-da.json",
     )
-    assert derived.residual_members == (), derived.residual_members
+    # MOVED DELIBERATELY 2026-10-25 (#556 B4, V6 layer 3): the fixture's
+    # unclaimed staged vendor action gains its settings residual row — the
+    # decoder itself still reports nothing, the arm's own subject.
+    assert derived.residual_members == (
+        ResidualMember(
+            "settings member",
+            "settings idioms",
+            "com.veridian-labs.auto-threshold/1.0.0",
+            "no settings surface declared "
+            "(controls render staged on device-features)",
+        ),
+    ), derived.residual_members
     landed = [
         lane["decoder"]
         for page in derived.manifest["pages"]
