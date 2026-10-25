@@ -1,0 +1,194 @@
+{
+  "contract_version": "0.5.0",
+  "profile_id": "otdp.oscilloscope/1.0.0",
+  "title": "Oscilloscope",
+  "targets": {
+    "plugin_ui": ">=0.4.0"
+  },
+  "slots": {
+    "channels": {
+      "kind": "channels",
+      "where_role": "analogue_input",
+      "key": "id",
+      "label": "label"
+    },
+    "capture": {
+      "kind": "dataset",
+      "action": "otdp.oscilloscope.fetch/1.0.0",
+      "schema_source": "output_measurement",
+      "host_supplied": [
+        "acquisition_id"
+      ]
+    },
+    "configure": {
+      "kind": "configuration",
+      "action": "otdp.oscilloscope.configure/1.0.0",
+      "schema_source": "input_schema"
+    },
+    "arm": {
+      "kind": "procedure",
+      "action": "otdp.oscilloscope.arm/1.0.0",
+      "host_supplied": [
+        "configuration_id",
+        "acquisition_id"
+      ]
+    },
+    "abort": {
+      "kind": "procedure",
+      "action": "otdp.oscilloscope.abort/1.0.0",
+      "host_supplied": [
+        "acquisition_id"
+      ]
+    },
+    "trigger": {
+      "kind": "procedure",
+      "action": "otdp.oscilloscope.trigger/1.0.0",
+      "when_declared": true,
+      "host_supplied": [
+        "acquisition_id"
+      ]
+    },
+    "vendor_actions": {
+      "kind": "vendor_actions"
+    }
+  },
+  "pages": [
+    {
+      "id": "capture",
+      "title": "Capture",
+      "kind": "dataset",
+      "binding_slots": [
+        "capture",
+        "arm",
+        "abort",
+        "trigger"
+      ],
+      "plot": {
+        "kind": "waveform",
+        "over_slot": "capture",
+        "series": "numeric_variables"
+      }
+    },
+    {
+      "id": "configuration",
+      "title": "Configuration",
+      "kind": "configuration",
+      "binding_slots": [
+        "configure"
+      ]
+    },
+    {
+      "id": "device-features",
+      "title": "Device features",
+      "kind": "configuration",
+      "binding_slots": [
+        "vendor_actions"
+      ],
+      "vendor_features": true
+    }
+  ],
+  "layouts": [
+    {
+      "page_id": "capture",
+      "sections": [
+        {
+          "id": "traces",
+          "title": "Traces",
+          "surface": "recessed",
+          "span": 12,
+          "children": [
+            {
+              "plot_index": 0
+            }
+          ]
+        },
+        {
+          "id": "run",
+          "title": "Run",
+          "surface": "raised",
+          "span": 12,
+          "children": [
+            {
+              "binding_id": "arm",
+              "kind": "button"
+            },
+            {
+              "binding_id": "abort",
+              "kind": "button"
+            },
+            {
+              "binding_id": "trigger",
+              "kind": "button"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "expect": {
+    "components": {
+      "engineering-plot": {
+        "count": "1",
+        "per_page": "capture"
+      },
+      "button": {
+        "count": "{n_run_actions}",
+        "per_page": "capture"
+      },
+      "data-table": {
+        "count": "1"
+      },
+      "panel": {
+        "count": "{n_pages}"
+      },
+      "mode-banner": {
+        "count": "1",
+        "per_page": "*"
+      }
+    },
+    "controls": {
+      "otdp.oscilloscope.configure/1.0.0": "preset",
+      "otdp.oscilloscope.arm/1.0.0": "staging",
+      "otdp.oscilloscope.abort/1.0.0": "button",
+      "otdp.oscilloscope.trigger/1.0.0": "button"
+    },
+    "forbid": [
+      "confirm-wrapped-run-action",
+      "color-role-hint-on-lane",
+      "untraceable-lane-label",
+      "intermediated-energy-removing-action"
+    ]
+  },
+  "cannot_derive": [
+    {
+      "id": "acquisition-settings",
+      "aspect": "the coupling/range/offset/probe/sample/trigger selection surface",
+      "reason": "configure's channels array, closed unions, nested trigger object and conditional requirements are inexpressible at L2; configure is preset-mediated at birth; presets are commissioned evidence (A02)",
+      "author_action": "author ui/presets/*.json via check-preset; the expander emits the scaffold"
+    },
+    {
+      "id": "trigger-marker",
+      "aspect": "the trigger marker and its readout on the waveform canvas",
+      "reason": "the dataset carries trigger structurally, but the preview wire has no trigger field — host-knowledge seam (the provenance precedent: the preview wire carries no provenance field and no standards byte moves); a contract-grade marker sub-row is the wall-payment item",
+      "author_action": "host composition where a trigger time is known; the marker sub-row when the owner calls the bump"
+    },
+    {
+      "id": "cursor-readout",
+      "aspect": "the cursor pair and Δ readout",
+      "reason": "cursors are operator runtime state; never on the wire, never derived",
+      "author_action": "host composition at real benches"
+    },
+    {
+      "id": "partial-capture-alert",
+      "aspect": "the truncated-acquisition alert",
+      "reason": "the condition is the dataset's runtime status: partial + status_reason — observation state, data not structure",
+      "author_action": "bench observation; the alert-bubble renders from host-observed conditions"
+    },
+    {
+      "id": "channel-names",
+      "aspect": "channel names beyond descriptor labels",
+      "reason": "the descriptor owns channel identity",
+      "author_action": "label channels in the descriptor"
+    }
+  ]
+}

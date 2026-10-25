@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.22.0] - Unreleased
+
+### Features
+
+- Vendor the plugin-ui-class-reference 0.5.0 family (gateway #556): the vendored import carries the composed-member declaration schema; 0.4.0 stays in the tree frozen and flips to retained
+
+### Miscellaneous
+
+- 0.21.0 -> 0.22.0 — the classref 0.5.0 carried-set motion (the sync's bump-class gate refuses an EQUAL-version sync across a widened declared range); the carried set grows 20 -> 21 rows / 14 retained
+
 ## [0.21.0] - 2026-10-24
 
 ### Bug Fixes
