@@ -700,15 +700,29 @@ classref suite (`test_classref_effective`, `_composed`, `_residual`,
 single property's numeric bounds; they do not re-derive every catalogue
 field, and no fixture byte moves.
 
-**The cross-half obligation.** The gateway mirror at
+**Outstanding mirror obligation (recorded, dated).** The gateway lane is
+stood down for this arc and will not change code, so the SDK is the
+leading half — CON-12 says the gateway mirrors the SDK, never the other way
+round. The gateway mirror at
 `src/benchweave/presentation/classref.py::_intersect_property` (its own
-`_bound` + `min()` at the high end) carries this same defect and is being
-fixed in the same arc, gateway-side. This SDK commit only fixes the SDK
-half. The #408 order governs the pairing: SDK PRs merge → release cut →
-gateway pointer PR. **A release carrying this fix must be followed by the
-pointer PR before the gateway and SDK diverge for long** — until the
-pointer moves, the gateway renders an effective schema that admits the tied
-high value the vendored class reference refuses. The gateway equivalence
-census (`tests/sdk/test_descriptor_equivalence.py`) carries no
+`_bound` + `min()` at the high end) carries the same defect TODAY and
+mirrors the SDK faithfully; it adopts the corrected semantics in the
+pointer PR that advances past the release carrying this fix, not before.
+Until that pointer moves, a DELIBERATE DIVERGENCE exists: the SDK previews
+the tighter control (an exclusive ceiling that refuses the tied value) and
+the gateway renders the looser one (an inclusive ceiling that admits it).
+This is a known, dated, convergent divergence, not an accident — the
+pointer PR closes it, and it is recorded here so a later differential run
+reads it as scheduled convergence rather than a regression.
+
+**Census.** This repository carries no committed gateway-versus-SDK
+equivalence census; the only one is the gateway's
+`tests/sdk/test_descriptor_equivalence.py`, and it carries no
 effective-schema bound arm today, so no census expectation moves with this
-commit; the gateway half's census arm lands with B7.
+commit. Because that file is the differential vehicle between the two
+halves, it is where the tie case must be noted when it gains
+effective-schema arms — with the same future-fix framing (an expected
+divergence until the pointer advances), so a differential run does not
+rediscover the tie as an unexplained failure. Recording that requirement
+here is the SDK-side half of the obligation; the note itself belongs to the
+pointer PR, since the gateway lane does not change code in this arc.
