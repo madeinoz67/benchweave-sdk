@@ -40,6 +40,12 @@ CONFIGURE_SCHEMA_ID = "urn:meridian:action:profile-mode:1.0.0:input"
 #: A configuration-shaped residual: numeric, expressible, unclaimed — the
 #: staged-form signature on device-features.
 STAGED_URN = "com.meridian.m400.audit_log/1.0.0"
+#: (#556 B4 fold F1) An unclaimed vendor action whose slug equals a
+#: reference slot key — the hijack shape: device-features mints its button
+#: under binding id ``capture``, which the slot-keyed binding map must not
+#: re-resolve to the reference ``capture`` slot's own action.
+CAPTURE_URN = "com.meridian.m400.capture/1.0.0"
+CAPTURE_SCHEMA_ID = "urn:meridian:action:capture:1.0.0:input"
 
 MEMBER_PIN = "member-actions.json"
 CATALOG_PIN = "meridian-actions.json"
@@ -166,12 +172,28 @@ def _project(
     declaration: dict[str, Any],
     actions: dict[str, Any] | None = None,
     with_catalog: bool = True,
+    catalog_actions: dict[str, Any] | None = None,
 ) -> Any:
     """Derive over the f1 fixture body with the member declaration and the
-    vendor catalog pinned beside the descriptor."""
+    vendor catalog pinned beside the descriptor. ``catalog_actions`` adds
+    rows to the pinned vendor catalog (the F1 arm's unclaimed capture
+    action rides the catalog side, never the declaration)."""
     descriptor = json.loads((FIXTURES / "descriptor-f1.json").read_bytes())
     descriptor["profiles"].append(VENDOR_PROFILE_ID)
     descriptor["actions"].update(actions or {})
+    descriptor["actions"].update(
+        {
+            urn: {
+                "binding": {"kind": "adapter", "key": "fixture"},
+                "input_constraints": {},
+                "timeout_ms": 30000,
+                "side_effect": "state_change",
+                "cancellable": True,
+                "retry": "never",
+            }
+            for urn in (catalog_actions or {})
+        }
+    )
     descriptor["actions"][SWEEP_URN] = {
         "binding": {"kind": "adapter", "key": "fixture"},
         "input_constraints": {},
@@ -189,6 +211,8 @@ def _project(
         "retry": "never",
     }
     catalog = _vendor_catalog()
+    if catalog_actions:
+        catalog["actions"].update(catalog_actions)
     pins: list[tuple[str, dict[str, Any]]] = [(MEMBER_PIN, declaration)]
     if with_catalog:
         pins.append((CATALOG_PIN, catalog))
@@ -481,3 +505,69 @@ def test_a_configuration_shaped_residual_action_reports_no_settings_surface(
         row.member == STAGED_URN for row in composed.residual_members
     ), composed.residual_members
     assert composed.composed_members["settings"][-1]["action"] == STAGED_URN
+
+
+# ---------------------------------------------------------------------------
+# #556 B4 fold F1 — the slug-minted button keeps its own action. The B4
+# slot-keyed binding map (binding id == slot key wins) resolved by binding id
+# ALONE, so an unclaimed vendor action whose slug equals a reference slot key
+# (`capture`, `configure`: natural vendor verbs) had its device-features
+# button re-resolved to the SLOT's action, and the ladder-numeric insert
+# welded the slot action's numeric fields onto the vendor button. The expander
+# minted that button knowing its own URN; the fix resolves minted buttons by
+# that URN, and the slot-key map governs only keys the page actually places.
+# ---------------------------------------------------------------------------
+
+
+def test_a_slug_minted_button_keeps_its_own_action_fields(tmp_path: Path) -> None:
+    """The refute's shape, armed: an unclaimed vendor action whose slug is
+    `capture` (numeric input `shots`), derived against the logic_analyser
+    reference whose own `capture` slot names otdp.logic_analyser.fetch
+    (`max_bytes`, a numeric field under constraint). The rendered button
+    carries ONLY its own action's fields — the slot action's numerics never
+    weld onto it — and the slot's own resolution is unchanged (its plan row
+    still names the capture page, resolved through the placed slot key)."""
+    derived = _project(
+        tmp_path,
+        declaration=_member_declaration([_sweep_member()]),
+        catalog_actions={
+            CAPTURE_URN: {
+                "description": "Capture a vendor waveform.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "shots": {"type": "integer", "minimum": 1},
+                    },
+                    "required": ["shots"],
+                    "$id": CAPTURE_SCHEMA_ID,
+                },
+                "output_schema": {"type": "object"},
+                "side_effect": "state_change",
+            },
+        },
+    )
+    row = derived.control_plan[CAPTURE_URN]
+    assert row["page"] == "device-features", row
+    assert row["level"] == "L2", row
+    device_features = next(
+        page
+        for page in derived.layout_block["pages"]
+        if page["page_id"] == "device-features"
+    )
+    capture_fields = [
+        str(node.get("field"))
+        for section in device_features["sections"]
+        for node in section.get("children", [])
+        if node.get("kind") == "numeric"
+        and str(node.get("binding_id")) == "capture"
+    ]
+    # The vendor button's own staging pair is present, exactly its own.
+    assert capture_fields == ["shots"], capture_fields
+    # The slot action's numeric field — the welded field before the fix —
+    # never rides the vendor button.
+    assert "max_bytes" not in capture_fields, capture_fields
+    # The other direction: the reference `capture` slot's own row still
+    # resolves through its PLACED slot key to the capture page, never to the
+    # vendor action the slug collision could have swapped in.
+    fetch_row = derived.control_plan["otdp.logic_analyser.fetch/1.0.0"]
+    assert fetch_row["page"] == "capture", fetch_row

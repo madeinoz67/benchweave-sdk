@@ -919,3 +919,99 @@ declaration — the production shape the refusals above describe. The
 acceptance arms that moved are marked in place; both new B4 arms drive
 the real derive, the real gate, the real host render and the production
 `check_ui` over the derived package.
+
+### 2026-10-26 — the B4 refute fold: five findings, one commit
+
+One adversarial lane reviewed the slice; it confirmed the seam is
+production-reachable and load-bearing, found no kill condition, and raised
+one MEDIUM-HIGH plus four lower findings. All five fold here, each with a
+RED arm quoted in the commit message.
+
+**F1 (MEDIUM-HIGH) — the binding-id map hijacked slug-minted nodes.** The
+B4 slot-keyed map (the M-400's `vendor-configure` fix) resolved by binding
+id ALONE, so an unclaimed vendor action whose slug spells a reference slot
+key (`capture`, `configure`: natural vendor verbs) had its
+device-features button re-resolved to the SLOT's action, and the
+ladder-numeric insert welded the slot action's numeric fields onto the
+vendor button — the arm shows `otdp.logic_analyser.fetch`'s `max_bytes`
+riding `com.meridian.m400.capture`'s button beside its own `shots`. The
+mint sites know their own URN, so the fix records it: the unclaimed-slug
+loop and `_complete_authored_buttons` write a per-page
+`minted: binding_id -> urn` consumed FIRST by `_insert_ladder_numerics`,
+and the slot-key map a page's nodes resolve through is scoped to the slot
+keys PLACED on that page (`_urn_for_binding` keeps the founding slug scan
+for authored nodes). Byte stability held: all nine derivations
+identical.
+
+**F2 (MEDIUM) — the pooled data-table count laundered coverage, two
+shapes.** (a) Strip the member's table, pad a data-table node on another
+page: the pooled expect row re-satisfied, check-ui clean, gate clean. (b)
+The logic_analyser class carries no `data-table` expect row at all, and
+its L3 coverage rows ride the A02 birth deviation — stripping every
+configuration table left the gate clean. The fix follows the L2
+precedent (`staged_control_ids` censuses per action, the gateway #463 RC
+fold): the render attributes every data-table to its binding
+(`data-bw-binding`, the numeric-branch flags precedent in `web.py`), the
+census collects `data_table_bindings`, and the gate's new
+`_data_table_surface_findings` compares (page, binding) SETS against the
+derived layout's own minted surfaces — never sums. The MISSING direction
+is not ledger-downgradable (the W6 ruling: an overlay that drops what the
+derivation minted does not clear the debt); the EXCESS direction
+downgrades under a declared `data-table` expectation row like every
+additive count drift (A6). The L3 coverage row keeps its per-page test —
+the per-surface arm is the teeth, not a rewrite of the coverage question.
+The `test_red_sanity_neutralized_detector` arm now neutralizes BOTH
+detectors, with the move marked in its docstring: the per-surface arm
+reds the function_generator strip independently of `_assert_expect`, so
+neutralizing the count detector alone would prove nothing about either.
+
+**F3 (LOW-MEDIUM) — derive and check-ui disagreed on colliding pinned
+`$id`s.** Two pinned catalogs sharing an input-schema `$id` derived green
+(the walk keys actions by URN and never read `$id`s) while check-ui's
+vendored merge refused `pinned_id_shadow`. The walk now runs the SAME
+vendored guard (`merge_pinned_documents` through
+`presentation.check_pinned_id_shadows`) over exactly the accepted pin
+set, under the guard's own code — one shared enforcement point for both
+composition surfaces, as the vendored docstring already intended.
+Inventory note: `pinned_id_shadow` joins this record's committed refusal
+inventory as a walk-side code that is NOT `classref_*`-prefixed — it
+names the vendored guard's own code so the two surfaces agree by
+construction; the walk's integrity codes stay prefixed as they were.
+
+**F4 (LOW-MEDIUM) — an ignored pin still contributed a profile row.** A
+digest-verified document matching no pin shape was disclosed as having
+contributed nothing, yet its profile row landed in the validator's
+admission map and a target naming that profile validated — the
+disclosure's claim was false at check-ui. The shape discriminator now
+lives in ONE place (`classref._pin_shape_groups`) shared by the walk and
+`pinned_contract_documents`, and the reader drops ignored-shape pins: only
+documents the walk accepts may contribute anywhere. The declaration shape
+(`members`, with its optional profile row) is what carries a row.
+Residual, named: an AMBIGUOUS pin (two shape groups) refuses the derive
+but would still merge at check-ui — pre-existing, unchanged by this fold,
+and unreachable from a green derive.
+
+**F5 (LOW) — the V6 classifier named class run-verbs as vendor settings
+members.** `otdp.smu.arm` and `otdp.smu.fetch` reported as settings
+members on every SMU plugin. The served profile row's required/optional
+actions are the one honest class-action signal: an action a claimed
+profile's served row lists is a class action, never a vendor settings
+member, whatever its derived level. The motion is measured: the smu
+fixture's `residual_members` digest moves
+`3da8f5d5a1eb963b -> 37517e5f3dc66819` (the family's empty-residual
+digest) and every other derivation is byte-identical — the keep direction
+(the logic_analyser's `com.veridian-labs.auto-threshold`, the M-400's
+staged vendor actions) still reports.
+
+**NIT.** `check_ui`'s `Raises:` docstring lists the pinned-document
+`ValueError` (`classref_vendor_catalog_*:`) the B4 motion 1 wiring added.
+
+**Test-harness motions, named:** `helpers_classref.build_classref_project`
+writes every settings asset from the per-slot map (the single-slot
+convenience pins the WRONG bytes on a composed project — the M-400's
+manifest digests the map's bytes, not the convenience's), and
+`_check_ui_clean` feeds the production pinned-document seam plus every
+settings asset — a composed package cannot be check-ui-clean through the
+bytes-only call without them. `test_classref_member_seam._check_ui_package`
+gains `descriptor`/`extra_pins` substitution so variant packages stay
+internally digest-consistent.

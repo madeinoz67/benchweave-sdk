@@ -30,7 +30,7 @@ from typing import Any
 from jsonschema import Draft202012Validator
 from referencing import Registry, Resource
 
-from .presentation import read_file
+from .presentation import _check_pinned_id_shadows, read_file
 from .served import active_version
 from .validation import contract_documents, validate_descriptor
 
@@ -621,6 +621,26 @@ def _check_member_reference_conflicts(
                         )
 
 
+def _pin_shape_groups(document: dict[str, Any]) -> list[str]:
+    """The pin-shape key sets a document carries (#556 B4 fold F4): the
+    member keys, the composed-class keys and the catalog keys are three
+    disjoint vocabularies, and the groups a document carries decide what
+    the walk does with it — one group is that shape, more than one refuses
+    as ambiguous, none is IGNORED (disclosed, contributing nothing). ONE
+    definition serves the walk's discrimination AND the presentation-side
+    pin reader's filter, so the derive and the check-ui agree on which
+    documents are accepted by construction — a second copy of the key sets
+    is how the two halves would drift."""
+    shape_groups: list[str] = []
+    if "members" in document:
+        shape_groups.append("members")
+    if "urn" in document or "claims" in document:
+        shape_groups.append("composed-class")
+    if "actions" in document:
+        shape_groups.append("actions")
+    return shape_groups
+
+
 def _vendor_documents(
     descriptor: dict[str, Any],
     descriptor_path: Path | None,
@@ -702,6 +722,7 @@ def _vendor_documents(
     empty_pins: list[str] = []
     member_declarations: list[ComposedMemberDeclaration] = []
     pinned_sources: dict[str, str] = {}
+    accepted_documents: dict[str, dict[str, Any]] = {}
     for row in descriptor.get("contracts", []):
         identifier = str(row.get("id", ""))
         if identifier.startswith("urn:otdp:"):
@@ -741,13 +762,12 @@ def _vendor_documents(
         # vocabularies; a pin carrying keys from more than one refuses,
         # naming the carried keys (the pre-#556 predicate — actions AND
         # (urn OR claims) — is this rule's catalog/class row exactly).
-        shape_groups: list[str] = []
-        if "members" in document:
-            shape_groups.append("members")
-        if "urn" in document or "claims" in document:
-            shape_groups.append("composed-class")
-        if "actions" in document:
-            shape_groups.append("actions")
+        # (#556 B4 folds F3/F4) The discriminator lives in ONE place
+        # (``_pin_shape_groups``) shared with the presentation-side pin
+        # reader, and every ACCEPTED document is collected for the
+        # vendored shadow guard below — the derive and the check-ui read
+        # the same accepted set.
+        shape_groups = _pin_shape_groups(document)
         if len(shape_groups) > 1:
             carried = sorted(
                 key
@@ -760,6 +780,11 @@ def _vendor_documents(
                 f"than one pin shape ({', '.join(shape_groups)}: "
                 f"{', '.join(carried)}) — an ambiguous pin",
             )
+        if shape_groups:
+            # (#556 B4 fold F3) Every ACCEPTED document rides the vendored
+            # shadow guard after the loop — exactly the set the check-ui
+            # merge sees, so the two surfaces refuse identically.
+            accepted_documents[str(row.get("path", ""))] = document
         composed_keys = "urn" in document and "claims" in document
         if "members" in document:
             _validate_member_declaration(document, row.get("path"))
@@ -857,6 +882,15 @@ def _vendor_documents(
                         }
                     actions[action_urn] = action_row
                     pinned_sources[action_urn] = str(row.get("path", ""))
+    # (#556 B4 fold F3) The walk-side half of the vendored ``pinned_id_shadow``
+    # guard: check-ui's merge has refused colliding embedded $ids (a pin
+    # shadowing a served $id, or aliasing a sibling pin's) since #446 slice 2,
+    # but the derive keyed actions by URN and never read $ids — two pinned
+    # catalogs sharing an input-schema $id derived green and the author
+    # learned only at check-ui, packages already derived. The SAME guard runs
+    # here, over exactly the accepted set, so both surfaces refuse the same
+    # shape under the same code.
+    _check_pinned_id_shadows(descriptor, accepted_documents)
     descriptor_actions = descriptor.get("actions") or {}
     claimant: dict[str, str] = {}
     for cls_urn in sorted(classes):
@@ -3229,17 +3263,37 @@ def _finish(
                     f"{joined} lanes; the plot's y admits {_LANE_CEILING})",
                 )
             )
-    # (#556 §4 V6 layer 3) A declared action whose controls render STAGED on
-    # device-features carries the settings idiom's control shape without
-    # the idiom — no schema asset, no preset scaffold, no data-table — and
-    # REPORTs every run. The design's "configuration-shaped" has no
-    # descriptor-side signal (verbs are not typed in OTDP), so the
+    # (#556 §4 V6 layer 3; B4 fold F5) A declared action whose controls
+    # render STAGED on device-features carries the settings idiom's control
+    # shape without the idiom — no schema asset, no preset scaffold, no
+    # data-table — and REPORTs every run. The design's "configuration-shaped"
+    # has no descriptor-side signal (verbs are not typed in OTDP), so the
     # classifier is the derived state: unclaimed by any slot (page
-    # device-features) AND level L2 (staged). A settings member that claims
-    # the action moves its row off device-features and this row disappears
-    # — the R10 two-sided rule's direction, asserted by the surfaces arms.
+    # device-features) AND level L2 (staged) — EXCEPT an action a served
+    # profile row of a claimed profile lists (required or optional): a row
+    # listing is the one honest class-action signal, so otdp.smu.arm and
+    # otdp.smu.fetch are class run-verbs staging on device-features, never
+    # vendor settings members, whatever their derived level. A settings
+    # member that claims the action moves its row off device-features and
+    # this row disappears — the R10 two-sided rule's direction, asserted by
+    # the surfaces arms.
+    catalog_profiles = _catalog_documents(descriptor).get("profiles", [])
+    claimed_profiles = set(descriptor.get("profiles") or [])
+    class_listed_actions = {
+        str(action)
+        for row in catalog_profiles
+        if isinstance(row, dict) and str(row.get("id")) in claimed_profiles
+        for action in [
+            *(row.get("required_actions") or []),
+            *(row.get("optional_actions") or []),
+        ]
+    }
     for urn, row in sorted(plan.items()):
-        if row.get("page") == "device-features" and row.get("level") == "L2":
+        if (
+            row.get("page") == "device-features"
+            and row.get("level") == "L2"
+            and urn not in class_listed_actions
+        ):
             member_residual_rows.append(
                 ResidualMember(
                     "settings member",
@@ -3458,6 +3512,18 @@ def _build_layout(
     plot_done = False
     for page in pages:
         page_id = str(page["id"])
+        # (#556 B4 fold F1) The slot map this page's nodes resolve through
+        # covers exactly the slot keys PLACED on this page: a slot key
+        # placed elsewhere must not capture a binding id that only shares
+        # its spelling (an unclaimed vendor action slugged `capture` beside
+        # a reference `capture` slot on another page).
+        page_slots: dict[str, str] = {}
+        if slot_urns:
+            for row in page.get("bindings", []):
+                key = str(row if isinstance(row, str) else row.get("id"))
+                if key in slot_urns:
+                    page_slots[key] = slot_urns[key]
+        minted: dict[str, str] = {}
         authored_page = by_page.get(page_id)
         if authored_page is not None:
             # The reading-tile expansion consumes authored reading-tile
@@ -3481,7 +3547,7 @@ def _build_layout(
                 plot_done = True
             for row in page.get("bindings", []):
                 binding_id = str(row if isinstance(row, str) else row.get("id"))
-                urn = _urn_for_binding(plan, binding_id, slot_urns)
+                urn = _urn_for_binding(plan, binding_id, page_slots)
                 level = plan.get(urn, {}).get("level") if urn else None
                 if level == "L2" and urn is not None:
                     children.extend(
@@ -3538,6 +3604,10 @@ def _build_layout(
                         )
                     if plan_row["level"] in ("L1", "L2"):
                         target.append({"binding_id": slug, "kind": "button"})
+                        # (#556 B4 fold F1) The unclaimed-slug mint records
+                        # its own urn — the insert must never re-resolve the
+                        # slug through a slot key placed on any page.
+                        minted[slug] = urn
             sections = []
             if children:
                 sections.append({
@@ -3561,14 +3631,14 @@ def _build_layout(
                     "span": 12,
                     "children": custom_children,
                 })
-        _complete_authored_buttons(sections, plan, page_id)
+        _complete_authored_buttons(sections, plan, page_id, minted)
         # #541 W1 fold: completion runs BEFORE the ladder-numeric insert —
         # a button the completion pass appends (a when-declared action on
         # an authored page, a catalogued vendor action on an authored
         # device-features page) must arrive in time for the insert to give
         # it its numeric staging pair, or the action reds
         # classref_gate_uncovered with a button and no staged fields.
-        _insert_ladder_numerics(sections, plan, slot_urns)
+        _insert_ladder_numerics(sections, plan, page_slots, minted)
         if not sections:
             # Every declared page renders as a panel (the expect row's
             # meaning): a page whose surface is fully placed — or whose
@@ -3618,6 +3688,7 @@ def _complete_authored_buttons(
     sections: list[dict[str, Any]],
     plan: dict[str, dict[str, Any]],
     page_id: str,
+    minted: dict[str, str] | None = None,
 ) -> None:
     """A9's F3b arm: the reference's authored sections name only the
     always-present bindings — a when-declared action (trigger) that
@@ -3659,6 +3730,12 @@ def _complete_authored_buttons(
         target.setdefault("children", []).append(
             {"binding_id": slug, "kind": "button"}
         )
+        # (#556 B4 fold F1) The completion minted this button FOR this urn;
+        # record it so the ladder-numeric insert resolves the button by its
+        # own action, never by whatever a slot key sharing the slug's
+        # spelling resolves to.
+        if minted is not None:
+            minted[slug] = urn
 
 
 def _urn_for_binding(
@@ -3667,10 +3744,15 @@ def _urn_for_binding(
     slot_urns: Mapping[str, str] | None = None,
 ) -> str | None:
     """The action a binding id names. The class convention is binding id ==
-    action slug; a composed member's slot key (#556 B4) may name its slot
-    anything the schema admits, so the slot-keyed map wins when carried,
-    and the slug scan stays the founding fallback for binding ids no slot
-    holds (the authored sections' conventions)."""
+    action slug; a placed slot key (#556 B4) may name its slot anything the
+    schema admits, so the page-placed slot map wins when carried — the map
+    a caller passes covers exactly the slot keys placed on the page under
+    construction (the B4 fold's F1: a slot key placed elsewhere must not
+    capture a binding id that only shares its spelling) — and the slug scan
+    stays the founding fallback for binding ids no placed slot holds (the
+    authored sections' conventions). Expander-MINTED buttons never come
+    here: the mint site knows its own URN and records it (see
+    ``_insert_ladder_numerics``)."""
     if slot_urns is not None and binding_id in slot_urns:
         return slot_urns[binding_id]
     for urn in plan:
@@ -3683,6 +3765,7 @@ def _insert_ladder_numerics(
     sections: list[dict[str, Any]],
     plan: dict[str, dict[str, Any]],
     slot_urns: Mapping[str, str] | None = None,
+    minted: Mapping[str, str] | None = None,
 ) -> None:
     """Authored button nodes for an L2 action gain the action's numeric
     field nodes immediately before the button (the staging pair order).
@@ -3690,7 +3773,15 @@ def _insert_ladder_numerics(
     #541 W8 fold: a numeric node the section already carries — a derived
     page's staging emission, or a layout that authored its own numerics —
     is not re-emitted: one field, one control (the pair used to render
-    twice on every derived page, catalogued pairs included)."""
+    twice on every derived page, catalogued pairs included).
+
+    #556 B4 fold F1: ``minted`` carries the binding ids the EXPANDER minted
+    on this page mapped to the URN each was minted for — resolution
+    consults it first, so a slug-minted button keeps its own action even
+    when its slug spells a slot key placed on another page (the slot map
+    would otherwise weld the slot action's numerics onto the vendor
+    button). Authored nodes — no mint record — resolve through the
+    page-placed slot map and the founding slug scan as before."""
     for section in sections:
         children = section.get("children", [])
         present = {
@@ -3704,7 +3795,12 @@ def _insert_ladder_numerics(
                 node.get("kind") == "button"
                 and isinstance(node.get("binding_id"), str)
             ):
-                urn = _urn_for_binding(plan, str(node["binding_id"]), slot_urns)
+                binding_id = str(node["binding_id"])
+                urn = (
+                    minted.get(binding_id)
+                    if minted is not None and binding_id in minted
+                    else _urn_for_binding(plan, binding_id, slot_urns)
+                )
                 row = plan.get(urn or "", {}) if urn else {}
                 for field_row in row.get("fields", []):
                     if field_row["mode"] != "numeric":

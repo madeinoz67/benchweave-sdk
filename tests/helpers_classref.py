@@ -73,7 +73,14 @@ def build_classref_project(
     (package / "binding-catalogue.json").write_bytes(raw(derived.catalogue))
     settings = ui / "settings"
     settings.mkdir(exist_ok=True)
-    (settings / "configure.schema.json").write_bytes(raw(derived.settings_schema))
+    # #556 B4: the writers emit one settings asset per configuration surface
+    # (``DerivedUI.settings_schemas``, slot-keyed — the manifest's asset rows
+    # digest exactly these), so every surface's schema lands on disk with the
+    # bytes the presentation envelope pins. The single-slot convenience
+    # (``settings_schema``) is NOT the class's own surface on a composed
+    # project and would pin the wrong bytes.
+    for slug, schema in derived.settings_schemas.items():
+        (settings / f"{slug}.schema.json").write_bytes(raw(schema))
     presets = ui / "presets"
     presets.mkdir(exist_ok=True)
     for slug, scaffold in derived.preset_scaffolds.items():

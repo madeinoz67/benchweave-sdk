@@ -121,8 +121,23 @@ def pinned_contract_documents(
     not valid JSON refuses typed rather than surfacing the bare decoder
     error (the walk lets that one escape; this reader does not). The
     documents feed ``merge_pinned_documents`` so the validator's profile map
-    and $id aliases see the pinned rows exactly as the served corpus's."""
+    and $id aliases see the pinned rows exactly as the served corpus's.
+
+    #556 B4 fold F4: only documents the WALK accepts may contribute —
+    a digest-verified document matching none of the walk's pin shapes
+    (``_pin_shape_groups`` empty: no members, no urn/claims, no actions) is
+    ignored by the derivation and disclosed as contributing nothing, so it
+    contributes nothing HERE either; before the filter its profile row
+    still landed in the validator's admission map and a target naming that
+    profile validated — the disclosure's claim was false at check-ui. The
+    declaration shape (``members``, with its optional profile row) is what
+    carries a row into the map."""
     import hashlib
+
+    # Deferred import: classref imports this module at import time, so the
+    # shared discriminator (the walk's own) is pulled in here, never at
+    # module load.
+    from .classref import _pin_shape_groups
 
     documents: dict[str, dict[str, Any]] = {}
     for row in descriptor.get("contracts", []):
@@ -154,8 +169,34 @@ def pinned_contract_documents(
                 "classref_vendor_catalog_invalid: "
                 f"pinned vendor catalog {row.get('path')} is not a JSON object"
             )
+        if not _pin_shape_groups(document):
+            continue
         documents[str(row.get("path", ""))] = document
     return documents
+
+
+def _check_pinned_id_shadows(
+    descriptor: dict[str, Any], documents: dict[str, dict[str, Any]]
+) -> None:
+    """The walk-side half of the vendored ``pinned_id_shadow`` guard (#556
+    B4 fold F3): the classref walk runs the SAME ``merge_pinned_documents``
+    check-ui runs, over the accepted pin set, so a pin whose embedded $id
+    shadows a served schema $id or aliases a sibling pin's refuses the
+    DERIVE under the guard's own code — both surfaces name the defect
+    identically, and the author learns before a package exists, not at
+    check-ui over derived bytes.
+
+    Raises
+    ------
+    ValueError
+        ``pinned_id_shadow: ...`` — the vendored guard's own code and
+        message, unchanged.
+    """
+    contract = _contract()
+    try:
+        contract.merge_pinned_documents(_pinned_schemas(descriptor), documents)
+    except contract.DocumentError as exc:
+        raise ValueError(f"{exc.code}: {exc}") from exc
 
 
 def _open_no_follow(part: str, flags: int, directory: int) -> int:
@@ -564,7 +605,10 @@ def check_ui(
     ------
     ValueError
         For an unsafe resource path, a symlinked component
-        (``path_symlink_component:``) or an oversize input.
+        (``path_symlink_component:``) or an oversize input. Also for a
+        pinned plugin document that is unreadable, digest-mismatched or
+        not valid JSON (``classref_vendor_catalog_*:``) — the descriptor's
+        pins are read beside it (#556 B4), with the walk's own codes.
     OSError
         For a file that is absent or unreadable.
     """

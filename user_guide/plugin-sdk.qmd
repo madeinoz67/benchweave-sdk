@@ -194,7 +194,9 @@ A class that declares `energy_removing` makes its actions energy-removing for th
 
 Conflicts refuse. They never merge. A claim against a served catalog row refuses with `classref_composed_claim_conflict:`. The same code fires for a claim against a pinned vendor catalog row. It also fires for a claim another class holds, and for one class URN in two pinned documents.
 
-A pinned document is one of three kinds. A document with `actions` is a vendor catalog. A document with both `urn` and `claims` is a composed class. A document with `actions` together with `urn` or `claims` is ambiguous and refuses with `classref_invalid_composed_class:`. A document with neither shape contributes nothing and discloses on every run.
+A pinned document is one of three kinds. A document with `actions` is a vendor catalog. A document with both `urn` and `claims` is a composed class. A document with `actions` together with `urn` or `claims` is ambiguous and refuses with `classref_invalid_composed_class:`. A document with neither shape contributes nothing and discloses on every run. It contributes nothing to `check-ui` either: no profile row from such a document enters the admission map, so a target that names its profile id reports `capability_mismatch` until a member declaration carries the row.
+
+An accepted pinned document must own its `$id` values. A document whose input-schema `$id` matches a `$id` the served corpus carries, or a `$id` another accepted pin carries, refuses with `pinned_id_shadow:`. The derive and `check-ui` refuse the same shape with the same code.
 
 Integrity checks run before any shape discrimination. An unreadable file refuses with `classref_vendor_catalog_unreadable:`. Bytes that do not match the pin's sha256 refuse with `classref_vendor_catalog_digest_mismatch:`. A document that is not a JSON object, or whose `actions` is not an object, refuses with `classref_vendor_catalog_invalid:`.
 

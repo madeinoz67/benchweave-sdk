@@ -74,6 +74,11 @@ class _CensusParser(HTMLParser):
         self.lane_kinds: dict[str, int] = {}
         self.confirms = 0
         self.data_tables = 0
+        # (#556 B4 fold F2) The bindings the served data-tables carry —
+        # one per table, from the render's ``data-bw-binding`` attribute —
+        # so coverage compares SURFACES, never pooled counts (the
+        # staged_control_ids precedent, gateway #463 RC fold).
+        self.data_table_bindings: list[str] = []
         self.readings = 0
         self.plots = 0
         self._button_depth = 0
@@ -111,6 +116,9 @@ class _CensusParser(HTMLParser):
             self.booleans += 1
         if "bw-data-table" in classes:
             self.data_tables += 1
+            binding = data.get("data-bw-binding")
+            if binding:
+                self.data_table_bindings.append(binding)
         if "bw-reading" in classes:
             self.readings += 1
         if "bw-plot" in classes:
@@ -150,6 +158,7 @@ def census(html: str) -> dict[str, Any]:
         "lane_kinds": dict(parser.lane_kinds),
         "confirms": parser.confirms,
         "data_tables": parser.data_tables,
+        "data_table_bindings": list(dict.fromkeys(parser.data_table_bindings)),
         "readings": parser.readings,
         "plots": parser.plots,
         "lane_labels": [
@@ -563,6 +572,62 @@ def _custom_minted_slugs(layout_block: dict[str, Any] | None) -> frozenset[str]:
         for node in section.get("children", [])
         if isinstance(node, dict) and node.get("binding_id") is not None
     )
+
+
+def _data_table_surface_findings(
+    layout_block: dict[str, Any] | None,
+    censused: dict[str, dict[str, Any]],
+    declared: frozenset[str] = frozenset(),
+) -> list[GateFinding]:
+    """(#556 B4 fold F2) The per-surface data-table comparison: every
+    (page, binding) surface the DERIVED layout's own block mints must
+    render, attributed to its binding, and every attributed table the
+    render serves must be a surface the derivation minted. The pooled
+    count laundered two shapes — a strip-plus-pad (the member's table
+    removed, a table padded on another page; the pooled expect row
+    re-satisfied) and the logic_analyser strip (no data-table expect row
+    at all, the L3 coverage miss downgraded by the A02 birth deviation) —
+    exactly the class of laundering the L2 fix's per-action
+    ``staged_control_ids`` census closed (gateway #463 RC fold): compared
+    as sets per surface, never summed.
+
+    The MISSING direction is not ledger-downgradable: the derivation
+    minted the surface, and an overlay that drops what the derivation
+    minted does not clear the debt (the W6 ruling this gate already
+    applies to custom sections). The EXCESS direction downgrades under a
+    declared ``data-table`` expectation row like every additive count
+    drift (A6: the author's ledger governs what the author adds)."""
+    if not isinstance(layout_block, dict):
+        return []
+    findings: list[GateFinding] = []
+    declared_table = "data-table" in declared and _not_d7("data-table")
+    for layout_page in layout_block.get("pages", []):
+        page_id = str(layout_page.get("page_id"))
+        minted = {
+            str(node.get("binding_id"))
+            for section in layout_page.get("sections", [])
+            for node in section.get("children", [])
+            if isinstance(node, dict) and node.get("kind") == "data-table"
+        }
+        served = set(censused.get(page_id, {}).get("data_table_bindings", ()))
+        for binding in sorted(minted - served):
+            findings.append(
+                GateFinding(
+                    "classref_gate_missing",
+                    f"data-table {binding} on {page_id}: the derivation mints "
+                    "this surface, the render serves no table for it",
+                )
+            )
+        if not declared_table:
+            for binding in sorted(served - minted):
+                findings.append(
+                    GateFinding(
+                        "classref_gate_excess",
+                        f"data-table {binding} on {page_id}: the render serves "
+                        "a table the derivation does not mint",
+                    )
+                )
+    return findings
 
 
 def _custom_inventory_findings(
@@ -998,6 +1063,15 @@ def verify_ui(
     )
     findings = list(component_findings)
     findings.extend(forbid_findings)
+    # (#556 B4 fold F2) The per-surface data-table comparison — the pooled
+    # count laundered a strip-plus-pad and the no-expect-row strip (see
+    # _data_table_surface_findings); the derivation's own layout block is
+    # the minted-set authority (the W6 criterion).
+    findings.extend(
+        _data_table_surface_findings(
+            derived.layout_block, censused, frozenset(ledger_ids)
+        )
+    )
     # F4: every rendered lane label must trace to the descriptor's channel
     # identity or the group pattern.
     for seen in censused.values():
