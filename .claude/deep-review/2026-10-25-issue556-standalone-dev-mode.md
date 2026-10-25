@@ -342,3 +342,61 @@ command exists.
   friction is ever measured — the composed class is the loop's new surface.
 - **Gateway anything**: the leg is SDK-only by the owner's disambiguation; Track A owns
   the mirror.
+
+## 11. Addendum (2026-10-25) — the original green measured presentation only
+
+Lane: `feat/556-standalone-fixes`, base `5c73f5b`. This section corrects the record; it
+does not rewrite it. §8's acceptance rule and the arms landed by Commit 1 were honestly
+measured, and what they measured was the composed **presentation**.
+
+**State when the original arms ran.** The M-400 project loaded DEGRADED: the loader
+validated every document, then failed the adapter entry point
+(`adapter_factory: None`, `load_diagnostic: standalone_plugin_entry_point:
+meridian_m400_plugin:create_plugin does not name a factory inside the
+meridian_m400_plugin package`). Every green arm in this leg — the loop, the control
+flip, the served page — passes over that degraded load, because
+`classref_gate_render.render_pages` and the spawned listener both go through
+`load_plugin_project`, and §4.5 degrades rather than refuses: the composed pages render
+from the derived documents whether or not an adapter exists. The lane proved the
+derivation and its rendering; it did not prove the plugin.
+
+**Two causes, both fixed in this lane.**
+
+1. The host's entry-point rule required the module to begin with `<package>.`, rejecting
+   the package-root form `<package>:create_plugin`. The frozen descriptor schema admits
+   that form (its entry-point pattern has no dot requirement) and every shipped
+   standards example uses it, so the rule was stricter than the contract it serves.
+   `load_plugin_project` now accepts the package itself or a module beneath it
+   (`module == package or module.startswith(f"{package}.")`). A genuinely foreign
+   module still diagnoses — including a sibling whose name merely shares the prefix
+   (`example_plugin_extra.adapter`), which pins the dot in the boundary test — and a
+   string naming no factory is still refused by the descriptor schema.
+2. The scaffold's package root did not export the factory: `__init__.py` was a bare
+   docstring while `create_plugin` lived in `adapter.py`. Admitting the package-root
+   shape without that export would only have changed the diagnostic
+   (`standalone_plugin_import: ... has no attribute 'create_plugin'`) while the adapter
+   still never loaded. `template/src/{{ package_name }}/__init__.py.jinja` now
+   re-exports the factory from `.adapter`, and the R-2 byte-parity fixtures under
+   `tests/fixtures/scaffold_expected/` were regenerated from the renderer — the two
+   fixture trees differ from their predecessors only in that file.
+
+**What now guards it.** `test_the_loop_loads_the_plugin_adapter_not_only_the_presentation`
+(in `tests/test_standalone_dev_loop.py`) asserts that the spawned listener prints no
+`standalone_plugin_*` diagnostic of any kind, and that the INSTALLED SDK resolves a real
+factory for the same project with no diagnostic. Neutralizing either half reddens it:
+restoring the docstring-only template reproduces `standalone_plugin_import: ... has no
+attribute 'create_plugin'`; restoring the strict module check reproduces
+`standalone_plugin_entry_point: ... does not name a factory inside the ... package`.
+
+**What that arm does not prove, so its claim does not outrun it.** It proves factory
+RESOLUTION (import plus attribute), not a live connect: the fixture descriptor declares a
+Meridian M-400 while the scaffold adapter answers the SDK's synthetic identity, so a
+connect raises `standalone_connect_identity_mismatch` by design. It does not cover any
+transport but the scripted mock, does not judge visual correctness, and says nothing
+gateway-side — unchanged from §"What this module does NOT catch".
+
+**`test_classref_acceptance.py` A1–A4 remain presentation-only, by design.** They render
+through `render_pages` over the same degraded-adapter path and assert derived documents
+and page content, not a loaded plugin. A later reader must not mistake them for load
+proofs. Strengthening them is a separate arm's job, not an edit to those assertions —
+none of them was weakened or replaced here.

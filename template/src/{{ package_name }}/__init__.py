@@ -1,1 +1,0 @@
-"""Synthetic device plugin."""

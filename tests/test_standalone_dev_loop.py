@@ -90,6 +90,21 @@ BUILD_TIMEOUT_S = 600
 CLI_TIMEOUT_S = 300
 SERVE_TIMEOUT_S = 60
 
+#: The adapter-load probe, run in the clean venv: the INSTALLED SDK's loader
+#: opens this project and reports whether the factory resolved. Running it in
+#: the installed interpreter is what keeps the fact the shipped loader's
+#: rather than this checkout's.
+LOADER_PROBE = """\
+import sys
+from pathlib import Path
+
+from benchweave_sdk_server.session import load_plugin_project
+
+plugin = load_plugin_project(Path(sys.argv[1]))
+print(f"adapter_factory={'loaded' if plugin.adapter_factory is not None else 'none'}")
+print(f"load_diagnostic={plugin.load_diagnostic}")
+"""
+
 #: The skipped arm's reason names the remaining coverage, so a reader can tell
 #: "not proven here" from "not proven at all".
 SPAWN_SKIPPED_ON_WINDOWS = pytest.mark.skipif(
@@ -564,6 +579,44 @@ def test_the_console_script_announces_the_listener_and_stops_cleanly(
         loop_page.stdout
     )
     assert loop_page.exit_code == 0, loop_page.stdout
+
+
+@SPAWN_SKIPPED_ON_WINDOWS
+def test_the_loop_loads_the_plugin_adapter_not_only_the_presentation(
+    installed: Installed, loop: LoopRun, loop_page: ServedPage
+) -> None:
+    """The loop's green must not be a presentation-only green.
+
+    A degraded load (§4.5) renders the composed pages exactly like a healthy
+    one — the loader validates the documents first and only then tries the
+    adapter, so every other arm in this module passes with
+    ``adapter_factory`` None. Two facts close that hole:
+
+    * the spawned listener prints no ``standalone_plugin_*`` diagnostic of
+      any kind (the bearer line and the serving banner are expected output,
+      not diagnostics), and
+    * the INSTALLED SDK resolves a real factory for the same project with no
+      diagnostic.
+
+    What this proves is factory RESOLUTION (import + attribute), not a live
+    connect: the fixture descriptor declares a Meridian M-400, while the
+    scaffold adapter answers the SDK's synthetic identity, so a connect
+    would raise ``standalone_connect_identity_mismatch`` by design. The
+    loop never connects; its pages are the composed presentation.
+    """
+    assert "standalone_plugin_" not in loop_page.stdout, loop_page.stdout
+
+    probe = _run(
+        [str(installed.python), "-c", LOADER_PROBE, str(loop.project)],
+        cwd=installed.root,
+        timeout=CLI_TIMEOUT_S,
+        env=_child_env(),
+    )
+    assert probe.returncode == 0, probe.stderr
+    assert probe.stdout.splitlines() == [
+        "adapter_factory=loaded",
+        "load_diagnostic=None",
+    ], probe.stdout
 
 
 # ---------------------------------------------------------------------------

@@ -44,6 +44,7 @@ test module only.
 
 from __future__ import annotations
 
+import fnmatch
 import io
 import shutil
 import subprocess
@@ -51,6 +52,7 @@ import tarfile
 from pathlib import Path
 
 import pytest
+import yaml
 
 from benchweave_sdk import __version__
 from benchweave_sdk.cli import main as cli_main
@@ -102,6 +104,38 @@ def _tree(root: Path) -> dict[str, bytes]:
         entry.relative_to(root).as_posix(): entry.read_bytes().replace(b"\r\n", b"\n")
         for entry in sorted(root.rglob("*"))
         if entry.is_file() and ".git" not in entry.relative_to(root).parts
+    }
+
+
+def _project_member(relative: str) -> str:
+    """A template member's project-relative path.
+
+    Two template-side spellings never exist in a rendered project: the
+    ``.jinja`` suffix, and the package directory's literal
+    ``{{ package_name }}``. Both must be translated here — the WS3 fold
+    fixed the suffix alone, which stayed blind to any delta under the
+    package directory because such a member's base name carries the raw
+    variable.
+    """
+    return (
+        relative.removeprefix("template/")
+        .removesuffix(".jinja")
+        .replace("{{ package_name }}", PACKAGE)
+    )
+
+
+def _skip_protected(paths: set[str]) -> set[str]:
+    """The subset of ``paths`` copier's update-time skip list protects.
+
+    The patterns are read from ``copier.yml`` itself (never a second list
+    to go stale). ``fnmatch``'s ``*`` crosses ``/``, which is the
+    globstar behaviour the config documents for ``src/**``/``tests/**``.
+    """
+    patterns = yaml.safe_load((REPO / "copier.yml").read_text(encoding="utf-8"))[
+        "_skip_if_exists"
+    ]
+    return {
+        path for path in paths if any(fnmatch.fnmatchcase(path, row) for row in patterns)
     }
 
 
@@ -237,17 +271,21 @@ def test_update_keeps_the_update_promise(
     # copier.yml is template CONFIG, never a rendered member — a config-only
     # delta touches nothing in the project.
     changed = sorted(
-        # Project-relative paths (the .jinja suffix is template-side only):
-        # this set is compared against project file names in A2/A5 below.
+        # Project-relative paths: this set is compared against project file
+        # names in A2/A5 below, so the template-side spellings (the .jinja
+        # suffix and the `{{ package_name }}` directory) are translated.
         # WS3 fold: the suffix mismatch was masked in WS2 — every member its
         # tests mutated was .jinja-less, and a clean checkout's delta set is
-        # empty — but any .jinja-bearing template delta (the skills, the
-        # answers template) made `changed` name paths that never exist in
-        # the project, so the A2 carve-out and the A5 footprint both went
-        # blind for exactly those files.
-        relative.removeprefix("template/").removesuffix(".jinja")
-        for relative in set(base) | set(target)
-        if relative.startswith("template/") and base.get(relative) != target.get(relative)
+        # empty — but any .jinja-bearing template delta made `changed` name
+        # paths that never exist in the project. The same blindness applied
+        # to every delta under the package directory until the package-root
+        # `__init__.py` became a template member.
+        {
+            _project_member(relative)
+            for relative in set(base) | set(target)
+            if relative.startswith("template/")
+            and base.get(relative) != target.get(relative)
+        }
     )
 
     from copier import run_update
@@ -314,11 +352,15 @@ def test_update_keeps_the_update_promise(
     # leading space is significant — stripping it would shift the path slice.)
     porcelain = _git(project, "status", "--porcelain").stdout.splitlines()
     touched = {line[3:] for line in porcelain}
-    expected_touched = {".copier-answers.yml"} | set(changed)
+    # A skip-protected seed the template moved is deliberately NOT touched —
+    # skip-wins is the update promise for owned files (A2), so such a path is
+    # excluded from the required footprint and separately asserted absent.
+    # Every other template delta must appear.
+    skip_protected = _skip_protected(set(changed))
+    expected_touched = {".copier-answers.yml"} | (set(changed) - skip_protected)
     assert touched == expected_touched, porcelain
-    added_by_template = {
-        relative.removeprefix("template/") for relative in set(target) - set(base)
-    }
+    assert not (touched & skip_protected), sorted(touched & skip_protected)
+    added_by_template = {_project_member(relative) for relative in set(target) - set(base)}
     assert set(updated) - set(author_state) <= added_by_template
     for relative, content in updated.items():
         if relative not in changed:
