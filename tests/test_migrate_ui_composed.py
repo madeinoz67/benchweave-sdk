@@ -919,8 +919,14 @@ def test_b6_unapplied_member_in_a_pin_is_not_drift(
     _downstamp_ledger(package)
     before = _tree(package)
     capsys.readouterr()
-    assert _migrate(monkeypatch, package) == 0
+    code = _migrate(monkeypatch, package)
     rendered = capsys.readouterr().err
+    assert code == 0, (
+        "migrate-ui keyed the drift arithmetic to the PIN-DECLARED member set, "
+        "not the APPLIED set: it demanded a ledger row for the unapplied member "
+        "'ghost_sweep' (its claim names no declared action). The applied-set "
+        f"keying is the rule; stderr: {rendered}"
+    )
     assert "migrate_ui_ledger_drift" not in rendered
     moved = {name for name in before if before[name] != _tree(package).get(name)}
     assert moved == {"ui/class-reference.json"}, sorted(moved)
@@ -979,6 +985,43 @@ def test_b6_member_declaration_dialect_absent_refuses(
     assert "migrate_ui_version_absent:" in rendered
     assert "composed-member declaration" in rendered
     assert _tree(package) == before
+
+
+def test_b6_member_declaration_dialect_behind_refuses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The other side of the guard: the SDK's active dialect ahead of the
+    declaration's also refuses ``migrate_ui_ahead``, naming both versions.
+    migrate-ui will not write the author's pinned declaration up, so the
+    author moves it. The behind value is synthetic fixture input — no
+    predecessor member dialect ever shipped — so this arm pins the guard's
+    shape, not a real historical document."""
+    package = _member_project(tmp_path / "member-dialect-behind")
+    _rewrite_member_declaration(package, "0.0.9")
+    _downstamp_ledger(package)
+    before = _tree(package)
+    capsys.readouterr()
+    assert _migrate(monkeypatch, package) == 1
+    rendered = capsys.readouterr().err
+    assert "migrate_ui_ahead:" in rendered
+    assert "0.0.9" in rendered
+    assert "update the declaration" in rendered
+    assert _tree(package) == before
+
+
+def test_b6_no_member_declaration_is_a_no_op_for_the_guard(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """No member declaration means nothing for the dialect guard to do: a
+    composed-CLASS project (no member pin) still migrates, and no
+    member-dialect refusal appears."""
+    package = _composed_project(tmp_path / "no-member")
+    _downstamp_ledger(package)
+    capsys.readouterr()
+    assert _migrate(monkeypatch, package) == 0
+    rendered = capsys.readouterr().err
+    assert "migrate_ui_ahead" not in rendered
+    assert "migrate_ui_version_absent" not in rendered
 
 
 def test_b6_family_bump_does_not_repin_the_member_declaration(

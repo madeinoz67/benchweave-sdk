@@ -2,7 +2,9 @@
 
 The ``migrate_ui`` lane (issue #460) refuses with these ``snake_case:`` prefixes
 (STD-4): ``migrate_ui_ahead:`` (a document above the lock's active — install the
-newer SDK, never a downgrade write), ``migrate_ui_version_absent:`` (a document
+newer SDK, never a downgrade write; a composed-member declaration whose decoupled
+dialect sits on either side of the active also refuses here, naming both, because
+migrate-ui never rewrites a pinned document), ``migrate_ui_version_absent:`` (a document
 that is unparseable or carries no version-shaped ``contract_version``),
 ``migrate_ui_stamp_unlocatable:`` (the version value parses but its byte pattern
 cannot be located for in-place re-stamping), and
@@ -817,13 +819,23 @@ def _guard_member_declaration_dialects(
     The dialect is deliberately decoupled from the family version — the
     schema's own words: a pinned, digest-verified document stays valid
     across family bumps — so the migration never RE-STAMPS it (a family
-    bump does not repin the document). It does READ it: a declaration above
-    the active dialect refuses ``migrate_ui_ahead`` (migrate-ui never
-    writes a version down) and a non-version-shaped one refuses
-    ``migrate_ui_version_absent``. Without this guard the walk's
-    ``classref_invalid_member_declaration`` would name a generic schema
-    fault for a version motion the migration family owns — the declaration
-    is the only pinned document whose dialect the class-reference family
+    bump does not repin the document). It does READ it, and it guards BOTH
+    sides of the active dialect, because migrate-ui never rewrites a
+    pinned document (the author's bytes are the author's):
+
+    - the declaration's dialect AHEAD of the active refuses
+      ``migrate_ui_ahead`` naming both, because the SDK cannot know a
+      future dialect's semantics;
+    - the ACTIVE dialect ahead of the declaration's refuses
+      ``migrate_ui_ahead`` naming both, because the migration will not
+      write the author's declaration up — the author updates it;
+    - an equal dialect is a no-op, and a project with no member
+      declaration has nothing to do: no row, no write.
+
+    Without this guard a mismatched declaration would answer through the
+    walk's ``classref_invalid_member_declaration``, a generic schema fault
+    for a version motion the migration family owns — the declaration is
+    the only pinned document whose dialect the class-reference family
     itself serves.
 
     Only digest-verified member-SHAPE pins are inspected; the walk keeps
@@ -870,6 +882,14 @@ def _guard_member_declaration_dialects(
                 f"dialect {dialect}, above this SDK's active {target}; "
                 f"install the newer SDK that serves {dialect} — migrate-ui "
                 "never writes versions down"
+            )
+        if _tuple(dialect) < _tuple(target):
+            raise ValueError(
+                "migrate_ui_ahead: this SDK's active "
+                "composed-member-declaration dialect "
+                f"{target} is ahead of {row.get('path')}'s {dialect}; "
+                f"update the declaration to {target} — migrate-ui never "
+                "rewrites a pinned document"
             )
 
 

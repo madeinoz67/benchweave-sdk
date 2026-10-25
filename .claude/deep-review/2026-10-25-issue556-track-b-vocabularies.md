@@ -1241,33 +1241,53 @@ members, `cp` backup, restored) reds the control arm alone,
 member ghost_sweep derives applied but the authored declaration's
 composed_members omits it)`. That is the R1 loop shape reproduced on the
 member vocabulary: keying to the pins demands a row derive-ui never
-writes. Restored, `tests=11 failures=0` for the module's B6 arms.
+writes. The control arm's assertion message names which of the two
+keyings it caught ("keyed the drift arithmetic to the PIN-DECLARED member
+set, not the APPLIED set"), so a future regression cannot be reported as
+an anonymous green. Restored, `tests=13 failures=0` for the module's B6
+arms.
 
-**The declaration's own dialect: guarded, not rewritten — a recorded
-reading of the brief.** The brief asked that "re-stamping must cover the
-composed-member declaration's own dialect version". The design record's
-§5 B6 row scopes migrate-ui to the drift arithmetic and says nothing
-about rewriting the declaration; the schema and the composed-action-class
-sibling both declare the dialect "deliberately decoupled from the family
-directory version so a pinned, digest-verified document stays valid
-across family bumps", and the sibling adds "a dialect bump is a standards
-motion of its own". B6 therefore READS the dialect and never rewrites the
-pinned document: a declaration above the active dialect refuses
-`migrate_ui_ahead`, and a version-less one refuses
-`migrate_ui_version_absent`, before the walk's generic schema code would
-answer. Every applied class's `composed_classes[].validated_against`
-re-stamp is the existing motion (arm
+**The declaration's own dialect: guarded on both sides, never rewritten —
+the owner's ruling, with its reasons.** The brief asked that "re-stamping
+must cover the composed-member declaration's own dialect version". The
+owner ruled the reading: (B), guard not rewrite, because three things
+make the rewrite (A) wrong rather than merely bigger. (1) The schema
+states the decoupling's purpose in its own text: a pinned, digest-verified
+document stays valid across family bumps. (2) The composed-action-class
+sibling says a dialect bump is a standards motion of its own. (3)
+migrate-ui rewriting a vendor-pinned document and then repairing the
+descriptor's digest to match is exactly the silent rewrite this project
+refuses elsewhere: the author's bytes are the author's.
+
+So the guard READS the dialect and never writes the pinned document, on
+BOTH sides of the active dialect:
+
+- the active dialect ahead of the declaration's → `migrate_ui_ahead`,
+  naming both, because the migration will not write the author's
+  declaration up — the author updates it;
+- the declaration's ahead of the SDK's → `migrate_ui_ahead`, naming both,
+  because the SDK cannot know a future dialect's semantics;
+- an equal dialect → a no-op;
+- no declaration at all → nothing to do, no row, no write.
+
+Every APPLIED class's `composed_classes[].validated_against` re-stamps as
+it does today, keyed on the applied set rather than the pins (arm
 `test_ledger_restamps_across_the_family_bump`). A family bump rewrites
 neither the declaration nor the descriptor pin (arm
-`test_b6_family_bump_does_not_repin_the_member_declaration`). If the
-owner wants a document rewrite instead, it is a new motion with a
-descriptor-pin write, not this slice.
+`test_b6_family_bump_does_not_repin_the_member_declaration`).
+
+(A)'s write surface is unreachable in-tree today: no predecessor member
+dialect ever shipped, so choosing (A) would have invented a mutation to
+satisfy a sentence rather than a need. The four arms pin the guard's
+shape; the behind value and the ahead value are synthetic fixture input,
+not historical documents.
 
 RED for the guard: neutralized (the call commented, `cp` backup,
-restored), the two dialect arms fail `tests=2 failures=2 errors=0`, with
+restored), all three dialect arms fail `tests=3 failures=3 errors=0`,
+each answering
 `classref_invalid_member_declaration: pinned document member-lanes.json:
 contract_version: '0.1.0' was expected` where `migrate_ui_ahead:` /
-`migrate_ui_version_absent:` were expected. Restored, green.
+`migrate_ui_version_absent:` were expected. Restored, green (13 B6 arms).
 
 **The guide exposed two design statements the code did not ship, and one
 stale paragraph.** (1) §4 V1's ledger row is written
@@ -1300,8 +1320,8 @@ sites for `plugin-sdk.qmd`, its share of the 82-site, 11-file census.
 **Files.** `src/benchweave_sdk/classref.py` (the shared comparator, the
 4-tuple inventory), `src/benchweave_sdk/classref_gate.py` (the delegate),
 `src/benchweave_sdk/presentation.py` (the member drift block and the
-dialect guard), `tests/test_migrate_ui_composed.py` (eleven B6 arms),
-`user_guide/plugin-sdk.qmd`.
+two-sided dialect guard), `tests/test_migrate_ui_composed.py` (thirteen
+B6 arms), `user_guide/plugin-sdk.qmd`.
 
 **Deferred.** Nothing in this slice. B7 (the gateway mirror) and B8
 (docs and close-out) remain as §5 plans; the B7 mirror must carry this
