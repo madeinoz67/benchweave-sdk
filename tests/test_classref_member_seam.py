@@ -30,7 +30,7 @@ from typing import Any
 
 from jsonschema import Draft202012Validator
 
-from benchweave_sdk.presentation import _contract, _pinned_schemas
+from benchweave_sdk.presentation import _contract, _pinned_schemas, check_ui
 from benchweave_sdk.served import active_version
 from benchweave_sdk.validation import contract_documents, validate_descriptor
 
@@ -341,4 +341,121 @@ def test_a_declaration_redeclaring_a_corpus_id_divergently_shadows(tmp_path: Pat
         "targets.calibrate",
         f'Profile id "{corpus_profile_id}" is declared with divergent rows '
         "by multiple documents",
+    ) in report.findings
+
+
+# ---------------------------------------------------------------------------
+# B4 motion 1 — the seam wired into the production call (#556 Track B record,
+# B3 fold's recorded fact 1: ``validate_presentation`` still passed the
+# served-only document map, so a vendor target failed the REAL ``check-ui``
+# with ``capability_mismatch`` until the pinned-document merge rides that
+# path). These arms drive ``check_ui`` — the shipped call the CLI's
+# ``check-ui`` runs, loading every byte from disk — never the test-side
+# manual merge above.
+# ---------------------------------------------------------------------------
+
+
+def _check_ui_package(scratch: Path, *, with_declaration_pin: bool = True) -> Path:
+    """A real presentation package on disk: envelope, descriptor with its
+    digest-pinned plugin documents beside it, binding catalogue carrying the
+    vendor configuration target, and the ui/ resource tree — the layout
+    ``check_ui`` loads."""
+    descriptor = _seam_descriptor()
+    if not with_declaration_pin:
+        descriptor["contracts"] = [
+            row
+            for row in descriptor["contracts"]
+            if row["path"] != MEMBER_DECLARATION_NAME
+        ]
+    schema_raw = _raw(_vendor_input_schema())
+    version = active_version("plugin-ui")
+    manifest = {
+        "contract_version": version,
+        "plugin_id": descriptor["id"],
+        "descriptor_sha256": _digest(_raw(descriptor)),
+        "bindings": [
+            {"id": "calibrate", "kind": "configuration", "target_id": "calibrate"}
+        ],
+        "pages": [
+            {
+                "id": "settings",
+                "kind": "configuration",
+                "title": "Settings",
+                "bindings": ["calibrate"],
+                "required": True,
+            }
+        ],
+        "assets": [
+            {"id": "settings", "path": "settings.json", "sha256": _digest(schema_raw)}
+        ],
+    }
+    catalogue = {
+        "contract_version": version,
+        "descriptor_sha256": _digest(_raw(descriptor)),
+        "targets": [_vendor_target()],
+    }
+    envelope = {
+        "contract_version": version,
+        "descriptor_sha256": _digest(_raw(descriptor)),
+        "resource_root": "ui",
+        "manifest": {"path": "manifest.json", "sha256": _digest(_raw(manifest))},
+    }
+    package = scratch / "pkg"
+    (package / "ui").mkdir(parents=True)
+    (package / "descriptor.json").write_bytes(_raw(descriptor))
+    (package / MEMBER_DECLARATION_NAME).write_bytes(_raw(_member_declaration()))
+    (package / VENDOR_CATALOG_NAME).write_bytes(_raw(_vendor_catalog()))
+    # The f1 fixture body's own pin: its file rides the package so the
+    # descriptor-relative pin walk verifies every digest it names.
+    (package / "vendor-catalog.json").write_bytes(
+        (FIXTURES / "vendor-catalog.json").read_bytes()
+    )
+    (package / "presentation.json").write_bytes(_raw(envelope))
+    (package / "binding-catalogue.json").write_bytes(_raw(catalogue))
+    (package / "ui" / "manifest.json").write_bytes(_raw(manifest))
+    (package / "ui" / "settings.json").write_bytes(schema_raw)
+    return package
+
+
+def test_the_real_check_ui_resolves_the_vendor_target(tmp_path: Path) -> None:
+    """The production arm (#556 B4 motion 1): through the SHIPPED
+    ``check_ui`` call — bytes loaded from disk, the served map built
+    in-process — a vendor configuration target the declaration's profile
+    row admits resolves with ZERO findings. The B3 arms above prove the
+    validator, the vendored schema and the merge agree; this arm proves
+    the route a plugin author actually runs carries them."""
+    package = _check_ui_package(tmp_path)
+    report = check_ui(
+        package / "presentation.json",
+        package / "descriptor.json",
+        package,
+        package / "binding-catalogue.json",
+        firmware="1.0",
+        features=frozenset(),
+        panels=frozenset(),
+    )
+    assert report.valid, [(f.code, f.path, f.message) for f in report.findings]
+
+
+def test_the_real_check_ui_without_the_pin_still_refuses(tmp_path: Path) -> None:
+    """The production negative control: the same package with the
+    member-declaration pin absent from the descriptor (the profile id
+    stays claimed, the vendor catalog pin stays) reports
+    ``capability_mismatch`` — the pinned profile row is what closes the
+    target's admission, so the wiring is load-bearing, not decorative."""
+    package = _check_ui_package(tmp_path, with_declaration_pin=False)
+    report = check_ui(
+        package / "presentation.json",
+        package / "descriptor.json",
+        package,
+        package / "binding-catalogue.json",
+        firmware="1.0",
+        features=frozenset(),
+        panels=frozenset(),
+    )
+    assert not report.valid
+    assert contract.Finding(
+        "capability_mismatch",
+        "targets.calibrate",
+        "Target exceeds descriptor capabilities",
     ) in report.findings

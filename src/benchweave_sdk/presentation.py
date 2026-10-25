@@ -109,6 +109,55 @@ def _pinned_schemas(descriptor: dict[str, Any]) -> dict[str, Any]:
     return scoped
 
 
+def pinned_contract_documents(
+    descriptor: dict[str, Any], descriptor_path: Path
+) -> dict[str, dict[str, Any]]:
+    """The descriptor's digest-pinned plugin contract documents, read and
+    verified (#556 track B B4: the seam the composed-member mechanism rides).
+    Every non-``urn:otdp:`` contracts row names a plugin-authored document
+    beside the descriptor; the same integrity discipline as the classref
+    walk's ``_vendor_documents`` applies here — unreadable, digest-mismatched
+    and non-object pins refuse with the walk's own codes, and a pin that is
+    not valid JSON refuses typed rather than surfacing the bare decoder
+    error (the walk lets that one escape; this reader does not). The
+    documents feed ``merge_pinned_documents`` so the validator's profile map
+    and $id aliases see the pinned rows exactly as the served corpus's."""
+    import hashlib
+
+    documents: dict[str, dict[str, Any]] = {}
+    for row in descriptor.get("contracts", []):
+        identifier = str(row.get("id", ""))
+        if identifier.startswith("urn:otdp:") or not identifier:
+            continue
+        path = descriptor_path.parent / str(row.get("path", ""))
+        try:
+            raw = read_file(path)
+        except (ValueError, OSError) as exc:
+            raise ValueError(
+                "classref_vendor_catalog_unreadable: "
+                f"pinned vendor catalog {row.get('path')} unreadable ({exc})"
+            ) from exc
+        if hashlib.sha256(raw).hexdigest() != row.get("sha256"):
+            raise ValueError(
+                "classref_vendor_catalog_digest_mismatch: "
+                f"pinned vendor catalog {row.get('path')} digest mismatch"
+            )
+        try:
+            document = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                "classref_vendor_catalog_invalid: "
+                f"pinned vendor catalog {row.get('path')} is not valid JSON"
+            ) from exc
+        if not isinstance(document, dict):
+            raise ValueError(
+                "classref_vendor_catalog_invalid: "
+                f"pinned vendor catalog {row.get('path')} is not a JSON object"
+            )
+        documents[str(row.get("path", ""))] = document
+    return documents
+
+
 def _open_no_follow(part: str, flags: int, directory: int) -> int:
     """Open one strict component, naming symlink refusals over raw errno prose.
 
@@ -344,6 +393,7 @@ def validate_presentation(
     supported_features: frozenset[str] = frozenset(),
     supported_panels: frozenset[str] = frozenset(),
     firmware: str | None = None,
+    pinned_documents: dict[str, dict[str, Any]] | None = None,
 ) -> Any:
     """Validate a presentation candidate, offline, from bytes already in hand.
 
@@ -366,6 +416,17 @@ def validate_presentation(
         as unavailable rather than invalid.
     firmware
         Firmware version the candidate is judged against, or None.
+    pinned_documents
+        The descriptor's digest-verified plugin contract documents, keyed by
+        pin path (``pinned_contract_documents``); when supplied they merge
+        into the served document set through the vendored
+        ``merge_pinned_documents`` guard, so a composed-member declaration's
+        vendor profile row and a vendor catalog's action schemas resolve for
+        the targets that name them (#556 track B B4 — without the merge a
+        vendor target reports ``capability_mismatch`` at the real
+        ``check-ui``). A pin that shadows a served ``$id`` reports as a
+        ``pinned_id_shadow`` finding, the same posture as every other
+        reader-refused document.
 
     Returns
     -------
@@ -381,12 +442,22 @@ def validate_presentation(
             (contract.Finding(exc.code, "descriptor", str(exc)),)
         )
     validate_descriptor(descriptor)
+    documents: dict[str, Any] = _pinned_schemas(descriptor)
+    if pinned_documents:
+        try:
+            documents = contract.merge_pinned_documents(
+                documents, pinned_documents
+            )
+        except contract.DocumentError as exc:
+            return contract.ValidationReport(
+                (contract.Finding(exc.code, "descriptor.contracts", str(exc)),)
+            )
     return contract.validate_presentation(
         envelope_raw,
         descriptor_raw=descriptor_raw,
         resources=resources,
         binding_catalogue=binding_catalogue,
-        schema_documents=_pinned_schemas(descriptor),
+        schema_documents=documents,
         supported_features=supported_features,
         supported_panels=supported_panels,
         firmware=firmware,
@@ -430,14 +501,26 @@ def _load_ui_candidate(
                 resources[name] = raw
                 total += len(raw)
         catalogue = contract.parse_document(read_file(catalogue_path))
+        descriptor_bytes = read_file(descriptor_path)
+        # (#556 track B B4) The pinned-document merge rides the production
+        # path: the descriptor's digest-verified plugin documents join the
+        # served set here, so a composed-member declaration's vendor profile
+        # row — and a vendor catalog's action schemas — resolve for the
+        # targets that name them. Integrity refusals carry the walk's own
+        # codes: a broken pin refuses the check exactly as it refuses the
+        # derive.
+        descriptor_document = contract.parse_document(descriptor_bytes)
         report = validate_presentation(
             envelope_raw,
-            descriptor_raw=read_file(descriptor_path),
+            descriptor_raw=descriptor_bytes,
             resources=resources,
             binding_catalogue=catalogue,
             supported_features=features,
             supported_panels=panels,
             firmware=firmware,
+            pinned_documents=pinned_contract_documents(
+                descriptor_document, descriptor_path
+            ),
         )
         return report, ValidatedPreviewInputs(envelope, manifest, catalogue, base)
     except (KeyError, TypeError) as exc:
