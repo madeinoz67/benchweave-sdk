@@ -1540,13 +1540,21 @@ def _merge_references(references: list[dict[str, Any]]) -> dict[str, Any]:
     return merged
 
 
-def _resolve_channels(descriptor: dict[str, Any], merged: dict[str, Any]) -> list[dict[str, Any]]:
-    """The class-role lanes, in declaration order; fail-closed count
-    refusals (record §3.3)."""
-    slot = next(
+def _channels_slot(merged: dict[str, Any]) -> dict[str, Any] | None:
+    """The ONE channels slot this derivation resolves lanes for — the first
+    in merge order (#556 B1 keeps the founding one-slot rule; the per-slot
+    channels generalization is a later slice). ``residual_members`` uses it to
+    name the one role a channel can still resolve against."""
+    return next(
         (slot for slot in merged["slots"].values() if slot.get("kind") == "channels"),
         None,
     )
+
+
+def _resolve_channels(descriptor: dict[str, Any], merged: dict[str, Any]) -> list[dict[str, Any]]:
+    """The class-role lanes, in declaration order; fail-closed count
+    refusals (record §3.3)."""
+    slot = _channels_slot(merged)
     if slot is None:
         return []
     role = str(slot.get("where_role", ""))
@@ -1623,7 +1631,9 @@ def residual_members(
     descriptor: dict[str, Any],
     derived_decoder_ids: Iterable[str],
     *,
+    channel_roles: Iterable[str] = (),
     dataset_axes: Mapping[str, str] | None = None,
+    plot_kinds: Iterable[str] = (),
 ) -> tuple[ResidualMember, ...]:
     """(#541 slice 3 fold R10; #556 Track B §3 rule 3) declared members whose
     surface the derivation owes an account of, as REPORTED rows.
@@ -1648,7 +1658,14 @@ def residual_members(
     PLOT carries, never the set that was BUILT — the lane machinery can build
     lanes that no plot hosts (a waveform or time-series plot has no
     ``decoder_lanes`` key; they land in a digital-lanes plot alone), and
-    building is not rendering.
+    building is not rendering. ``plot_kinds`` is the kinds the derived plots
+    carry, so the row can name the structural reason lanes did not land.
+
+    Channels (V3, #556 B1): a channel whose role matches no channels slot the
+    derivation resolves lanes for derives nothing, and used to disappear
+    without a word anywhere. It now reports every run against
+    ``channel_roles`` — the role(s) the run actually resolved lanes for — and
+    a channel that resolves never reports.
     """
     rows: list[ResidualMember] = []
     axes = dict(dataset_axes or {})
@@ -1664,7 +1681,23 @@ def residual_members(
                 _computed_variable_detail(member, axes),
             )
         )
+    resolved_roles = {str(role) for role in channel_roles}
+    for row in descriptor.get("channels") or []:
+        if not isinstance(row, dict) or not row.get("id"):
+            continue
+        role = str(row.get("role", ""))
+        if role in resolved_roles:
+            continue
+        rows.append(
+            ResidualMember(
+                "channel",
+                "channels and decoders",
+                f"{row['id']} (role {role})",
+                "resolves to no lanes surface",
+            )
+        )
     derived_ids = {str(value) for value in derived_decoder_ids}
+    decoder_detail = _decoder_no_host_detail(plot_kinds)
     for pin in descriptor.get("decoders") or []:
         member = str(pin.get("id", "")) if isinstance(pin, dict) else ""
         if member and member not in derived_ids:
@@ -1673,11 +1706,38 @@ def residual_members(
                     "custom decoder",
                     "channels and decoders",
                     member,
-                    "derivation deferred (the channels and decoders "
-                    "vocabulary has no derivation in this increment; D1)",
+                    decoder_detail,
                 )
             )
     return tuple(rows)
+
+
+def _decoder_no_host_detail(plot_kinds: Iterable[str]) -> str:
+    """V3's decoder row detail (#556 Track B §4 V3 layer 3): the structural
+    reason the decoder's lanes have no host.
+
+    The canonical manifest schema admits ``decoder_lanes`` on a
+    ``digital_lanes`` plot alone (the 0.4.0 ``$defs.plot`` allOf bans them on
+    the analog kinds), so only a class whose plot IS digital_lanes can host a
+    decoder at all. When such a plot derives and the lanes still do not land,
+    the reason is not the kind — the row says no derived plot carries them
+    rather than blaming a plot kind that admits them.
+    """
+    kinds = sorted({str(kind) for kind in plot_kinds if kind})
+    if not kinds or "digital_lanes" in kinds:
+        return (
+            "no lane host (no derived plot carries its lanes; lanes host in "
+            "digital_lanes plots alone)"
+        )
+    if len(kinds) == 1:
+        return (
+            f"no lane host (this class's plot is {kinds[0]}; lanes host in "
+            "digital_lanes plots alone)"
+        )
+    return (
+        f"no lane host (this class's plots are {', '.join(kinds)}; lanes host "
+        "in digital_lanes plots alone)"
+    )
 
 
 def _computed_variable_detail(member: str, dataset_axes: Mapping[str, str]) -> str:
@@ -2306,10 +2366,10 @@ def _finish(
         references, divergences, plan, ignored_pins
     )
     cannot = list(merged["cannot_derive"])
-    # The residual inventory (#556 Track B §3 rule 3) needs one fact about
-    # THIS run's derived documents: which dataset targets exist and which
-    # axis variable each carries (a computed id equal to an axis id cannot
-    # compose into that dataset).
+    # The residual inventory (#556 Track B §3 rule 3) needs three facts about
+    # THIS run: which channel roles resolved lanes, which dataset targets
+    # derived (and their axis ids), and which plot kinds derived.
+    channels_slot = _channels_slot(merged)
     residual = residual_members(
         descriptor,
         # The rendered set, not the built set (R10's condition): lanes a
@@ -2319,6 +2379,13 @@ def _finish(
             for plot in plots
             for lane in (plot.get("decoder_lanes") or [])
         },
+        # The founding rule resolves ONE channels slot, so at most one role
+        # resolves lanes here; a channel of another role reports (#556 B1).
+        channel_roles=(
+            (str(channels_slot.get("where_role", "")),)
+            if channels_slot is not None
+            else ()
+        ),
         dataset_axes={
             str(target["id"]): next(
                 (
@@ -2331,6 +2398,7 @@ def _finish(
             for target in targets
             if target["kind"] == "dataset"
         },
+        plot_kinds=[str(plot.get("kind", "")) for plot in plots],
     )
     result = DerivedUI(
         manifest=manifest,

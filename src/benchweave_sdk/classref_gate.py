@@ -811,10 +811,11 @@ def verify_ui(
             for path in empty_pins
         )
         # R10/#556 B1: declared members are disclosed on this arm too. The
-        # reference-less path derives no decoder lanes and no dataset target,
-        # so every declared decoder is a residual member here and every
-        # computed variable reports its no-dataset terminal state (the
-        # B6/B7/R3 discipline: both arms carry every disclosure).
+        # reference-less path resolves no channels slot, derives no decoder
+        # lanes and no dataset target, so every declared channel and decoder
+        # is a residual member here and every computed variable reports its
+        # no-dataset terminal state (the B6/B7/R3 discipline: both arms carry
+        # every disclosure).
         reported.extend(
             f"{row.kind} {row.member}: {row.detail}"
             for row in residual_members(descriptor, ())

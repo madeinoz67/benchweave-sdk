@@ -900,34 +900,118 @@ def test_scope_b1_the_reference_less_arm_reports_them_too(tmp_path: Path) -> Non
         "observation variable rms_v: computes no dataset variable (no dataset "
         "target derives on this class); no tile (no parameter to read)"
     ) in joined, report.reported_deviations
-    assert "custom decoder" in joined, report.reported_deviations
+    assert (
+        "custom decoder uart: no lane host (no derived plot carries its "
+        "lanes; lanes host in digital_lanes plots alone)"
+    ) in joined, report.reported_deviations
 
 
-def test_scope_r10_a_decoder_whose_lanes_never_land_is_still_disclosed(
+def test_scope_b1_v3_a_channel_matching_no_resolved_slot_is_reported(
     tmp_path: Path,
 ) -> None:
-    """R10's decoder condition, exactly: a member is disclosed when nothing
-    DERIVED renders it — not merely when no lane was built. The decode-
-    annotated overlay on a DAQ-class device BUILDS decoder lanes (the
-    overlay fires, so a "was it built?" test would wrongly call it served)
-    but no derived plot carries them: the plot is a waveform, and lanes land
-    only in a digital-lanes plot. Nothing rendered the decoder, so it is
-    disclosed."""
+    """(#556 Track B §4 V3 layer 3, first bullet) A channel whose role matches
+    no channels slot the derivation resolves lanes for used to disappear
+    without a word anywhere — no lanes and no disclosure. It now yields a
+    REPORTED row every run, and a channel that DOES resolve never does.
+
+    Metric: the denominator is ``descriptor.channels`` (asserted from the
+    fixture, never a literal); the numerator is channels with a derived lanes
+    surface plus channels carrying a row naming the vocabulary. The fixture
+    declares four channels and one channels slot (role ``analogue_input``), so
+    three resolve and one reports.
+    """
+    project = _m400_project(tmp_path / "m400", with_ui=False)
+    package = project / "src" / PACKAGE
+    descriptor = _fixture_descriptor()
+    descriptor["channels"].append(
+        {
+            "id": "clk",
+            "label": "Clock lane",
+            "role": "digital_input",
+            "quantities": ["edge"],
+            "parameter_names": [],
+        }
+    )
+    (package / "descriptor.json").write_bytes(_raw(descriptor))
+    reference = find_reference(PROFILE)
+    assert reference is not None
+    derived = derive_ui(
+        _raw(descriptor),
+        reference,
+        descriptor_path=package / "descriptor.json",
+    )
+    declared = {str(row["id"]) for row in descriptor["channels"]}
+    assert len(declared) == 4
+    reported = [row for row in derived.residual_members if row.kind == "channel"]
+    assert [row.member for row in reported] == ["clk (role digital_input)"]
+    assert declared - {"clk"} == {"ch1", "ch2", "ch3"}
+    _write_derived(package, derived)
+    report = verify_ui(project)
+    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
+    assert (
+        "channel clk (role digital_input): resolves to no lanes surface"
+        in report.reported_deviations
+    ), report.reported_deviations
+
+
+def test_scope_b1_v3_the_reference_less_arm_reports_every_channel(
+    tmp_path: Path,
+) -> None:
+    """The closure runs on both gate arms: a descriptor whose profile matches
+    no vendored class resolves no channels slot, so every declared channel
+    reports — the B6/B7/R3 discipline that every disclosure rides both
+    arms."""
+    from benchweave_sdk.presentation import create_ui_resources
+    from benchweave_sdk.scaffold import create_project
+
+    project = tmp_path / "refless"
+    create_project(project, "veridian_refless_plugin", with_ui=False)
+    package = project / "src" / "veridian_refless_plugin"
+    descriptor = json.loads((package / "descriptor.json").read_bytes())
+    descriptor["channels"] = [
+        {
+            "id": "a1",
+            "label": "Analog input 1",
+            "role": "analogue_input",
+            "quantities": ["voltage"],
+            "parameter_names": [],
+        }
+    ]
+    (package / "descriptor.json").write_bytes(_raw(descriptor))
+    create_ui_resources(project, "veridian_refless_plugin")
+    report = verify_ui(project, reference=None)
+    joined = " | ".join(report.reported_deviations)
+    assert (
+        "channel a1 (role analogue_input): resolves to no lanes surface" in joined
+    ), report.reported_deviations
+
+
+def test_scope_b1_v3_a_decoder_with_no_lane_host_reports_its_reason(
+    tmp_path: Path,
+) -> None:
+    """(#556 Track B §4 V3 layer 3) The decoder disclosure speaks the residual
+    vocabulary and names the structural reason: this class's plot is a
+    waveform, and lanes host in digital_lanes plots alone. The decoder
+    document and its annotation action ARE present — the lanes are built and
+    then hosted nowhere — so the row is the only surface that can tell the
+    author the decoder has no lane host."""
     project, package, derived = _decoded_daq(tmp_path)
     assert derived.residual_members == (
         ResidualMember(
             "custom decoder",
             "channels and decoders",
             "uart",
-            "derivation deferred (the channels and decoders vocabulary has no "
-            "derivation in this increment; D1)",
+            "no lane host (this class's plot is waveform; lanes host in "
+            "digital_lanes plots alone)",
         ),
     ), derived.residual_members
     _write_derived(package, derived)
     report = verify_ui(project)
-    assert "custom decoder uart" in " | ".join(report.reported_deviations), (
-        report.reported_deviations
-    )
+    assert (
+        "custom decoder uart: no lane host (this class's plot is waveform; "
+        "lanes host in digital_lanes plots alone)"
+        in report.reported_deviations
+    ), report.reported_deviations
 
 
 def test_scope_r10_a_decoder_that_renders_is_not_disclosed() -> None:
