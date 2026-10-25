@@ -1,0 +1,52 @@
+{
+  "catalog_version": "1.0.0",
+  "vendor": "com.meridian",
+  "actions": {
+    "com.meridian.m400.sweep/1.0.0": {
+      "description": "Run the M-400 frequency sweep.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "dwell_s": {
+            "type": "number",
+            "minimum": 0.001
+          }
+        },
+        "$id": "urn:meridian:action:sweep:1.0.0:input"
+      },
+      "output_schema": {
+        "type": "object"
+      },
+      "side_effect": "state_change"
+    },
+    "com.meridian.m400.profile_mode/1.0.0": {
+      "description": "Set the M-400 profile mode.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "profile": {
+            "type": "string",
+            "enum": [
+              "short",
+              "long"
+            ]
+          },
+          "aperture_s": {
+            "type": "number",
+            "minimum": 0.01,
+            "maximum": 10.0
+          }
+        },
+        "required": [
+          "profile",
+          "aperture_s"
+        ],
+        "$id": "urn:meridian:action:profile-mode:1.0.0:input"
+      },
+      "output_schema": {
+        "type": "object"
+      },
+      "side_effect": "state_change"
+    }
+  }
+}

@@ -3,7 +3,7 @@
   "descriptor_version": "1.0.0",
   "id": "dev.meridian.m400",
   "display_name": "Meridian M-400",
-  "description": "Acceptance fixture for the class-reference composition scenario (gateway #541): a mostly-DAQ device with one composed and one residual action. Fixture vocabulary only; not a verified real device or implemented adapter.",
+  "description": "Acceptance fixture for the class-reference composition scenario (gateway #541, extended by #556 Track B): a mostly-DAQ device with one composed action class, one residual action, and a composed-member declaration carrying a vendor configure slot and a sweep procedure slot. Fixture vocabulary only; not a verified real device or implemented adapter.",
   "identity": {
     "strategy": "adapter",
     "manufacturer": "Meridian Instruments",
@@ -112,7 +112,8 @@
     }
   ],
   "profiles": [
-    "otdp.daq/1.0.0"
+    "otdp.daq/1.0.0",
+    "com.meridian.m400/1.0.0"
   ],
   "contracts": [
     {
@@ -129,6 +130,16 @@
       "id": "urn:meridian:composed-burst:1.0.0",
       "path": "composed-burst.json",
       "sha256": "54a7907fdcba7e266a085fd69dd82e14f97eee7b9117b324a461507f617e1f6b"
+    },
+    {
+      "id": "urn:meridian:member-declaration:1.0.0",
+      "path": "member-declaration-m400.json",
+      "sha256": "ab394cd306bb771c57d8a686420f370c10f4d2a8e4ee662f0896940124758e1f"
+    },
+    {
+      "id": "urn:meridian:actions:1.0.0",
+      "path": "meridian-actions.json",
+      "sha256": "8dcb072db976fb96353f5c4d0a79183e21c4f8159ab52551bf5d5873e8838661"
     }
   ],
   "actions": {
@@ -214,6 +225,28 @@
         ]
       },
       "timeout_ms": 5000,
+      "side_effect": "state_change",
+      "cancellable": true,
+      "retry": "never"
+    },
+    "com.meridian.m400.sweep/1.0.0": {
+      "binding": {
+        "kind": "adapter",
+        "key": "sweep"
+      },
+      "input_constraints": {},
+      "timeout_ms": 60000,
+      "side_effect": "state_change",
+      "cancellable": true,
+      "retry": "never"
+    },
+    "com.meridian.m400.profile_mode/1.0.0": {
+      "binding": {
+        "kind": "adapter",
+        "key": "profile_mode"
+      },
+      "input_constraints": {},
+      "timeout_ms": 10000,
       "side_effect": "state_change",
       "cancellable": true,
       "retry": "never"

@@ -3093,9 +3093,20 @@ def _finish(
         for urn, row in plan.items():
             if urn.split("/")[0].rsplit(".", 1)[-1] == "decode_annotated":
                 row["rendered_by"] = "decoder annotation lanes"
+    # (#556 B4) Binding-to-action resolution consults the slot keys: a
+    # composed member's slot may name its binding anything the schema
+    # admits, where the class convention binding id == action slug does
+    # not hold (the M-400 fixture's vendor-configure slot naming the
+    # profile_mode action).
+    slot_urns = {
+        key: str(slot["action"])
+        for key, slot in merged["slots"].items()
+        if slot.get("action")
+    }
     layout_block = _build_layout(
         pages_out, plots, merged["layouts"], plan, vendor_binding_ids,
         templates={str(row["id"]): row for row in merged["pages"]},
+        slot_urns=slot_urns,
     )
     manifest = {
         "contract_version": version,
@@ -3435,6 +3446,7 @@ def _build_layout(
     *,
     templates: dict[str, dict[str, Any]] | None = None,
     plan_is_placeholder: bool = False,
+    slot_urns: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """The namespaced layout block: authored sections where the reference
     carries them, derived sections otherwise — the main derived section,
@@ -3469,7 +3481,7 @@ def _build_layout(
                 plot_done = True
             for row in page.get("bindings", []):
                 binding_id = str(row if isinstance(row, str) else row.get("id"))
-                urn = _urn_for_binding(plan, binding_id)
+                urn = _urn_for_binding(plan, binding_id, slot_urns)
                 level = plan.get(urn, {}).get("level") if urn else None
                 if level == "L2" and urn is not None:
                     children.extend(
@@ -3556,7 +3568,7 @@ def _build_layout(
         # device-features page) must arrive in time for the insert to give
         # it its numeric staging pair, or the action reds
         # classref_gate_uncovered with a button and no staged fields.
-        _insert_ladder_numerics(sections, plan)
+        _insert_ladder_numerics(sections, plan, slot_urns)
         if not sections:
             # Every declared page renders as a panel (the expect row's
             # meaning): a page whose surface is fully placed — or whose
@@ -3649,7 +3661,18 @@ def _complete_authored_buttons(
         )
 
 
-def _urn_for_binding(plan: dict[str, dict[str, Any]], binding_id: str) -> str | None:
+def _urn_for_binding(
+    plan: dict[str, dict[str, Any]],
+    binding_id: str,
+    slot_urns: Mapping[str, str] | None = None,
+) -> str | None:
+    """The action a binding id names. The class convention is binding id ==
+    action slug; a composed member's slot key (#556 B4) may name its slot
+    anything the schema admits, so the slot-keyed map wins when carried,
+    and the slug scan stays the founding fallback for binding ids no slot
+    holds (the authored sections' conventions)."""
+    if slot_urns is not None and binding_id in slot_urns:
+        return slot_urns[binding_id]
     for urn in plan:
         if urn.split("/")[0].rsplit(".", 1)[-1] == binding_id:
             return urn
@@ -3657,7 +3680,9 @@ def _urn_for_binding(plan: dict[str, dict[str, Any]], binding_id: str) -> str | 
 
 
 def _insert_ladder_numerics(
-    sections: list[dict[str, Any]], plan: dict[str, dict[str, Any]]
+    sections: list[dict[str, Any]],
+    plan: dict[str, dict[str, Any]],
+    slot_urns: Mapping[str, str] | None = None,
 ) -> None:
     """Authored button nodes for an L2 action gain the action's numeric
     field nodes immediately before the button (the staging pair order).
@@ -3679,7 +3704,7 @@ def _insert_ladder_numerics(
                 node.get("kind") == "button"
                 and isinstance(node.get("binding_id"), str)
             ):
-                urn = _urn_for_binding(plan, str(node["binding_id"]))
+                urn = _urn_for_binding(plan, str(node["binding_id"]), slot_urns)
                 row = plan.get(urn or "", {}) if urn else {}
                 for field_row in row.get("fields", []):
                     if field_row["mode"] != "numeric":

@@ -837,3 +837,85 @@ rewording buys nothing and risks the arms (the refute's own note).
    injects nothing, so no vocabulary's residual walk sees it) — the
    per-member REPORTED row this fold adds IS the guard, and M1's
    100%-coverage claim must not be read as covering it.
+
+### 2026-10-25 — B4: the seam wired into production, the two admission refusals, and the V6 classifier
+
+B4 landed in four motions. The corrections the code forced, recorded here
+because two are rules, not code:
+
+**The seam rides the production call (the B3 fold's fact 1, answered).**
+`presentation.validate_presentation` gains `pinned_documents` — the
+descriptor's digest-verified plugin contract documents, read by
+`pinned_contract_documents` with the classref walk's own integrity codes
+(plus one strict improvement: a pin that is not valid JSON refuses typed
+here, where the walk lets the bare decoder error escape — the walk's own
+gap is not changed in this slice). `_load_ui_candidate` reads the pins
+beside the descriptor and passes them, so `check-ui`, every preview built
+from it and the gate's own render carry the merged set. The arm drives
+the SHIPPED `check_ui` call from disk; the negative control (the same
+package, the member-declaration pin absent from the descriptor) still
+reports `capability_mismatch`, so the pinned row is load-bearing in
+production, not decorative.
+
+**Two admission refusals, both application-scoped.** An APPLIED
+procedure or configuration member composes a target with two admission
+requirements the canonical validator enforces: a vendor profile row
+naming the claim, and a catalogue side for `input_schema_id`. The walk
+refuses the missing half under existing codes — `classref_invalid_member_declaration`
+for a declaration with no profile row (a cross-array conditional the
+0.1.0 dialect schema cannot express; NOT caught: a row whose
+required/optional actions omit the claim — the validator's
+`capability_mismatch` finding at check-ui), and `classref_unknown_action`
+for a claim no served or pinned catalog describes (the D4 rule's member
+half — without the catalogue side the derived target carries
+`input_schema_id: None` and the validator refuses it twice over, so the
+derivation refuses at the claim instead of emitting a document the
+validator rejects). Both refusals are APPLICATION-scoped: a member that
+applies nowhere composes nothing and stays the applied-nowhere
+disclosure, so the B3 dead-member arms are untouched. Dataset members
+are exempt from both until B5 composes their targets; the exemption is
+stated where it is enforced.
+
+**V6's residual classifier is the derived state — a design correction.**
+§4 V6 says the row fires for "a configuration-shaped declared action";
+OTDP types no verbs, and no descriptor-side signal distinguishes a
+configuration verb from a run verb. The classifier is what the
+derivation can honestly read: unclaimed by any slot (plan page
+device-features) AND level L2 (staged). This also names class run-verbs
+that stage on device-features (`otdp.smu.arm`, `otdp.smu.fetch` in the
+render arms) — accepted because the row's STATEMENT is true of
+everything it names and the row is advisory REPORTED, never a failure;
+the alternative was silence on a real gap. The row disappears when a
+settings member claims the action (armed).
+
+**Binding resolution consults slot keys.** `_urn_for_binding` resolved
+by action slug alone — the class convention binding id == slug — so a
+member slot named anything else rendered no control while a sibling
+data-table satisfied the per-page L3 coverage check (the laundering
+shape risk #6 names, L3 flavor; the pooled `data-table` expect caught it
+because B4's arithmetic counts composed members). The slot-keyed map now
+wins; the slug scan stays the founding fallback.
+
+**Both writers write every settings asset.** `create_ui_resources` and
+the CLI's `derive-ui` each carried a single hardcoded
+`settings/configure.schema.json` write; with a second configuration
+surface the manifest named an asset no writer produced (a check-ui
+`unresolved_reference` and a host-load refusal). Both now write one
+asset per surface from `DerivedUI.settings_schemas` (slot-keyed, the
+map mirroring `preset_scaffolds`); `settings_schema` keeps the founding
+single-slot semantics for single-surface consumers.
+
+**V1's REPORTED surface, stated plainly (§4 V1's own instruction):** a
+declared procedure member always derives at least its control, so V1
+carries NO derives-nothing residual row and none was invented — its
+disclosure surface is the applied-nowhere family alone (the walk's rows)
+plus the action track's `custom|composed` rows.
+
+**The M-400 fixture extension** carries a vendor configure slot
+(`vendor-configure`, naming `com.meridian.m400.profile_mode/1.0.0`) and
+a sweep procedure slot (`sweep`, naming `com.meridian.m400.sweep/1.0.0`)
+on one descriptor, with the vendor catalog pin beside the member
+declaration — the production shape the refusals above describe. The
+acceptance arms that moved are marked in place; both new B4 arms drive
+the real derive, the real gate, the real host render and the production
+`check_ui` over the derived package.

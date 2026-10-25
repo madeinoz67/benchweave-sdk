@@ -1,0 +1,36 @@
+{
+  "contract_version": "0.1.0",
+  "profiles": [
+    {
+      "id": "com.meridian.m400/1.0.0",
+      "title": "Meridian M-400 composed profile",
+      "channel_roles": [
+        "analogue_input"
+      ],
+      "required_actions": [
+        "com.meridian.m400.profile_mode/1.0.0",
+        "com.meridian.m400.sweep/1.0.0"
+      ],
+      "optional_actions": []
+    }
+  ],
+  "members": [
+    {
+      "slot": "sweep",
+      "kind": "procedure",
+      "claims": [
+        "com.meridian.m400.sweep/1.0.0"
+      ],
+      "page": "capture"
+    },
+    {
+      "slot": "vendor-configure",
+      "kind": "configuration",
+      "claims": [
+        "com.meridian.m400.profile_mode/1.0.0"
+      ],
+      "schema_source": "input_schema",
+      "page": "configuration"
+    }
+  ]
+}

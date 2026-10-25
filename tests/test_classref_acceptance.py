@@ -67,12 +67,22 @@ CLASS_ACTIONS = (
     "otdp.daq.fetch/1.0.0",
     "otdp.daq.trigger/1.0.0",
 )
+#: (#556 B4) The vendor actions the composed-member declaration claims and
+#: the pinned vendor catalog describes — the catalog layer beside the class
+#: actions (their surfaces are the member arms' subject below).
+MEMBER_CLAIMED_ACTIONS = (
+    "com.meridian.m400.profile_mode/1.0.0",
+    "com.meridian.m400.sweep/1.0.0",
+)
 #: The derived documents ``derive-ui`` writes — the set no author hand-writes.
+#: (#556 B4) one settings asset per configuration surface: the class
+#: configure slot's and the vendor-configure member's.
 DERIVED_DOCUMENTS = (
     "presentation.json",
     "binding-catalogue.json",
     "ui/manifest.json",
     "ui/settings/configure.schema.json",
+    "ui/settings/vendor-configure.schema.json",
     "ui/class-reference.json",
 )
 
@@ -86,21 +96,26 @@ def _fixture_descriptor() -> dict[str, Any]:
 
 
 def _fill_package(package: Path) -> Path:
-    """The builder's authored artefacts: the descriptor and the composed
-    declaration (plus the pinned files the descriptor declares). Nothing
-    else is authored — the rest of the package is the scaffold's own."""
+    """The builder's authored artefacts: the descriptor, the composed class
+    declaration and the composed-member declaration with its vendor catalog
+    (plus the pinned files the descriptor declares). Nothing else is
+    authored — the rest of the package is the scaffold's own."""
     (package / "descriptor.json").write_bytes(
         (FIXTURES / "descriptor-m400.json").read_bytes()
     )
-    (package / "composed-burst.json").write_bytes(
-        (FIXTURES / "composed-burst.json").read_bytes()
-    )
+    for pinned in (
+        "composed-burst.json",
+        "member-declaration-m400.json",
+        "meridian-actions.json",
+    ):
+        (package / pinned).write_bytes((FIXTURES / pinned).read_bytes())
     return package / "descriptor.json"
 
 
 def _write_derived(package: Path, derived: Any) -> None:
     """Persist a derivation exactly as ``derive-ui`` does (the same byte
-    shape — this is what makes A4's byte comparison meaningful)."""
+    shape — this is what makes A4's byte comparison meaningful): one
+    settings asset per configuration surface, mirroring the writer."""
     ui = package / "ui"
     ui.mkdir(exist_ok=True)
     (ui / "manifest.json").write_bytes(_raw(derived.manifest))
@@ -108,7 +123,8 @@ def _write_derived(package: Path, derived: Any) -> None:
     (package / "binding-catalogue.json").write_bytes(_raw(derived.catalogue))
     settings = ui / "settings"
     settings.mkdir(exist_ok=True)
-    (settings / "configure.schema.json").write_bytes(_raw(derived.settings_schema))
+    for slot_key, schema in derived.settings_schemas.items():
+        (settings / f"{slot_key}.schema.json").write_bytes(_raw(schema))
     presets = ui / "presets"
     presets.mkdir(exist_ok=True)
     for slug, scaffold in derived.preset_scaffolds.items():
@@ -217,8 +233,12 @@ def test_a2_every_declared_action_resolves(tmp_path: Path) -> None:
         urn: row["resolution"] for urn, row in derived.control_plan.items()
     }
     assert set(resolutions.values()) == {"catalog", "composed", "custom"}
-    assert {urn for urn, value in resolutions.items() if value == "catalog"} == set(
-        CLASS_ACTIONS
+    # MOVED DELIBERATELY 2026-10-25 (#556 B4): the fixture's member-declared
+    # vendor actions resolve through their pinned vendor catalog rows — the
+    # catalog layer beside the class actions, the composed class and the
+    # residual member.
+    assert {urn for urn, value in resolutions.items() if value == "catalog"} == (
+        set(CLASS_ACTIONS) | set(MEMBER_CLAIMED_ACTIONS)
     )
     assert resolutions[BURST_URN] == "composed"
     assert resolutions[SELF_CAL_URN] == "custom"
@@ -234,10 +254,14 @@ def test_a2_class_surfaces_come_from_the_corpus(tmp_path: Path) -> None:
     rendered = render_pages(project, pages)
     capture = census(rendered["capture"])
     assert capture["plots"] == 1
-    assert capture["buttons"] == ["arm", "abort", "trigger"]
+    # MOVED DELIBERATELY 2026-10-25 (#556 B4): the sweep procedure member's
+    # button welds onto the authored capture page through the existing
+    # completion arm, and the vendor-configure member's data-table joins
+    # the class's on the configuration page.
+    assert capture["buttons"] == ["arm", "abort", "trigger", "sweep"]
     assert "action-arm-max_duration_ms" in capture["staged_control_ids"]
     configuration = census(rendered["configuration"])
-    assert configuration["data_tables"] == 1
+    assert configuration["data_tables"] == 2
     assert configuration["numerics"] >= 3
     # The measurement members the class covers: one trace per declared
     # channel and quantity, the strain gauge among them.
@@ -308,6 +332,131 @@ def test_a2_residual_action_is_generic_and_labelled_custom(tmp_path: Path) -> No
         report.reported_deviations
     )
     assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
+
+
+# ---------------------------------------------------------------------------
+# B4 (#556 Track B, design §5 slice B4): the fixture's composed-member
+# declaration — a vendor configure slot and a sweep procedure slot — exercises
+# the procedures and settings vocabularies end to end through the real derive,
+# the real gate, the real standalone host and the real check-ui. One
+# descriptor, both vocabularies; the members' RED evidence is the surfaces
+# file's pre-implementation runs (motions 2-3), quoted in those commits.
+# ---------------------------------------------------------------------------
+
+SWEEP_URN = "com.meridian.m400.sweep/1.0.0"
+PROFILE_MODE_URN = "com.meridian.m400.profile_mode/1.0.0"
+VENDOR_PROFILE_ID = "com.meridian.m400/1.0.0"
+
+
+def test_b4_the_sweep_procedure_member_surfaces_end_to_end(tmp_path: Path) -> None:
+    """V1 (#556 §4 V1 layer 2) on the acceptance fixture: the sweep member's
+    target composes with the vendor profile id, the plan row places its
+    control on the authored capture page, the real host renders its button
+    there, the ledger records the applied member, and the production
+    check-ui resolves the vendor target — the seam wired in B4 motion 1."""
+    project, derived = _derived(tmp_path)
+    target = next(
+        row
+        for row in derived.catalogue["targets"]
+        if row.get("action_id") == SWEEP_URN
+    )
+    assert target == {
+        "id": "sweep",
+        "kind": "procedure",
+        "action_id": SWEEP_URN,
+        "profile_ids": [VENDOR_PROFILE_ID],
+        "input_schema_id": "urn:meridian:action:sweep:1.0.0:input",
+    }
+    assert {"id": "sweep", "kind": "procedure", "target_id": "sweep"} in (
+        derived.manifest["bindings"]
+    )
+    row = derived.control_plan[SWEEP_URN]
+    assert (row["page"], row["level"], row["resolution"]) == (
+        "capture", "L1", "catalog"
+    )
+    assert derived.composed_members["procedures"] == (
+        {"slot": "sweep", "action": SWEEP_URN, "page": "capture"},
+    )
+    capture = census(render_pages(project, _page_ids(derived))["capture"])
+    assert "sweep" in capture["buttons"], capture["buttons"]
+    # The production check (the seam's payoff): the vendor procedure target
+    # resolves over the merged pinned documents — zero findings.
+    from benchweave_sdk.presentation import check_ui
+
+    package = project / "src" / PACKAGE
+    report = check_ui(
+        package / "presentation.json",
+        package / "descriptor.json",
+        package,
+        package / "binding-catalogue.json",
+        firmware=None,
+        features=frozenset(),
+        panels=frozenset(),
+    )
+    assert report.valid, [(f.code, f.path, f.message) for f in report.findings]
+
+
+def test_b4_the_vendor_settings_member_surfaces_end_to_end(tmp_path: Path) -> None:
+    """V6 (#556 §4 V6 layer 2) on the acceptance fixture: the vendor-configure
+    member drives the FULL existing idiom — the settings schema asset on disk
+    and in the manifest, the preset scaffold on disk, the A02 birth deviation
+    on the ledger, the data-table rendered by the real host on the
+    configuration page — and the production check-ui resolves the vendor
+    configuration target, schema asset and preset surface with zero
+    findings."""
+    project, derived = _derived(tmp_path)
+    package = project / "src" / PACKAGE
+    target = next(
+        row
+        for row in derived.catalogue["targets"]
+        if row.get("action_id") == PROFILE_MODE_URN
+    )
+    assert target == {
+        "id": "vendor-configure",
+        "kind": "configuration",
+        "action_id": PROFILE_MODE_URN,
+        "profile_ids": [VENDOR_PROFILE_ID],
+        "input_schema_id": "urn:meridian:action:profile-mode:1.0.0:input",
+        "schema_asset_id": "settings/vendor-configure.schema.json",
+        "preset_asset_ids": [],
+    }
+    asset = next(
+        row
+        for row in derived.manifest["assets"]
+        if row["id"] == "settings/vendor-configure.schema.json"
+    )
+    on_disk = package / "ui" / "settings" / "vendor-configure.schema.json"
+    assert on_disk.is_file()
+    import hashlib
+
+    assert asset["sha256"] == hashlib.sha256(on_disk.read_bytes()).hexdigest()
+    assert (package / "ui" / "presets" / "vendor-configure.json").is_file()
+    deviations = {
+        row["expectation_id"]: row["reason"]
+        for row in derived.declaration["deviations"]
+    }
+    assert deviations[PROFILE_MODE_URN] == (
+        "preset surface derived with no commissioned presets at birth; "
+        "author ui/presets/ and validate via check-preset"
+    )
+    configuration = census(render_pages(project, _page_ids(derived))["configuration"])
+    assert configuration["data_tables"] == 2
+    assert derived.composed_members["settings"] == (
+        {"slot": "vendor-configure", "action": PROFILE_MODE_URN,
+         "page": "configuration"},
+    )
+    from benchweave_sdk.presentation import check_ui
+
+    report = check_ui(
+        package / "presentation.json",
+        package / "descriptor.json",
+        package,
+        package / "binding-catalogue.json",
+        firmware=None,
+        features=frozenset(),
+        panels=frozenset(),
+    )
+    assert report.valid, [(f.code, f.path, f.message) for f in report.findings]
 
 
 # ---------------------------------------------------------------------------
@@ -452,11 +601,17 @@ def test_a3_a_clean_environment_install_carries_the_declaration(
     package = site / PACKAGE
     assert (package / "descriptor.json").is_file()
     assert (package / "composed-burst.json").is_file()
+    # MOVED DELIBERATELY 2026-10-25 (#556 B4): the descriptor now pins the
+    # member declaration and the vendor catalog beside the composed class,
+    # so the digest is matched by pin id, never by list position.
+    pin = next(
+        row
+        for row in json.loads((package / "descriptor.json").read_bytes())["contracts"]
+        if row["id"] == "urn:meridian:composed-burst:1.0.0"
+    )
     assert (
         hashlib.sha256((package / "composed-burst.json").read_bytes()).hexdigest()
-        == json.loads((package / "descriptor.json").read_bytes())["contracts"][-1][
-            "sha256"
-        ]
+        == pin["sha256"]
     )
 
 
@@ -491,9 +646,10 @@ def test_a4_nothing_is_hand_written(tmp_path: Path) -> None:
     assert (package / "ui" / "manifest.json").read_bytes() == _raw(derived.manifest)
     assert (package / "presentation.json").read_bytes() == _raw(derived.envelope)
     assert (package / "binding-catalogue.json").read_bytes() == _raw(derived.catalogue)
-    assert (package / "ui" / "settings" / "configure.schema.json").read_bytes() == _raw(
-        derived.settings_schema
-    )
+    for slot_key, schema in derived.settings_schemas.items():
+        assert (package / "ui" / "settings" / f"{slot_key}.schema.json").read_bytes() == _raw(
+            schema
+        )
     assert (package / "ui" / "class-reference.json").read_bytes() == _raw(
         derived.declaration
     )
@@ -523,10 +679,17 @@ def test_a4_nothing_is_hand_written(tmp_path: Path) -> None:
     # The authored set itself: the scaffold's own files plus exactly two
     # authored documents — the descriptor and the composed declaration.
     authored = {path.name for path in package.iterdir() if path.is_file()}
-    assert {"descriptor.json", "composed-burst.json"} <= authored
+    assert {
+        "descriptor.json",
+        "composed-burst.json",
+        "member-declaration-m400.json",
+        "meridian-actions.json",
+    } <= authored
     extra = authored - {
         "descriptor.json",
         "composed-burst.json",
+        "member-declaration-m400.json",
+        "meridian-actions.json",
         # the scaffold's own starter files (copier template output)
         "__init__.py",
         "adapter.py",
@@ -548,13 +711,14 @@ def test_a4_nothing_is_hand_written(tmp_path: Path) -> None:
 
 def test_the_composed_pin_names_the_fixture_bytes() -> None:
     descriptor = _fixture_descriptor()
-    pin = next(
-        row
-        for row in descriptor["contracts"]
-        if row["id"] == "urn:meridian:composed-burst:1.0.0"
-    )
-    digest = hashlib.sha256((FIXTURES / "composed-burst.json").read_bytes()).hexdigest()
-    assert pin["sha256"] == digest
+    pins = {row["id"]: row for row in descriptor["contracts"]}
+    for pin_id, name in (
+        ("urn:meridian:composed-burst:1.0.0", "composed-burst.json"),
+        ("urn:meridian:member-declaration:1.0.0", "member-declaration-m400.json"),
+        ("urn:meridian:actions:1.0.0", "meridian-actions.json"),
+    ):
+        digest = hashlib.sha256((FIXTURES / name).read_bytes()).hexdigest()
+        assert pins[pin_id]["sha256"] == digest, name
 
 
 # ---------------------------------------------------------------------------
