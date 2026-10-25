@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
@@ -85,6 +85,23 @@ def _refuse(prefix: str, detail: str) -> ValueError:
 
 
 @dataclass(frozen=True)
+class ResidualMember:
+    """(#556 Track B §3 rule 3) One row on the gate's REPORTED channel.
+
+    ``kind`` names the member's vocabulary surface (``observation variable``,
+    ``channel``, ``custom decoder``); ``member`` identifies the member
+    (a channel row carries its role beside the id); ``detail`` states what
+    the derivation did not produce, or — V2's composed-state row — what it
+    did produce instead. The gate renders ``"<kind> <member>: <detail>"``.
+    """
+
+    kind: str
+    vocabulary: str
+    member: str
+    detail: str
+
+
+@dataclass(frozen=True)
 class DerivedUI:
     """Everything one expander run emits; the gate's assertion input."""
 
@@ -114,15 +131,16 @@ class DerivedUI:
     #: (R5): shape-valid, contributed nothing — disclosed beside the
     #: unapplied classes, never silent.
     empty_action_pins: tuple[str, ...] = ()
-    #: Declared members whose vocabulary has no derivation in this run (R10,
-    #: 2026-10-23 fold), as ``(kind, vocabulary, member_id)`` rows: a
-    #: computed measurement (``derived_variables``) or a decoder pin that
-    #: produced no lane. Layer 3's promise is two-sided — never refuses AND
-    #: never silent — so these are disclosed through the gate's REPORTED
-    #: channel on every run, naming the member and the vocabulary whose
-    #: derivation is deferred (D1). Silence there is indistinguishable from
-    #: "we rendered it and it looked fine".
-    deferred_members: tuple[tuple[str, str, str], ...] = ()
+    #: Declared members carried on the gate's REPORTED channel every run
+    #: (R10, 2026-10-23 fold; #556 Track B §3 rule 3). Two kinds of row ride
+    #: this inventory: a member that derives NO surface of its vocabulary (a
+    #: decoder no derived plot hosts, a channel whose role matches no resolved
+    #: lanes slot), and V2's composed-state disclosure — a computed variable
+    #: DOES derive, into dataset variables, and never a tile, so its row
+    #: states what it derives instead of naming a deferral. Layer 3's promise
+    #: is two-sided — never refuses AND never silent — and silence here is
+    #: indistinguishable from "we rendered it and it looked fine".
+    residual_members: tuple[ResidualMember, ...] = ()
 
 
 @cache
@@ -1601,42 +1619,98 @@ def _assemble(
     )
 
 
-def deferred_members(
-    descriptor: dict[str, Any], derived_decoder_ids: Iterable[str]
-) -> tuple[tuple[str, str, str], ...]:
-    """(#541 slice 3 fold R10) Declared members whose vocabulary has no
-    derivation in this run, as ``(kind, vocabulary, member_id)`` rows.
+def residual_members(
+    descriptor: dict[str, Any],
+    derived_decoder_ids: Iterable[str],
+    *,
+    dataset_axes: Mapping[str, str] | None = None,
+) -> tuple[ResidualMember, ...]:
+    """(#541 slice 3 fold R10; #556 Track B §3 rule 3) declared members whose
+    surface the derivation owes an account of, as REPORTED rows.
 
-    Layer 3's promise is two-sided — never refuses AND never silent. A
-    computed measurement (``derived_variables``, the measurement vocabulary
-    measurement-model.md §8 owns) and a decoder no derived plot renders
-    both declare cleanly and derive nothing; silence there is
-    indistinguishable from "we rendered it and it looked fine". Each row
-    names the member and the vocabulary whose derivation is deferred (D1),
-    so the gate can disclose it on the same REPORTED channel that carries
-    custom members.
+    Layer 3's promise is two-sided — never refuses AND never silent. Silence
+    is indistinguishable from "we rendered it and it looked fine", so every
+    declared member lands either a derived surface or a row here.
 
-    The decoder condition is "declared and nothing rendered it" — never
-    "the decoder member exists". ``derived_decoder_ids`` is the set whose
-    lanes a derived PLOT carries, so a decoder that renders is never
-    reported as missing: the lane machinery can build lanes that no plot
-    hosts (a waveform or time-series plot has no ``decoder_lanes`` key —
-    they land in a digital-lanes plot alone), and building is not
-    rendering.
+    Computed variables (``derived_variables``, the measurement vocabulary
+    measurement-model.md §8 owns — V2): since #556 B1 the derivation composes
+    them into every dataset target's variable set (``_dataset_shape``), so
+    their row is a COMPOSED-STATE disclosure, never a deferral: it states the
+    surface that exists and the one that must not (a tile names a
+    ``parameter_id``; a computed variable has no parameter to read). When no
+    dataset target derives — the reference-less arm, or a class with no
+    dataset slot — the row states that terminal state instead of claiming a
+    dataset variable no wire carries. A computed id that collides with a
+    dataset's axis variable cannot be composed into that dataset (the emitted
+    variable set would carry a duplicate id); the row names the collision.
+
+    Decoders (V3): ``derived_decoder_ids`` is the set whose lanes a derived
+    PLOT carries, never the set that was BUILT — the lane machinery can build
+    lanes that no plot hosts (a waveform or time-series plot has no
+    ``decoder_lanes`` key; they land in a digital-lanes plot alone), and
+    building is not rendering.
     """
-    rows: list[tuple[str, str, str]] = []
+    rows: list[ResidualMember] = []
+    axes = dict(dataset_axes or {})
     for row in descriptor.get("derived_variables") or []:
         member = str(row.get("id", "")) if isinstance(row, dict) else ""
-        if member:
-            rows.append(
-                ("custom measurement", "datasets and capture shapes", member)
+        if not member:
+            continue
+        rows.append(
+            ResidualMember(
+                "observation variable",
+                "observation variables",
+                member,
+                _computed_variable_detail(member, axes),
             )
+        )
     derived_ids = {str(value) for value in derived_decoder_ids}
     for pin in descriptor.get("decoders") or []:
         member = str(pin.get("id", "")) if isinstance(pin, dict) else ""
         if member and member not in derived_ids:
-            rows.append(("custom decoder", "channels and decoders", member))
+            rows.append(
+                ResidualMember(
+                    "custom decoder",
+                    "channels and decoders",
+                    member,
+                    "derivation deferred (the channels and decoders "
+                    "vocabulary has no derivation in this increment; D1)",
+                )
+            )
     return tuple(rows)
+
+
+def _computed_variable_detail(member: str, dataset_axes: Mapping[str, str]) -> str:
+    """V2's row detail (#556 Track B §4 V2), naming what the computed
+    variable actually derives into.
+
+    ``dataset_axes`` maps each derived dataset target's id to its axis
+    variable's id. A target whose axis is the computed id cannot carry the
+    variable — the dataset shape would then hold two rows with one id.
+    """
+    if not dataset_axes:
+        return (
+            "computes no dataset variable (no dataset target derives on this "
+            "class); no tile (no parameter to read)"
+        )
+    missed = sorted(
+        target for target, axis in dataset_axes.items() if axis == member
+    )
+    if not missed:
+        return (
+            "computed variable derives into dataset variables "
+            "(no tile; no parameter to read)"
+        )
+    if len(missed) == len(dataset_axes):
+        return (
+            "id collides with the dataset axis variable on "
+            f"{', '.join(missed)}; no tile (no parameter to read)"
+        )
+    return (
+        f"id collides with the dataset axis variable on {', '.join(missed)}; "
+        f"derives into {len(dataset_axes) - len(missed)} of {len(dataset_axes)} "
+        "dataset targets (no tile; no parameter to read)"
+    )
 
 
 def _finish(
@@ -1757,13 +1831,51 @@ def _finish(
         "shape": "scalar", "axis_role": "receipt_time",
     }
 
+    # (#556 Track B §4 V2) A computed measurement — the descriptor's own
+    # ``derived_variables`` declaration — is an ordinary value variable of
+    # EVERY dataset target: the host computes the value into the dataset, so
+    # the wire carries it and the derived shape asserting it is honest. The
+    # shape follows the dataset's own wire shape: a time_series dataset's
+    # value variables are scalars (one sample per receipt time), while a
+    # waveform or digital-lanes dataset carries a vector per sample, so the
+    # computed variable is a vector there. A scalar row on a waveform dataset
+    # would describe a wire shape the dataset does not carry — and the
+    # canonical validator refuses a scalar y series on a waveform plot
+    # (contracts.py `_plot_findings`: y's shape must match the kind's).
+    # The variable rides the numeric series rule where the kind admits it
+    # (time_series and waveform y sets; a digital-lanes plot's y channels are
+    # the wire's string logic alphabet, so it stays in the dataset alone).
+    computed_rows = [
+        {
+            "id": str(row["id"]),
+            "type": "number",
+            "unit": str(row["unit"]),
+        }
+        for row in descriptor.get("derived_variables") or []
+        if isinstance(row, dict) and row.get("id")
+    ]
+
     def _dataset_shape(slot_key: str) -> list[dict[str, Any]]:
         kind = plot_kind_for_slot.get(slot_key, "digital_lanes")
+        wire_shape = "scalar" if kind == "time_series" else "vector"
         if kind == "time_series":
-            return [receipt_var, *quantity_vars]
-        if kind == "waveform":
-            return [x_var, *trace_vars]
-        return [x_var, *lane_vars]
+            base, axis = [receipt_var, *quantity_vars], receipt_var["id"]
+        elif kind == "waveform":
+            base, axis = [x_var, *trace_vars], x_var["id"]
+        else:
+            base, axis = [x_var, *lane_vars], x_var["id"]
+        # A computed id equal to the axis id would put two rows with one id
+        # into the variable set; the residual channel names that collision
+        # (_computed_variable_detail) rather than emitting a document the
+        # canonical validator refuses.
+        return [
+            *base,
+            *[
+                {**row, "shape": wire_shape}
+                for row in computed_rows
+                if row["id"] != axis
+            ],
+        ]
 
     if capture_key:
         targets.append(
@@ -2194,6 +2306,32 @@ def _finish(
         references, divergences, plan, ignored_pins
     )
     cannot = list(merged["cannot_derive"])
+    # The residual inventory (#556 Track B §3 rule 3) needs one fact about
+    # THIS run's derived documents: which dataset targets exist and which
+    # axis variable each carries (a computed id equal to an axis id cannot
+    # compose into that dataset).
+    residual = residual_members(
+        descriptor,
+        # The rendered set, not the built set (R10's condition): lanes a
+        # derived PLOT carries. Building a lane is not rendering it.
+        {
+            str(lane.get("decoder", ""))
+            for plot in plots
+            for lane in (plot.get("decoder_lanes") or [])
+        },
+        dataset_axes={
+            str(target["id"]): next(
+                (
+                    str(row["id"])
+                    for row in target["variables"]
+                    if row.get("axis_role") in ("x", "receipt_time")
+                ),
+                "",
+            )
+            for target in targets
+            if target["kind"] == "dataset"
+        },
+    )
     result = DerivedUI(
         manifest=manifest,
         envelope=envelope,
@@ -2209,16 +2347,7 @@ def _finish(
         ignored_pins=ignored_pins,
         unapplied_classes=unapplied_classes,
         empty_action_pins=empty_action_pins,
-        deferred_members=deferred_members(
-            descriptor,
-            # The rendered set, not the built set (R10's condition): lanes a
-            # derived PLOT carries. Building a lane is not rendering it.
-            {
-                str(lane.get("decoder", ""))
-                for plot in plots
-                for lane in (plot.get("decoder_lanes") or [])
-            },
-        ),
+        residual_members=residual,
     )
     return result
 

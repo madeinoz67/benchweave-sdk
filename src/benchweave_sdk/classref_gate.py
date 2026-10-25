@@ -703,7 +703,7 @@ def verify_ui(
         from .classref import (
             coverage_plan_without_reference,
             declared_energy_removing,
-            deferred_members,
+            residual_members,
             validate_declaration_vocabulary,
         )
         from .classref_gate_render import render_pages
@@ -810,15 +810,14 @@ def verify_ui(
             "actions map is empty)"
             for path in empty_pins
         )
-        # R10 (2026-10-23 fold): declared members whose vocabulary has no
-        # derivation are disclosed on this arm too — the reference-less path
-        # derives no decoder lanes at all, so every declared decoder and
-        # every computed measurement is deferred here (the B6/B7/R3
-        # discipline: both arms carry every disclosure).
+        # R10/#556 B1: declared members are disclosed on this arm too. The
+        # reference-less path derives no decoder lanes and no dataset target,
+        # so every declared decoder is a residual member here and every
+        # computed variable reports its no-dataset terminal state (the
+        # B6/B7/R3 discipline: both arms carry every disclosure).
         reported.extend(
-            f"{kind} {member}: derivation deferred (the {vocabulary} "
-            "vocabulary has no derivation in this increment; D1)"
-            for kind, vocabulary, member in deferred_members(descriptor, ())
+            f"{row.kind} {row.member}: {row.detail}"
+            for row in residual_members(descriptor, ())
         )
         return GateReport(findings=tuple(coverage), reported_deviations=tuple(reported))
     # The AUTHOR's ledger is the deviation record (A6's mechanism): when
@@ -975,14 +974,14 @@ def verify_ui(
         "actions map is empty)"
         for path in derived.empty_action_pins
     )
-    # R10 (2026-10-23 fold): a declared member whose vocabulary has no
-    # derivation is disclosed every run — never silent. Layer 3's promise is
-    # two-sided; silence here is indistinguishable from "we rendered it and
-    # it looked fine".
+    # R10 (2026-10-23 fold; #556 Track B §3 rule 3): every declared member
+    # lands a derived surface or a row here — never silent. Layer 3's promise
+    # is two-sided; silence is indistinguishable from "we rendered it and it
+    # looked fine". V2's row is a composed-state disclosure (the computed
+    # variable derives into dataset variables and never a tile).
     reported.extend(
-        f"{kind} {member}: derivation deferred (the {vocabulary} "
-        "vocabulary has no derivation in this increment; D1)"
-        for kind, vocabulary, member in derived.deferred_members
+        f"{row.kind} {row.member}: {row.detail}"
+        for row in derived.residual_members
     )
     findings.extend(coverage)
     forbidden = [
