@@ -522,6 +522,18 @@ For this reason, a rehearsal proves the command flow, not the timing budget. A c
 
 But a script can prove only what its rows record. A script that does not match the real device proves nothing about the device. Use `--transport serial` and the hardware for interleaving, for non-serial transports, for timing, and for any claim about the device.
 
+## Replay transport (recorded evidence)
+
+`benchweave-sdk-server serve <project> --transport replay --replay <journal.json>` serves a recorded journal. The journal is a JSON document of the exchanges that one hardware session recorded. The mock script comes from the plugin's own builders. The journal comes from the device session. This difference is the point. A builder that drifts from the recording fails the replay at the first divergent row. A builder-generated script cannot catch that drift, because it is the drift.
+
+**What the journal carries.** The journal names its provider contract: the feature, the identity, and the sha256 of the pinned contract bytes. The journal loads only when this triple agrees with the contract that the served plugin pins. The `recorded` block states when the capture started, its source, and whether one owner held the device. The rows carry the transactions in recorded order. Provider transactions are matched on the full transaction. Stream sends are matched on bytes. A send of 4096 bytes or more is recorded as a digest row: `data_sha256` plus `byte_length`. The journal file is refused above 1 MiB. Record bulk sends as digest rows.
+
+**Honesty rules.** A replay never reports more than its recording. The page banner says `REPLAYED RECORDED EXCHANGES · NOT A LIVE DEVICE`. Readings and captures take their timestamps at replay time. The start time of the recording is evidence, not an observation. A capture over the replay transport records the journal digest in its sidecar. A row that recorded a timeout replays that timeout. The recording's no-response stays a no-response.
+
+**Exhaustion.** The replay restores a repeating unit when the recording proves one: at least two full units, and one command row in the unit. A recording with no derivable unit plays once. A receive past the end then answers the quiet line, or holds a partial frame until the deadline. A transmit past the end fails and names the recording. The host never invents a row.
+
+Use the replay to prove that the plugin still speaks the recorded conversation. Do not use it for timing, and do not use it for any claim about the device. A replay proves what the recording shows.
+
 ## Capture without a gateway (standalone writer)
 
 Plugin and bench development happens on machines that never run the gateway. `benchweave_sdk.capture.StandaloneCaptureWriter` implements the three capture methods that an adapter calls in gateway mode: `artifact_append`, `artifact_finalise` and `artifact_abort`. The writer works over one directory per capture on a local filesystem. It is three of the eight `CaptureServices` members. Device I/O still comes from a transport that a composing runtime supplies.

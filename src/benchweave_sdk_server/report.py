@@ -159,6 +159,13 @@ def build_report(
     simulated = any(
         entry.source.metadata.get("transport") == "mock" for entry in entries
     )
+    # SW-72's data-derived mark, one transport further (issue #564): a
+    # source capture that records REPLAY transport marks the report as
+    # replayed — never silently as live hardware and never as the mock's
+    # simulation, which it also is not.
+    replayed = any(
+        entry.source.metadata.get("transport") == "replay" for entry in entries
+    )
     marker_rows = dict(markers or {})
     title_ids = ", ".join(entry.source.capture_id for entry in entries)
     parts: list[str] = []
@@ -177,6 +184,8 @@ def build_report(
     mode = "STANDALONE — no gateway"
     if simulated:
         mode += " · SIMULATED (a source capture records mock transport)"
+    if replayed:
+        mode += " · REPLAYED (a source capture records replay transport)"
     parts.append(f'<p class="bw-report-mode">{_text(mode)}</p>')
     parts.append(
         f"<p>Statistics definition <code>{ANALYSIS_DEFINITION}</code>; edge "

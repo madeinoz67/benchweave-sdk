@@ -700,7 +700,11 @@ def _add_html_routes(
     """Server-rendered pages plus the HTMX poll partials (SW-20/SW-27)."""
 
     simulated = seam.transport_kind == "mock"
-    mode_banner = Markup(mode_banner_html(simulated=simulated))
+    # The replay transport is neither simulated nor live: its banner carries
+    # the replay disclosure row instead of the mock's (issue #564, C2) — a
+    # page served over a recorded journal must never read as live hardware.
+    replaying = seam.transport_kind == "replay"
+    mode_banner = Markup(mode_banner_html(simulated=simulated, replay=replaying))
 
     def _operator_valid(request: Request) -> bool:
         """Whether the request presented the per-launch operator action

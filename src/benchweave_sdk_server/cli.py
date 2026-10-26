@@ -149,6 +149,7 @@ def _build_seam(
     bindings: Path | None = None,
     serial_hooks: Any = None,
     retention: Any | None = None,
+    replay: Path | None = None,
 ) -> tuple[StandaloneSeam, ScenarioSelection | None]:
     """Compose the seam over one transport (§4.1's composition step).
 
@@ -171,7 +172,10 @@ def _build_seam(
     without it the endpoint is binding-backed and the host serves
     binding-pending until the operator picks. ``serial_hooks`` is the
     test-injection axis for discovery + resolution enumeration (the
-    ``open_port`` sibling).
+    ``open_port`` sibling). The replay branch (#564) parses and validates
+    the journal HERE — a refused journal is a typed ``replay_journal_*:``
+    exit 2 before any port binds, and the frozen parse serves every
+    connection after it.
     """
     from .scenarios import (
         ScenarioSelection,
@@ -202,6 +206,45 @@ def _build_seam(
             ),
             selection,
         )
+    # Flag-agreement guards run BEFORE any transport branch builds (the
+    # refute fold's F2: the serial branch returned ahead of these checks, so
+    # ``--transport serial --replay`` silently ignored the journal and served
+    # LIVE hardware, and the replay branch returned ahead of the --bindings
+    # and --device checks, silently ignoring both). A flag disagreement
+    # refuses — it never resolves toward the live device, and no flag is
+    # silently dropped on any transport.
+    if replay is not None and transport != "replay":
+        # One flag one meaning (the --device precedent's family): the
+        # journal names the replay transport's recording.
+        click.echo(
+            "standalone_transport_replay_flag: --replay applies only to "
+            "--transport replay",
+            err=True,
+        )
+        raise SystemExit(2)
+    if transport == "replay" and replay is None:
+        click.echo(
+            "standalone_transport_replay_journal: --transport replay needs "
+            "--replay <journal.json> (the recorded capture it serves)",
+            err=True,
+        )
+        raise SystemExit(2)
+    if device is not None and transport != "serial":
+        click.echo(
+            "standalone_transport_device_serial_only: --device applies only to "
+            "--transport serial",
+            err=True,
+        )
+        raise SystemExit(2)
+    if bindings is not None and transport != "serial":
+        # drift-2 (review fold): --bindings names the serial binding
+        # document; on any other transport it is not silently ignored.
+        click.echo(
+            "standalone_transport_bindings_serial_only: --bindings applies only "
+            "to --transport serial",
+            err=True,
+        )
+        raise SystemExit(2)
     if transport == "serial":
         from .binding import BindingStore, binding_endpoint, bindings_path
 
@@ -261,23 +304,30 @@ def _build_seam(
             ),
             None,
         )
-    if device is not None:
-        click.echo(
-            "standalone_transport_device_serial_only: --device applies only to "
-            "--transport serial",
-            err=True,
+    if transport == "replay":
+        from .replay import replay_plugin_session
+
+        # The hoisted agreement guards proved the journal is present; the
+        # assert is the type-level narrowing for that proof.
+        assert replay is not None
+        try:
+            # Fail fast: the journal, its provider triple against the
+            # plugin's pin, and every row validate BEFORE the seam exists —
+            # a refused recording never serves (issue #564's load-time rule).
+            session = replay_plugin_session(plugin, replay, capture_root=capture_root)
+        except ValueError as exc:
+            click.echo(str(exc), err=True)
+            raise SystemExit(2) from exc
+        return (
+            StandaloneSeam(
+                session,
+                transport_kind="replay",
+                unattended=unattended,
+                capture_root=capture_root,
+                retention=retention,
+            ),
+            None,
         )
-        raise SystemExit(2)
-    if bindings is not None:
-        # drift-2 (review fold): --bindings names the serial binding
-        # document; on any other transport it is not silently ignored —
-        # the --device precedent's family, one flag one meaning.
-        click.echo(
-            "standalone_transport_bindings_serial_only: --bindings applies only "
-            "to --transport serial",
-            err=True,
-        )
-        raise SystemExit(2)
     return (
         StandaloneSeam(
             mock_plugin_session(plugin, capture_root=capture_root),
@@ -311,9 +361,22 @@ def cli() -> None:
 @click.option("--no-open", is_flag=True)
 @click.option(
     "--transport",
-    type=click.Choice(["mock", "serial"]),
+    type=click.Choice(["mock", "serial", "replay"]),
     default="mock",
     show_default=True,
+)
+@click.option(
+    "--replay",
+    "replay",
+    type=click.Path(path_type=Path, exists=True),
+    default=None,
+    help=(
+        "The recorded journal to serve (replay transport only): the capture "
+        "a hardware session recorded, validated against the plugin's pinned "
+        "provider contract at startup. The host replays the recorded wire "
+        "bytes exactly; a plugin whose builders diverged fails at the first "
+        "mismatched row. Refused on other transports."
+    ),
 )
 @click.option(
     "--device",
@@ -397,6 +460,7 @@ def serve(
     allow_network: bool,
     no_open: bool,
     transport: str,
+    replay: Path | None,
     device: str | None,
     bindings: Path | None,
     capture_root: Path | None,
@@ -467,6 +531,7 @@ def serve(
         bindings=bindings,
         capture_root=capture_root,
         retention=retention,
+        replay=replay,
     )
     if seam.session.plugin.load_diagnostic is not None:
         # §4.5: the degraded load BINDS (exit 0) with its diagnostic on

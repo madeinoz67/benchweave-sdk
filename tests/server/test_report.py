@@ -285,6 +285,22 @@ def test_mode_line_names_standalone_and_simulated(tmp_path: Path) -> None:
     assert "SIMULATED" in mixed
 
 
+def test_mode_line_marks_replayed_sources(tmp_path: Path) -> None:
+    # Issue #564's F5: the REPLAYED mark gets the SIMULATED precedent's own
+    # treatment — a replay-transport source marks the report, a mixed export
+    # stays marked, and the mark never reads as simulation.
+    write_capture(
+        tmp_path, "fx-replayed", values=(1.0,), metadata={"transport": "replay"}
+    )
+    replayed = _render(tmp_path, ["fx-replayed"])
+    assert "REPLAYED (a source capture records replay transport)" in replayed
+    assert "SIMULATED" not in replayed
+    write_capture(tmp_path, "fx-live", values=(1.0,))
+    mixed = _render(tmp_path, ["fx-live", "fx-replayed"])
+    assert "REPLAYED" in mixed
+    assert "SIMULATED" not in mixed
+
+
 def test_sources_section_prints_plugin_identity_and_pin(
     single_set: Path,
 ) -> None:
