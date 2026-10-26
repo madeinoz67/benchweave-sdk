@@ -1175,8 +1175,8 @@ def test_matrix_test_surfaces_match_the_registry() -> None:
     """F2: the matrix's Test-surfaces prose set is regenerable from the
     mechanism (G4): each T-row is either DECLARED in the registry or
     classified by the prose itself (T3 = a procedure docstring, T4 = inert
-    by design) — and the arm fails if the prose and the registry drift
-    apart in either direction."""
+    by design, T5 = derived by construction) — and the arm fails if the prose
+    and the registry drift apart in either direction."""
     drift = _load()
     matrix = (ROOT / "docs" / "internal" / "release-review-matrix.md").read_text(
         encoding="utf-8"
@@ -1185,7 +1185,7 @@ def test_matrix_test_surfaces_match_the_registry() -> None:
     section = section[: section.find("\n## ", 1)]
     rows = re.findall(r"^\| (T\d+) \| ([^|]+) \|", section, re.M)
     by_id = {row_id: surface.strip() for row_id, surface in rows}
-    assert set(by_id) == {"T1", "T2", "T3", "T4"}, by_id
+    assert set(by_id) == {"T1", "T2", "T3", "T4", "T5"}, by_id
     regen_paths = {
         surface.path for surface in drift.DECLARED_SURFACES if surface.kind == "regen"
     }
@@ -1198,6 +1198,20 @@ def test_matrix_test_surfaces_match_the_registry() -> None:
     # T4 is inert BY DESIGN — the prose says so, and the registry agrees
     assert "test_scaffold_update" in by_id["T4"]
     assert "test_scaffold_update" not in {s.path for s in drift.DECLARED_SURFACES}
+    # T5 is DERIVED BY CONSTRUCTION (issue #473): the lock-anchor test reads the
+    # release version from pyproject, so a current-version literal in it is the
+    # defect the row names — the gate fails if one reappears
+    assert "test_standards_verify" in by_id["T5"]
+    assert "test_standards_verify" not in {s.path for s in drift.DECLARED_SURFACES}
+    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    declared = re.search(r'^version = "([^"]+)"', pyproject, re.MULTILINE)
+    assert declared is not None, "pyproject carries no version line"
+    version = declared.group(1)
+    anchor_test = (ROOT / "tests" / "test_standards_verify.py").read_text(encoding="utf-8")
+    assert f'"{version}"' not in anchor_test, (
+        f"tests/test_standards_verify.py names the current release version {version}: "
+        "derive it from pyproject instead (matrix row T5, issue #473)"
+    )
 
 
 # --- the Makefile wrapper ----------------------------------------------------------------
