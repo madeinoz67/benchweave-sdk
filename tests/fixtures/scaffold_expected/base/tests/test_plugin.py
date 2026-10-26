@@ -85,9 +85,16 @@ def test_uncertain_response_after_dispatch():
 def test_wire_counter_refuses_a_gap():
     """The wire helpers (issue #566): one counter sequences reads and
     writes; a gap is a refusal naming the expected and observed counter
-    and the exchange index."""
-    from example_plugin.wire import CommandCounter, CounterGapError
+    and the exchange index. The evidence kind comes from the module's
+    closed set — a misspelled constant fails at import, never as a wrong
+    string at runtime."""
+    from example_plugin.wire import (
+        CommandCounter, CounterGapError, EVIDENCE_COMMAND_COUNTER_GAP)
     tracker = CommandCounter(modulus=256)
+    recorded = []
+
+    async def record(entry):
+        recorded.append(entry)
 
     async def run():
         await tracker.advance(0x10)
@@ -96,11 +103,12 @@ def test_wire_counter_refuses_a_gap():
     asyncio.run(run())
 
     async def gap():
-        await tracker.advance(0x14)
+        await tracker.advance(0x14, record=record)
 
     with pytest.raises(CounterGapError,
                        match=r"exchange 2.*expected 0x12.*observed 0x14"):
         asyncio.run(gap())
+    assert recorded[0]["kind"] is EVIDENCE_COMMAND_COUNTER_GAP
 
 
 def test_wire_paced_poll_waits_the_declared_interval():

@@ -139,6 +139,33 @@ def test_counter_gap_records_evidence_before_the_refusal(tmp_path: Path) -> None
     ]
 
 
+def test_evidence_kinds_are_a_closed_set(tmp_path: Path) -> None:
+    """Row 15: the scaffold's evidence-kind names are exported constants,
+    not inlined strings. A misspelled name fails at import (a NameError in
+    referencing code, an AttributeError through getattr) rather than
+    becoming a wrong string only a reviewer can catch."""
+    wire = _rendered_wire(tmp_path)
+    assert wire.EVIDENCE_COMMAND_COUNTER_GAP == "command_counter_gap"
+    with pytest.raises(AttributeError):
+        getattr(wire, "EVIDENCE_COMMAND_COUNTER_GPA")  # misspelled
+
+
+def test_counter_gap_evidence_carries_the_constant(tmp_path: Path) -> None:
+    """The helper emits its kind through the constant — identity, not a
+    duplicated literal — so renaming the constant moves the wire value."""
+    wire = _rendered_wire(tmp_path)
+    tracker = wire.CommandCounter()
+    recorded: list[dict] = []
+
+    async def record(entry: dict) -> None:
+        recorded.append(entry)
+
+    asyncio.run(tracker.advance(0x40, record=record))
+    with pytest.raises(wire.CounterGapError):
+        asyncio.run(tracker.advance(0x42, record=record))
+    assert recorded[0]["kind"] is wire.EVIDENCE_COMMAND_COUNTER_GAP
+
+
 def test_counter_refuses_non_int_and_out_of_range_counters(tmp_path: Path) -> None:
     wire = _rendered_wire(tmp_path)
     tracker = wire.CommandCounter(modulus=256)

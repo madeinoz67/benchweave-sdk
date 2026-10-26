@@ -122,6 +122,10 @@ Four rules come from hardware evidence. They apply to every device plugin.
 The helpers live in src/<package>/wire.py and use standard-library imports
 only.
 
+Evidence kinds are closed names, not inline strings. Give every kind one
+module-level constant, as wire.py does for its own kinds. Reference the
+constant. A misspelled constant fails at import. A typed string does not.
+
 1. **One counter sequences the wire.** When the device echoes a command
 counter that advances by one on every command, feed every parsed counter
 to `CommandCounter.advance`. The first observation sets the baseline. A

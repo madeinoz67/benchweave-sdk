@@ -22,6 +22,14 @@ from typing import Any
 #: One evidence entry the adapter's ``record`` hook receives on a gap.
 RecordHook = Callable[[dict[str, Any]], Awaitable[None]]
 
+#: The evidence kinds the scaffold's helpers emit (issue #566 row 15).
+#: Reference these constants — never type a kind string inline. A
+#: misspelled constant is a NameError at import (an AttributeError through
+#: getattr), not a wrong string that only a reviewer can catch. Give
+#: device-specific kinds the same shape: one module-level constant per
+#: kind.
+EVIDENCE_COMMAND_COUNTER_GAP = "command_counter_gap"
+
 
 class CounterGapError(ValueError):
     """A command-counter gap: a lost or duplicated exchange.
@@ -109,7 +117,7 @@ class CommandCounter:
                 if record is not None:
                     await record(
                         {
-                            "kind": "command_counter_gap",
+                            "kind": EVIDENCE_COMMAND_COUNTER_GAP,
                             "exchange": index,
                             "expected": expected,
                             "observed": counter,
