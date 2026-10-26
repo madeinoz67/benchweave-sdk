@@ -12,10 +12,11 @@ Run installation, pytest and uv build from the directory containing pyproject.to
 The generated project contains README.md, this AI-GUIDE.md, CLAUDE.md (agent
 notes for the repository root), tests/test_plugin.py, and src/<package>/ with
 __init__.py, adapter.py, protocol.py, wire.py, descriptor.json, protocol.md,
-vectors.json and skills/ — the seeded agent skills (develop-plugin for the
-authoring workflow, drive-device as the synthetic demo driver to rewrite). The
-protocol and vectors files begin as synthetic evidence; wire.py carries the
-wire-discipline helpers (see "Wire discipline" below); the skills are
+vectors.json and skills/. The skills directory holds two seeded agent skills.
+develop-plugin supports the authoring workflow. drive-device is the synthetic
+demo driver to rewrite. The protocol and vectors files begin as synthetic
+evidence. wire.py carries the
+wire-discipline helpers (see "Wire discipline" below). The skills are
 distributable content inside the package.
 
 With --with-ui, the SDK also generates UI-GUIDE.md at the project root and
@@ -124,23 +125,24 @@ only.
 1. **One counter sequences the wire.** When the device echoes a command
 counter that advances by one on every command, feed every parsed counter
 to `CommandCounter.advance`. The first observation sets the baseline. A
-gap is a lost or a duplicated frame: the helper refuses, names the
-expected counter, the observed counter and the exchange index, and records
-the evidence before the refusal. Give the counter's byte modulus
-(`modulus=256`) when the counter is one byte, or the roll at 0xFF reads as
-a gap.
+gap is a lost or a duplicated frame. The helper records the evidence
+before the refusal, and the refusal names the expected counter, the
+observed counter and the exchange index. If the counter is one byte, give
+the counter's byte modulus (`modulus=256`). Without the modulus, the roll
+0xFF to 0x00 reads as a gap.
 2. **A declared poll interval is a budget the loop must honour.** A
 declared interval that no loop reads is a defect. Poll through
 `paced_poll`. The helper owns the wait between attempts, so a loop cannot
 skip the pace. A device that answers on its own timer reports not-ready
-until its cadence passes; a loop that polls faster exhausts its attempts
-before the device becomes ready, and the timeout is false.
+until its cadence passes. A loop that polls faster than the cadence
+exhausts its attempts before the device becomes ready. The timeout is
+then false.
 3. **Completion pins gate success.** An operation whose hardware
 completion signal is not asserted never reports ok. Call
 `require_completion` on the parsed signal verdict. Report the refusal as a
 device failure with the outcome your contract requires, never as ok.
 4. **Hardware evidence needs recorded bytes.** A `vectors.json` that
-claims `"evidence": "hardware"` must carry at least one exchange with
+claims `"evidence": "hardware"` must carry at least one row with
 hand-recorded bytes and a `recorded` object whose `when` names the capture
 moment. Builder-generated vectors cannot supply this: a script your own
 builder wrote proves only that the builder agrees with itself. The host

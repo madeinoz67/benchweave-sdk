@@ -504,7 +504,11 @@ If you declare `"transaction_dialect": "send_receive"`, the rows form a binary s
 
 A row can also carry a `name`. Diagnostics refer to a row by its `name` or by its index.
 
-**Evidence.** The file can carry an `evidence` key. The value is `"synthetic"` or `"hardware"`. An absent key means `"synthetic"`. Put `"evidence": "hardware"` on one row when its bytes are hand-recorded from the device. That row then carries a `recorded` object. The `recorded` object needs a `when` field. The `when` field names the capture moment. The host refuses a `"hardware"` claim at file level when no row carries recorded bytes. The host also refuses a row that claims `"hardware"` without the `recorded` object. The refusal gives the row. A file that claims less than it holds does not refuse: a `"synthetic"` file with one recorded row is accepted.
+**Evidence.** The file can carry an `evidence` key. The value is `"synthetic"` or `"hardware"`. An absent key means `"synthetic"`. When the bytes of one row are hand-recorded from the device, put `"evidence": "hardware"` on that row. That row then carries a `recorded` object. The `recorded` object needs a `when` field, and the `when` field names the capture moment.
+
+The host refuses a `"hardware"` claim at file level when no row carries recorded bytes. The host also refuses a row that claims `"hardware"` without the `recorded` object. The refusal gives the row.
+
+A file that claims less than it holds does not refuse: a `"synthetic"` file with one recorded row is accepted.
 
 The check proves that a hardware claim comes with recorded provenance. The check cannot prove that the provenance itself is true. Hand-recorded bytes exist to break a circle: a script your own builder writes proves only that the builder agrees with itself. At least one recorded exchange is the anti-circularity property. Builder-generated vectors cannot supply it. The scaffold seeds `"synthetic"` evidence and claims nothing.
 
@@ -522,7 +526,9 @@ The timings of the mock are not the timings of the device. The quiet line answer
 
 For this reason, a rehearsal proves the command flow, not the timing budget. A capture that fits its `timeout_ms` on the mock proves nothing about the hardware budget. Budget-fit evidence needs `--transport serial` and the device.
 
-**Poll cadence.** A device that answers on its own timer needs a paced poll. Declare the poll interval from the device cadence. A declared interval that no loop reads is a defect. The scaffold's `wire` module carries `paced_poll`. The helper owns the wait between attempts, so the loop cannot skip the pace. A loop that polls faster than the cadence exhausts its attempts before the device becomes ready. The timeout is then false, and only hardware shows it.
+**Poll cadence.** A device that answers on its own timer needs a paced poll. Declare the poll interval from the device cadence. A declared interval that no loop reads is a defect. The scaffold's `wire` module carries `paced_poll`. The helper owns the wait between attempts, so the loop cannot skip the pace.
+
+A loop that polls faster than the cadence exhausts its attempts before the device becomes ready. The timeout is then false, and only hardware shows it.
 
 **The bound, in simple words.** The discipline of the mock is exact. When a frame that the adapter SENDs differs from the frame of the scripted row, the rehearsal fails. The failure gives the row and both frames. The mock never guesses what the device meant.
 
