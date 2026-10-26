@@ -54,6 +54,24 @@ same items:
 A successful derivation is not admission, approval to apply settings, or
 permission to operate hardware.
 
+### Vendor features the class reference does not cover
+
+The class reference places the surfaces it covers. Decide the rest. A
+member the reference already places needs nothing. A device that is mostly
+a class with a few vendor features declares them: a pinned composed action
+class supplies the catalog side of an action no catalog describes, and a
+pinned composed member declaration supplies the slot and the page the
+reference does not place. Both documents live in the package, beside the
+descriptor, pinned under `contracts[]` in `descriptor.json`. A member that
+no class reference and no catalog covers stays a residual member: the
+derivation places it in the `Custom device actions` section and reports
+it. It does not refuse. The plugin SDK guide gives the document shapes:
+section "Author a composed action class" and
+section "Author a composed member declaration". The normative rule
+lives in the class reference family README in the main repository,
+`standards/plugin-ui-class-reference/`, section
+`Composed member declarations (normative, gateway issue #556)`.
+
 Optional project-root docs/compatibility.md and docs/qualification.md describe
 supported models/firmware and supervised hardware evidence. firmware/README.md
 and firmware/release-notes/ can hold vendor source/checksum references and upgrade
