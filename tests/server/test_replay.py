@@ -425,7 +425,10 @@ def test_metric_c3_capture_sidecar_carries_the_journal_evidence(
                 "format": "raw_binary",
                 "sample_count": 4,
                 "sample_interval_s": 0.001,
-                "started_at": _RECORDED["started_at"],
+                # The summary stamps REPLAY time, never the recording's
+                # start (the honesty rule — a recorded timestamp is
+                # evidence, not an observation; the refute fold's NIT).
+                "started_at": host.utc_now(),
                 "unit": "V",
             },
             None,
@@ -754,3 +757,322 @@ def test_serve_replay_with_bad_journal_exits_two(tmp_path: Path) -> None:
     )
     assert result.exit_code == 2
     assert "replay_journal_provider_mismatch:" in result.output
+
+
+# --------------------------------------------------------------------------
+# The refute fold (the wave over 580dab6, issue #564): five findings, RED-first
+# --------------------------------------------------------------------------
+
+
+def _dispatched_context(host: ReplayHost, operation_id: str = "op-fold") -> Any:
+    """A live, dispatched MockContext on the host's own clock."""
+    from benchweave_sdk.testing import MockContext
+
+    context = MockContext(
+        operation_id, deadline_monotonic=host.monotonic() + 5
+    )
+    context.dispatched = True
+    return context
+
+
+def test_f1_receive_path_never_restores_the_cycle(tmp_path: Path, plugin) -> None:
+    """F1 (blocker): the cycle restores on a COMMAND, never on a receive —
+    mock parity. After a full drain, one extra receive must leave the
+    exhaustion certificate issuable; today it silently restores the unit
+    and breaks assert_complete."""
+    path = _write(tmp_path, _journal(_read_rows(3)))
+    host = ReplayHost(load_replay_journal(path, plugin))
+    context = _dispatched_context(host)
+    asyncio.run(session_consume(host, plugin))
+    assert (host.pending, host.plays) == (0, 1)
+    receive = {"kind": "stream_receive", "max_bytes": 8,
+               "termination": "lf", "exact_bytes": None}
+    assert asyncio.run(host.transfer(receive, context)) == {"data": b""}
+    assert (host.pending, host.plays) == (0, 1)
+    host.assert_complete()
+
+
+def test_f1_truncated_recording_serves_no_reply_without_its_poll(
+    tmp_path: Path, plugin
+) -> None:
+    """F1's honesty arm: a recording cut before its status reply must answer
+    the status receive with the quiet line — the NEXT cycle's recorded reply
+    is a conversation the recording never showed. Two full units plus the
+    truncated third is the shape that derives the cycle (the rotate lands on
+    the status row), so this is the recording where the receive-path restore
+    fabricated the reply."""
+    rows = _establishment_rows() + _read_rows(2) + _read_rows(1, start=2)[:3]
+    path = _write(tmp_path, _journal(rows))
+    session = replay_plugin_session(plugin, path)
+    asyncio.run(session.connect())
+    for _ in range(2):  # the two complete recorded reads
+        _read_once(session)
+    host = session.services
+    assert isinstance(host, ReplayHost)
+    context = _dispatched_context(host)
+    # The truncated second read: resync, drain, poll — then the status
+    # receive the recording never recorded.
+    asyncio.run(
+        host.transfer({"kind": "stream_send", "data": bytes.fromhex(_RESYNC_HEX)}, context)
+    )
+    asyncio.run(
+        host.transfer({"kind": "stream_receive", "max_bytes": 8,
+                       "termination": "lf", "exact_bytes": None}, context)
+    )
+    asyncio.run(
+        host.transfer({"kind": "stream_send", "data": bytes.fromhex(_POLL_HEX)}, context)
+    )
+    status = asyncio.run(
+        host.transfer({"kind": "stream_receive", "max_bytes": 8,
+                       "termination": "lf", "exact_bytes": 4}, context)
+    )
+    assert status == {"data": b""}  # the quiet line, not the restored reply
+    assert host.plays == 1
+
+
+def test_f2_replay_flag_on_serial_refuses_never_serves_live(
+    tmp_path: Path,
+) -> None:
+    """F2 (blocker): ``--transport serial --replay <journal>`` silently
+    ignored the journal and served LIVE hardware. A flag disagreement must
+    refuse, never resolve toward the live device."""
+    journal = _write(tmp_path, _acceptance_journal())
+    with pytest.raises(SystemExit) as caught:
+        _build_seam(
+            FIXTURE_ROOT,
+            transport="serial",
+            replay=journal,
+            bindings=tmp_path / "bindings.json",  # the store never writes here
+        )
+    assert caught.value.code == 2
+
+
+def test_f2_bindings_and_device_refuse_on_replay(tmp_path: Path) -> None:
+    """F2's other two dead guards: ``--bindings`` and ``--device`` were
+    silently ignored on the replay transport (the replay branch returned
+    before both guards)."""
+    journal = _write(tmp_path, _acceptance_journal())
+    with pytest.raises(SystemExit) as bindings_refusal:
+        _build_seam(FIXTURE_ROOT, transport="replay", replay=journal,
+                    bindings=tmp_path / "b.json")
+    assert bindings_refusal.value.code == 2
+    with pytest.raises(SystemExit) as device_refusal:
+        _build_seam(FIXTURE_ROOT, transport="replay", replay=journal,
+                    device="/dev/nope")
+    assert device_refusal.value.code == 2
+
+
+#: The canonical FTDI contract instance, served from the providers directory
+#: — the fold builds a THROWAWAY plugin pinning it so the read_pins result
+#: schema is exercised at journal load, its real enforcement surface.
+_FTDI_CONTRACT = (
+    Path(__file__).resolve().parents[2]
+    / "src" / "benchweave_sdk" / "providers" / "ftdi-control-1.0.0.json"
+)
+
+_FTDI_DESCRIPTOR = {
+    "otdp_version": "0.2.4",
+    "descriptor_version": "1.0.0",
+    "id": "dev.local.ftdi-fold",
+    "display_name": "Fold fixture ftdi pin",
+    "description": "Synthetic fold-wave fixture pinning the canonical FTDI contract copy.",
+    "identity": {
+        "strategy": "adapter",
+        "manufacturer": "BenchWeave Labs",
+        "model": "ftdi-fold",
+        "firmware_policy": "listed",
+        "supported_firmware": ["1.0"],
+    },
+    "integration": {
+        "mode": "adapter",
+        "adapter": {
+            "entry_point": "ftdi_fold.adapter:create_plugin",
+            "api_version": "1.1",
+            "version": "0.1.0",
+            "dependencies": [],
+            "permissions": ["scoped_transport"],
+        },
+    },
+    "transport": {
+        "type": "custom",
+        "connection_key": "ftdi_fold",
+        "settings": {"protocol_reference": "The pinned canonical FTDI contract"},
+        "provider": {
+            "feature_id": "otdp.transport.ftdi-control/1.0.0",
+            "id": "urn:otdp:transport-provider:ftdi-control:1.0.0",
+            "path": "ftdi-control-1.0.0.json",
+            "sha256": "",  # stamped from the canonical bytes below
+        },
+    },
+    "capabilities": ["identify"],
+    "operations": {
+        "identify": {
+            "timeout_ms": 2000,
+            "side_effect": "none",
+            "retry": "never",
+            "cancellable": False,
+            "completion": "acknowledged",
+        }
+    },
+    "parameters": [],
+    "required_features": [
+        "otdp.core/0.1.0",
+        "otdp.adapter/0.1.0",
+        "otdp.transport.ftdi-control/1.0.0",
+    ],
+    "provenance": {
+        "sources": [
+            {
+                "title": "Canonical FTDI control contract",
+                "reference": "ftdi-control-1.0.0.json",
+                "revision": "1.0.0",
+            }
+        ],
+        "test_vectors": [
+            {
+                "id": "fold-journals",
+                "path": "ftdi-control-1.0.0.json",
+                "purpose": "The fold-wave journals are spelled in the suite",
+            }
+        ],
+    },
+}
+
+_FTDI_ADAPTER = '''\
+# author: Stephen Eaton
+"""Minimal fold fixture adapter: one read_pins transaction, no more."""
+
+
+def create_plugin():
+    return Plugin()
+
+
+class Plugin:
+    def __init__(self):
+        self.services = None
+        self.closed = False
+
+    async def open(self, descriptor, services, context):
+        self.services = services
+
+    async def execute(self, request, context):
+        await context.mark_dispatch_started()
+        reply = await self.services.transfer(
+            {"kind": "ftdi_control", "op": "read_pins"}, context
+        )
+        return {"operation_id": request["operation_id"], "verb": "identify",
+                "status": "ok", "data": {"pins": reply["data"].hex()}}
+
+    async def next_event(self, subscription_id, context):
+        return None
+
+    async def close(self, context):
+        if self.closed:
+            return
+        self.closed = True
+        if self.services is not None:
+            await self.services.close_transport(context)
+'''
+
+
+def _ftdi_project(tmp: Path) -> Path:
+    """A throwaway plugin project pinning the CANONICAL contract bytes."""
+    package = tmp / "src" / "ftdi_fold"
+    package.mkdir(parents=True)
+    contract = _FTDI_CONTRACT.read_bytes()
+    (package / "ftdi-control-1.0.0.json").write_bytes(contract)
+    (package / "adapter.py").write_text(_FTDI_ADAPTER)
+    (package / "__init__.py").write_text("")
+    import copy as _copy
+
+    descriptor = _copy.deepcopy(_FTDI_DESCRIPTOR)
+    import hashlib as _hashlib
+
+    descriptor["transport"]["provider"]["sha256"] = _hashlib.sha256(contract).hexdigest()
+    (package / "descriptor.json").write_text(json.dumps(descriptor, indent=2) + "\n")
+    return tmp
+
+
+def _ftdi_journal(pins_b64: str) -> dict[str, Any]:
+    contract = json.loads(_FTDI_CONTRACT.read_text())
+    import hashlib as _hashlib
+
+    return _journal(
+        [
+            {"name": "pin-1",
+             "transaction": {"kind": "ftdi_control", "op": "read_pins"},
+             "response": {"data": pins_b64}},
+        ],
+        provider_overrides={
+            "feature_id": contract["feature_id"],
+            "id": contract["id"],
+            "sha256": _hashlib.sha256(_FTDI_CONTRACT.read_bytes()).hexdigest(),
+        },
+    )
+
+
+def test_f3_read_pins_result_admits_exactly_one_byte(tmp_path: Path) -> None:
+    """F3: the contract SAID one byte but admitted unpadded four-character
+    base64 — three bytes ("QUJD" is b"ABC"). The result schema is the
+    enforcement surface at journal load: a three-byte read_pins must refuse
+    there, and a one-byte read_pins must load and serve."""
+    project = _ftdi_project(tmp_path)
+    plugin = load_plugin_project(project)
+    # RED today: this load succeeds and the three-byte pin serves.
+    with pytest.raises(ValueError, match="replay_journal_row_shape:"):
+        load_replay_journal(_write(tmp_path, _ftdi_journal("QUJD")), plugin)
+    # The admitted direction: exactly one byte ("Wg==" is b"Z").
+    host = ReplayHost(
+        load_replay_journal(_write(tmp_path, _ftdi_journal("Wg=="), "one.json"), plugin)
+    )
+    context = _dispatched_context(host)
+    reply = asyncio.run(
+        host.transfer({"kind": "ftdi_control", "op": "read_pins"}, context)
+    )
+    assert reply == {"data": b"Z"}
+    host.assert_complete()
+
+
+def test_f4_directory_replay_argument_refuses_typed(tmp_path: Path) -> None:
+    """F4: ``--replay <directory>`` crashed with an uncaught
+    IsADirectoryError (exit 1, empty message). The surface owes a typed
+    replay_journal_* refusal at exit 2."""
+    from benchweave_sdk_server.cli import cli
+
+    result = CliRunner().invoke(
+        cli,
+        ["serve", str(FIXTURE_ROOT), "--transport", "replay",
+         "--replay", str(tmp_path), "--no-open"],
+    )
+    assert result.exit_code == 2
+    assert "replay_journal_" in result.output
+
+
+def test_nit2_stream_kinds_match_their_recorded_kind(tmp_path: Path, plugin) -> None:
+    """NIT2, tightened rather than inherited: the byte-stream mock is
+    kind-blind by FrameRow design (its rows carry no kind), but a replay
+    row IS the recorded transaction — a stream_send must not consume a
+    recorded stream_exchange row however well the bytes match."""
+    journal = _journal([
+        {"name": "exchange-1",
+         "transaction": {"kind": "stream_exchange", "data": _RESYNC_HEX,
+                         "max_bytes": 8, "termination": "lf", "exact_bytes": 4},
+         "response": {"data": _STATUS_HEX}},
+    ])
+    host = ReplayHost(load_replay_journal(_write(tmp_path, journal), plugin))
+    context = _dispatched_context(host)
+    with pytest.raises(ConformanceError, match="row exchange-1"):
+        asyncio.run(
+            host.transfer({"kind": "stream_send",
+                           "data": bytes.fromhex(_RESYNC_HEX)}, context)
+        )
+    # The recorded kind still matches its own transaction shape.
+    reply = asyncio.run(
+        host.transfer(
+            {"kind": "stream_exchange", "data": bytes.fromhex(_RESYNC_HEX),
+             "max_bytes": 8, "termination": "lf", "exact_bytes": 4},
+            context,
+        )
+    )
+    assert reply == {"data": bytes.fromhex(_STATUS_HEX)}
+    host.assert_complete()

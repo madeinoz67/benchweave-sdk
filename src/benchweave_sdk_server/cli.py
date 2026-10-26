@@ -206,6 +206,45 @@ def _build_seam(
             ),
             selection,
         )
+    # Flag-agreement guards run BEFORE any transport branch builds (the
+    # refute fold's F2: the serial branch returned ahead of these checks, so
+    # ``--transport serial --replay`` silently ignored the journal and served
+    # LIVE hardware, and the replay branch returned ahead of the --bindings
+    # and --device checks, silently ignoring both). A flag disagreement
+    # refuses — it never resolves toward the live device, and no flag is
+    # silently dropped on any transport.
+    if replay is not None and transport != "replay":
+        # One flag one meaning (the --device precedent's family): the
+        # journal names the replay transport's recording.
+        click.echo(
+            "standalone_transport_replay_flag: --replay applies only to "
+            "--transport replay",
+            err=True,
+        )
+        raise SystemExit(2)
+    if transport == "replay" and replay is None:
+        click.echo(
+            "standalone_transport_replay_journal: --transport replay needs "
+            "--replay <journal.json> (the recorded capture it serves)",
+            err=True,
+        )
+        raise SystemExit(2)
+    if device is not None and transport != "serial":
+        click.echo(
+            "standalone_transport_device_serial_only: --device applies only to "
+            "--transport serial",
+            err=True,
+        )
+        raise SystemExit(2)
+    if bindings is not None and transport != "serial":
+        # drift-2 (review fold): --bindings names the serial binding
+        # document; on any other transport it is not silently ignored.
+        click.echo(
+            "standalone_transport_bindings_serial_only: --bindings applies only "
+            "to --transport serial",
+            err=True,
+        )
+        raise SystemExit(2)
     if transport == "serial":
         from .binding import BindingStore, binding_endpoint, bindings_path
 
@@ -265,23 +304,12 @@ def _build_seam(
             ),
             None,
         )
-    if device is not None:
-        click.echo(
-            "standalone_transport_device_serial_only: --device applies only to "
-            "--transport serial",
-            err=True,
-        )
-        raise SystemExit(2)
     if transport == "replay":
         from .replay import replay_plugin_session
 
-        if replay is None:
-            click.echo(
-                "standalone_transport_replay_journal: --transport replay needs "
-                "--replay <journal.json> (the recorded capture it serves)",
-                err=True,
-            )
-            raise SystemExit(2)
+        # The hoisted agreement guards proved the journal is present; the
+        # assert is the type-level narrowing for that proof.
+        assert replay is not None
         try:
             # Fail fast: the journal, its provider triple against the
             # plugin's pin, and every row validate BEFORE the seam exists —
@@ -300,26 +328,6 @@ def _build_seam(
             ),
             None,
         )
-    if replay is not None:
-        # One flag one meaning (the --device precedent's family): the
-        # journal names the replay transport's recording and is not
-        # silently ignored anywhere else.
-        click.echo(
-            "standalone_transport_replay_flag: --replay applies only to "
-            "--transport replay",
-            err=True,
-        )
-        raise SystemExit(2)
-    if bindings is not None:
-        # drift-2 (review fold): --bindings names the serial binding
-        # document; on any other transport it is not silently ignored —
-        # the --device precedent's family, one flag one meaning.
-        click.echo(
-            "standalone_transport_bindings_serial_only: --bindings applies only "
-            "to --transport serial",
-            err=True,
-        )
-        raise SystemExit(2)
     return (
         StandaloneSeam(
             mock_plugin_session(plugin, capture_root=capture_root),

@@ -146,19 +146,50 @@ def _hex_decode(text: Any, row: str, field: str) -> bytes:
         ) from exc
 
 
+#: The composition-walk depth for _base64_props — the same 32-level cap
+#: validate_transport_provider enforces on grammar subschemas (already
+#: refused beyond it), so the walk here cannot be driven deeper than a
+#: schema the SDK agreed to serve.
+_B64_WALK_MAX_DEPTH = 32
+
+
 def _base64_props(schema: dict[str, Any]) -> frozenset[str]:
     """The property names a grammar subschema carries as base64 text
     (contract-document form): the ABI carries these as bytes, so the loader
     decodes them and the serve path encodes them — one conversion rule,
-    driven by the contract itself."""
-    properties = schema.get("properties")
-    if not isinstance(properties, dict):
-        return frozenset()
-    return frozenset(
-        name
-        for name, sub in properties.items()
-        if isinstance(sub, dict) and sub.get("contentEncoding") == "base64"
-    )
+    driven by the contract itself.
+
+    The walk goes THROUGH the composition keywords (oneOf/anyOf/allOf): the
+    ftdi contract's result schema is a oneOf over per-op branches whose
+    properties sit one level down, and a top-level-only read served the
+    journal's read_pins reply as undecoded text (found by the fold's F3
+    arm). A name declared base64 in ANY branch joins the set — a
+    discriminated grammar matches exactly one branch per instance, so the
+    union cannot misfire on a conforming document. Not walked: ``$ref``,
+    ``patternProperties`` and ``items`` (grammar payloads are plain objects
+    in every corpus contract; a grammar needing those shapes extends this
+    walk)."""
+    found: set[str] = set()
+
+    def visit(node: Any, depth: int) -> None:
+        if depth > _B64_WALK_MAX_DEPTH or not isinstance(node, dict):
+            return
+        properties = node.get("properties")
+        if isinstance(properties, dict):
+            for name, sub in properties.items():
+                if (
+                    isinstance(sub, dict)
+                    and sub.get("contentEncoding") == "base64"
+                ):
+                    found.add(name)
+        for keyword in ("oneOf", "anyOf", "allOf"):
+            branches = node.get(keyword)
+            if isinstance(branches, list):
+                for branch in branches:
+                    visit(branch, depth + 1)
+
+    visit(schema, 0)
+    return frozenset(found)
 
 
 @dataclass(frozen=True, slots=True)
@@ -597,6 +628,15 @@ def load_replay_journal(path: Path, plugin: LoadedPlugin) -> ReplayJournal:
     conversation exists; the CLI maps it to exit 2 with the message, and a
     refused journal leaves the conversation untouched (there is none yet).
     """
+    if not path.is_file():
+        # The refute fold's F4: a directory argument reached read_bytes and
+        # crashed as an uncaught IsADirectoryError (exit 1, empty message).
+        # The surface owes the typed refusal, and the message names no
+        # filesystem path (the EN-3 discipline).
+        raise ValueError(
+            "replay_journal_invalid: the journal path is not a regular file "
+            "(a directory or special file cannot be a recorded journal)"
+        )
     size = path.stat().st_size
     if size > JOURNAL_BYTE_LIMIT:
         raise ValueError(
@@ -889,6 +929,18 @@ class ReplayHost(WriterBackedCaptureServices, MockHost):
                 f"{'a stream send' if row.expected is None else 'a provider transaction'}"
                 f" here, not kind {transaction['kind']!r}"
             )
+        if not wants_provider and row.kind != transaction["kind"]:
+            # Kind-aware on purpose (the refute fold's NIT2): the byte-stream
+            # mock matches on frame bytes alone because its FrameRow carries
+            # no kind — inherited there, deliberate here. A journal row IS
+            # the recorded transaction, kind included, so a stream_send must
+            # not consume a recorded stream_exchange row however well the
+            # bytes match: the two kinds are different conversations.
+            raise ConformanceError(
+                f"row {row.name}: the recording expects a {row.kind} here, "
+                f"not a {transaction['kind']} (the recorded transaction kind "
+                "is part of the match)"
+            )
         return row
 
     def _match_send(self, row: ReplayRow, data: bytes) -> None:
@@ -938,8 +990,14 @@ class ReplayHost(WriterBackedCaptureServices, MockHost):
         the inbound stream (the quiet line when nothing arrived), exactly as
         on real hardware, and the command row stays pending. A head receive
         row must carry the SAME bounds (a builder that changed its receive
-        bounds diverges from the recording)."""
-        self._recycle_if_armed()
+        bounds diverges from the recording).
+
+        A receive NEVER restores the cycle (the refute fold's F1): restoring
+        here would serve the next cycle's recorded replies to receives alone
+        — a conversation the recording never showed — and it would move host
+        state under a drain, breaking the exhaustion certificate the mock
+        preserves (restore happens in the COMMAND path only, the module
+        contract's own rule)."""
         if not self._rows:
             return None
         row = self._rows[0]
