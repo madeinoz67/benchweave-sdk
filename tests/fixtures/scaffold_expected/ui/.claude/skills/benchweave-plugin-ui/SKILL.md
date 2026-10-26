@@ -13,12 +13,47 @@ or hardware.
 ## Derive the presentation set
 
 A class-conformant descriptor derives its presentation set. Derive the set
-with `derive-ui` before you write pages by hand. The `new --with-ui` scaffold
-derives the set already.
+with `derive-ui` before you extend it. The `new --with-ui` scaffold derives
+the set already.
 
 The derivation shows the `cannot_derive` items. The items name what the
 derivation cannot decide. You decide them as the author. The AI-GUIDE names
 the items and the author actions. Verify the derived set with `verify-ui`.
+
+## Vendor customizations
+
+The class reference places the surfaces it covers. Decide the rest. Three
+cases cover every member:
+
+1. The class reference already places the member. Do nothing. The
+   derivation derives the surface from the reference.
+2. The device is mostly a class with a few vendor features. Compose them.
+   Author a composed action class when no catalog describes an action: the
+   class supplies the catalog side. Author a composed member declaration
+   when the reference places no slot: the declaration supplies the slot
+   and its page. Put the document in the plugin package, beside the
+   descriptor. Pin it in `descriptor.json` under `contracts[]`, with the
+   sha256 of the file bytes.
+3. No class reference and no catalog covers the member. Leave it as a
+   residual member. The derivation does not refuse. It derives the member
+   into the `Custom device actions` section, and the gate reports the
+   member on every run.
+
+Each case has a cost. Case 1 costs nothing. Case 2 costs the authored
+document and its pin: an edit to the document moves the bytes, so the pin
+moves with them. A class or a member that names no action the descriptor
+declares applies nowhere, and the gate discloses it on every run. Case 3
+costs the class semantics: the custom surface renders from the descriptor
+alone, apart from the catalogued surfaces, and the report row stays until
+you compose the member.
+
+The authoring contract lives in two documents. The plugin SDK guide gives
+the document shapes and the pin row, in
+section "Author a composed action class" and
+section "Author a composed member declaration". The class reference
+family README in the main repository gives the normative rule, in
+`standards/plugin-ui-class-reference/`, section
+`Composed member declarations (normative, gateway issue #556)`.
 
 ## Validate a presentation candidate
 

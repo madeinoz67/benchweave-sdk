@@ -79,6 +79,27 @@ level per report - `structural`, `simulated` or `hardware`?
 While authoring: do not contact hardware, flash firmware or energise
 outputs, and publish nothing without separate authority.
 
+## Vendor customizations
+
+The class reference places the surfaces it covers. Decide the rest:
+
+1. The reference already places the member. Do nothing.
+2. The device adds vendor features. Compose them. A pinned composed
+   action class supplies the catalog side of an action no catalog
+   describes. A pinned composed member declaration supplies the slot and
+   its page. Cost: the document and its sha256 pin move together, and a
+   claim that names no action the descriptor declares applies nowhere.
+3. Nothing covers the member. Leave it as a residual member. The
+   derivation does not refuse: it derives the `Custom device actions`
+   section, and the gate reports the member on every run. Cost: the
+   class semantics.
+
+The plugin SDK guide gives the document shapes:
+section "Author a composed action class" and
+section "Author a composed member declaration". The normative rule lives
+in the class reference family README in the main repository,
+`standards/plugin-ui-class-reference/`.
+
 ## 2. Firmware development
 
 Keep vendor source and checksum references under `firmware/` and release
