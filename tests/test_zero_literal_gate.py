@@ -208,7 +208,8 @@ class TestTwinCounter:
         #422 inc1 env-file autoload adds env_file.py, the 41st; I4a adds
         analysis.py and report.py, the 42nd and 43rd; the #422 inc3
         lifecycle twins add lifecycle.py, the 44th; #440 adds shim.py,
-        the 45th) —
+        the 45th; #564 adds the providers/ data directory's contract
+        instance, the 49th) —
         a scope change is a visible diff, never a silent denominator move.
         The server half is issue #309 slice A's scope extension: deleting
         the tree or narrowing the roots reds here."""
@@ -219,7 +220,7 @@ class TestTwinCounter:
             check=False,
         )
         assert result.returncode == 0, result.stdout + result.stderr
-        assert json.loads(result.stdout)["scanned"] == 48, (
+        assert json.loads(result.stdout)["scanned"] == 49, (
 
             "the scanned-file census moved — update this pin in the "
             "same commit as the tree change (the ratchet discipline)"

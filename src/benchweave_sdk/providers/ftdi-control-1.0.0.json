@@ -1,0 +1,144 @@
+{
+  "contract_version": "0.1.0",
+  "id": "urn:otdp:transport-provider:ftdi-control:1.0.0",
+  "feature_id": "otdp.transport.ftdi-control/1.0.0",
+  "version": "1.0.0",
+  "description": "Generic FTDI-class USB transport control dialect: the D2XX/libftdi common control surface (reset, timeouts, latency, baud, purge, bit mode, pin read) plus the generic section 8.1 stream kinds a device's command frames ride on. The contract carries no vendor device knowledge: opcodes, register maps and bitstreams stay in the plugins that pin this contract.",
+  "transport_kind": "ftdi_control",
+  "transaction_grammar": [
+    {
+      "kind": "ftdi_control",
+      "request_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "oneOf": [
+          {
+            "properties": {
+              "op": { "const": "reset_device" }
+            },
+            "required": ["op"],
+            "additionalProperties": false,
+            "description": "FT_ResetDevice over the commissioned connection."
+          },
+          {
+            "properties": {
+              "op": { "const": "set_timeouts" },
+              "read_ms": { "type": "integer", "minimum": 0 },
+              "write_ms": { "type": "integer", "minimum": 0 }
+            },
+            "required": ["op", "read_ms", "write_ms"],
+            "additionalProperties": false,
+            "description": "FT_SetTimeouts in milliseconds; both bounds are nonnegative."
+          },
+          {
+            "properties": {
+              "op": { "const": "set_latency" },
+              "ms": { "type": "integer", "minimum": 0, "maximum": 255 }
+            },
+            "required": ["op", "ms"],
+            "additionalProperties": false,
+            "description": "FT_SetLatencyTimer; the latency timer is one byte."
+          },
+          {
+            "properties": {
+              "op": { "const": "set_baud" },
+              "baud": { "type": "integer", "minimum": 1 }
+            },
+            "required": ["op", "baud"],
+            "additionalProperties": false,
+            "description": "FT_SetBaudRate; the rate is a positive integer."
+          },
+          {
+            "properties": {
+              "op": { "const": "purge" },
+              "queue": { "enum": ["tx", "rx"] }
+            },
+            "required": ["op", "queue"],
+            "additionalProperties": false,
+            "description": "FT_Purge of one queue."
+          },
+          {
+            "properties": {
+              "op": { "const": "set_bitmode" },
+              "mask": { "type": "integer", "minimum": 0, "maximum": 255 },
+              "mode": { "type": "integer", "minimum": 0, "maximum": 255 }
+            },
+            "required": ["op", "mask", "mode"],
+            "additionalProperties": false,
+            "description": "FT_SetBitMode: the pin-direction mask and the interface mode, each one byte."
+          },
+          {
+            "properties": {
+              "op": { "const": "read_pins" }
+            },
+            "required": ["op"],
+            "additionalProperties": false,
+            "description": "FT_GetBitMode / ftdi_read_pins: read the bit-mode pin states. The result carries exactly one byte."
+          }
+        ],
+        "description": "One control transaction: the op discriminator plus that op's parameters, exactly as the pinning plugin's builders type them. The kind key itself is validated by the host before this schema applies; every property here other than the discriminator is a payload."
+      },
+      "result_schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "oneOf": [
+          {
+            "maxProperties": 0,
+            "description": "Actuation ops (reset_device, set_timeouts, set_latency, set_baud, purge, set_bitmode): transport acceptance only, like stream_send; an empty result carries no device meaning."
+          },
+          {
+            "properties": {
+              "data": {
+                "type": "string",
+                "contentEncoding": "base64",
+                "minLength": 4,
+                "maxLength": 4
+              }
+            },
+            "required": ["data"],
+            "additionalProperties": false,
+            "description": "read_pins: exactly one byte, carried as its base64 text (one byte always encodes to four characters). data is bytes at the adapter ABI and base64 text in contract documents and journals."
+          }
+        ],
+        "description": "Empty for actuation ops; one byte for read_pins."
+      },
+      "limits": {
+        "read_pins_max_bytes": 1,
+        "set_timeouts_ms_range": [0, 4294967295],
+        "set_latency_ms_range": [0, 255],
+        "set_baud_minimum": 1,
+        "set_bitmode_mask_range": [0, 255],
+        "set_bitmode_mode_range": [0, 255]
+      }
+    }
+  ],
+  "security_scope": "commissioned_connection",
+  "host_requirements": {
+    "summary": "Host-side FTDI-class access to the commissioned device only: libftdi or D2XX semantics for the seven control calls. No filesystem paths, no process spawning, no network endpoints.",
+    "native_libraries": [],
+    "privileges": []
+  },
+  "approval": {
+    "approved_by": "BenchWeave SDK",
+    "approved_at": "2026-10-26T00:00:00Z",
+    "expires_at": "2027-10-26T00:00:00Z",
+    "evidence": [
+      {
+        "category": "protocol",
+        "report": {
+          "id": "issue-562-ftdi-provider-replay-design",
+          "version": "1.0.0",
+          "sha256": "5597ad8cfbae382bdc7e9607a425465beb2c1da398318a176677482318ff6db2"
+        },
+        "tested_at": "2026-10-26T00:00:00Z",
+        "scope": "Grammar of the FTDI common control surface as the pinning plugin's builders type it (protocol.py reset_device/set_timeouts/set_latency/set_baud/purge/set_bitmode/read_pins), recorded against one hardware session's exchanges over the generic section 8.1 stream kinds",
+        "result": "partial",
+        "limitations": [
+          "Direct hardware exercise covers set_latency, set_baud, set_bitmode, read_pins and purge of the rx queue only; reset_device, set_timeouts and purge of the tx queue rest on the static-analysis record of the same session",
+          "The register and command decode above this transport (page-bit decomposition, register map) is outside this contract's evidence; the pinning plugin's decode remains its own claim",
+          "No sample-plane read was recorded on hardware; a journal carrying sample-plane rows cannot cite this approval as its evidence for them"
+        ]
+      }
+    ]
+  }
+}
