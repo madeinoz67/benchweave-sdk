@@ -126,7 +126,9 @@ gap is a lost or a duplicated frame. The helper records the evidence
 before the refusal, and the refusal names the expected counter, the
 observed counter and the exchange index. If the counter is one byte, give
 the counter's byte modulus (`modulus=256`). Without the modulus, the roll
-0xFF to 0x00 reads as a gap.
+0xFF to 0x00 reads as a gap. On the mock, a strict counter rehearses
+only as many cycles as the corpus carries: capture three cycles, not
+two (the user guide's session-continuity paragraph gives the bound).
 2. **A declared poll interval is a budget the loop must honour.** A
 declared interval that no loop reads is a defect. Poll through
 `paced_poll`. The helper owns the wait between attempts, so a loop cannot
