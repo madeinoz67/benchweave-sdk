@@ -15,8 +15,9 @@ The arms drive the REAL pinned-document path (``merge_pinned_documents``)
 and the REAL validator (``validate_presentation`` from the vendored
 contracts twin) over the REAL served-document builder
 (``presentation._pinned_schemas``), with the declaration validated
-against the REAL vendored 0.5.0 schema first — a schema-valid declaration
-is a readable one. The negative control derives the RED direction: the
+against the REAL vendored ACTIVE family schema first — a schema-valid
+declaration is a readable one. The negative control derives the RED
+direction: the
 same target over the un-merged served set reports ``capability_mismatch``,
 so the seam is load-bearing, not decorative.
 """
@@ -177,8 +178,8 @@ def _pinned_documents(
 
 
 def _validate_declaration(document: JsonObject) -> None:
-    """The declaration is schema-valid per the REAL vendored 0.5.0 schema
-    (the family's own closed sets, not a test-side restatement)."""
+    """The declaration is schema-valid per the REAL vendored ACTIVE family
+    schema (the family's own closed sets, not a test-side restatement)."""
     findings = sorted(
         Draft202012Validator(_declaration_schema()).iter_errors(document),
         key=lambda error: list(error.path),
@@ -260,9 +261,9 @@ def _validate_with(
 
 def test_the_vendored_schema_admits_the_seam_declaration() -> None:
     """The declaration carrying the vendor profile row (plural ``profiles``
-    key, exactly one row) is valid against the vendored 0.5.0 schema — the
-    spelling the validator's profile map reads, so a schema-valid
-    declaration is a readable one."""
+    key, exactly one row) is valid against the vendored ACTIVE family
+    schema — the spelling the validator's profile map reads, so a
+    schema-valid declaration is a readable one."""
     _validate_declaration(_member_declaration())
 
 

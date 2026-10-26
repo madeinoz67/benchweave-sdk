@@ -16,7 +16,7 @@ exactly that).
 
 V5's composing half rides the member's ``plot`` field: the vendor chooses
 among the EXISTING three kinds for a page that hosts no plot template,
-validated against the family schema's own plot def (the 0.5.0 member schema
+validated against the family schema's own plot def (the member schema
 carries it verbatim). A page that already hosts a plot keeps the class's and
 the member's choice discloses (the B3 row); the nine measurement kinds beyond
 the three presentation kinds are the honest terminal state — no fourth kind

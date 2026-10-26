@@ -1,0 +1,181 @@
+{
+  "contract_version": "0.6.0",
+  "profile_id": "otdp.electronic_load/1.0.0",
+  "title": "Electronic load",
+  "targets": {
+    "plugin_ui": ">=0.4.0"
+  },
+  "slots": {
+    "inputs": {
+      "kind": "channels",
+      "where_role": "sink",
+      "key": "id",
+      "label": "label"
+    },
+    "measure": {
+      "kind": "dataset",
+      "action": "otdp.electronic_load.measure/1.0.0",
+      "schema_source": "output_measurement"
+    },
+    "configure": {
+      "kind": "configuration",
+      "action": "otdp.electronic_load.configure/1.0.0",
+      "schema_source": "input_schema"
+    },
+    "output": {
+      "kind": "procedure",
+      "action": "otdp.electronic_load.output/1.0.0",
+      "host_supplied": [
+        "configuration_id"
+      ]
+    },
+    "vendor_actions": {
+      "kind": "vendor_actions"
+    }
+  },
+  "pages": [
+    {
+      "id": "input",
+      "title": "Input",
+      "kind": "readings",
+      "binding_slots": [
+        "measure"
+      ],
+      "plot": {
+        "kind": "time_series",
+        "over_slot": "measure",
+        "series": "numeric_variables"
+      }
+    },
+    {
+      "id": "configuration",
+      "title": "Configuration",
+      "kind": "configuration",
+      "binding_slots": [
+        "configure"
+      ]
+    },
+    {
+      "id": "device-features",
+      "title": "Device features",
+      "kind": "configuration",
+      "binding_slots": [
+        "vendor_actions"
+      ],
+      "vendor_features": true
+    }
+  ],
+  "layouts": [
+    {
+      "page_id": "input",
+      "sections": [
+        {
+          "id": "readings",
+          "title": "Readings",
+          "surface": "raised",
+          "span": 12,
+          "children": [
+            {
+              "binding_id": "measure",
+              "kind": "reading-tile"
+            }
+          ]
+        },
+        {
+          "id": "trend",
+          "title": "Trend",
+          "surface": "recessed",
+          "span": 7,
+          "children": [
+            {
+              "plot_index": 0
+            }
+          ]
+        },
+        {
+          "id": "table",
+          "title": "Table",
+          "surface": "raised",
+          "span": 5,
+          "children": [
+            {
+              "binding_id": "measure",
+              "kind": "data-table"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "expect": {
+    "components": {
+      "reading-tile": {
+        "count": "{n_reading_tiles}",
+        "per_page": "input"
+      },
+      "data-table": {
+        "count": "1",
+        "per_page": "input"
+      },
+      "engineering-plot": {
+        "count": "1",
+        "per_page": "input"
+      },
+      "panel": {
+        "count": "{n_pages}"
+      },
+      "mode-banner": {
+        "count": "1",
+        "per_page": "*"
+      }
+    },
+    "controls": {
+      "otdp.electronic_load.configure/1.0.0": "preset",
+      "otdp.electronic_load.output/1.0.0": "deviation"
+    },
+    "forbid": [
+      "confirm-wrapped-run-action",
+      "color-role-hint-on-lane",
+      "untraceable-lane-label",
+      "intermediated-energy-removing-action"
+    ]
+  },
+  "cannot_derive": [
+    {
+      "id": "input-control",
+      "aspect": "the input engage/disengage control",
+      "reason": "the directional section C.1 presentation is inverted for a sink: engage is the energy-admitting, flow-starting direction (stage then confirm naming effect, values and target); disengage is the one ungated action (R-DEENERGISE-1); the per-action control vocabulary cannot split them; renderer enforcement belongs to the safety-behaviours slice",
+      "author_action": "none until that slice lands; the deviation is REPORTED, never silent"
+    },
+    {
+      "id": "draw-staging",
+      "aspect": "the staged mode/setpoint draw control",
+      "reason": "configure is preset-mediated at birth; presets are commissioned evidence (A02)",
+      "author_action": "author ui/presets/*.json via check-preset; the expander emits the scaffold"
+    },
+    {
+      "id": "sink-margin-alert",
+      "aspect": "the sinking-margin alert",
+      "reason": "the alert condition (draw vs configured current or power maximum) is commissioned policy (A02)",
+      "author_action": "bench policy at commissioning; the alert-bubble renders from host-observed conditions"
+    },
+    {
+      "id": "limit-overlay",
+      "aspect": "the trend's dashed configured-maximum line",
+      "reason": "the limit value is runtime configuration data; the overlay is a runtime join",
+      "author_action": "host composition where a configured limit is active"
+    },
+    {
+      "id": "presets",
+      "aspect": "preset settings values",
+      "reason": "presets are commissioned evidence, never derived (A02 unamended)",
+      "author_action": "check-preset"
+    },
+    {
+      "id": "channel-names",
+      "aspect": "input names beyond descriptor labels",
+      "reason": "the descriptor owns channel identity",
+      "author_action": "label channels in the descriptor"
+    }
+  ]
+}
