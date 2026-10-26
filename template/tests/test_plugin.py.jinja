@@ -154,3 +154,15 @@ def test_vectors_evidence_claims_carry_recorded_bytes():
     from benchweave_sdk.vectors import validate_vectors_evidence
     document = json.loads(files("{{ package_name }}").joinpath("vectors.json").read_text())
     validate_vectors_evidence(document, source=Path("vectors.json"))
+
+
+def test_vectors_walk_order_matches_the_descriptor_walk():
+    """The demand-order contract (issue #567 row 12): the corpus rows are
+    ordered as the shipped driver demands them — identify, then each
+    readable parameter in descriptor order. A corpus ordered against some
+    other walk rehearses a flow the host never runs; this refuses."""
+    from benchweave_sdk.vectors import validate_vectors_walk_order
+    descriptor = json.loads(files("{{ package_name }}").joinpath("descriptor.json").read_text())
+    document = json.loads(files("{{ package_name }}").joinpath("vectors.json").read_text())
+    validate_vectors_walk_order(create_plugin, descriptor, document,
+                                source=Path("vectors.json"))

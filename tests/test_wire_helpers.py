@@ -146,8 +146,8 @@ def test_evidence_kinds_are_a_closed_set(tmp_path: Path) -> None:
     becoming a wrong string only a reviewer can catch."""
     wire = _rendered_wire(tmp_path)
     assert wire.EVIDENCE_COMMAND_COUNTER_GAP == "command_counter_gap"
-    with pytest.raises(AttributeError):
-        getattr(wire, "EVIDENCE_COMMAND_COUNTER_GPA")  # misspelled
+    with pytest.raises(NameError):
+        exec("EVIDENCE_COMMAND_COUNTER_GPA", vars(wire))  # misspelled
 
 
 def test_counter_gap_evidence_carries_the_constant(tmp_path: Path) -> None:

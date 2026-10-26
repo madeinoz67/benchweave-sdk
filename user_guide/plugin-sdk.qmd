@@ -514,6 +514,8 @@ The check proves that a hardware claim comes with recorded provenance. The check
 
 **How selection works.** The host reads the declaration at connect time and builds the matching mock host. Nothing else changes. `serve --transport serial` never reads `vectors.json`. The script is rehearsal evidence, not device configuration.
 
+**Demand order.** The mock serves the rows in order. The shipped driver walks the descriptor: identify, then each readable parameter in declaration order. The corpus rows must follow that walk. A corpus that is ordered against another walk rehearses a flow that the host never runs. `validate_vectors_walk_order` in `benchweave_sdk.vectors` rehearses the walk over the corpus. It refuses a drift. The refusal names the walk step and the row. The corpus alone cannot say which row serves which parameter. The mapping is plugin code. The rehearsal with the adapter is the check that decides it. A corpus can also carry rows that the walk never reaches. The rehearsal names those rows. It does not ignore them.
+
 **How the script loops.** The mock detects a repeating unit from the captured rows. The rows before the first full unit are the establishment. The mock serves these rows once. The unit then serves every later cycle in captured order.
 
 A capture needs at least two full units of evidence. A capture with no derivable unit is not an error. Two causes are usual. A truncated capture is one cause. A polled value that varies across occurrences of the same request is another cause. Such a capture then obeys the plain tail rule. Under this rule, row 0 is the establishment. The whole tail becomes the cycle. The cycle repeats in captured order on every restore.

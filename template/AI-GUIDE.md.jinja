@@ -154,6 +154,15 @@ refuses a hardware claim without recorded bytes. The check proves the
 claim comes with recorded provenance; it cannot prove the provenance is
 true. Record the bytes from a real capture session.
 
+The corpus rows are ordered as the driver demands them. The shipped
+driver walks the descriptor: identify, then each readable parameter in
+declaration order. Order the corpus to that walk. The seeded
+`test_vectors_walk_order_matches_the_descriptor_walk` rehearses the walk
+and refuses on drift. The corpus alone cannot say which row serves which
+parameter: that mapping is your protocol code, so the rehearsal with the
+adapter is the check. Rows the walk never reaches are named, not
+ignored.
+
 ## 3. Demonstrate behaviour
 
 > Extend the exact-exchange tests for supported operations, wrong correlation,
