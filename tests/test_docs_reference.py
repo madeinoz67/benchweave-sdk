@@ -30,6 +30,9 @@ EXCLUDED = {
     "validation.YankedPinWarning": "a warnings category raised by validate_descriptor on a "
     "yanked pin (issue #203 slice 1); authors catch it from the check lane, whose output "
     "renders the message — not an entry point to call",
+    "validation.validate_read_receipt": "the host's runtime read-receipt gate (#567 row 13); "
+    "reached through parameter_read, whose refusal renders the message — never called by "
+    "an author",
 }
 
 

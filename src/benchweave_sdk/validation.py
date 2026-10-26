@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 import tomllib
 import warnings
+from collections.abc import Mapping
 from functools import cache
 from importlib.resources import files
 from pathlib import Path, PurePosixPath
@@ -341,6 +343,89 @@ def validate_result(
     validate(result, f"otdp/{version}/otdp-runtime.schema.json", "operationResult")
     if (result["operation_id"], result["verb"]) != (request["operation_id"], request["verb"]):
         raise ValueError("Result correlation does not match the request")
+
+
+def validate_read_receipt(
+    receipt: Mapping[str, Any], contract: Mapping[str, Any], *, parameter: str
+) -> None:
+    """Refuse a read receipt that satisfies neither its shape nor the
+    parameter contract (issue #567 row 13).
+
+    Two checks. The structural one: the receipt carries every key the
+    vendored runtime schema's ``reading`` shape requires (that ``required``
+    list is the authority, re-checked here rather than trusted) and its
+    ``parameter`` names the parameter being read. The typed one: the
+    descriptor's parameter row (``type``, ``unit``, ``range``,
+    ``enum_values``, ``string_constraints``) governs the value. A receipt
+    that used to reach the readings page and render ``None`` refuses here
+    by name. ``value: null`` stays legal — the schema declares it (an
+    ``invalid``/``stale`` reading has no value); the typed contract
+    applies to non-null values only.
+
+    What this does NOT check, on purpose: the closed ``quality`` and
+    ``source`` enums of the schema. The live pipeline serves wider,
+    device-declared quality strings (the host-shipped scenario simulator
+    serves its nine states through this same path with ``source:
+    "scenario"``), so policing those vocabularies here would refuse the
+    preview surface itself. The vocabularies' tension with the corpus is a
+    named observation for review, not this gate's.
+
+    Raises
+    ------
+    ValueError
+        ``read_receipt_invalid:`` naming the parameter and the violated
+        contract row.
+    """
+    required = ("parameter", "value", "unit", "observed_at", "age_ms", "quality", "source")
+    missing = [key for key in required if key not in receipt]
+    if missing:
+        raise ValueError(
+            f"read_receipt_invalid: {parameter}: missing key(s) {missing} "
+            f"(the reading shape requires {list(required)})"
+        )
+    if receipt.get("parameter") != parameter:
+        raise ValueError(
+            f"read_receipt_invalid: {parameter}: receipt names "
+            f"{receipt.get('parameter')!r}"
+        )
+    value = receipt.get("value")
+    if value is None:
+        return
+    kind = contract.get("type")
+    reasons: list[str] = []
+    numeric = isinstance(value, (int, float)) and not isinstance(value, bool)
+    if kind == "float" and not (numeric and math.isfinite(float(value))):
+        reasons.append(f"value must be a finite number for type {kind}")
+    elif kind == "int" and not (isinstance(value, int) and not isinstance(value, bool)):
+        reasons.append(f"value must be an integer for type {kind}")
+    elif kind == "bool" and not isinstance(value, bool):
+        reasons.append("value must be a boolean for type bool")
+    elif kind in ("enum", "string") and not isinstance(value, str):
+        reasons.append(f"value must be a string for type {kind}")
+    enum_values = contract.get("enum_values")
+    if kind == "enum" and isinstance(enum_values, list) and value not in enum_values:
+        reasons.append(f"value {value!r} is outside enum_values {enum_values}")
+    bounds = contract.get("range")
+    if (
+        numeric
+        and isinstance(bounds, list)
+        and len(bounds) == 2
+        and not (bounds[0] <= value <= bounds[1])
+    ):
+        reasons.append(f"value {value!r} is outside range {bounds}")
+    constraints = contract.get("string_constraints")
+    if isinstance(value, str) and isinstance(constraints, Mapping):
+        low = constraints.get("min_length")
+        high = constraints.get("max_length")
+        if isinstance(low, int) and len(value) < low:
+            reasons.append(f"value is shorter than min_length {low}")
+        if isinstance(high, int) and len(value) > high:
+            reasons.append(f"value is longer than max_length {high}")
+    unit = contract.get("unit")
+    if unit is not None and receipt.get("unit") != unit:
+        reasons.append(f"unit {receipt.get('unit')!r} does not match declared {unit!r}")
+    if reasons:
+        raise ValueError(f"read_receipt_invalid: {parameter}: " + "; ".join(reasons))
 
 
 # ---------------------------------------------------------------------------
