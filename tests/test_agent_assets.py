@@ -467,6 +467,70 @@ def test_ai_guide_fixture_arms_carry_the_composed_path() -> None:
         )
 
 
+def test_develop_plugin_skill_documents_the_composed_path() -> None:
+    """Home 2 of the composed path: the in-package authoring skill ships
+    inside the wheel and travels with the project. Same three-case rule,
+    sized for a skill: the case, the cost, the pointer."""
+    skill = (
+        TEMPLATE / "src/{{ package_name }}/skills/develop-plugin/SKILL.md.jinja"
+    ).read_text(encoding="utf-8")
+    for token in (
+        "## Vendor customizations",
+        "composed action class",
+        "composed member declaration",
+        "residual member",
+        "`Custom device actions`",
+        'section "Author a composed member declaration"',
+        "standards/plugin-ui-class-reference/",
+    ):
+        assert token in skill, f"develop-plugin skill lost the composed-path fact: {token!r}"
+
+
+def test_project_instructions_name_the_composed_path() -> None:
+    """Home 3: an agent that loads only the project instructions (CLAUDE.md)
+    still learns the option exists — one paragraph pointing at the
+    customizations section of the plugin-ui skill (with-ui arm only; a
+    project without UI has no class-reference derivation to extend)."""
+    instructions = (TEMPLATE / "CLAUDE.md.jinja").read_text(encoding="utf-8")
+    assert "## Vendor customizations" in instructions, (
+        "CLAUDE.md template lost the composed-path paragraph"
+    )
+    assert "Vendor customizations" in instructions and "benchweave-plugin-ui" in instructions
+
+
+def test_ui_guide_documents_the_composed_path() -> None:
+    """Home 4: the human-facing UI-GUIDE.md teaches the same three cases.
+    Its text is a string constant in presentation.py; the fixture IS the
+    render, so the arm reads the rendered fixture (R-2 parity binds it to
+    the constant)."""
+    guide = (FIXTURES / "ui" / "UI-GUIDE.md").read_text(encoding="utf-8")
+    for token in (
+        "composed action class",
+        "composed member declaration",
+        "residual member",
+        "`Custom device actions`",
+        'section "Author a composed member declaration"',
+    ):
+        assert token in guide, f"UI-GUIDE.md lost the composed-path fact: {token!r}"
+
+
+def test_fixture_arms_carry_the_composed_path_homes() -> None:
+    """The regenerated fixture arms carry every home: develop-plugin in
+    both arms (unconditional package content), the project instructions
+    in the ui arm alone (the paragraph is with-ui framed)."""
+    for arm in ("base", "ui"):
+        skill = (
+            FIXTURES / arm / "src" / "example_plugin" / "skills" / "develop-plugin" / "SKILL.md"
+        ).read_text(encoding="utf-8")
+        assert "## Vendor customizations" in skill, (
+            f"{arm} arm develop-plugin skill does not carry the composed path"
+        )
+    instructions = (FIXTURES / "ui" / "CLAUDE.md").read_text(encoding="utf-8")
+    assert "## Vendor customizations" in instructions, (
+        "ui arm CLAUDE.md does not carry the composed-path paragraph"
+    )
+
+
 def test_the_versioned_docs_url_uses_the_tag_prefixed_bucket() -> None:
     """Adversary fold A-F1: the versioned docs buckets are keyed by the
     release TAG — ``docs/v/v0.6.0/``, tags carry the leading ``v`` (the same

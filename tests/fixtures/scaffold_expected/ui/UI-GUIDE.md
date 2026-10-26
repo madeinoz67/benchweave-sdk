@@ -48,6 +48,20 @@ marker `data-bw-override-refused` while the default tokens render.
 The user guide covers the override in
 section "The plugin stylesheet override (preview.css)".
 
+When the device has features the class reference does not place,
+decide each one. The reference places the member: do nothing. The
+device adds a few vendor features: compose them. Author a composed
+action class for the catalog side of an action, or a composed
+member declaration for the slot and its page. Put the document
+beside descriptor.json and pin it under `contracts[]` with the
+sha256 of the file bytes; the document and its pin move together.
+Nothing covers the member: leave it as a residual member. The
+derivation does not refuse. It derives the `Custom device actions`
+section, and the gate reports the member on every run. The user
+guide gives the document shapes in
+section "Author a composed action class" and
+section "Author a composed member declaration".
+
 Preview with: `benchweave-sdk preview-ui .` from the project root (the standalone host on the scripted mock transport; needs the `benchweave-sdk[server]` extra).
 
 All preview values and receipts are simulated. check-ui and preview-ui are not
