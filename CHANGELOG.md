@@ -2,6 +2,32 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.23.0] - 2026-10-26
+
+### Documentation
+
+- The gateway mirrors the three-layer resolution
+- Name the composed path in the plugin-ui skill and the AI-GUIDE
+- Carry the composed path in the three remaining homes
+
+### Features
+
+- Vendor plugin-ui-class-reference 0.6.0 (gateway #560)
+
+### Miscellaneous
+
+- Cut v0.23.0 — release surfaces and the phase-2 patch
+- Apply the v0.23.0 phase-2 patch at the tag commit [skip ci]
+
+### Testing
+
+- RED suite for issue #560 — many vendor operations must derive and verify
+
+
+### Contributors
+
+- Stephen Eaton (5 commits)
+- Seaton (2 commits)
 ## [0.22.0] - 2026-10-25
 
 ### Bug Fixes
@@ -157,21 +183,6 @@ All notable changes to this project will be documented in this file.
 ### Contributors
 
 - Stephen Eaton (17 commits)
-## [0.23.0] - 2026-10-26
-
-### Standards
-
-- Vendor plugin-ui-class-reference 0.6.0. The new version removes every ceiling that counted device content, so a device with many real vendor operations derives instead of being refused. The served range widens to `<0.7.0`.
-- Copy never move. 0.5.0 stays in the tree byte-frozen with its corpus rows unchanged.
-
-### Fixed
-
-- The expander no longer refuses a device whose device-features surface exceeds sixteen rows.
-
-### Notes
-
-- Releases 0.19.0 through 0.22.0 were not recorded in this file at their release. This entry does not reconstruct them.
-
 ## [0.18.0] - 2026-10-21
 
 ### Features
