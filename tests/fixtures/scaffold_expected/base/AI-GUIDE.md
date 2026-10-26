@@ -11,11 +11,12 @@ The SDK implementation lives separately in BenchWeave's packages/sdk/.
 Run installation, pytest and uv build from the directory containing pyproject.toml.
 The generated project contains README.md, this AI-GUIDE.md, CLAUDE.md (agent
 notes for the repository root), tests/test_plugin.py, and src/<package>/ with
-__init__.py, adapter.py, protocol.py, descriptor.json, protocol.md, vectors.json
-and skills/ — the seeded agent skills (develop-plugin for the authoring
-workflow, drive-device as the synthetic demo driver to rewrite). The protocol
-and vectors files begin as synthetic evidence; the skills are distributable
-content inside the package.
+__init__.py, adapter.py, protocol.py, wire.py, descriptor.json, protocol.md,
+vectors.json and skills/ — the seeded agent skills (develop-plugin for the
+authoring workflow, drive-device as the synthetic demo driver to rewrite). The
+protocol and vectors files begin as synthetic evidence; wire.py carries the
+wire-discipline helpers (see "Wire discipline" below); the skills are
+distributable content inside the package.
 
 With --with-ui, the SDK also generates UI-GUIDE.md at the project root and
 presentation.json, binding-catalogue.json and ui/manifest.json inside src/<package>/.
@@ -105,6 +106,40 @@ plugin source package. A preset is configuration, not a retained measurement.
 > preserve uncertain outcomes. Keep imports relative within this package or
 > standard-library-only for the current gateway loader. Run the synthetic
 > identify/read example before replacing it.
+
+
+## Wire discipline
+
+Four rules come from hardware evidence. They apply to every device plugin.
+The helpers live in src/<package>/wire.py and use standard-library imports
+only.
+
+1. **One counter sequences the wire.** When the device echoes a command
+counter that advances by one on every command, feed every parsed counter
+to `CommandCounter.advance`. The first observation sets the baseline. A
+gap is a lost or a duplicated frame: the helper refuses, names the
+expected counter, the observed counter and the exchange index, and records
+the evidence before the refusal. Give the counter's byte modulus
+(`modulus=256`) when the counter is one byte, or the roll at 0xFF reads as
+a gap.
+2. **A declared poll interval is a budget the loop must honour.** A
+declared interval that no loop reads is a defect. Poll through
+`paced_poll`. The helper owns the wait between attempts, so a loop cannot
+skip the pace. A device that answers on its own timer reports not-ready
+until its cadence passes; a loop that polls faster exhausts its attempts
+before the device becomes ready, and the timeout is false.
+3. **Completion pins gate success.** An operation whose hardware
+completion signal is not asserted never reports ok. Call
+`require_completion` on the parsed signal verdict. Report the refusal as a
+device failure with the outcome your contract requires, never as ok.
+4. **Hardware evidence needs recorded bytes.** A `vectors.json` that
+claims `"evidence": "hardware"` must carry at least one exchange with
+hand-recorded bytes and a `recorded` object whose `when` names the capture
+moment. Builder-generated vectors cannot supply this: a script your own
+builder wrote proves only that the builder agrees with itself. The host
+refuses a hardware claim without recorded bytes. The check proves the
+claim comes with recorded provenance; it cannot prove the provenance is
+true. Record the bytes from a real capture session.
 
 ## 3. Demonstrate behaviour
 

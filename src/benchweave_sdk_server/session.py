@@ -48,6 +48,7 @@ from typing import Any
 from benchweave_sdk.interfaces import Adapter, HostServices
 from benchweave_sdk.presentation import read_file
 from benchweave_sdk.validation import validate_descriptor
+from benchweave_sdk.vectors import validate_vectors_evidence
 
 
 class PluginLoadError(ValueError):
@@ -267,6 +268,15 @@ def vectors_script(plugin: LoadedPlugin) -> VectorsScript:
     vectors = json.loads(read_file(path))
     if not isinstance(vectors, dict):
         raise PluginLoadError(f"standalone_vectors_row_shape: not an object in {path}")
+    # The evidence claim is judged before the script is decoded (issue #566
+    # row 11): what the file CLAIMS to be precedes whether it scripts. The
+    # one shared validator (plugin test suites run it too) raises ValueError
+    # with the standalone_vectors_evidence_* family; the loader maps it to
+    # the PluginLoadError the connect seam types as not_ready.
+    try:
+        validate_vectors_evidence(vectors, source=path)
+    except ValueError as exc:
+        raise PluginLoadError(str(exc)) from exc
     dialect = vectors.get("transaction_dialect", "stream_exchange")
     if dialect not in _DIALECTS:
         raise PluginLoadError(

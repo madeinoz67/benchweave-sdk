@@ -1,6 +1,8 @@
 import asyncio
 import json
 from importlib.resources import files
+from pathlib import Path
+import pytest
 from benchweave_sdk.testing import MockContext, MockHost
 from benchweave_sdk.validation import validate_descriptor, validate_result
 from {{ package_name }}.adapter import create_plugin
@@ -83,3 +85,64 @@ def test_uncertain_response_after_dispatch():
             host.assert_complete()
             await plugin.close(context)
     asyncio.run(run())
+
+
+def test_wire_counter_refuses_a_gap():
+    """The wire helpers (issue #566): one counter sequences reads and
+    writes; a gap is a refusal naming the expected and observed counter
+    and the exchange index."""
+    from {{ package_name }}.wire import CommandCounter, CounterGapError
+    tracker = CommandCounter(modulus=256)
+
+    async def run():
+        await tracker.advance(0x10)
+        await tracker.advance(0x11)
+
+    asyncio.run(run())
+
+    async def gap():
+        await tracker.advance(0x14)
+
+    with pytest.raises(CounterGapError,
+                       match=r"exchange 2.*expected 0x12.*observed 0x14"):
+        asyncio.run(gap())
+
+
+def test_wire_paced_poll_waits_the_declared_interval():
+    """A declared poll interval every retry honours first; the pacer owns
+    the wait, so a loop cannot skip the pace (issue #566)."""
+    from {{ package_name }}.wire import paced_poll
+    waits = []
+
+    async def sleep(seconds):
+        waits.append(seconds)
+
+    async def read():
+        return None  # never ready inside the attempt budget
+
+    async def run():
+        await paced_poll(2, 0.05, read=read, ready=lambda outcome: bool(outcome),
+                         monotonic=lambda: 0.0, deadline=1.0, sleep=sleep)
+
+    with pytest.raises(TimeoutError):
+        asyncio.run(run())
+    assert waits == [0.05]
+
+
+def test_wire_completion_signal_pins_success():
+    """An operation whose hardware completion signal is not asserted never
+    reports ok (issue #566)."""
+    from {{ package_name }}.wire import CompletionUnassertedError, require_completion
+    require_completion(True, signal="demo done pin")
+    with pytest.raises(CompletionUnassertedError, match="demo done pin"):
+        require_completion(False, signal="demo done pin")
+
+
+def test_vectors_evidence_claims_carry_recorded_bytes():
+    """The anti-circularity invariant for this plugin's own vectors: a
+    vectors.json that claims hardware evidence must carry at least one
+    hand-recorded exchange. The scaffold ships synthetic evidence, which
+    claims nothing (issue #566)."""
+    from benchweave_sdk.vectors import validate_vectors_evidence
+    document = json.loads(files("{{ package_name }}").joinpath("vectors.json").read_text())
+    validate_vectors_evidence(document, source=Path("vectors.json"))

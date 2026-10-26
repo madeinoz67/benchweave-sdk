@@ -779,6 +779,7 @@ def test_a4_nothing_is_hand_written(tmp_path: Path) -> None:
         "__init__.py",
         "adapter.py",
         "protocol.py",
+        "wire.py",
         "protocol.md",
         "vectors.json",
         # derive-ui's output
