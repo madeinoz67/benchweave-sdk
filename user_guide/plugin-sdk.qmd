@@ -159,7 +159,7 @@ A computed measurement variable derives into the dataset targets as an ordinary 
 
 A custom decoder needs no catalog row. Its annotation lanes render in a digital-lanes plot only. A decoder whose lanes no derived plot carries stays disclosed. A channel whose role matches no resolved channel slot stays disclosed too. The verify-ui section below gives the exact rows.
 
-The gateway mirror of this resolution is also deferred. A gateway still refuses an action that the SDK resolves.
+The gateway mirrors this resolution. At serving time a gateway derives the same three layers from the pins in your descriptor. An action that this SDK resolves also resolves on the gateway. The composed action class and the composed member declaration are the same documents that this section describes. The gateway reads the documents those pins name. A residual member renders in the `Custom device actions` section, unless an authored layout stands.
 
 ### Author a composed action class {#composed-action-classes}
 
