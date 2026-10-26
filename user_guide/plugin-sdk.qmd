@@ -504,7 +504,17 @@ If you declare `"transaction_dialect": "send_receive"`, the rows form a binary s
 
 A row can also carry a `name`. Diagnostics refer to a row by its `name` or by its index.
 
+**Evidence.** The file can carry an `evidence` key. The value is `"synthetic"` or `"hardware"`. An absent key means `"synthetic"`. When the bytes of one row are hand-recorded from the device, put `"evidence": "hardware"` on that row. That row then carries a `recorded` object. The `recorded` object needs a `when` field, and the `when` field names the capture moment.
+
+The host refuses a `"hardware"` claim at file level when no row carries recorded bytes. The host also refuses a row that claims `"hardware"` without the `recorded` object. The refusal gives the row.
+
+A file that claims less than it holds does not refuse: a `"synthetic"` file with one recorded row is accepted.
+
+The check proves that a hardware claim comes with recorded provenance. The check cannot prove that the provenance itself is true. Hand-recorded bytes exist to break a circle: a script your own builder writes proves only that the builder agrees with itself. At least one recorded exchange is the anti-circularity property. Builder-generated vectors cannot supply it. The scaffold seeds `"synthetic"` evidence and claims nothing.
+
 **How selection works.** The host reads the declaration at connect time and builds the matching mock host. Nothing else changes. `serve --transport serial` never reads `vectors.json`. The script is rehearsal evidence, not device configuration.
+
+**Demand order.** The mock serves the rows in order. The shipped driver walks the descriptor: identify, then each readable parameter in declaration order. The corpus rows must follow that walk. A corpus that is ordered against another walk rehearses a flow that the host never runs. `validate_vectors_walk_order` in `benchweave_sdk.vectors` rehearses the walk over the corpus. It refuses a drift. The refusal names the walk step and the row. The corpus alone cannot say which row serves which parameter. The mapping is plugin code. The rehearsal with the adapter is the check that decides it. A corpus can also carry rows that the walk never reaches. The rehearsal names those rows. It does not ignore them.
 
 **How the script loops.** The mock detects a repeating unit from the captured rows. The rows before the first full unit are the establishment. The mock serves these rows once. The unit then serves every later cycle in captured order.
 
@@ -512,11 +522,17 @@ A capture needs at least two full units of evidence. A capture with no derivable
 
 A repeating unit must contain at least one row with a `request`. A response-only row releases once per cycle pass. A captured burst drains once. Then the line goes quiet. When the adapter consumes a row with a `request`, the cycle re-arms.
 
+**Session continuity bounds the rehearsal.** A plugin that enforces strict command-counter continuity can rehearse only as many cycles as its corpus carries. The mock restores the poll cycle from a pristine copy. The recycled rows carry the same counters again. A strict tracker refuses that repeat. A session that runs past the corpus wedges on the mock. The mitigation is the third cycle. Capture three cycles, not two. Two cycles derive the unit. The third leaves the rehearsal one cycle of counter headroom before the rows recycle. Bounding the mock's cycles to the corpus size keeps a rehearsal inside the recorded counters.
+
 **What the mock can and cannot rehearse.** The `send_receive` mock reproduces exactly the RECEIVE outcomes of the serial backend: `exact_bytes` precedence over `termination`, the `lf` and `crlf` terminators, the overlong-line discard, the quiet-line `{"data": b""}`, and a partial frame retained across a deadline. The mock releases unsolicited frames strictly in row order. The mock cannot rehearse the interleaving that a real streaming device produces between rows. The mock does not serve `can_receive`, `can_send`, `i2c_transfer` or `spi_transfer`. A plugin that needs those kinds needs a real transport.
 
 The timings of the mock are not the timings of the device. The quiet line answers at once, not after the quiet window of the backend. A receive that cannot complete raises the `TimeoutError` of the backend at once. The mock does not wait until the deadline.
 
 For this reason, a rehearsal proves the command flow, not the timing budget. A capture that fits its `timeout_ms` on the mock proves nothing about the hardware budget. Budget-fit evidence needs `--transport serial` and the device.
+
+**Poll cadence.** A device that answers on its own timer needs a paced poll. Declare the poll interval from the device cadence. A declared interval that no loop reads is a defect. The scaffold's `wire` module carries `paced_poll`. The helper owns the wait between attempts, so the loop cannot skip the pace.
+
+A loop that polls faster than the cadence exhausts its attempts before the device becomes ready. The timeout is then false, and only hardware shows it.
 
 **The bound, in simple words.** The discipline of the mock is exact. When a frame that the adapter SENDs differs from the frame of the scripted row, the rehearsal fails. The failure gives the row and both frames. The mock never guesses what the device meant.
 

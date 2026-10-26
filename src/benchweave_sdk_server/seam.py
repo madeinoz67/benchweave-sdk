@@ -47,6 +47,7 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 from benchweave_sdk.capture import capture_root as resolve_capture_root
 from benchweave_sdk.presentation import read_file, validate_preset
 from benchweave_sdk.testing import ConformanceError
+from benchweave_sdk.validation import validate_read_receipt
 
 from . import catalogue
 from .binding import BindingAbsent, BindingStale
@@ -685,6 +686,17 @@ class StandaloneSeam:
                 correlation,
             )
         data = await self._execute("read", {"parameter": name}, correlation)
+        # Row 13 (issue #567): the receipt is a contract, not a convention.
+        # A non-standard shape used to record None on the ring and render
+        # None on the readings page with no gate firing; it now refuses on
+        # the vendored reading shape plus the descriptor's parameter
+        # contract before the ring sees it.
+        try:
+            validate_read_receipt(data, known[name], parameter=name)
+        except ValueError as exc:
+            raise self._fail(
+                "unavailable", f"read receipt refused: {exc}", correlation
+            ) from exc
         self.observation_ring.record(
             name, time.monotonic() * 1000.0, data.get("value")
         )

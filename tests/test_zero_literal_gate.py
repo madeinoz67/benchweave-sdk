@@ -209,7 +209,7 @@ class TestTwinCounter:
         analysis.py and report.py, the 42nd and 43rd; the #422 inc3
         lifecycle twins add lifecycle.py, the 44th; #440 adds shim.py,
         the 45th; #564 adds the providers/ data directory's contract
-        instance, the 49th) —
+        instance, the 49th; #566 adds vectors.py, the 50th) —
         a scope change is a visible diff, never a silent denominator move.
         The server half is issue #309 slice A's scope extension: deleting
         the tree or narrowing the roots reds here."""
@@ -220,7 +220,7 @@ class TestTwinCounter:
             check=False,
         )
         assert result.returncode == 0, result.stdout + result.stderr
-        assert json.loads(result.stdout)["scanned"] == 49, (
+        assert json.loads(result.stdout)["scanned"] == 50, (
 
             "the scanned-file census moved — update this pin in the "
             "same commit as the tree change (the ratchet discipline)"
