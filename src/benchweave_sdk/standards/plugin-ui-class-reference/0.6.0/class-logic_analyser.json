@@ -1,0 +1,205 @@
+{
+  "contract_version": "0.6.0",
+  "profile_id": "otdp.logic_analyser/1.0.0",
+  "title": "Logic analyser",
+  "targets": {
+    "plugin_ui": ">=0.3.1"
+  },
+  "slots": {
+    "lanes": {
+      "kind": "channels",
+      "where_role": "digital_input",
+      "key": "id",
+      "label": "label"
+    },
+    "capture": {
+      "kind": "dataset",
+      "action": "otdp.logic_analyser.fetch/1.0.0",
+      "schema_source": "output_measurement",
+      "host_supplied": [
+        "acquisition_id"
+      ]
+    },
+    "configure": {
+      "kind": "configuration",
+      "action": "otdp.logic_analyser.configure/1.0.0",
+      "schema_source": "input_schema"
+    },
+    "arm": {
+      "kind": "procedure",
+      "action": "otdp.logic_analyser.arm/1.0.0",
+      "host_supplied": [
+        "configuration_id",
+        "acquisition_id"
+      ]
+    },
+    "abort": {
+      "kind": "procedure",
+      "action": "otdp.logic_analyser.abort/1.0.0",
+      "host_supplied": [
+        "acquisition_id"
+      ]
+    },
+    "trigger": {
+      "kind": "procedure",
+      "action": "otdp.logic_analyser.trigger/1.0.0",
+      "when_declared": true,
+      "host_supplied": [
+        "acquisition_id"
+      ]
+    },
+    "decode": {
+      "kind": "dataset",
+      "action": "otdp.logic_analyser.decode/1.0.0",
+      "when_declared": true,
+      "schema_source": "output_measurement"
+    },
+    "vendor_actions": {
+      "kind": "vendor_actions"
+    }
+  },
+  "pages": [
+    {
+      "id": "capture",
+      "title": "Capture",
+      "kind": "dataset",
+      "binding_slots": [
+        "capture",
+        "arm",
+        "abort",
+        "trigger"
+      ],
+      "plot": {
+        "kind": "digital_lanes",
+        "over_slot": "capture",
+        "group_size": 8,
+        "group_label_pattern": "D{first}-D{last}",
+        "group_radix": "hex"
+      }
+    },
+    {
+      "id": "configuration",
+      "title": "Configuration",
+      "kind": "configuration",
+      "binding_slots": [
+        "configure"
+      ]
+    },
+    {
+      "id": "device-features",
+      "title": "Device features",
+      "kind": "configuration",
+      "binding_slots": [
+        "vendor_actions"
+      ],
+      "vendor_features": true
+    }
+  ],
+  "layouts": [
+    {
+      "page_id": "capture",
+      "sections": [
+        {
+          "id": "lanes",
+          "title": "Lanes",
+          "surface": "raised",
+          "span": 12,
+          "children": [
+            {
+              "plot_index": 0
+            }
+          ]
+        },
+        {
+          "id": "run",
+          "title": "Run",
+          "surface": "raised",
+          "span": 12,
+          "children": [
+            {
+              "binding_id": "arm",
+              "kind": "button"
+            },
+            {
+              "binding_id": "abort",
+              "kind": "button"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "expect": {
+    "components": {
+      "digital-lanes": {
+        "count": "1",
+        "per_page": "capture",
+        "attribute": {
+          "data-bw-lane-kind=channel": "{n_lanes}",
+          "data-bw-lane-kind=group": "{n_groups}",
+          "data-bw-lane-kind=decoder": "{n_decoders}"
+        }
+      },
+      "button": {
+        "count": "{n_run_actions}",
+        "per_page": "capture"
+      },
+      "numeric-input": {
+        "count": "{n_configure_fields}",
+        "per_page": "configuration"
+      },
+      "panel": {
+        "count": "{n_pages}"
+      },
+      "mode-banner": {
+        "count": "1",
+        "per_page": "*"
+      }
+    },
+    "controls": {
+      "otdp.logic_analyser.configure/1.0.0": "preset",
+      "otdp.logic_analyser.arm/1.0.0": "staging",
+      "otdp.logic_analyser.abort/1.0.0": "button",
+      "otdp.logic_analyser.trigger/1.0.0": "button",
+      "otdp.logic_analyser.decode/1.0.0": "deviation"
+    },
+    "forbid": [
+      "confirm-wrapped-run-action",
+      "color-role-hint-on-lane",
+      "untraceable-lane-label",
+      "intermediated-energy-removing-action"
+    ]
+  },
+  "cannot_derive": [
+    {
+      "id": "thresholds",
+      "aspect": "safe threshold_v range for the logic family",
+      "reason": "a class reference cannot know a bench's acceptable thresholds (qualification is per bench)",
+      "author_action": "constrain the settings schema (input_constraints) on the descriptor"
+    },
+    {
+      "id": "arm-safety",
+      "aspect": "safe trigger/arm sequencing",
+      "reason": "device- and DUT-specific; the reference binds the buttons, not the sequence",
+      "author_action": "procedure/policy at commissioning; noted by the generated AI-GUIDE"
+    },
+    {
+      "id": "lane-names",
+      "aspect": "lane names beyond descriptor labels",
+      "reason": "the descriptor owns channel identity",
+      "author_action": "label channels in the descriptor"
+    },
+    {
+      "id": "presets",
+      "aspect": "preset settings values",
+      "reason": "presets are commissioned evidence, never derived",
+      "author_action": "author ui/presets/*.json via check-preset; the expander emits the scaffold only"
+    },
+    {
+      "id": "decode-settings",
+      "aspect": "decode options beyond the closed unions",
+      "reason": "the closed trio unions are the contract; anything else is a named extension",
+      "author_action": "declare decoders[] on the descriptor"
+    }
+  ]
+}

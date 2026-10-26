@@ -1,6 +1,6 @@
 """#556 Track B B3: the composed-member walk (design record
 ``.claude/deep-review/2026-10-25-issue556-track-b-vocabularies.md`` §3 —
-the shared mechanism; the 0.5.0 README's normative section).
+the shared mechanism; the family README's normative section).
 
 Layer 2's document ride and shape discrimination: a declaration carrying
 ``members`` joins the SAME ``descriptor.contracts[]`` path+sha256 pin seam

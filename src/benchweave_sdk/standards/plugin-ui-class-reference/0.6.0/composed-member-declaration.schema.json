@@ -1,0 +1,343 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://benchweave.dev/contracts/plugin-ui-class-reference/0.6.0/composed-member-declaration.schema.json",
+  "title": "BenchWeave plugin-ui-class-reference composed member declaration 0.1.0",
+  "description": "A vendor-authored member-surface declaration: one versioned document that supplies the reference side (slots and placement) the served corpus does not carry, for a device whose class reference covers only part of what the device declares (layer 2 of the composed-member mechanism, gateway #556 track B record section 3). Every closed set in this document is lifted from an owner that already ships it: the member kinds, the channels fields and the action fields are class-reference.schema.json $defs.slot verbatim; the page id shape is its page_template id shape; the plot block is its page_template.plot block verbatim, per-kind conditionals included; the claim pattern is composed-action-class.schema.json $defs.claimed_action_urn; and the optional vendor profile row is device-profile-catalog.schema.json properties.profiles.items verbatim, carried under the PLURAL profiles key as an array of exactly one row — the spelling the canonical validator's profile map reads (documents[*].profiles), so a schema-valid declaration is a readable one. A member injects into the existing derivation, so no new component, page, plot kind or node kind is introduced: the component inventory is the existing one, applied by the existing rule. The document's own contract_version is the composed-member-declaration dialect version, deliberately decoupled from the family directory version so a pinned, digest-verified document stays valid across family bumps (the composed-action-class precedent). What this schema does NOT catch, because each is a derivation rule over document PAIRS rather than a shape rule over one document: (a) page naming an existing page id of the reference the declaration composes with; (b) plot.over_slot naming the member's own slot key (JSON Schema draft 2020-12 cannot compare two instance values); (c) a slot key or claimed action colliding with a reference slot, another member, or a composed action class's claim. (a) and (c) refuse typed in the derivation under the shared conflict code classref_composed_slot_conflict; (b) is a declaration conflict — a document referring to itself inconsistently — and refuses its own code classref_composed_plot_slot_mismatch; none is ever silently merged. One placement outcome is neither refused nor derived: a dataset member's plot on a page whose class template already hosts a plot is admissible (the declaration contradicts nothing the schema can see) and is disclosed on the REPORTED channel — the page keeps the class's plot, the member's plot derives nothing — because a refusal is reserved for a declaration conflict, and a placement limit the declaration cannot see is a disclosure, never a silent drop.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "members"
+  ],
+  "properties": {
+    "contract_version": {
+      "const": "0.1.0"
+    },
+    "profiles": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "items": {
+        "$ref": "#/$defs/vendor_profile"
+      }
+    },
+    "members": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/member"
+      }
+    }
+  },
+  "$defs": {
+    "member": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/channels_member"
+        },
+        {
+          "$ref": "#/$defs/action_member"
+        }
+      ]
+    },
+    "channels_member": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "slot",
+        "kind",
+        "page"
+      ],
+      "properties": {
+        "slot": {
+          "$ref": "#/$defs/slot_key"
+        },
+        "kind": {
+          "const": "channels"
+        },
+        "where_role": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "key": {
+          "const": "id"
+        },
+        "label": {
+          "const": "label"
+        },
+        "page": {
+          "$ref": "#/$defs/page_id"
+        }
+      }
+    },
+    "action_member": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "slot",
+        "kind",
+        "claims",
+        "page"
+      ],
+      "properties": {
+        "slot": {
+          "$ref": "#/$defs/slot_key"
+        },
+        "kind": {
+          "enum": [
+            "dataset",
+            "configuration",
+            "procedure"
+          ]
+        },
+        "claims": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/claimed_action_urn"
+          }
+        },
+        "when_declared": {
+          "type": "boolean"
+        },
+        "schema_source": {
+          "enum": [
+            "input_schema",
+            "output_measurement"
+          ]
+        },
+        "host_supplied": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "page": {
+          "$ref": "#/$defs/page_id"
+        },
+        "plot": {
+          "$ref": "#/$defs/plot"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "dataset"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "plot"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "plot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "over_slot"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "digital_lanes",
+            "time_series",
+            "waveform"
+          ]
+        },
+        "over_slot": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "group_size": {
+          "const": 8
+        },
+        "group_label_pattern": {
+          "const": "D{first}-D{last}"
+        },
+        "group_radix": {
+          "enum": [
+            "hex",
+            "decimal"
+          ]
+        },
+        "series": {
+          "const": "numeric_variables"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "digital_lanes"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "not": {
+              "required": [
+                "series"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "time_series"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "required": [
+              "series"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "group_size"
+                  ]
+                },
+                {
+                  "required": [
+                    "group_label_pattern"
+                  ]
+                },
+                {
+                  "required": [
+                    "group_radix"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "waveform"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "required": [
+              "series"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "group_size"
+                  ]
+                },
+                {
+                  "required": [
+                    "group_label_pattern"
+                  ]
+                },
+                {
+                  "required": [
+                    "group_radix"
+                  ]
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "vendor_profile": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "channel_roles": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "required_actions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "optional_actions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 0
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "channel_roles",
+        "required_actions",
+        "optional_actions"
+      ],
+      "additionalProperties": false
+    },
+    "claimed_action_urn": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*/[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "slot_key": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "page_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+    }
+  }
+}

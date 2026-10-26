@@ -1,0 +1,315 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://benchweave.dev/contracts/plugin-ui-class-reference/0.6.0/layout.schema.json",
+  "title": "BenchWeave plugin-ui-class-reference layout vocabulary 0.6.0",
+  "description": "The namespaced layout block. It rides a plugin-ui manifest's extensions seam under the key plugin-ui-class-reference:layout; the canonical manifest validator is extension-blind, so this family schema is the block's only validation authority. Bounds: section nesting depth <=3 by construction, grid span <=12, text bodies <=512 characters. The schema shape-checks content, it does not count it: no array of pages, sections or children carries a count ceiling — a vendor feature surface grows children (staging nodes and buttons scale with the action count) and a multi-class composition concatenates page templates, so density is a renderer concern, not a validation one.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "pages"
+  ],
+  "properties": {
+    "contract_version": {
+      "const": "0.6.0"
+    },
+    "pages": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/layout_page"
+      }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "layout_page": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "page_id",
+        "sections"
+      ],
+      "properties": {
+        "page_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+        },
+        "sections": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/section"
+          }
+        }
+      }
+    },
+    "section": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "surface",
+        "children"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "surface": {
+          "enum": [
+            "raised",
+            "recessed"
+          ]
+        },
+        "span": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 12
+        },
+        "children": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/node"
+          }
+        }
+      }
+    },
+    "node": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/nested_section"
+        },
+        {
+          "$ref": "#/$defs/control"
+        },
+        {
+          "$ref": "#/$defs/text"
+        },
+        {
+          "$ref": "#/$defs/reading"
+        },
+        {
+          "$ref": "#/$defs/plot_ref"
+        }
+      ]
+    },
+    "nested_section": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "surface",
+        "children"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "surface": {
+          "enum": [
+            "raised",
+            "recessed"
+          ]
+        },
+        "span": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 12
+        },
+        "children": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/node_deep"
+          }
+        }
+      }
+    },
+    "node_deep": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/deep_section"
+        },
+        {
+          "$ref": "#/$defs/control"
+        },
+        {
+          "$ref": "#/$defs/text"
+        },
+        {
+          "$ref": "#/$defs/reading"
+        },
+        {
+          "$ref": "#/$defs/plot_ref"
+        }
+      ]
+    },
+    "deep_section": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "surface",
+        "children"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "surface": {
+          "enum": [
+            "raised",
+            "recessed"
+          ]
+        },
+        "span": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 12
+        },
+        "children": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/node_leaf"
+          }
+        }
+      }
+    },
+    "node_leaf": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/control"
+        },
+        {
+          "$ref": "#/$defs/text"
+        },
+        {
+          "$ref": "#/$defs/reading"
+        },
+        {
+          "$ref": "#/$defs/plot_ref"
+        }
+      ]
+    },
+    "control": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "binding_id",
+        "kind"
+      ],
+      "properties": {
+        "binding_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+        },
+        "kind": {
+          "enum": [
+            "button",
+            "numeric",
+            "rotary",
+            "text",
+            "select",
+            "boolean"
+          ]
+        },
+        "field": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      }
+    },
+    "text": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "body"
+      ],
+      "properties": {
+        "body": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      }
+    },
+    "reading": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "binding_id",
+        "kind"
+      ],
+      "properties": {
+        "binding_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$"
+        },
+        "kind": {
+          "enum": [
+            "reading-tile",
+            "data-table"
+          ]
+        }
+      }
+    },
+    "plot_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "plot_index"
+      ],
+      "properties": {
+        "plot_index": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 15
+        }
+      }
+    }
+  }
+}
