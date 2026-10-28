@@ -719,11 +719,12 @@ def serve(
         click.echo(f"Bearer token (REST mutations and MCP over HTTP): {policy.bearer_token}")
         # trust-1: the per-launch operator action token, minted for every serve
         # (uniform and fail-closed — the routes refuse everything without one)
-        # but DELIVERED only where it has a consumer: the serial transport's
-        # bind/unbind routes. Two out-of-band channels, never a page GET: the
-        # banner line below, and a file under the capture-root family.
+        # but DELIVERED only where it has a consumer: the live transports'
+        # bind/unbind routes (row a widened ftdi into them). Two out-of-band
+        # channels, never a page GET: the banner line below, and a file
+        # under the capture-root family.
         launch_url = f"http://{host}:{port}"
-        if transport == "serial":
+        if transport in ("serial", "ftdi"):
             click.echo(
                 "Operator action token (endpoint bind/unbind in the UI): "
                 f"{policy.operator_action_token}"

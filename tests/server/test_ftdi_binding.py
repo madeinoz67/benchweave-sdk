@@ -237,3 +237,97 @@ def test_the_seam_scan_serves_the_ftdi_discovery(tmp_path: Path) -> None:
     devices = result["devices"]
     assert [row["port_path"] for row in devices] == [_URL]
     assert seam.discovery_cache is not None and len(seam.discovery_cache) == 1
+
+
+# --------------------------------------------------------------------------
+# F2 (claims-surface refute): the scan/pick/bind path must WORK on ftdi —
+# bind_device accepts and persists an ftdi pick against the ftdi
+# enumeration. Pre-fix this refused standalone_binding_pick_vanished (the
+# cross-check enumerated pyserial).
+# --------------------------------------------------------------------------
+
+
+def _scan_and_bind_seam(tmp_path: Path):
+    """A seam over the fixture plugin with ftdi hooks injected: a scan
+    confirms the URL, ready for the bind."""
+    import json as _json
+
+    rows = _json.loads(
+        (FIXTURE_ROOT / "src" / "ftdi_control_demo" / "vectors.json").read_text()
+    )["exchanges"]
+    from benchweave_sdk_server.ftdi import FtdiDeviceHooks, ScriptedFtdiDriver
+
+    hooks = FtdiDeviceHooks(
+        enumerate_urls=lambda: [_URL],
+        open_url=lambda url: ScriptedFtdiDriver(rows),
+    )
+    monkey_env = tmp_path / "bind.json"
+    import os
+
+    os.environ["BENCHWEAVE_STANDALONE_BINDINGS"] = str(monkey_env)
+    try:
+        seam, _ = _build_seam(FIXTURE_ROOT, transport="ftdi", driver_hooks=hooks)
+    finally:
+        os.environ.pop("BENCHWEAVE_STANDALONE_BINDINGS", None)
+    return seam, monkey_env
+
+
+def test_f2_bind_accepts_and_persists_an_ftdi_pick(tmp_path: Path) -> None:
+    seam, store_path = _scan_and_bind_seam(tmp_path)
+
+    async def scenario() -> None:
+        devices = await seam.call("device_discover")
+        assert [row["port_path"] for row in devices["devices"]] == [_URL]
+        await seam.bind_device(_URL)  # the pick the scan just confirmed
+        row = seam.binding_row
+        assert row is not None
+        assert row["endpoint_kind"] == "ftdi_url"
+        assert row["ftdi_url"] == _URL
+        # The persisted document carries the ftdi row verbatim.
+        document = json.loads(store_path.read_text())
+        assert document["bindings"][0]["ftdi_url"] == _URL
+        assert document["bindings"][0]["endpoint_kind"] == "ftdi_url"
+        # The bound row now resolves a no-device connect end to end.
+        await seam.call("device_connect", {"device_id": "ftdi_demo"})
+        read = await seam.call(
+            "parameter_read",
+            {"device_id": "ftdi_demo", "parameter": "line_status"},
+        )
+        assert read["value"] == 0x5A
+
+    asyncio.run(scenario())
+
+
+def test_f2_a_vanished_ftdi_pick_refuses_the_ftdi_enumeration(
+    tmp_path: Path,
+) -> None:
+    """The live-presence cross-check runs against the FTDI enumeration: a
+    pick whose URL a fresh enumeration no longer carries refuses (the
+    unplug-between-scan-and-click posture, one transport over)."""
+    import json as _json
+
+    rows = _json.loads(
+        (FIXTURE_ROOT / "src" /"ftdi_control_demo" / "vectors.json").read_text()
+    )["exchanges"][:8]
+    from benchweave_sdk_server.ftdi import FtdiDeviceHooks, ScriptedFtdiDriver
+
+    live_urls = [_URL]
+    hooks = FtdiDeviceHooks(
+        enumerate_urls=lambda: list(live_urls),
+        open_url=lambda url: ScriptedFtdiDriver(rows),
+    )
+    import os
+
+    os.environ["BENCHWEAVE_STANDALONE_BINDINGS"] = str(tmp_path / "bind.json")
+    try:
+        seam, _ = _build_seam(FIXTURE_ROOT, transport="ftdi", driver_hooks=hooks)
+    finally:
+        os.environ.pop("BENCHWEAVE_STANDALONE_BINDINGS", None)
+
+    async def scenario() -> None:
+        await seam.call("device_discover")
+        live_urls.clear()  # the device unplugged between the scan and the click
+        with pytest.raises(Exception, match="standalone_binding_pick_vanished"):
+            await seam.bind_device(_URL)
+
+    asyncio.run(scenario())

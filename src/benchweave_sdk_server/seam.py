@@ -812,7 +812,7 @@ class StandaloneSeam:
 
         if self._bindings is None:
             raise self._fail(
-                "not_found", "endpoint binding is a serial-transport surface", correlation
+                "not_found", "endpoint binding is a live-transport surface", correlation
             )
         if self._session.connected:
             raise self._fail(
@@ -832,6 +832,66 @@ class StandaloneSeam:
                 "of the listed ports",
                 correlation,
             )
+        if self._transport_kind == "ftdi":
+            # Row a (F2's fix): the live-presence cross-check runs against
+            # the FTDI enumeration — an ftdi:// URL never matches a pyserial
+            # port list, so the serial path below is a dead end here. The
+            # pick must still name a URL the LIVE enumeration carries (the
+            # unplug-between-scan-and-click posture, one transport over);
+            # the row is ftdi_url-shaped (the URL is the endpoint identity).
+            live_urls: list[str] = (
+                list(self._ftdi_hooks.enumerate_urls())
+                if self._ftdi_hooks is not None
+                else []
+            )
+            if str(port_path) not in live_urls:
+                raise self._fail(
+                    "invalid_request",
+                    f"standalone_binding_pick_vanished: {port_path} is no longer "
+                    "present; scan for devices, then pick one of the "
+                    "listed URLs",
+                    correlation,
+                )
+            ftdi_row: dict[str, Any] = {
+                "connection_key": self._session.device_id,
+                "plugin_package": self._session.plugin.package,
+                "transport": self._transport_kind,
+                "endpoint_kind": "ftdi_url",
+                "usb_serial": None,
+                "vid": None,
+                "pid": None,
+                "port_path": None,
+                "ftdi_url": str(port_path),
+                "identity": {
+                    "manufacturer": str(picked.get("manufacturer") or ""),
+                    "model": str(picked.get("model") or ""),
+                    "firmware": None,
+                },
+                "bound_at": binding_stamp(),
+                "bound_via": via,
+            }
+            try:
+                self._bindings.bind(ftdi_row)
+            except (OSError, ValueError) as exc:
+                raise self._fail(
+                    "internal_error",
+                    f"the binding store refused the write: {exc}",
+                    correlation,
+                ) from exc
+            self.events.publish(
+                "device_bound",
+                {
+                    "device_id": self._session.device_id,
+                    "endpoint_kind": "ftdi_url",
+                    "ftdi_url": str(port_path),
+                },
+            )
+            return {
+                "device_id": self._session.device_id,
+                "bound": True,
+                "endpoint_kind": "ftdi_url",
+                "ftdi_url": str(port_path),
+            }
         # The live-presence cross-check (fold wave 2, lane A F1): the
         # confirmed cache governs the PICK, but the pick must still name a
         # port the LIVE enumeration carries. A port that unplugged between
