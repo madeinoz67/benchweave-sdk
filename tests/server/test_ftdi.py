@@ -50,7 +50,7 @@ from benchweave_sdk_server.ftdi import (
     open_ftdi,
     verify_ftdi_plugin,
 )
-from benchweave_sdk_server.replay import load_replay_journal
+from benchweave_sdk_server.replay import load_replay_journal, replay_plugin_session
 from benchweave_sdk_server.seam import StandaloneSeam
 from benchweave_sdk_server.serial import SerialCaptureServices, SerialLink
 from benchweave_sdk_server.session import load_plugin_project
@@ -842,7 +842,6 @@ def test_record_emits_a_replayable_journal(tmp_path: Path, plugin) -> None:
     exactly, and (c) REPLAYS — the recorded session completes the same
     bring-up and read through ``replay_plugin_session``, closing the loop
     record-on-ftdi → replay-on-#564."""
-    from benchweave_sdk_server.replay import replay_plugin_session
 
     record_path = tmp_path / "recorded-journal.json"
     driver = _double()
@@ -1203,3 +1202,195 @@ def test_the_contracts_declared_limits_are_enforced_before_dispatch(plugin) -> N
     )
     assert ("set_baud", {"baud": 2**40}) in driver.calls
     services.link.close()
+
+
+# --------------------------------------------------------------------------
+# The recorder folds (refute lane A): F4 a session accumulates across
+# reconnects (no write path may discard recorded rows); F5 a fully-sent
+# frame lands its request row when the receive faults; F6 the faulted
+# driver latches; plus the short-write label and the verify order.
+# --------------------------------------------------------------------------
+
+
+def test_record_accumulates_across_reconnects(tmp_path: Path, plugin) -> None:
+    """F4's named arm: rows are minted per connection and close_transport
+    used write_text, so a reconnect destroyed the prior conversation's
+    rows — exactly the evidence a falsification session wants. A session
+    now accumulates into one journal: both conversations' rows survive,
+    the row names mark the connection boundary, and the journal still
+    loads through the replay validator."""
+    record_path = tmp_path / "session-journal.json"
+    first = _double()
+    second = _double()
+    drivers = [first, second]
+    session = ftdi_plugin_session(
+        plugin,
+        _URL,
+        driver_factory=lambda url: drivers.pop(0) if drivers else _double(),
+        record_path=record_path,
+    )
+    asyncio.run(session.connect())
+    asyncio.run(session.execute("read", {"parameter": "line_status"}))
+    asyncio.run(session.close())
+    asyncio.run(session.connect())  # the reconnect that used to destroy
+    asyncio.run(session.execute("read", {"parameter": "line_status"}))
+    asyncio.run(session.close())
+    document = json.loads(record_path.read_text())
+    provider_rows = _provider_rows(document["rows"])
+    one_conversation = _provider_rows(_journal_rows())
+    assert provider_rows == one_conversation + one_conversation, (
+        "both conversations' rows survive the reconnect"
+    )
+    names = [row["name"] for row in document["rows"]]
+    assert any(name.startswith("conn1-") for name in names)
+    assert any(name.startswith("conn2-") for name in names), (
+        "the row names mark the reconnect boundary"
+    )
+    load_replay_journal(record_path, plugin)  # still a loadable journal
+
+
+def test_a_fully_sent_frame_lands_its_request_row_when_the_receive_faults(
+    tmp_path: Path, plugin
+) -> None:
+    """F5's named arm: the driver recorded the whole frame; the journal
+    recorded zero rows for it — less honest than the timeout arm. The
+    request row now lands with recorded_failure 'connection' when the
+    send completed and the receive faulted; the replay loader and host
+    serve that marker as the connection fault it was."""
+    from benchweave_sdk_server.ftdi import RecordingFtdiCaptureServices
+
+    rows = [_journal_rows()[-1]]
+    rows[0]["response"] = {"data": "c200015a"}
+    driver = ScriptedFtdiDriver(rows)
+    driver.fault_reads = True  # the write lands; the reader faults after
+    contract = verify_ftdi_plugin(plugin)
+    stream = FtdiStreamAdapter(driver)
+    link = SerialLink(stream)
+    services = RecordingFtdiCaptureServices(
+        link,
+        driver,
+        contract.grammar,
+        provider=contract.provider,
+        max_frame_bytes=4096,
+        record_path=tmp_path / "fault-journal.json",
+        limits=contract.limits,
+        stream=stream,
+    )
+    context = _context(services, "op-f5")
+    with pytest.raises(ConnectionError):
+        asyncio.run(
+            services.transfer(
+                {
+                    "kind": "stream_exchange",
+                    "data": bytes.fromhex("55a1"),
+                    "max_bytes": 8,
+                    "termination": "lf",
+                    "exact_bytes": 4,
+                },
+                context,
+            )
+        )
+
+    async def close() -> None:
+        await services.close_transport(context)
+
+    asyncio.run(close())
+    document = json.loads((tmp_path / "fault-journal.json").read_text())
+    faults = [row for row in document["rows"] if row.get("recorded_failure")]
+    assert len(faults) == 1, "the sent frame's row landed"
+    assert faults[0]["recorded_failure"] == "connection"
+    assert faults[0]["transaction"]["data"] == "55a1"
+    # The marker replays as the connection fault it was: the loader
+    # accepts the "connection" value and the replay host serves it as a
+    # ConnectionError, not a fabricated frame (driven through the host
+    # directly — the journal holds just the one row).
+    from benchweave_sdk_server.replay import ReplayHost, load_replay_journal
+
+    parsed = load_replay_journal(tmp_path / "fault-journal.json", plugin)
+    host = ReplayHost(parsed)
+    replay_context = MockContext("op-replay", deadline_monotonic=host.monotonic() + 2)
+    replay_context.dispatched = True
+    with pytest.raises(ConnectionError, match="lost its connection"):
+        asyncio.run(
+            host.transfer(
+                {
+                    "kind": "stream_exchange",
+                    "data": bytes.fromhex("55a1"),
+                    "max_bytes": 8,
+                    "termination": "lf",
+                    "exact_bytes": 4,
+                },
+                replay_context,
+            )
+        )
+    link.close()
+
+
+def test_a_faulted_driver_latches(tmp_path: Path, plugin) -> None:
+    """F6's named arm: 'a faulted driver stays faulted' was claim-only —
+    a transient fault let the next transaction answer ok. The services
+    latch the fault: every later transaction on this connection refuses
+    ConnectionError BEFORE the driver, and the driver sees exactly one
+    call."""
+    driver = ScriptedFtdiDriver(_journal_rows())
+    session = ftdi_plugin_session(
+        plugin, _URL, driver_factory=lambda url: driver
+    )
+    asyncio.run(session.connect())
+    driver.fault_writes = True  # the device is unplugged mid-session
+    read = asyncio.run(session.execute("read", {"parameter": "line_status"}))
+    assert read["status"] == "unknown"  # the faulted exchange
+    writes_before = driver.write_calls  # the read's own faulting write is in
+    # The latch: the next control op refuses without reaching the driver.
+    context = _context(session.services, "op-f6")
+    with pytest.raises(ConnectionError, match="previously faulted"):
+        asyncio.run(
+            session.services.transfer(
+                {"kind": "ftdi_control", "op": "reset_device"}, context
+            )
+        )
+    assert driver.write_calls == writes_before, "no second driver call"
+    asyncio.run(session.close())
+
+
+def test_the_short_write_refusal_names_the_ftdi_transport(plugin) -> None:
+    """Lane A's observation: the inherited short-write refusal printed
+    'serial write reported ...' on the ftdi transport. The message names
+    the transport that actually short-wrote."""
+    rows = [
+        {
+            "name": "chunk",
+            "transaction": {
+                "kind": "stream_send",
+                "data": "deadbeefcafebabe",
+            },
+            "response": {},
+        }
+    ]
+    driver = ScriptedFtdiDriver(rows)
+    driver.short_writes = True  # the write lands short: 4 of 8 bytes
+    services = _services(plugin, driver)
+    context = _context(services, "op-short")
+    with pytest.raises(ConnectionError, match="ftdi write reported 4 of 8"):
+        asyncio.run(
+            services.transfer(
+                {"kind": "stream_send", "data": bytes.fromhex("deadbeefcafebabe")},
+                context,
+            )
+        )
+    services.link.close()
+
+
+def test_a_missing_backend_does_not_mask_a_contract_refusal(
+    tmp_path: Path, starter_project: Path, monkeypatch
+) -> None:
+    """Lane A's observation: verify_ftdi_plugin checked the pyftdi
+    backend before the pin, so a missing extra masked the contract
+    refusal at serve. The contract-level check runs first; a deployment
+    error never hides a contract one."""
+    import sys
+
+    monkeypatch.setitem(sys.modules, "pyftdi.ftdi", None)
+    unpinned = load_plugin_project(starter_project)
+    with pytest.raises(ValueError, match="live_provider_plugin_unpinned:"):
+        verify_ftdi_plugin(unpinned)

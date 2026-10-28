@@ -318,6 +318,9 @@ class ScriptedFtdiDriver:
         self.write_calls = 0
         self.closes = 0
         self.fault_writes = False
+        self.fault_reads = False
+        self.short_writes = False
+        self._write_done = False
         self._script: deque[_ScriptEntry] = deque()
         self._inbound = bytearray()
         for index, row in enumerate(rows):
@@ -463,9 +466,17 @@ class ScriptedFtdiDriver:
         self._script.popleft()
         self.writes.append(bytes(data))
         self._inbound += entry.response
+        self._write_done = True
+        if self.short_writes and len(data) > 4:
+            # A short count: part of the frame hit the pipe; the services
+            # layer's own short-count refusal judges it.
+            return 4
         return len(data)
 
     def read_data(self, size: int) -> bytes:
+        if self.fault_reads and self._write_done:
+            # The F5 shape: the frame went out, then the receive faults.
+            raise OSError("device unplugged mid-receive")
         out = bytes(self._inbound[:size])
         del self._inbound[:size]
         return out
@@ -489,9 +500,17 @@ class FtdiStreamAdapter:
 
     def __init__(self, driver: FtdiDriver) -> None:
         self._driver = driver
+        #: Whether the LAST write left the driver in full (the recorder's
+        #: F5 discriminator: only a fully-sent frame's request row may
+        #: land on a later receive fault — a partial never claims to have
+        #: gone out whole).
+        self.completed = False
 
     def write(self, data: bytes) -> int | None:
-        return self._driver.write_data(data)
+        self.completed = False
+        sent = self._driver.write_data(data)
+        self.completed = sent == len(data)
+        return sent
 
     def read(self, size: int = 1) -> bytes:
         data = self._driver.read_data(size)
@@ -540,6 +559,13 @@ class FtdiCaptureServices(SerialCaptureServices):
         self._grammar = grammar
         self._provider = dict(provider)
         self._limits = dict(limits or {})
+        # The faulted-driver latch (refute lane A, F6): a driver exception
+        # latches THIS connection's services — every later transaction
+        # refuses ConnectionError before the driver. "A faulted driver
+        # stays faulted" is enforced, not claimed; a reconnect mints fresh
+        # services (the M1 fold's fresh conversation).
+        self._faulted = False
+        self._write_label = "ftdi"
 
     # -- capture (the sidecar names the transport and the contract) --------
 
@@ -644,14 +670,28 @@ class FtdiCaptureServices(SerialCaptureServices):
         grammar gate refuses what is neither, unchanged."""
         kind = transaction.get("kind")
         if not (isinstance(kind, str) and kind in self._grammar):
-            return await super().transfer(transaction, context)
+            try:
+                return await super().transfer(transaction, context)
+            except ConnectionError:
+                # F6's latch covers the stream side too: a faulted driver
+                # (including a faulted link) stays faulted on this
+                # connection; every later transaction refuses before
+                # dispatch until a reconnect mints fresh services.
+                self._faulted = True
+                raise
         # 1. Grammar first, before any state change: the schema, then the
         #    contract's declared limits (F3b — the schema alone admits
         #    values the device cannot express; the limits block is the
         #    contract's own envelope).
         self._validate_provider(transaction)
         self._enforce_limits(transaction)
-        # 2. The closed posture (the driver shares the link's close path).
+        # 2. The closed posture (the driver shares the link's close path),
+        #    and the faulted-driver latch (F6).
+        if self._faulted:
+            raise ConnectionError(
+                "the ftdi driver previously faulted on this connection; "
+                "reconnect required"
+            )
         if self._link.is_closed:
             raise ConnectionError("ftdi device link is closed")
         # 3. The busy guard (the #407 guard one mode over, uniform over all
@@ -687,6 +727,7 @@ class FtdiCaptureServices(SerialCaptureServices):
         try:
             result = await asyncio.to_thread(self._dispatch, op, args)
         except Exception as exc:
+            self._faulted = True
             raise ConnectionError(
                 f"ftdi driver call failed: {type(exc).__name__}: {exc}"
             ) from exc
@@ -828,13 +869,14 @@ def verify_ftdi_plugin(plugin: LoadedPlugin) -> FtdiContract:
     connection re-runs over the CURRENT plugin (the late-bound
     ``replay_plugin_session`` shape: a reload that re-pins a different
     contract revision refuses the reconnect). Returns the verified
-    contract — grammar, provider triple, limits. A missing pyftdi refuses
-    here too — serve construction, exit 2, before any port binds (the
-    journal precedent's posture)."""
-    _require_backend()
+    contract — grammar, provider triple, limits. The CONTRACT checks run
+    first and the deployment check (pyftdi present) last: a missing extra
+    is a deployment error and must never mask a contract refusal at serve
+    (refute lane A's ordering observation)."""
     pinned, digest = _ftdi_pinned_contract(plugin)
     _require_ftdi_feature(pinned, digest)
     grammar = _probe_grammar(pinned)
+    _require_backend()
     provider = {
         "feature_id": str(pinned["feature_id"]),
         "id": str(pinned["id"]),
@@ -846,6 +888,49 @@ def verify_ftdi_plugin(plugin: LoadedPlugin) -> FtdiContract:
         if isinstance(row, dict):
             limits.update(row)
     return FtdiContract(grammar=grammar, provider=provider, limits=limits)
+
+
+class _JournalState:
+    """The session-scoped recorder state (refute lane A, F4): one journal
+    accumulates across the session's connections — rows are never
+    discarded on reconnect, the row names mark each connection boundary
+    (``conn<n>-row<m>``), and every ``close_transport`` rewrites the
+    ACCUMULATED document so even a mid-session close loses nothing."""
+
+    def __init__(self, record_path: Any, provider: dict[str, str]) -> None:
+        self.record_path = record_path
+        self.provider = dict(provider)
+        self.rows: list[dict[str, Any]] = []
+        self.started_at: str
+        self.connection = 0
+        self.counter = 0
+
+    def begin_connection(self) -> None:
+        self.connection += 1
+        if self.connection == 1:
+            from datetime import UTC, datetime
+
+            self.started_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
+
+    def name(self) -> str:
+        self.counter += 1
+        return f"conn{self.connection}-row{self.counter}"
+
+    def document(self) -> dict[str, Any]:
+        return {
+            "journal_version": "1",
+            "recorded": {
+                "started_at": self.started_at,
+                "source": "live_ftdi_session",
+                "single_owner": True,
+                "operator_note": (
+                    f"{self.connection} connection(s); row names mark each "
+                    "connection boundary"
+                ),
+            },
+            "provider": dict(self.provider),
+            "rows": self.rows,
+        }
 
 
 class RecordingFtdiCaptureServices(FtdiCaptureServices):
@@ -893,6 +978,8 @@ class RecordingFtdiCaptureServices(FtdiCaptureServices):
         capture_max_bytes: int | None = None,
         record_path: Any = None,
         limits: Mapping[str, Any] | None = None,
+        journal: _JournalState | None = None,
+        stream: FtdiStreamAdapter | None = None,
     ) -> None:
         super().__init__(
             link,
@@ -904,16 +991,20 @@ class RecordingFtdiCaptureServices(FtdiCaptureServices):
             capture_max_bytes=capture_max_bytes,
             limits=limits,
         )
-        self._record_path = record_path
-        self._rows: list[dict[str, Any]] = []
-        self._started_at = self.utc_now()
-        self._counter = 0
+        # A shared state object carries the session's accumulation across
+        # reconnects (F4); a bare record_path mints a private one (the
+        # direct-construction unit arms).
+        if journal is not None:
+            self._journal = journal
+        else:
+            self._journal = _JournalState(record_path, provider)
+        self._journal.begin_connection()
+        self._stream = stream
 
     # -- row composition ------------------------------------------------------
 
     def _name(self) -> str:
-        self._counter += 1
-        return f"row-{self._counter}"
+        return self._journal.name()
 
     def _provider_row(self, transaction: dict[str, Any], result: dict[str, Any]) -> None:
         entry = self._grammar[transaction["kind"]]
@@ -934,7 +1025,7 @@ class RecordingFtdiCaptureServices(FtdiCaptureServices):
             )
             for key, value in result.items()
         }
-        self._rows.append(
+        self._journal.rows.append(
             {
                 "name": self._name(),
                 "transaction": dict(transaction, **document),
@@ -970,8 +1061,24 @@ class RecordingFtdiCaptureServices(FtdiCaptureServices):
         response: dict[str, Any] = {}
         if kind != "stream_send" and result.get("data"):
             response = {"data": result["data"].hex()}
-        self._rows.append(
+        self._journal.rows.append(
             {"name": self._name(), "transaction": fields, "response": response}
+        )
+
+    def _connection_failure_row(self, transaction: dict[str, Any]) -> None:
+        """F5: the request went out in full; the connection then faulted.
+        The row lands with ``recorded_failure: "connection"`` — a marker
+        the #564 loader accepts and the replay host serves as the
+        connection fault it was."""
+        fields: dict[str, Any] = {"kind": transaction["kind"]}
+        fields.update(self._frame_fields(transaction["data"]))
+        fields.update(self._bounds_fields(transaction))
+        self._journal.rows.append(
+            {
+                "name": self._name(),
+                "transaction": fields,
+                "recorded_failure": "connection",
+            }
         )
 
     def _timeout_row(self, transaction: dict[str, Any]) -> None:
@@ -980,7 +1087,7 @@ class RecordingFtdiCaptureServices(FtdiCaptureServices):
         if kind != "stream_receive":
             fields.update(self._frame_fields(transaction["data"]))
         fields.update(self._bounds_fields(transaction))
-        self._rows.append(
+        self._journal.rows.append(
             {
                 "name": self._name(),
                 "transaction": fields,
@@ -1007,27 +1114,32 @@ class RecordingFtdiCaptureServices(FtdiCaptureServices):
             if isinstance(kind, str) and kind in ("stream_receive", "stream_exchange"):
                 self._timeout_row(transaction)
             raise
+        except ConnectionError:
+            # F5 + F6 together: a fully-sent exchange whose receive
+            # faulted lands its request row with the connection marker —
+            # at least as honest as the timeout arm. The discriminator is
+            # the ADAPTER's send-completion fact (``stream.completed``): a
+            # failed, short or never-started send records nothing (it
+            # never went out whole), and a receive-side fault after a full
+            # send records the row. And the latch (F6): a faulted driver
+            # (including a faulted link) stays faulted on this connection.
+            if kind == "stream_exchange" and self._stream is not None and (
+                self._stream.completed
+            ):
+                self._connection_failure_row(transaction)
+            self._faulted = True
+            raise
         self._stream_row(transaction, result)
         return result
 
     async def close_transport(self, context: Any) -> None:
-        document = {
-            "journal_version": "1",
-            "recorded": {
-                "started_at": self._started_at,
-                "source": "live_ftdi_session",
-                "single_owner": True,
-            },
-            "provider": dict(self._provider),
-            "rows": self._rows,
-        }
+        document = self._journal.document()
         try:
-            assert self._record_path is not None
-            self._record_path.write_text(
+            self._journal.record_path.write_text(
                 json.dumps(document, indent=2, sort_keys=False) + "\n",
                 encoding="utf-8",
             )
-        except (OSError, ValueError, AssertionError) as exc:
+        except (OSError, ValueError) as exc:
             _LOGGER.warning(
                 "live_provider_record_write: the journal was not written: %s", exc
             )
@@ -1054,12 +1166,14 @@ def ftdi_plugin_session(
     ``record_path`` arms the live journal recorder (row b): the session's
     exchanges emit a #564-format journal at close."""
     open_driver = driver_factory or open_ftdi
+    journal = _JournalState(record_path, {}) if record_path is not None else None
 
     def factory() -> FtdiCaptureServices:
         contract = verify_ftdi_plugin(session.plugin)
         driver = open_driver(url)
-        link = SerialLink(FtdiStreamAdapter(driver))
         settings = session.plugin.descriptor.get("transport", {}).get("settings", {})
+        stream = FtdiStreamAdapter(driver)
+        link = SerialLink(stream)
         common: dict[str, Any] = {
             "provider": contract.provider,
             "max_frame_bytes": transport_ceiling(settings),
@@ -1068,11 +1182,15 @@ def ftdi_plugin_session(
             "limits": contract.limits,
         }
         services: FtdiCaptureServices
-        if record_path is None:
+        if journal is None:
             services = FtdiCaptureServices(link, driver, contract.grammar, **common)
         else:
+            # The session's journal state carries the provider triple the
+            # document names (the CURRENT plugin's verified pin).
+            journal.provider = contract.provider
             services = RecordingFtdiCaptureServices(
-                link, driver, contract.grammar, record_path=record_path, **common
+                link, driver, contract.grammar, journal=journal,
+                stream=stream, **common
             )
         return services
 

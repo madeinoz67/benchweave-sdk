@@ -335,10 +335,11 @@ def _load_row(
     if not isinstance(kind, str):
         raise ValueError(f"replay_journal_row_shape: row {name}: kind is not a string")
     failure = row.get("recorded_failure")
-    if failure is not None and failure != "timeout":
+    if failure is not None and failure not in ("timeout", "connection"):
         raise ValueError(
             f"replay_journal_row_shape: row {name}: recorded_failure {failure!r} "
-            'is not a recorded outcome this format carries (only "timeout")'
+            'is not a recorded outcome this format carries '
+            '("timeout" or "connection")'
         )
     response_raw = row.get("response")
 
@@ -1071,9 +1072,14 @@ class ReplayHost(WriterBackedCaptureServices, MockHost):
             row = self._match_receive(identity_bounds)
             if row is not None and row.failure is not None:
                 # The recorded failure replays honestly: the outcome class is
-                # the backend's TimeoutError posture, compressed to immediate
-                # (the recording already proved the wait); no byte is served
-                # and no clean quiet-line answer upgrades the ambiguity (A06).
+                # the backend's posture, compressed to immediate (the
+                # recording already proved the wait); no byte is served and
+                # no clean quiet-line answer upgrades the ambiguity (A06).
+                if row.failure == "connection":
+                    raise ConnectionError(
+                        f"replay recorded_failure at row {row.name}: the "
+                        "recorded exchange lost its connection after the send"
+                    )
                 raise TimeoutError(
                     f"replay recorded_failure at row {row.name}: the recorded "
                     "receive expired at its deadline with no complete frame"
@@ -1104,6 +1110,11 @@ class ReplayHost(WriterBackedCaptureServices, MockHost):
         if kind == "stream_send":
             return {}
         if row.failure is not None:
+            if row.failure == "connection":
+                raise ConnectionError(
+                    f"replay recorded_failure at row {row.name}: the "
+                    "recorded exchange lost its connection after the send"
+                )
             raise TimeoutError(
                 f"replay recorded_failure at row {row.name}: the recorded "
                 "receive expired at its deadline with no complete frame"
