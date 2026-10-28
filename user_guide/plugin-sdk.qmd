@@ -358,7 +358,7 @@ You can author, derive and preview a composed user interface with no gateway. Th
    benchweave-sdk new acme-widget --package acme_widget_plugin --with-ui
    ```
 
-   Pass `--provider-transport` instead for a plugin that declares a transport provider: the scaffold pins the banked FTDI control contract inside the package, emits provider-shaped builders and adapter, and writes no `vectors.json` (the mock cannot rehearse control operations). Rehearsal for that shape runs over the SDK's shipped driver double; the section "Live FTDI transport (provider control)" above states the serve and record commands.
+   Pass `--provider-transport` instead for a plugin that declares a transport provider: the scaffold pins the banked FTDI control contract inside the package, emits provider-shaped builders and adapter, and writes no `vectors.json` (the mock cannot rehearse control operations). Rehearsal for that shape runs over the SDK's shipped driver double; the section "Live FTDI transport (provider control)" below states the serve and record commands.
 
 3. Write the composed action class document in the plugin package, beside the descriptor. The section "Author a composed action class" above gives the document shape. A composed member declaration uses the same pin seam. The section "Author a composed member declaration" above gives that document shape.
 
@@ -554,19 +554,19 @@ Use the replay to prove that the plugin still speaks the recorded conversation. 
 
 ## Live FTDI transport (provider control)
 
-`benchweave-sdk-server serve <project> --transport ftdi --device <ftdi-url>` serves a plugin over an FTDI-class USB device. The URL is the pyftdi device selector, for example `ftdi://::0x0403:0x6001/1`. The descriptor's `connection_key` stays the logical identity of the device. The URL is the only endpoint source on this transport. This transport has no binding store and no scan. A serve without `--device` refuses.
+`benchweave-sdk-server serve <project> --transport ftdi --device <ftdi-url>` serves a plugin over an FTDI-class USB device. The URL is the pyftdi device selector, for example `ftdi://::0x0403:0x6001/1`. The descriptor's `connection_key` stays the logical identity of the device. The URL is the only endpoint source on this transport. This transport has no binding store and no scan. If the command line has no `--device`, serve refuses.
 
-The plugin must pin the FTDI common control contract in its descriptor. A plugin that declares no provider refuses with `live_provider_plugin_unpinned:`. A plugin that pins a different contract refuses with `live_provider_feature_unsupported:`.
+The plugin must pin the FTDI common control contract in its descriptor. If the plugin declares no provider, serve refuses with `live_provider_plugin_unpinned:`. If the plugin pins a different contract, serve refuses with `live_provider_feature_unsupported:`.
 
-Control transactions are the seven operations of the pinned contract: `reset_device`, `set_timeouts`, `set_latency`, `set_baud`, `purge`, `set_bitmode` and `read_pins`. The host checks each transaction against the pinned grammar before any device call. A transaction outside the grammar refuses with `live_provider_transaction_grammar:`. A device answer outside the contract refuses with `live_provider_result_grammar:`. A control transaction under a parked receive refuses with `live_provider_line_busy:`.
+Control transactions are the seven operations of the pinned contract: `reset_device`, `set_timeouts`, `set_latency`, `set_baud`, `purge`, `set_bitmode` and `read_pins`. The host checks each transaction against the pinned grammar before any device call. The host refuses a transaction outside the grammar with `live_provider_transaction_grammar:`. The host refuses a device answer outside the contract with `live_provider_result_grammar:`. The host refuses a control transaction during a parked receive with `live_provider_line_busy:`.
 
-The section 8.1 stream kinds ride the same device data pipe. Send and receive behave as on the serial backend.
+The generic stream kinds of section 8.1 use the same data pipe on the device. Send and receive behave as they do on the serial backend.
 
 The transport needs the `server` extra. Without pyftdi, serve refuses with `live_provider_backend_missing:`. With no device at the URL, connect refuses with `live_provider_device_unavailable:` and names the exception class. Each connect is one attempt. The host does not scan and does not retry.
 
-`--record <path>` records the live session as a replay journal. Pass it with `--transport ftdi`; the host refuses it on every other transport. The host writes the journal at session close. Each row records one completed exchange the device made. A receive that expired at its deadline records a `timeout` row. A transaction the host refused records no row. The recorded journal replays with `--transport replay`, so a bench session produces replay evidence directly.
+Pass `--record <path>` with `--transport ftdi` to record the live session as a replay journal. The host refuses `--record` on every other transport. The host writes the journal when the session closes. Each row records one completed exchange that the device made. A receive that does not complete before its deadline records a `timeout` row, and a transaction that the host refused records no row. The recorded journal replays with `--transport replay`, so a bench session produces replay evidence directly.
 
-Rehearsal parity: the SDK test suite drives its scripted driver double from the bring-up journal, and the replay transport validates the same journal. Rehearse a control plugin against its journal with `--transport replay`. Prove the device itself on a real bench with `--transport ftdi`.
+The SDK test suite drives its scripted driver double from the synthetic bring-up journal, and the replay transport validates the same journal. Rehearse a control plugin against its journal with `--transport replay`. Use `--transport ftdi` on a real bench to prove the device itself. The live-device acceptance is not complete.
 
 ## Capture without a gateway (standalone writer)
 
