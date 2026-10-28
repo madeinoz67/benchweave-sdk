@@ -118,14 +118,15 @@ def _services(
 ) -> FtdiCaptureServices:
     """A directly-constructed services object over the double (the unit
     arms' hand — the same construction the session factory performs)."""
-    grammar, provider = verify_ftdi_plugin(plugin)
+    contract = verify_ftdi_plugin(plugin)
     link = SerialLink(FtdiStreamAdapter(driver))
     return FtdiCaptureServices(
         link,
         driver,
-        grammar,
-        provider=provider,
+        contract.grammar,
+        provider=contract.provider,
         max_frame_bytes=max_frame_bytes,
+        limits=contract.limits,
     )
 
 
@@ -571,7 +572,7 @@ def test_metric_c3_sidecar_names_transport_and_contract_digest(
     the pinned contract's digest — written by the REAL writer path
     (configure_capture → first append), read back from disk: file bytes,
     not in-memory state."""
-    grammar, provider = verify_ftdi_plugin(plugin)
+    contract = verify_ftdi_plugin(plugin)
     driver = ScriptedFtdiDriver(
         [
             {
@@ -585,10 +586,11 @@ def test_metric_c3_sidecar_names_transport_and_contract_digest(
     services = FtdiCaptureServices(
         link,
         driver,
-        grammar,
-        provider=provider,
+        contract.grammar,
+        provider=contract.provider,
         max_frame_bytes=4096,
         capture_root=tmp_path / "caps",
+        limits=contract.limits,
     )
 
     async def run() -> None:
@@ -919,15 +921,16 @@ def test_a_timed_out_receive_records_the_timeout(tmp_path: Path, plugin) -> None
     rows = [_journal_rows()[-1]]
     rows[0]["response"] = {"data": "c200"}
     driver = ScriptedFtdiDriver(rows)
-    grammar, provider = verify_ftdi_plugin(plugin)
+    contract = verify_ftdi_plugin(plugin)
     link = SerialLink(FtdiStreamAdapter(driver))
     services = RecordingFtdiCaptureServices(
         link,
         driver,
-        grammar,
-        provider=provider,
+        contract.grammar,
+        provider=contract.provider,
         max_frame_bytes=4096,
         record_path=tmp_path / "timeout-journal.json",
+        limits=contract.limits,
     )
     context = MockContext("op-rec-timeout", deadline_monotonic=services.monotonic() + 0.3)
     context.dispatched = True
@@ -972,15 +975,16 @@ def test_a_refused_transaction_records_nothing(tmp_path: Path, plugin) -> None:
             }
         ]
     )
-    grammar, provider = verify_ftdi_plugin(plugin)
+    contract = verify_ftdi_plugin(plugin)
     link = SerialLink(FtdiStreamAdapter(driver))
     services = RecordingFtdiCaptureServices(
         link,
         driver,
-        grammar,
-        provider=provider,
+        contract.grammar,
+        provider=contract.provider,
         max_frame_bytes=4096,
         record_path=tmp_path / "refused-journal.json",
+        limits=contract.limits,
     )
     context = _context(services, "op-rec-refused")
     with pytest.raises(ValueError, match="live_provider_transaction_grammar:"):
@@ -1144,3 +1148,58 @@ def test_an_unbanked_feature_version_refuses(tmp_path: Path) -> None:
     plugin = load_plugin_project(project)
     with pytest.raises(ValueError, match="live_provider_feature_unsupported:"):
         verify_ftdi_plugin(plugin)
+
+
+# --------------------------------------------------------------------------
+# F3b (refute lane A): the contract's declared limits are ENFORCED at the
+# ladder, before the driver call. The schema admits set_baud 2**40 and
+# read_ms 2**63 because its limits block was checked nowhere — an
+# admitted-but-unexpressible value must refuse typed, never dispatch.
+# --------------------------------------------------------------------------
+
+
+def test_the_contracts_declared_limits_are_enforced_before_dispatch(plugin) -> None:
+    """F3b's named arm: lane A executed set_timeouts read_ms=2**63 through
+    the grammar to the driver. The ladder now enforces the banked
+    contract's DECLARED limits (set_timeouts_ms_range is [0, 4294967295]);
+    the refused transaction never reaches the driver. What the contract
+    does not declare, the ladder does not invent (A02): set_baud carries a
+    minimum only, so 2**40 baud is inside the declared envelope and
+    DISPATCHES — the device-side inexpressibility of such a rate is the
+    contract's own disclosure seam, not a host constant."""
+    driver = ScriptedFtdiDriver(
+        [
+            {
+                "name": "impossible-rate",
+                "transaction": {"kind": "ftdi_control", "op": "set_baud",
+                                 "baud": 2**40},
+                "response": {},
+            },
+        ]
+    )
+    services = _services(plugin, driver)
+    context = _context(services, "op-f3b")
+    with pytest.raises(ValueError, match="live_provider_transaction_grammar:"):
+        asyncio.run(
+            services.transfer(
+                {
+                    "kind": "ftdi_control",
+                    "op": "set_timeouts",
+                    "read_ms": 2**63,
+                    "write_ms": 10,
+                },
+                context,
+            )
+        )
+    assert driver.calls == [], "the refused transaction never reached the driver"
+    # The declared-envelope case dispatches (the contract declares no baud
+    # maximum) — the double's exact-match answer proves it reached the
+    # driver, and the record's §5 disclosure owns the seam.
+    asyncio.run(
+        services.transfer(
+            {"kind": "ftdi_control", "op": "set_baud", "baud": 2**40},
+            context,
+        )
+    )
+    assert ("set_baud", {"baud": 2**40}) in driver.calls
+    services.link.close()

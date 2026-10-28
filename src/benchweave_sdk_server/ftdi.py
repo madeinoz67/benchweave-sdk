@@ -60,6 +60,7 @@ import re
 import time
 from collections import deque
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -527,6 +528,7 @@ class FtdiCaptureServices(SerialCaptureServices):
         max_frame_bytes: int,
         capture_root: Any = None,
         capture_max_bytes: int | None = None,
+        limits: Mapping[str, Any] | None = None,
     ) -> None:
         super().__init__(
             link,
@@ -537,6 +539,7 @@ class FtdiCaptureServices(SerialCaptureServices):
         self._driver = driver
         self._grammar = grammar
         self._provider = dict(provider)
+        self._limits = dict(limits or {})
 
     # -- capture (the sidecar names the transport and the contract) --------
 
@@ -589,6 +592,46 @@ class FtdiCaptureServices(SerialCaptureServices):
                 f"satisfy the admitted {transaction['kind']} grammar: {error}"
             )
 
+    #: The contract's limits keys to the transaction parameters they
+    #: bound (only keys the contract DECLARES are enforced — A02: the
+    #: contract's declaration governs, never a host constant).
+    _LIMIT_RANGES: Mapping[str, tuple[str, ...]] = {
+        "set_timeouts_ms_range": ("read_ms", "write_ms"),
+        "set_latency_ms_range": ("ms",),
+        "set_bitmode_mask_range": ("mask",),
+        "set_bitmode_mode_range": ("mode",),
+    }
+
+    def _enforce_limits(self, transaction: dict[str, Any]) -> None:
+        """Refuse a transaction whose values sit outside the contract's
+        declared limits, before any state change and before the driver
+        call — an admitted-but-unexpressible value never dispatches."""
+        op = transaction.get("op")
+        for key, names in self._LIMIT_RANGES.items():
+            bound = self._limits.get(key)
+            if not (isinstance(bound, list) and len(bound) == 2):
+                continue
+            low, high = int(bound[0]), int(bound[1])
+            for name in names:
+                value = transaction.get(name)
+                if isinstance(value, int) and not isinstance(value, bool) and not (
+                    low <= value <= high
+                ):
+                    raise ValueError(
+                        f"live_provider_transaction_grammar: {op} {name}={value} "
+                        f"is outside the contract's declared limit {key} "
+                        f"[{low}, {high}]"
+                    )
+        minimum = self._limits.get("set_baud_minimum")
+        if isinstance(minimum, int) and op == "set_baud":
+            baud = transaction.get("baud")
+            if isinstance(baud, int) and not isinstance(baud, bool) and baud < minimum:
+                raise ValueError(
+                    f"live_provider_transaction_grammar: set_baud baud={baud} "
+                    f"is below the contract's declared set_baud_minimum "
+                    f"{minimum}"
+                )
+
     def _dispatch(self, op: str, args: list[Any]) -> Any:
         """One driver call by op name (the table is the authority)."""
         return getattr(self._driver, op)(*args)
@@ -602,8 +645,12 @@ class FtdiCaptureServices(SerialCaptureServices):
         kind = transaction.get("kind")
         if not (isinstance(kind, str) and kind in self._grammar):
             return await super().transfer(transaction, context)
-        # 1. Grammar first, before any state change.
+        # 1. Grammar first, before any state change: the schema, then the
+        #    contract's declared limits (F3b — the schema alone admits
+        #    values the device cannot express; the limits block is the
+        #    contract's own envelope).
         self._validate_provider(transaction)
+        self._enforce_limits(transaction)
         # 2. The closed posture (the driver shares the link's close path).
         if self._link.is_closed:
             raise ConnectionError("ftdi device link is closed")
@@ -762,14 +809,28 @@ def _probe_grammar(pinned: dict[str, Any]) -> dict[str, GrammarEntry]:
     return grammar
 
 
-def verify_ftdi_plugin(plugin: LoadedPlugin) -> tuple[dict[str, GrammarEntry], dict[str, str]]:
+@dataclass(frozen=True, slots=True)
+class FtdiContract:
+    """The verified served contract: the compiled grammar, the provider
+    triple the services carry into the capture sidecar, and the contract's
+    declared ``limits`` blocks (merged across grammar entries) — enforced
+    at the ladder before any driver call (refute lane A, F3b: the schema
+    alone admits set_baud 2**40; the limits block is the contract's own
+    envelope and was previously enforced nowhere)."""
+
+    grammar: dict[str, GrammarEntry]
+    provider: dict[str, str]
+    limits: dict[str, Any]
+
+
+def verify_ftdi_plugin(plugin: LoadedPlugin) -> FtdiContract:
     """The serve-construction check the CLI runs fail-fast and every
     connection re-runs over the CURRENT plugin (the late-bound
     ``replay_plugin_session`` shape: a reload that re-pins a different
-    contract revision refuses the reconnect). Returns the compiled grammar
-    and the provider triple the services carry into the capture sidecar.
-    A missing pyftdi refuses here too — serve construction, exit 2, before
-    any port binds (the journal precedent's posture)."""
+    contract revision refuses the reconnect). Returns the verified
+    contract — grammar, provider triple, limits. A missing pyftdi refuses
+    here too — serve construction, exit 2, before any port binds (the
+    journal precedent's posture)."""
     _require_backend()
     pinned, digest = _ftdi_pinned_contract(plugin)
     _require_ftdi_feature(pinned, digest)
@@ -779,7 +840,12 @@ def verify_ftdi_plugin(plugin: LoadedPlugin) -> tuple[dict[str, GrammarEntry], d
         "id": str(pinned["id"]),
         "sha256": digest,
     }
-    return grammar, provider
+    limits: dict[str, Any] = {}
+    for entry in pinned["transaction_grammar"]:
+        row = entry.get("limits")
+        if isinstance(row, dict):
+            limits.update(row)
+    return FtdiContract(grammar=grammar, provider=provider, limits=limits)
 
 
 class RecordingFtdiCaptureServices(FtdiCaptureServices):
@@ -826,6 +892,7 @@ class RecordingFtdiCaptureServices(FtdiCaptureServices):
         capture_root: Any = None,
         capture_max_bytes: int | None = None,
         record_path: Any = None,
+        limits: Mapping[str, Any] | None = None,
     ) -> None:
         super().__init__(
             link,
@@ -835,6 +902,7 @@ class RecordingFtdiCaptureServices(FtdiCaptureServices):
             max_frame_bytes=max_frame_bytes,
             capture_root=capture_root,
             capture_max_bytes=capture_max_bytes,
+            limits=limits,
         )
         self._record_path = record_path
         self._rows: list[dict[str, Any]] = []
@@ -988,31 +1056,23 @@ def ftdi_plugin_session(
     open_driver = driver_factory or open_ftdi
 
     def factory() -> FtdiCaptureServices:
-        grammar, provider = verify_ftdi_plugin(session.plugin)
+        contract = verify_ftdi_plugin(session.plugin)
         driver = open_driver(url)
         link = SerialLink(FtdiStreamAdapter(driver))
         settings = session.plugin.descriptor.get("transport", {}).get("settings", {})
+        common: dict[str, Any] = {
+            "provider": contract.provider,
+            "max_frame_bytes": transport_ceiling(settings),
+            "capture_root": capture_root,
+            "capture_max_bytes": capture_max_bytes,
+            "limits": contract.limits,
+        }
         services: FtdiCaptureServices
         if record_path is None:
-            services = FtdiCaptureServices(
-                link,
-                driver,
-                grammar,
-                provider=provider,
-                max_frame_bytes=transport_ceiling(settings),
-                capture_root=capture_root,
-                capture_max_bytes=capture_max_bytes,
-            )
+            services = FtdiCaptureServices(link, driver, contract.grammar, **common)
         else:
             services = RecordingFtdiCaptureServices(
-                link,
-                driver,
-                grammar,
-                provider=provider,
-                max_frame_bytes=transport_ceiling(settings),
-                capture_root=capture_root,
-                capture_max_bytes=capture_max_bytes,
-                record_path=record_path,
+                link, driver, contract.grammar, record_path=record_path, **common
             )
         return services
 
