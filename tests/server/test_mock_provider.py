@@ -253,16 +253,17 @@ def test_encoding_under_provider_refuses(tmp_path: Path) -> None:
 
 
 def test_recorded_failure_scripts_the_ladders_outcome(tmp_path: Path) -> None:
-    """Bound D2 as work (the owner ruling): a recorded failure scripts the
-    ladder's own outcome class through MockHost's Exception slot — the
-    recorded timeout rehearses as the backend's TimeoutError posture, the
-    recorded connection fault as ConnectionError. The recorded outcome
-    stays the recorded outcome (A06)."""
+    """Bound D2 as work (the owner ruling) + M2's latch: a recorded
+    failure scripts the ladder's own outcome class through MockHost's
+    Exception slot — the recorded timeout rehearses as the backend's
+    TimeoutError posture — and the served fault LATCHES the double (the
+    live ladder refuses the post-fault transfer; the double must not
+    accept what the live path rejects)."""
     project = tmp_path / "failed"
     shutil.copytree(FIXTURE_ROOT, project)
     corpus_path = project / "src" / "ftdi_control_demo" / "vectors.json"
     corpus = json.loads(corpus_path.read_text())
-    failure_rows = [
+    corpus["exchanges"].append(
         {
             "name": "timeout-poll",
             "transaction": {
@@ -273,20 +274,8 @@ def test_recorded_failure_scripts_the_ladders_outcome(tmp_path: Path) -> None:
                 "exact_bytes": 4,
             },
             "recorded_failure": "timeout",
-        },
-        {
-            "name": "lost-poll",
-            "transaction": {
-                "kind": "stream_exchange",
-                "data": "55a1",
-                "max_bytes": 8,
-                "termination": "lf",
-                "exact_bytes": 4,
-            },
-            "recorded_failure": "connection",
-        },
-    ]
-    corpus["exchanges"] = corpus["exchanges"] + failure_rows
+        }
+    )
     corpus_path.write_text(json.dumps(corpus, indent=2) + "\n")
     plugin = load_plugin_project(project)
     session = mock_plugin_session(plugin)
@@ -303,12 +292,12 @@ def test_recorded_failure_scripts_the_ladders_outcome(tmp_path: Path) -> None:
         "exact_bytes": 4,
     }
     # The script is ordered: connect consumed the eight bring-up rows; the
-    # three authored polls serve first, THEN the recorded failures raise.
+    # three authored polls serve first, THEN the recorded failure raises.
     for _ in range(3):
         asyncio.run(session.services.transfer(dict(transaction), context))
     with pytest.raises(TimeoutError, match="recorded receive"):
         asyncio.run(session.services.transfer(dict(transaction), context))
-    with pytest.raises(ConnectionError, match="lost its connection"):
+    with pytest.raises(ConnectionError, match="faulted"):
         asyncio.run(session.services.transfer(dict(transaction), context))
 
 
@@ -804,3 +793,27 @@ def test_m1_a_doctored_provider_corpus_refuses_naming_the_corpus(tmp_path: Path)
         plugin = load_plugin_project(project)
         with pytest.raises(Exception, match=fragment):
             provider_script(plugin)
+
+
+def test_m2_a_served_fault_latches_the_double() -> None:
+    """M2 (mechanism refute): a scripted connection fault did not latch,
+    so the mock served the post-fault transfer the live ladder refuses —
+    a double-fidelity defect (the double accepted what the live path
+    rejects). A served exception now latches: the next transfer refuses,
+    never serves past the fault."""
+    from benchweave_sdk.testing import MockContext, MockHost
+
+    host = MockHost(
+        [
+            ({"kind": "ftdi_control", "op": "reset_device"}, ConnectionError("unplugged")),
+            ({"kind": "ftdi_control", "op": "purge", "queue": "rx"}, {}),
+        ]
+    )
+    context = MockContext("op-m2", deadline_monotonic=1.0)
+    context.dispatched = True
+    with pytest.raises(ConnectionError, match="unplugged"):
+        asyncio.run(host.transfer({"kind": "ftdi_control", "op": "reset_device"}, context))
+    with pytest.raises(ConnectionError, match="faulted"):
+        asyncio.run(
+            host.transfer({"kind": "ftdi_control", "op": "purge", "queue": "rx"}, context)
+        )
