@@ -134,6 +134,32 @@ class CaptureServices(HostServices, Protocol):
     HostServices : the base transport, clock, and evidence surface.
     """
 
+    def configure_capture(
+        self,
+        capture_id: str,
+        *,
+        metadata: dict[str, Any],
+        max_bytes: int | None = None,
+    ) -> None:
+        """Arm one capture's host-side configuration before its first
+        append (issue #568: this member and :meth:`capture_progress` are
+        declared surface, not a runtime duck-check secret — the host
+        demands them at capture start, so a composing services object
+        reads the demand here). ``metadata`` carries the capture's
+        configuration block; ``max_bytes`` the requested byte reservation,
+        clamped by the host's configured ceiling when one exists.
+
+        First full implementations:
+        :class:`benchweave_sdk_server.serial.WriterBackedCaptureServices`
+        and its subclasses (the standalone serial, replay and ftdi
+        transports).
+        """
+
+    def capture_progress(self, capture_id: str) -> int:
+        """Return the capture's staged progress in bytes (flushed plus
+        buffered — never a count the writer did not see; zero for an
+        unknown id)."""
+
     async def artifact_append(
         self, capture_id: str, data: bytes, context: OperationContext
     ) -> None:

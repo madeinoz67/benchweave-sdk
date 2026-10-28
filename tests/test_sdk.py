@@ -233,3 +233,19 @@ def test_finite_clock_and_descriptor_rejections() -> None:
             host.advance(delta)
     with pytest.raises(ValueError):
         validation.validate_descriptor({"otdp_version": "0.1.0"})
+
+
+def test_capture_services_declares_the_capture_lifecycle_members() -> None:
+    """The capture lifecycle is DECLARED surface, not a duck-check secret
+    (issue #568): the seam checks ``configure_capture`` /
+    ``capture_progress`` / ``artifact_finalise`` at capture start, and a
+    plugin author composing their own services object must be able to read
+    the demand off the Protocol instead of discovering it at runtime. The
+    runtime duck-check stays as the backstop (seam.py); this pin holds the
+    declaration itself."""
+    from benchweave_sdk.interfaces import CaptureServices
+
+    for name in ("configure_capture", "capture_progress", "artifact_finalise"):
+        member = getattr(CaptureServices, name, None)
+        assert member is not None, f"CaptureServices must declare {name}"
+        assert callable(member), name
