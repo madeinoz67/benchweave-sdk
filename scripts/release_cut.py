@@ -602,10 +602,13 @@ def canonical_pin_answers(project: Path, version: str) -> None:
 
 
 def regenerate_fixtures(fixtures_root: Path, version: str) -> None:
-    """Render base and ui arms into fixtures_root (replacing it), then pin
-    the answers. The stage is a RESOLVED tempdir: the scaffold's path
-    validation rejects symlinked roots, and macOS /var is a symlink to
-    /private/var — tempfile.mkdtemp() then Path.resolve() is designed in."""
+    """Render the base, ui and provider arms into fixtures_root (replacing
+    it), then pin the answers. The stage is a RESOLVED tempdir: the
+    scaffold's path validation rejects symlinked roots, and macOS /var is
+    a symlink to /private/var — tempfile.mkdtemp() then Path.resolve() is
+    designed in. The provider arm (row f) must NOT receive
+    create_ui_resources: the shapes are mutually exclusive per copier.yml's
+    conditional exclude."""
     from benchweave_sdk.presentation import create_ui_resources
     from benchweave_sdk.scaffold import create_project
 
@@ -614,7 +617,8 @@ def regenerate_fixtures(fixtures_root: Path, version: str) -> None:
         create_project(stage / "base", "example_plugin")
         create_project(stage / "ui", "example_plugin", with_ui=True)
         create_ui_resources(stage / "ui", "example_plugin")
-        for arm in ("base", "ui"):
+        create_project(stage / "provider", "example_plugin", provider_transport=True)
+        for arm in ("base", "ui", "provider"):
             canonical_pin_answers(stage / arm, version)
             target = fixtures_root / arm
             if target.exists():
