@@ -860,7 +860,7 @@ def test_the_fixture_contract_copy_is_byte_equal_to_the_banked_contract() -> Non
         / "src"
         / "benchweave_sdk"
         / "providers"
-        / "ftdi-control-1.0.0.json"
+        / "ftdi-control-1.1.0.json"
     )
     copy = (
         FIXTURE_ROOT
@@ -1196,9 +1196,9 @@ def test_a_lookalike_contract_under_the_banked_feature_name_refuses(
 
 def test_an_unbanked_feature_version_refuses(tmp_path: Path) -> None:
     """The other laundering face: a lookalike under a version tail with NO
-    banked instance (1.1.0) refuses — the executor serves banked feature
-    lines only."""
-    project = _lookalike_plugin(tmp_path, feature_tail="1.1.0", widen=True)
+    banked instance (2.0.0 — 1.1.0 IS banked since row c) refuses — the
+    executor serves banked feature lines only."""
+    project = _lookalike_plugin(tmp_path, feature_tail="2.0.0", widen=True)
     plugin = load_plugin_project(project)
     with pytest.raises(ValueError, match="live_provider_feature_unsupported:"):
         verify_ftdi_plugin(plugin)

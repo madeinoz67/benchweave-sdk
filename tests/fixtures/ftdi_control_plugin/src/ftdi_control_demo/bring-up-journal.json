@@ -7,9 +7,9 @@
     "operator_note": "The bring-up recording the live provider transport rehearses against: the init chain, one bitstream chunk, the DONE-gated pin poll, one status exchange. Spelled independently of the fixture builders; the pinned contract is the grammar both speak."
   },
   "provider": {
-    "feature_id": "otdp.transport.ftdi-control/1.0.0",
-    "id": "urn:otdp:transport-provider:ftdi-control:1.0.0",
-    "sha256": "762c7397eeabfb65830948de848a1cf7c0867583f11cc289f25c6be3acf97e92"
+    "feature_id": "otdp.transport.ftdi-control/1.1.0",
+    "id": "urn:otdp:transport-provider:ftdi-control:1.1.0",
+    "sha256": "b4b5a8ccad6d11a15f9383649a619d152423f873a01420ff0da30258b8a73f13"
   },
   "rows": [
     {

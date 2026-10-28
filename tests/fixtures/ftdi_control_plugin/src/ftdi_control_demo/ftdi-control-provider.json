@@ -1,9 +1,9 @@
 {
   "contract_version": "0.1.0",
-  "id": "urn:otdp:transport-provider:ftdi-control:1.0.0",
-  "feature_id": "otdp.transport.ftdi-control/1.0.0",
-  "version": "1.0.0",
-  "description": "Generic FTDI-class USB transport control dialect: the D2XX/libftdi common control surface (reset, timeouts, latency, baud, purge, bit mode, pin read) plus the generic section 8.1 stream kinds a device's command frames ride on. The contract carries no vendor device knowledge: opcodes, register maps and bitstreams stay in the plugins that pin this contract.",
+  "id": "urn:otdp:transport-provider:ftdi-control:1.1.0",
+  "feature_id": "otdp.transport.ftdi-control/1.1.0",
+  "version": "1.1.0",
+  "description": "Generic FTDI-class USB transport control dialect: the D2XX/libftdi common control surface (reset, timeouts, latency, baud, purge, bit mode, pin read) plus the generic section 8.1 stream kinds a device's command frames ride on. The contract carries no vendor device knowledge: opcodes, register maps and bitstreams stay in the plugins that pin this contract. Revision 1.1.0: host_requirements.native_libraries now names the Python driver stack (pyftdi over pyusb) the live transport mounts; the grammar is unchanged from 1.0.0.",
   "transport_kind": "ftdi_control",
   "transaction_grammar": [
     {
@@ -14,64 +14,125 @@
         "oneOf": [
           {
             "properties": {
-              "op": { "const": "reset_device" }
+              "op": {
+                "const": "reset_device"
+              }
             },
-            "required": ["op"],
+            "required": [
+              "op"
+            ],
             "additionalProperties": false,
             "description": "FT_ResetDevice over the commissioned connection."
           },
           {
             "properties": {
-              "op": { "const": "set_timeouts" },
-              "read_ms": { "type": "integer", "minimum": 0 },
-              "write_ms": { "type": "integer", "minimum": 0 }
+              "op": {
+                "const": "set_timeouts"
+              },
+              "read_ms": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "write_ms": {
+                "type": "integer",
+                "minimum": 0
+              }
             },
-            "required": ["op", "read_ms", "write_ms"],
+            "required": [
+              "op",
+              "read_ms",
+              "write_ms"
+            ],
             "additionalProperties": false,
             "description": "FT_SetTimeouts in milliseconds; both bounds are nonnegative."
           },
           {
             "properties": {
-              "op": { "const": "set_latency" },
-              "ms": { "type": "integer", "minimum": 0, "maximum": 255 }
+              "op": {
+                "const": "set_latency"
+              },
+              "ms": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 255
+              }
             },
-            "required": ["op", "ms"],
+            "required": [
+              "op",
+              "ms"
+            ],
             "additionalProperties": false,
             "description": "FT_SetLatencyTimer; the latency timer is one byte."
           },
           {
             "properties": {
-              "op": { "const": "set_baud" },
-              "baud": { "type": "integer", "minimum": 1 }
+              "op": {
+                "const": "set_baud"
+              },
+              "baud": {
+                "type": "integer",
+                "minimum": 1
+              }
             },
-            "required": ["op", "baud"],
+            "required": [
+              "op",
+              "baud"
+            ],
             "additionalProperties": false,
             "description": "FT_SetBaudRate; the rate is a positive integer."
           },
           {
             "properties": {
-              "op": { "const": "purge" },
-              "queue": { "enum": ["tx", "rx"] }
+              "op": {
+                "const": "purge"
+              },
+              "queue": {
+                "enum": [
+                  "tx",
+                  "rx"
+                ]
+              }
             },
-            "required": ["op", "queue"],
+            "required": [
+              "op",
+              "queue"
+            ],
             "additionalProperties": false,
             "description": "FT_Purge of one queue."
           },
           {
             "properties": {
-              "op": { "const": "set_bitmode" },
-              "mask": { "type": "integer", "minimum": 0, "maximum": 255 },
-              "mode": { "type": "integer", "minimum": 0, "maximum": 255 }
+              "op": {
+                "const": "set_bitmode"
+              },
+              "mask": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 255
+              },
+              "mode": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 255
+              }
             },
-            "required": ["op", "mask", "mode"],
+            "required": [
+              "op",
+              "mask",
+              "mode"
+            ],
             "additionalProperties": false,
             "description": "FT_SetBitMode: the pin-direction mask and the interface mode, each one byte."
           },
           {
             "properties": {
-              "op": { "const": "read_pins" }
+              "op": {
+                "const": "read_pins"
+              }
             },
-            "required": ["op"],
+            "required": [
+              "op"
+            ],
             "additionalProperties": false,
             "description": "FT_GetBitMode / ftdi_read_pins: read the bit-mode pin states. The result carries exactly one byte."
           }
@@ -96,7 +157,9 @@
                 "pattern": "^[A-Za-z0-9+/]{2}==$"
               }
             },
-            "required": ["data"],
+            "required": [
+              "data"
+            ],
             "additionalProperties": false,
             "description": "read_pins: exactly one byte, carried as its padded base64 text (two payload characters plus '=='). Length four alone admits unpadded three-byte spellings like 'QUJD'; the pattern closes that door, so one byte means one byte. data is bytes at the adapter ABI and base64 text in contract documents and journals."
           }
@@ -105,18 +168,39 @@
       },
       "limits": {
         "read_pins_max_bytes": 1,
-        "set_timeouts_ms_range": [0, 4294967295],
-        "set_latency_ms_range": [0, 255],
+        "set_timeouts_ms_range": [
+          0,
+          4294967295
+        ],
+        "set_latency_ms_range": [
+          0,
+          255
+        ],
         "set_baud_minimum": 1,
-        "set_bitmode_mask_range": [0, 255],
-        "set_bitmode_mode_range": [0, 255]
+        "set_bitmode_mask_range": [
+          0,
+          255
+        ],
+        "set_bitmode_mode_range": [
+          0,
+          255
+        ]
       }
     }
   ],
   "security_scope": "commissioned_connection",
   "host_requirements": {
     "summary": "Host-side FTDI-class access to the commissioned device only: libftdi or D2XX semantics for the seven control calls. No filesystem paths, no process spawning, no network endpoints.",
-    "native_libraries": [],
+    "native_libraries": [
+      {
+        "name": "pyftdi",
+        "version": ">=0.56"
+      },
+      {
+        "name": "pyusb",
+        "version": ">=1.3"
+      }
+    ],
     "privileges": []
   },
   "approval": {

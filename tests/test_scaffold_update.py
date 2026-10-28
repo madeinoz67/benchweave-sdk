@@ -296,6 +296,13 @@ def test_update_keeps_the_update_promise(
             for relative in set(base) | set(target)
             if relative.startswith("template/")
             and base.get(relative) != target.get(relative)
+            # Row f's conditional exclude (copier.yml renders its values
+            # as jinja): the provider-only members live in the template
+            # tree but never render for the serial shape — a tree diff
+            # alone would name them as changed and red the footprint on
+            # correct behaviour. The serial arms never see them.
+            and relative
+            != "template/src/{{ package_name }}/ftdi-control-provider.json"
         }
     )
 

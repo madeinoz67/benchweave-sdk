@@ -101,7 +101,7 @@ def test_provider_transport_scaffold_pins_the_banked_contract(tmp_path: Path) ->
     from benchweave_sdk.validation import verify_provider_pin
 
     banked = Path(__file__).resolve().parents[1] / (
-        "src/benchweave_sdk/providers/ftdi-control-1.0.0.json"
+        "src/benchweave_sdk/providers/ftdi-control-1.1.0.json"
     )
     pinned_bytes = (package / pin["path"]).read_bytes()
     assert pinned_bytes == banked.read_bytes()

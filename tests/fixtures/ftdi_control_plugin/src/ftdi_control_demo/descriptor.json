@@ -32,10 +32,10 @@
       "protocol_reference": "Synthetic FTDI control bring-up; the grammar is the pinned provider contract"
     },
     "provider": {
-      "feature_id": "otdp.transport.ftdi-control/1.0.0",
-      "id": "urn:otdp:transport-provider:ftdi-control:1.0.0",
+      "feature_id": "otdp.transport.ftdi-control/1.1.0",
+      "id": "urn:otdp:transport-provider:ftdi-control:1.1.0",
       "path": "ftdi-control-provider.json",
-      "sha256": "762c7397eeabfb65830948de848a1cf7c0867583f11cc289f25c6be3acf97e92"
+      "sha256": "b4b5a8ccad6d11a15f9383649a619d152423f873a01420ff0da30258b8a73f13"
     }
   },
   "capabilities": [
@@ -79,14 +79,14 @@
   "required_features": [
     "otdp.core/0.1.0",
     "otdp.adapter/0.1.0",
-    "otdp.transport.ftdi-control/1.0.0"
+    "otdp.transport.ftdi-control/1.1.0"
   ],
   "provenance": {
     "sources": [
       {
         "title": "FTDI common control surface contract",
         "reference": "ftdi-control-provider.json",
-        "revision": "1.0.0"
+        "revision": "1.1.0"
       }
     ],
     "test_vectors": [
