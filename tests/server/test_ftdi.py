@@ -660,10 +660,12 @@ def test_metric_c4_cli_guards(
     ``--replay`` and ``--bindings`` refuse on ftdi through the EXISTING
     guards (one flag one meaning); ``--device`` on a non-live transport
     refuses through the amended live-only guard row."""
-    with pytest.raises(SystemExit) as exc:
-        _build_seam(FIXTURE_ROOT, transport="ftdi")
-    assert exc.value.code == 2
-    assert "standalone_transport_ftdi_device_required:" in capsys.readouterr().err
+    # Row a amended the guard: ftdi without --device now serves
+    # BINDING-PENDING (the serial lane's posture) — construction succeeds
+    # and connect refuses binding_absent at connect time.
+    seam_no_device, _ = _build_seam(FIXTURE_ROOT, transport="ftdi")
+    assert seam_no_device.transport_kind == "ftdi"
+    assert seam_no_device.binding_row is None
 
     journal_copy = tmp_path / "journal.json"
     journal_copy.write_text(JOURNAL_PATH.read_text())
@@ -672,11 +674,19 @@ def test_metric_c4_cli_guards(
     assert exc.value.code == 2
     assert "standalone_transport_replay_flag:" in capsys.readouterr().err
 
+    # Row a widened --bindings to the live transports: ftdi accepts the
+    # binding document (it names THEIR document now); only non-live
+    # transports refuse it.
+    seam_bound, _ = _build_seam(
+        FIXTURE_ROOT,
+        transport="ftdi",
+        device=_URL,
+        bindings=tmp_path / "device-bindings.json",
+    )
+    assert seam_bound.transport_kind == "ftdi"
     with pytest.raises(SystemExit) as exc:
         _build_seam(
             FIXTURE_ROOT,
-            transport="ftdi",
-            device=_URL,
             bindings=tmp_path / "device-bindings.json",
         )
     assert exc.value.code == 2

@@ -575,7 +575,7 @@ its reopen trigger):**
 
 | Row | Deferred | Reopen trigger |
 |---|---|---|
-| a | FTDI discovery + binding-store integration (the #385 endpoint model for USB URLs; scan/pick/bind UI arms) | the first bench with more than one FTDI device to pick from |
+| a | LANDED (owner expansion, 2026-10-28): ftdi_url binding rows on the SAME BindingStore and endpoint model, FtdiEndpoint (the late-bound resolver), discover_ftdi_devices (confirm-by-identify over injectable hooks), the CLI's binding-backed endpoint (--device still the constant-endpoint bypass), the seam/web scan-pick-bind arms widened to the live transports, --bindings widened with it. This row previously deferred discovery+binding with the trigger above; the owner ruling of 2026-10-28 superseded this record's "no binding store, no discovery" first-slice posture (§4's guard rationale retired with it — ftdi without --device now serves binding-pending, the serial lane's F-385-2 shape). | — (landed) |
 | c | The contract's `native_libraries` naming (pyftdi/libftdi with exact versions — a 1.1.0 contract revision; the schema treats host_requirements as review surface, not runtime gate, so this is disclosure, not enforcement) — a plugin-tree governance pass on the contract bytes, not this repository | the first commissioned bring-up review |
 | d | The gateway commissioned provider runtime (executor + grant seam, gateway-side) | unchanged from the #562 design's deferral 2 — gateway-side design of its own |
 | e | A provider-agnostic executor registry (non-FTDI provider families on one transport) | the second provider family in existence |

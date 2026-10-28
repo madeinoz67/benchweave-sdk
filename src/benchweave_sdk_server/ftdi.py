@@ -61,8 +61,9 @@ import json
 import logging
 import re
 import time
+import uuid
 from collections import deque
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
@@ -75,7 +76,7 @@ from .replay import (
     _first_schema_error,
     _grammar,
 )
-from .serial import SerialCaptureServices, SerialLink
+from .serial import SerialCaptureServices, SerialLink, _identify_timeout_ms
 from .session import LoadedPlugin, PluginSession, transport_ceiling
 
 _LOGGER = logging.getLogger(__name__)
@@ -1191,9 +1192,187 @@ class RecordingFtdiCaptureServices(FtdiCaptureServices):
         await super().close_transport(context)
 
 
-def ftdi_plugin_session(
+class FtdiEndpoint:
+    """The ftdi session's endpoint source (row a, issue #568 — the
+    SerialEndpoint posture one transport over): consulted AT CONNECT TIME
+    by the services factory, so a rebind changes the next connection's
+    URL. A bare string wraps as the constant resolver (the ``--device``
+    form); a callable resolves from the binding store
+    (:func:`benchweave_sdk_server.binding.binding_endpoint`)."""
+
+    def __init__(self, source: str | Callable[[], str]) -> None:
+        if callable(source):
+            self._source = source
+        else:
+            url = str(source)
+            self._source = lambda: url
+        #: The URL the last successful open used; None until then.
+        self.last_resolution: str | None = None
+
+    def __call__(self) -> str:
+        return self._source()
+
+
+@dataclass(frozen=True)
+class FtdiDeviceHooks:
+    """The two device hooks ftdi discovery needs, injectable so tests
+    never open real hardware (SerialPortHooks' posture, one transport
+    over)."""
+
+    enumerate_urls: Callable[[], list[str]]
+    open_url: Callable[[str], FtdiDriver]
+
+
+def _pyftdi_enumerate_urls() -> list[str]:
+    """Enumerate the FTDI-class URLs a live pyftdi backend lists."""
+    _require_backend()
+    from pyftdi.usbtools import UsbTools  # type: ignore[import-untyped]  # pyftdi
+
+    try:
+        found: list[tuple[Any, Any]] = list(UsbTools.find_all([(0x0403, None)])[0])
+        return [str(url) for url, _ in found]
+    except Exception as exc:
+        raise RuntimeError(
+            f"live_provider_enumeration_failed: {type(exc).__name__}: the "
+            "FTDI enumeration did not complete (no USB backend, or a busy "
+            "bus); scan again or pass --device <ftdi-url>"
+        ) from exc
+
+
+def default_ftdi_hooks() -> FtdiDeviceHooks:
+    """The production hooks: pyftdi enumeration and the real open."""
+    return FtdiDeviceHooks(
+        enumerate_urls=_pyftdi_enumerate_urls, open_url=open_ftdi
+    )
+
+
+def _ftdi_device_row(
+    plugin: LoadedPlugin,
+    identity: dict[str, Any],
+    *,
+    url: str,
+) -> dict[str, Any]:
+    """One _DEVICE_SUMMARY row over an FTDI URL (the serial row's shape;
+    the URL rides the port_path slot — the endpoint string slot, one row
+    shape across transports)."""
+    transport = plugin.descriptor.get("transport", {})
+    return {
+        "id": plugin.device_id,
+        "manufacturer": str(identity.get("manufacturer", "")),
+        "model": str(identity.get("model", "")),
+        "transport": str(transport.get("type", "")),
+        "connection_key": str(transport.get("connection_key", "")),
+        "port_path": url,
+        "usb_serial": None,
+    }
+
+
+async def discover_ftdi_devices(
+    plugin: LoadedPlugin,
+    *,
+    hooks: FtdiDeviceHooks | None = None,
+    connected_url: str | None = None,
+    connected_identity: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Enumerate candidate FTDI URLs, confirm each by its identify answer,
+    and return the confirmed devices as discovery rows (discover_serial_
+    devices' posture, one transport over). The ONLY transmissions are the
+    identify exchanges; the connected session's URL is served from its
+    established identity without re-probing."""
+    effective = hooks or default_ftdi_hooks()
+    contract = verify_ftdi_plugin(plugin)
+    rows: list[dict[str, Any]] = []
+    for url in effective.enumerate_urls():
+        if connected_url is not None and url == connected_url:
+            if connected_identity is not None:
+                rows.append(
+                    _ftdi_device_row(plugin, connected_identity, url=url)
+                )
+            continue
+        answered = await _confirm_ftdi_by_identify(
+            plugin, url, effective, contract
+        )
+        if answered is None:
+            continue
+        rows.append(_ftdi_device_row(plugin, answered, url=url))
+    return rows
+
+
+async def _confirm_ftdi_by_identify(
     plugin: LoadedPlugin,
     url: str,
+    hooks: FtdiDeviceHooks,
+    contract: Any,
+) -> dict[str, Any] | None:
+    """Open one candidate URL and run the adapter's identify over a fresh
+    services object: the ONLY transmission discovery performs. The
+    answered identity must match the descriptor's declared manufacturer
+    and model; a silent, erroring or foreign URL is omitted (an
+    unconfirmed URL is not a device)."""
+    from .session import HostOperationContext
+
+    link: SerialLink | None = None
+    adapter: Any = None
+    try:
+        driver = hooks.open_url(url)
+        link = SerialLink(FtdiStreamAdapter(driver))
+        services = FtdiCaptureServices(
+            link,
+            driver,
+            contract.grammar,
+            provider=contract.provider,
+            max_frame_bytes=transport_ceiling(
+                plugin.descriptor.get("transport", {}).get("settings", {})
+            ),
+            limits=contract.limits,
+        )
+        adapter = plugin.adapter_factory() if plugin.adapter_factory else None
+        if adapter is None:
+            return None
+        context = HostOperationContext(
+            f"discover-{uuid.uuid4().hex[:8]}", timeout_ms=_identify_timeout_ms(plugin)
+        )
+        await adapter.open(plugin.descriptor, services, context)
+        envelope = await adapter.execute(
+            {
+                "operation_id": context.operation_id,
+                "verb": "identify",
+                "arguments": {},
+            },
+            context,
+        )
+        if envelope.get("status") != "ok":
+            return None
+        data = envelope.get("data")
+        if not isinstance(data, dict):
+            return None
+        declared = plugin.descriptor.get("identity", {})
+        if (
+            data.get("manufacturer") != declared.get("manufacturer")
+            or data.get("model") != declared.get("model")
+        ):
+            return None
+        return data
+    except Exception:
+        # A silent, erroring or foreign candidate is omitted, not reported:
+        # an unconfirmed URL is not a device (AR-4's posture).
+        return None
+    finally:
+        if adapter is not None:
+            with contextlib.suppress(Exception):
+                close_context = HostOperationContext(
+                    f"discover-close-{uuid.uuid4().hex[:8]}",
+                    timeout_ms=_identify_timeout_ms(plugin),
+                )
+                await adapter.close(close_context)
+        if link is not None:
+            with contextlib.suppress(Exception):
+                link.close()
+
+
+def ftdi_plugin_session(
+    plugin: LoadedPlugin,
+    url: str | FtdiEndpoint | Callable[[], str],
     *,
     driver_factory: Any = None,
     capture_root: Any = None,
@@ -1211,12 +1390,21 @@ def ftdi_plugin_session(
     ``record_path`` arms the live journal recorder (row b): the session's
     exchanges emit a #564-format journal at close."""
     open_driver = driver_factory or open_ftdi
+    # The endpoint (row a): a bare URL wraps as the constant resolver; an
+    # FtdiEndpoint or callable resolves AT CONNECT TIME (the serial lane's
+    # late-bound shape — a rebind redirects the next connection).
+    resolve_url: Callable[[], str] = (
+        url if callable(url) and not isinstance(url, str) else (lambda: str(url))
+    )
     journal = _JournalState(record_path, {}) if record_path is not None else None
 
     def factory() -> FtdiCaptureServices:
         contract = verify_ftdi_plugin(session.plugin)
-        driver = open_driver(url)
+        driver = open_driver(resolve_url())
         settings = session.plugin.descriptor.get("transport", {}).get("settings", {})
+        resolved_url = resolve_url()
+        if isinstance(url, FtdiEndpoint):
+            url.last_resolution = resolved_url
         stream = FtdiStreamAdapter(driver)
         link = SerialLink(stream)
         common: dict[str, Any] = {

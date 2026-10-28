@@ -146,6 +146,7 @@ def _build_seam(
     device: str | None = None,
     open_port: Any = None,
     driver_factory: Any = None,
+    driver_hooks: Any = None,
     capture_root: Any = None,
     bindings: Path | None = None,
     serial_hooks: Any = None,
@@ -231,18 +232,6 @@ def _build_seam(
             err=True,
         )
         raise SystemExit(2)
-    if transport == "ftdi" and device is None:
-        # The replay-needs-journal shape (#568): this transport has no
-        # binding store and no discovery in the first slice, so the URL is
-        # the only endpoint source.
-        click.echo(
-            "standalone_transport_ftdi_device_required: --transport ftdi needs "
-            "--device <ftdi-url> (the device selector URL, for example "
-            "'ftdi://::0x0403:0x6001/1'); this transport has no binding store "
-            "and no discovery",
-            err=True,
-        )
-        raise SystemExit(2)
     if device is not None and transport not in ("serial", "ftdi"):
         # One flag one meaning (maintainer ruling 2, issue #568): --device
         # names the constant endpoint of a LIVE transport — a port path on
@@ -255,12 +244,13 @@ def _build_seam(
             err=True,
         )
         raise SystemExit(2)
-    if bindings is not None and transport != "serial":
-        # drift-2 (review fold): --bindings names the serial binding
-        # document; on any other transport it is not silently ignored.
+    if bindings is not None and transport not in ("serial", "ftdi"):
+        # drift-2 (review fold): --bindings names the live transports'
+        # binding document; on any other transport it is not silently
+        # ignored. Widened to ftdi by row a (issue #568).
         click.echo(
             "standalone_transport_bindings_serial_only: --bindings applies only "
-            "to --transport serial",
+            "to a live transport (--transport serial or --transport ftdi)",
             err=True,
         )
         raise SystemExit(2)
@@ -360,10 +350,15 @@ def _build_seam(
             None,
         )
     if transport == "ftdi":
-        from .ftdi import ftdi_plugin_session, verify_ftdi_plugin
+        from .binding import BindingStore, binding_endpoint, bindings_path
+        from .ftdi import (
+            FtdiDeviceHooks,
+            FtdiEndpoint,
+            default_ftdi_hooks,
+            ftdi_plugin_session,
+            verify_ftdi_plugin,
+        )
 
-        # The hoisted guards proved the device URL is present.
-        assert device is not None
         try:
             # Fail fast (the journal precedent): the pin, the feature gate,
             # the grammar probe and the pyftdi backend all verify BEFORE
@@ -373,17 +368,58 @@ def _build_seam(
         except (ValueError, RuntimeError) as exc:
             click.echo(str(exc), err=True)
             raise SystemExit(2) from exc
+        # The endpoint lifecycle (row a, the serial lane's shape one
+        # transport over): --device is the headless CONSTANT endpoint; a
+        # serve without it starts BINDING-PENDING over the same store, and
+        # the UI drives the scan-and-pick. The binding document is opened
+        # and validated HERE (a malformed document refuses construction).
+        try:
+            store = BindingStore.open(bindings_path(bindings))
+        except ValueError as exc:
+            click.echo(str(exc), err=True)
+            raise SystemExit(2) from exc
+        base_hooks = driver_hooks or default_ftdi_hooks()
+
+        def open_resolved(resolved_url: str) -> Any:
+            if driver_factory is not None:
+                return driver_factory(resolved_url)
+            return base_hooks.open_url(resolved_url)
+
+        effective_hooks = FtdiDeviceHooks(
+            enumerate_urls=base_hooks.enumerate_urls,
+            open_url=open_resolved,
+        )
+        if device:
+            # The --device form is the constant endpoint (the binding
+            # bypass): the store is loaded and validated but never
+            # consulted for resolution.
+            endpoint_any: Any = FtdiEndpoint(device)
+        else:
+            # F-385-2's shape: serve starts BINDING-PENDING — the refusal
+            # moved to connect time so the UI can render the pick.
+            endpoint_any = FtdiEndpoint(
+                binding_endpoint(
+                    store,
+                    plugin.package,
+                    plugin.device_id,
+                    lambda: [],
+                    enumerate_urls=base_hooks.enumerate_urls,
+                )
+            )
         return (
             StandaloneSeam(
                 ftdi_plugin_session(
                     plugin,
-                    device,
-                    driver_factory=driver_factory,
+                    endpoint_any,
+                    driver_factory=open_resolved,
                     capture_root=capture_root,
                     record_path=record,
                 ),
                 transport_kind="ftdi",
                 unattended=unattended,
+                ftdi_hooks=effective_hooks,
+                ftdi_endpoint=endpoint_any,
+                bindings=store,
                 capture_root=capture_root,
                 retention=retention,
             ),

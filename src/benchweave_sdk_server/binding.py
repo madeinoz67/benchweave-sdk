@@ -75,6 +75,10 @@ _PATH_PATTERN = r"^[^\x00\n\r]{1,1024}$"
 #: explicit offset) — same shape as the capture sidecar's ``at``.
 _STAMP_PATTERN = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$"
 
+#: An FTDI device URL: pyftdi's selector spelling (``ftdi://`` scheme,
+#: optional vid/pid and serial segments, an interface index).
+_FTDI_URL_PATTERN = r"^ftdi://[^\x00\s]{1,512}$"
+
 #: The confirmed pick's evidence. manufacturer and model are the
 #: confirm-by-identify conjuncts and ride on the discovery row the pick is
 #: cross-checked against. firmware is null because the row IS the wire
@@ -98,14 +102,20 @@ _BINDING_ROW_SCHEMA: dict[str, Any] = {
         "connection_key": {"type": "string", "pattern": _KEY_PATTERN},
         "plugin_package": {"type": "string", "pattern": _KEY_PATTERN},
         "transport": {"type": "string", "pattern": _KEY_PATTERN},
-        "endpoint_kind": {"enum": ["usb_serial", "port_path"]},
+        "endpoint_kind": {"enum": ["usb_serial", "port_path", "ftdi_url"]},
         "usb_serial": {
             "type": ["string", "null"],
             "pattern": "^[^\\x00]{1,256}$",
         },
         "vid": {"type": ["string", "null"], "pattern": _USB_ID_PATTERN},
         "pid": {"type": ["string", "null"], "pattern": _USB_ID_PATTERN},
-        "port_path": {"type": "string", "pattern": _PATH_PATTERN},
+        "port_path": {
+            "anyOf": [
+                {"type": "string", "pattern": _PATH_PATTERN},
+                {"type": "null"},
+            ]
+        },
+        "ftdi_url": {"type": ["string", "null"], "pattern": _FTDI_URL_PATTERN},
         "identity": _IDENTITY_SCHEMA,
         "bound_at": {"type": "string", "pattern": _STAMP_PATTERN},
         "bound_via": {"type": "string", "pattern": _KEY_PATTERN},
@@ -119,6 +129,7 @@ _BINDING_ROW_SCHEMA: dict[str, Any] = {
         "vid",
         "pid",
         "port_path",
+        "ftdi_url",
         "identity",
         "bound_at",
         "bound_via",
@@ -152,6 +163,34 @@ _BINDING_ROW_SCHEMA: dict[str, Any] = {
                     "pid": {"type": "null"},
                 }
             },
+        },
+        {
+            # ftdi_url rows (row a, issue #568): the pyftdi selector URL is
+            # the endpoint identity — every other endpoint field is null.
+            "if": {
+                "properties": {"endpoint_kind": {"const": "ftdi_url"}},
+                "required": ["endpoint_kind"],
+            },
+            "then": {
+                "properties": {
+                    "ftdi_url": {"type": "string", "minLength": 1},
+                    "usb_serial": {"type": "null"},
+                    "vid": {"type": "null"},
+                    "pid": {"type": "null"},
+                    "port_path": {"type": "null"},
+                }
+            },
+        },
+        {
+            # Non-ftdi rows carry no URL — present-but-null, the same
+            # honest "not the key" spelling.
+            "if": {
+                "properties": {
+                    "endpoint_kind": {"enum": ["usb_serial", "port_path"]}
+                },
+                "required": ["endpoint_kind"],
+            },
+            "then": {"properties": {"ftdi_url": {"type": "null"}}},
         },
     ],
 }
@@ -459,7 +498,10 @@ class BindingStore:
 
 
 def resolve_endpoint(
-    row: dict[str, Any], enumerate_ports: Callable[[], Iterable[Any]]
+    row: dict[str, Any],
+    enumerate_ports: Callable[[], Iterable[Any]],
+    *,
+    enumerate_urls: Callable[[], Iterable[str]] | None = None,
 ) -> str:
     """The §1.4 resolution algorithm, pure over one row plus an enumeration
     (a read-only OS query that opens no port and transmits nothing).
@@ -498,6 +540,22 @@ def resolve_endpoint(
             f"{len(matches)} ports ({', '.join(sorted(matches))}); scan "
             "and re-pick the device"
         )
+    if row["endpoint_kind"] == "ftdi_url":
+        # Row a (issue #568): the pyftdi selector URL is the endpoint
+        # identity; a fresh enumeration must still list it — an absent URL
+        # is staleness, exactly the port_path posture one transport over.
+        if enumerate_urls is None:
+            raise BindingStale(
+                "the bound endpoint is stale: this host carries no FTDI "
+                "enumeration; scan and re-pick the device"
+            )
+        url = str(row["ftdi_url"])
+        if url not in {str(candidate) for candidate in enumerate_urls()}:
+            raise BindingStale(
+                f"the bound endpoint is stale: FTDI URL {url!r} is absent "
+                "from a fresh enumeration; scan and re-pick the device"
+            )
+        return url
     path = str(row["port_path"])
     if path not in {_port_name(port) for port in enumerate_ports()}:
         raise BindingStale(
@@ -512,6 +570,8 @@ def binding_endpoint(
     plugin_package: str,
     connection_key: str,
     enumerate_ports: Callable[[], Iterable[Any]],
+    *,
+    enumerate_urls: Callable[[], Iterable[str]] | None = None,
 ) -> Callable[[], str]:
     """The binding-backed endpoint source (§1.4): consulted at connect
     time, so a rebind changes the next connection's port. No row is
@@ -527,6 +587,6 @@ def binding_endpoint(
                 f"(plugin {plugin_package}); scan for devices and pick a "
                 "port, or pass --device <path>"
             )
-        return resolve_endpoint(row, enumerate_ports)
+        return resolve_endpoint(row, enumerate_ports, enumerate_urls=enumerate_urls)
 
     return source

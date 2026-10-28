@@ -214,6 +214,8 @@ class StandaloneSeam:
         reload_wrapper: Callable[[Any], Any] | None = None,
         serial_ports: Any = None,
         serial_endpoint: SerialEndpoint | None = None,
+        ftdi_hooks: Any = None,
+        ftdi_endpoint: Any = None,
         bindings: BindingStore | None = None,
         capture_root: Any | None = None,
         retention: RetentionConfig | None = None,
@@ -233,6 +235,10 @@ class StandaloneSeam:
         # short-circuit reads it for a connected session (retiring the
         # parallel ``serial_device_path`` source of truth).
         self._serial_endpoint = serial_endpoint
+        # Row a (issue #568): the ftdi transport's device hooks and
+        # endpoint resolver — the serial lane's shape, one transport over.
+        self._ftdi_hooks = ftdi_hooks
+        self._ftdi_endpoint = ftdi_endpoint
         # The operator's binding store (None off the serial transport):
         # opened by the composer so a malformed document refuses SERVE
         # construction, never a mid-request traceback.
@@ -516,6 +522,26 @@ class StandaloneSeam:
     async def _op_device_discover(
         self, arguments: dict[str, Any], correlation: str
     ) -> dict[str, Any]:
+        if self._transport_kind == "ftdi":
+            from .ftdi import discover_ftdi_devices
+
+            session = self._session
+            async with self._op_mutex:
+                minted = (
+                    self._ftdi_endpoint
+                    if session.connected and self._ftdi_endpoint is not None
+                    else None
+                )
+                devices = await discover_ftdi_devices(
+                    session.plugin,
+                    hooks=self._ftdi_hooks,
+                    connected_url=(
+                        minted.last_resolution if minted is not None else None
+                    ),
+                    connected_identity=session.identity,
+                )
+            self._discovery_cache = list(devices)
+            return {"devices": devices}
         if self._transport_kind == "serial":
             from .serial import discover_serial_devices
 
@@ -891,6 +917,7 @@ class StandaloneSeam:
             "vid": vid,
             "pid": pid,
             "port_path": str(port_path),
+            "ftdi_url": None,
             "identity": {
                 "manufacturer": str(picked.get("manufacturer") or ""),
                 "model": str(picked.get("model") or ""),

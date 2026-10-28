@@ -928,6 +928,7 @@ def test_establishment_refuses_a_wrong_identity_answer(tmp_path: Path) -> None:
         "vid": None,
         "pid": None,
         "port_path": foreign,
+        "ftdi_url": None,
         "identity": {"manufacturer": "SDK Example", "model": "demo", "firmware": None},
         "bound_at": "2026-10-06T00:00:00Z",
         "bound_via": "planted",

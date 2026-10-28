@@ -800,7 +800,7 @@ def _add_html_routes(
         scan and a refused bind/unbind all render here, so a refusal is
         never a silent redirect back (the M1 fold's render-the-refusal
         idiom, carried onto the pick flow)."""
-        if seam.transport_kind == "serial":
+        if seam.transport_kind in ("serial", "ftdi"):
             # NFR-O3: a page load never transmits — GET serves the LAST
             # discovery result (host state, initially empty with a scan
             # prompt); scanning is the explicit POST below.
@@ -815,7 +815,7 @@ def _add_html_routes(
                 connected=seam.session.connected,
                 pages=pres().pages,
                 has_presentation=pres().available,
-                scan_available=seam.transport_kind == "serial",
+                scan_available=seam.transport_kind in ("serial", "ftdi"),
                 scan_error=scan_error,
                 binding_error=binding_error,
                 binding=seam.binding_row,
@@ -837,7 +837,7 @@ def _add_html_routes(
         """The explicit scan (NFR-O3's arm): the ONLY page route that calls
         device_discover on the serial transport. A refused scan renders its
         refusal — never a silent no-op."""
-        if seam.transport_kind != "serial":
+        if seam.transport_kind not in ("serial", "ftdi"):
             return RedirectResponse(url="/", status_code=303)
         try:
             await seam.call("device_discover")
@@ -1584,7 +1584,7 @@ def _add_html_routes(
                 )
             return _redirect()
 
-    if seam.transport_kind == "serial":
+    if seam.transport_kind in ("serial", "ftdi"):
 
         @app.post("/devices/{device_id}/bind")
         async def bind_endpoint(request: Request, device_id: str) -> Response:

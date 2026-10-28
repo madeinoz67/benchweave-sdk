@@ -63,6 +63,7 @@ def _row(
         "vid": vid if endpoint_kind == "usb_serial" else None,
         "pid": pid if endpoint_kind == "usb_serial" else None,
         "port_path": port_path,
+        "ftdi_url": None,
         "identity": {
             "manufacturer": "SDK Example",
             "model": "demo",
