@@ -9,6 +9,7 @@ so.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 from pathlib import Path
 from typing import Any
@@ -375,3 +376,49 @@ def test_a3_the_endpoint_resolves_once_per_connect(tmp_path: Path) -> None:
     assert len(calls) == 1, "one resolve per connect (the desync was two)"
     assert endpoint.last_resolution == _URL
     asyncio.run(session.close())
+
+
+def test_a4_a_dispatchless_adapter_is_omitted_with_a_logged_reason(
+    tmp_path: Path, caplog
+) -> None:
+    """A4 (mechanism refute): serial's discovery logged the
+    ConformanceError arm (a dispatchless adapter) so the developer sees
+    WHY the device vanished from the scan; the ftdi copy dropped it.
+    The candidate is still omitted (AR-4) — but not silently."""
+    import json as _json
+    import logging
+
+    all_rows = _json.loads(
+        (FIXTURE_ROOT / "src" / "ftdi_control_demo" / "vectors.json").read_text()
+    )["exchanges"]
+
+    from benchweave_sdk.testing import ConformanceError
+    from benchweave_sdk_server.ftdi import FtdiDeviceHooks, discover_ftdi_devices
+    from benchweave_sdk_server.session import load_plugin_project
+
+    hooks = FtdiDeviceHooks(
+        enumerate_urls=lambda: [_URL],
+        open_url=lambda url: ScriptedFtdiDriver(all_rows),
+    )
+    plugin = load_plugin_project(FIXTURE_ROOT)
+
+    # An adapter whose open raises the marker ConformanceError — the
+    # service-level posture the serial lane's arm logs (a driver-level
+    # raise would be wrapped to ConnectionError by the ladder, which is
+    # the honest silent class).
+    class DispatchlessAdapter:
+        async def open(self, descriptor, services, context):
+            raise ConformanceError("Transmission needs a dispatch marker")
+
+        async def close(self, context):
+            return None
+
+    plugin = dataclasses.replace(
+        plugin, adapter_factory=lambda: DispatchlessAdapter()
+    )
+    with caplog.at_level(logging.WARNING, logger="benchweave_sdk_server.ftdi"):
+        devices = asyncio.run(discover_ftdi_devices(plugin, hooks=hooks))
+    assert devices == [], "the candidate is omitted (AR-4)"
+    assert any(
+        "dispatch marker" in record.message for record in caplog.records
+    ), "the reason is logged, not silent"

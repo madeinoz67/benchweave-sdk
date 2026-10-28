@@ -1462,6 +1462,15 @@ async def _confirm_ftdi_by_identify(
         ):
             return None
         return data
+    except ConformanceError as error:
+        # The serial lane's FOLD-D arm, one transport over: an adapter
+        # that transmits without a dispatch marker fails its own
+        # conformance and the developer deserves to know why the device
+        # did not appear — omitted, not silently. Silent, erroring and
+        # foreign candidates stay unreported by design (AR-4: an
+        # unconfirmed URL is not a device).
+        _LOGGER.warning("ftdi discovery: %s omitted — %s", url, error)
+        return None
     except Exception:
         # A silent, erroring or foreign candidate is omitted, not reported:
         # an unconfirmed URL is not a device (AR-4's posture).
