@@ -671,7 +671,12 @@ class SerialCaptureServices(WriterBackedCaptureServices):
         self._ceiling = min(link.transfer_ceiling, max_frame_bytes)
         # The write refusals name the transport that actually short-wrote
         # (refute lane A's observation): the serial default keeps the
-        # historical wording byte-identical; the ftdi subclass relabels.
+        # historical wording byte-identical on the two label lines; the
+        # ftdi subclass relabels. Disclosed reach of the same fold: a
+        # TYPED ConnectionError from the link is no longer rewrapped as
+        # "serial write failed: …" (and no longer carries the cause
+        # chain) — the passthrough is a behavior and wording change on
+        # the serial transport, kept as the honest fix.
         self._write_label = "serial"
         self._evidence_path = evidence_path
         self.evidence: list[dict[str, Any]] = []

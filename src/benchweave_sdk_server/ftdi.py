@@ -28,12 +28,14 @@ Module contract (pinned by ``tests/server/test_ftdi.py``):
   and the fixture claims none): the rehearsal and the fixture consume one
   document and cannot drift (the parity rule; the live-device acceptance
   leg runs on a real bench, CI cannot hold the device).
-- **The served set is bound twice.** The feature gate binds identity (the
-  pinned contract must declare the banked FTDI common control feature
-  family); the grammar probe binds surface (every op in the dispatch table
-  must validate against the pinned grammar at serve construction and at
-  every reconnect — a pinned lookalike whose grammar cannot express the
-  seven ops refuses, never serves selectively).
+- **The served set is bound twice.** The feature gate binds identity to
+  the BANKED BYTES (the pinned contract must be digest-equal to this
+  SDK's banked instance for the feature line it claims — a feature-id
+  prefix alone launders semantics, the anti-laundering bind); the grammar
+  probe binds surface (every op in the dispatch table must validate
+  against the pinned grammar at serve construction and at every reconnect
+  — a pinned lookalike whose grammar cannot express the seven ops
+  refuses, never serves selectively).
 - **One bounded attempt, never a retry (A06).** A driver exception maps to
   :class:`ConnectionError` naming the class and the driver call happens
   exactly once; a faulted driver stays faulted (reconnect required). An
@@ -152,8 +154,10 @@ _PROBE_PAYLOADS: dict[str, dict[str, Any]] = {
 _FEATURE_PREFIX = "otdp.transport.ftdi-control/"
 
 #: A semantic-version tail for the feature id (three numeric components —
-#: the contract family's own spelling, validated structurally so a pinned
-#: 1.1.0 revision is served while a malformed lookalike refuses).
+#: the contract family's own spelling). The tail names the banked
+#: instance to bind against: a revision is served only when THIS SDK
+#: banks that line's bytes (the anti-laundering bind, the delta fold's
+#: correction — a tail alone never admits a lookalike).
 _SEMVER = re.compile(r"\d+\.\d+\.\d+\Z")
 
 #: The idle quantum :class:`FtdiStreamAdapter` sleeps when the data pipe is
@@ -619,6 +623,15 @@ class FtdiCaptureServices(SerialCaptureServices):
                 f"satisfy the admitted {transaction['kind']} grammar: {error}"
             )
 
+    #: The FTDI family's BitMode byte encoding (the public hardware
+    #: enum: RESET/BITBANG/MPSSE/SYNCBB/MCU/OPTO/CBUS/SYNCFF = 0..1
+    #: powers of two up to 0x40). The contract's limits admit mode 0..255,
+    #: but the family's byte expresses these eight values only — an
+    #: inadmissible mode must refuse TYPED before the driver call (F3a's
+    #: principle), never reach the coercion and fault the connection for a
+    #: parameter-domain error (the delta refute's residual 2).
+    _ADMISSIBLE_BITMODES = frozenset({0, 1, 2, 4, 8, 16, 32, 64})
+
     #: The contract's limits keys to the transaction parameters they
     #: bound (only keys the contract DECLARES are enforced — A02: the
     #: contract's declaration governs, never a host constant).
@@ -658,6 +671,18 @@ class FtdiCaptureServices(SerialCaptureServices):
                     f"is below the contract's declared set_baud_minimum "
                     f"{minimum}"
                 )
+        mode = transaction.get("mode")
+        if (
+            op == "set_bitmode"
+            and isinstance(mode, int)
+            and not isinstance(mode, bool)
+            and mode not in self._ADMISSIBLE_BITMODES
+        ):
+            raise ValueError(
+                f"live_provider_transaction_grammar: set_bitmode "
+                f"mode={mode} is outside the FTDI family's BitMode byte "
+                f"values {sorted(self._ADMISSIBLE_BITMODES)}"
+            )
 
     def _dispatch(self, op: str, args: list[Any]) -> Any:
         """One driver call by op name (the table is the authority)."""
@@ -671,6 +696,16 @@ class FtdiCaptureServices(SerialCaptureServices):
         grammar gate refuses what is neither, unchanged."""
         kind = transaction.get("kind")
         if not (isinstance(kind, str) and kind in self._grammar):
+            # The latch gates the STREAM path as well (the delta refute's
+            # residual 1): after a fault, a later stream transaction must
+            # refuse before the driver exactly like a provider one. The
+            # check sits at the branch's head so no stream call reaches
+            # the driver on a faulted connection.
+            if self._faulted:
+                raise ConnectionError(
+                    "the ftdi driver previously faulted on this "
+                    "connection; reconnect required"
+                )
             try:
                 return await super().transfer(transaction, context)
             except ConnectionError:

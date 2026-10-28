@@ -346,8 +346,14 @@ late-bound CURRENT-plugin shape of `replay_plugin_session`
    exactly the FTDI common control surface the pinned grammar declares.
 4. The digest itself is pinned by the descriptor's `provider.sha256` —
    `verify_provider_pin` already refuses a mismatched digest at both serve
-   construction and reconnect (`provider_contract_hash_mismatch:`); this
-   design adds no second digest mechanism.
+   construction and reconnect (`provider_contract_hash_mismatch:`). The
+   2026-10-28 fold added a SECOND digest comparison — the anti-laundering
+   bind: the pinned bytes must also be digest-equal to this SDK's banked
+   instance for the feature line (the prefix alone launders semantics) —
+   and a version tail with no banked instance refuses outright. This
+   paragraph previously claimed no second digest mechanism; the fold
+   falsified that claim and this paragraph now carries the corrected
+   statement.
 
 `ftdi_plugin_session(plugin, url, *, driver_factory=None, capture_root=None,
 capture_max_bytes=None) -> PluginSession` — the factory opens the device per

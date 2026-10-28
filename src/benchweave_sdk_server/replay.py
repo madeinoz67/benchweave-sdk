@@ -36,10 +36,12 @@ test_replay.py``):
   the recorded row's is a conformance failure. Every mismatch is a
   ``ConformanceError`` naming the row — never a silently served substitute.
 - **Recorded failures stay failures.** A ``recorded_failure: "timeout"``
-  receive row answers with the backend's ``TimeoutError`` posture (the
-  recorded no-response stays a no-response; the timing compresses to
-  immediate, the outcome does not change). Replay invents no certainty the
-  recording lacks (A06).
+  receive row answers with the backend's ``TimeoutError`` posture and a
+  ``recorded_failure: "connection"`` row answers with the
+  ``ConnectionError`` posture (the recorded outcome stays the recorded
+  outcome; the timing compresses to immediate). A failure row carries NO
+  response — the contradiction refuses at load. Replay invents no
+  certainty the recording lacks (A06).
 - **The dispatch ladder is unchanged.** Grammar, then bounds, then payload,
   then liveness, then the closed transport, then the dispatch marker, then
   the row is consumed. A transmit without ``mark_dispatch_started`` is a
@@ -520,10 +522,15 @@ def _load_stream_row(
             )
         if "data" in response_raw:
             response = _hex_decode(response_raw["data"], name, "response.data")
-    if failure is not None and response:
+    if failure is not None and response_raw:
+        # The delta refute's residual 3: a row carrying BOTH a failure and
+        # a response used to load and silently discard the response (the
+        # decode above is gated on ``failure is None``) while this module
+        # rejects three neighbouring contradictions. Recorded evidence
+        # never vanishes without a diagnostic.
         raise ValueError(
             f"replay_journal_row_shape: row {name}: a recorded failure row "
-            "carries no response data"
+            "carries no response data — the failure IS the recorded outcome"
         )
     if bounds is not None:
         _outcome_check(name, bounds, response, failure)

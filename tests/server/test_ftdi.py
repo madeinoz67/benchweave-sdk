@@ -1356,9 +1356,11 @@ def test_a_fully_sent_frame_lands_its_request_row_when_the_receive_faults(
 def test_a_faulted_driver_latches(tmp_path: Path, plugin) -> None:
     """F6's named arm: 'a faulted driver stays faulted' was claim-only —
     a transient fault let the next transaction answer ok. The services
-    latch the fault: every later transaction on this connection refuses
-    ConnectionError BEFORE the driver, and the driver sees exactly one
-    call."""
+    latch the fault; this arm proves the provider→provider and
+    provider→stream directions (the stream→* directions are
+    test_the_fault_latch_covers_the_stream_first_directions): each
+    refuses ConnectionError BEFORE the driver, and the driver sees no
+    further call."""
     driver = ScriptedFtdiDriver(_journal_rows())
     session = ftdi_plugin_session(
         plugin, _URL, driver_factory=lambda url: driver
@@ -1367,16 +1369,73 @@ def test_a_faulted_driver_latches(tmp_path: Path, plugin) -> None:
     driver.fault_writes = True  # the device is unplugged mid-session
     read = asyncio.run(session.execute("read", {"parameter": "line_status"}))
     assert read["status"] == "unknown"  # the faulted exchange
+    calls_before = list(driver.calls)
     writes_before = driver.write_calls  # the read's own faulting write is in
-    # The latch: the next control op refuses without reaching the driver.
+    # The latch covers EVERY direction (the delta refute's residual 1):
+    # provider→provider, provider→stream, stream→provider, stream→stream.
+    # Each refuses BEFORE the driver, and the driver sees no call.
     context = _context(session.services, "op-f6")
-    with pytest.raises(ConnectionError, match="previously faulted"):
+    for _label, transaction in (
+        ("provider→provider", {"kind": "ftdi_control", "op": "reset_device"}),
+        (
+            "provider→stream",
+            {"kind": "stream_send", "data": bytes.fromhex("55a1")},
+        ),
+    ):
+        with pytest.raises(ConnectionError, match="previously faulted"):
+            asyncio.run(session.services.transfer(transaction, context))
+    assert driver.write_calls == writes_before, "no second driver call"
+    assert driver.calls == calls_before
+    asyncio.run(session.close())
+
+
+def test_an_unexpressible_bitmode_refuses_typed_without_latching(plugin) -> None:
+    """Residual 2: the contract admits mode 0..255; the FTDI family's
+    BitMode byte expresses eight values. An inadmissible mode must refuse
+    TYPED before the driver call (F3a's principle) and must NOT latch the
+    connection as faulted — a parameter-domain error is not a connection
+    fault."""
+    driver = ScriptedFtdiDriver(_journal_rows())
+    services = _services(plugin, driver)
+    context = _context(services, "op-mode")
+    with pytest.raises(ValueError, match="live_provider_transaction_grammar:"):
         asyncio.run(
-            session.services.transfer(
-                {"kind": "ftdi_control", "op": "reset_device"}, context
+            services.transfer(
+                {"kind": "ftdi_control", "op": "set_bitmode", "mask": 15, "mode": 99},
+                context,
             )
         )
+    assert driver.calls == [], "the refusal happens before the driver"
+    # No latch: the connection still serves.
+    asyncio.run(
+        services.transfer({"kind": "ftdi_control", "op": "reset_device"}, context)
+    )
+    services.link.close()
+
+
+def test_the_fault_latch_covers_the_stream_first_directions(plugin) -> None:
+    """Residual 1's other half: after a STREAM fault, both a later stream
+    transaction and a later provider transaction must refuse before the
+    driver (STREAM→stream, STREAM→provider)."""
+    driver = ScriptedFtdiDriver(_journal_rows())
+    session = ftdi_plugin_session(
+        plugin, _URL, driver_factory=lambda url: driver
+    )
+    asyncio.run(session.connect())
+    driver.fault_writes = True
+    read = asyncio.run(session.execute("read", {"parameter": "line_status"}))
+    assert read["status"] == "unknown"
+    calls_before = list(driver.calls)
+    writes_before = driver.write_calls
+    context = _context(session.services, "op-f6b")
+    for _label, transaction in (
+        ("stream→stream", {"kind": "stream_send", "data": bytes.fromhex("55a1")}),
+        ("stream→provider", {"kind": "ftdi_control", "op": "reset_device"}),
+    ):
+        with pytest.raises(ConnectionError, match="previously faulted"):
+            asyncio.run(session.services.transfer(transaction, context))
     assert driver.write_calls == writes_before, "no second driver call"
+    assert driver.calls == calls_before
     asyncio.run(session.close())
 
 

@@ -1076,3 +1076,24 @@ def test_nit2_stream_kinds_match_their_recorded_kind(tmp_path: Path, plugin) -> 
     )
     assert reply == {"data": bytes.fromhex(_STATUS_HEX)}
     host.assert_complete()
+
+
+def test_a_row_with_a_failure_and_a_response_is_refused(tmp_path: Path, plugin) -> None:
+    """The delta refute's residual 3: a row carrying BOTH a
+    ``recorded_failure`` and a response used to load and silently discard
+    the response (the decode is gated on ``failure is None``) while the
+    loader rejects three neighbouring contradictions. Recorded evidence
+    never vanishes without a diagnostic."""
+    journal = _journal([
+        {"name": "poll-1",
+         "transaction": {"kind": "stream_send", "data": _POLL_HEX},
+         "response": {}},
+        {"name": "both",
+         "transaction": {"kind": "stream_receive", "max_bytes": 4,
+                         "termination": "lf", "exact_bytes": None},
+         "recorded_failure": "timeout",
+         "response": {"data": "55a10d"}},
+    ])
+    path = _write(tmp_path, journal)
+    with pytest.raises(ValueError, match="replay_journal_row_shape:"):
+        load_replay_journal(path, plugin)
