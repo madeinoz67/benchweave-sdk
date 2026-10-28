@@ -1,25 +1,30 @@
 """The live FTDI provider transport (issue #568): the third standalone
 transport, pinned end to end.
 
-The parity rule (the design record's §3): only the driver is doubled. The
-scripted double's expected op sequence, its pin answers and its data-pipe
-replies are all DERIVED from the committed bring-up journal — the same
-evidence document the replay transport validates — so the rehearsal path
-and the recorded conversation cannot drift: if the journal's recorded
-conversation and the double's rehearsal ever disagree, the parity test
-reddens.
+The parity rule (the design record's §3, as amended 2026-10-28): the
+scripted double SHIPS product-side (``ScriptedFtdiDriver`` in
+``ftdi.py``), its script is the #564 journal's row shape, and it drives
+the PRODUCTION services end to end — only the driver is doubled. The
+acceptance script is derived from the committed bring-up journal's rows —
+the same evidence document the replay transport validates — so the
+rehearsal path and the recorded conversation cannot drift: if the
+journal's recorded conversation and the double's rehearsal ever disagree,
+the parity test reddens.
 
-The arms carry the design record's pre-committed acceptance (§8):
+The arms carry the design record's pre-committed acceptance (§8, amended):
 
-- **Metric A** — the bring-up over the double: every envelope ``ok`` and
-  the double's recorded op-call sequence equals the journal's provider
-  rows exactly (op, params, order). Zero ``ConformanceError``.
-- **Metric B** — six single-point RED controls (B1 is the pre-change
-  posture on the pre-existing transports; B2-B6 each have a permanent pin
-  here whose mutation run reddens it).
+- **Metric A** — the bring-up over the shipped double: every envelope
+  ``ok`` and the double's recorded op-call sequence equals the journal's
+  provider rows exactly (op, params, order). Zero ``ConformanceError``.
+- **Metric B** — six single-point RED controls. B1 is the negative
+  control, three transports wide: the SAME provider-kind transaction is
+  refused on serial, on the mock, and on replay (the reference-hid
+  fixture's grammar does not admit the kind) — only ftdi dispatches it.
+  B2-B6 each have a permanent pin here whose mutation run reddens it.
 - **Metric C** — seven honesty arms: the seam surfaces, the live banner,
-  the sidecar, the CLI guards, the untouched mock refusal, the unpinned
-  reconnect, the faulted-driver posture.
+  the sidecar, the CLI guards, the untouched mock refusal (with the
+  unpinned-plugin serve-construction arm), the unpinned reconnect, the
+  faulted-driver posture.
 """
 
 from __future__ import annotations
@@ -27,6 +32,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import dataclasses
+import hashlib
 import json
 import time
 from pathlib import Path
@@ -39,6 +45,7 @@ from benchweave_sdk_server.cli import _build_seam
 from benchweave_sdk_server.ftdi import (
     FtdiCaptureServices,
     FtdiStreamAdapter,
+    ScriptedFtdiDriver,
     ftdi_plugin_session,
     open_ftdi,
     verify_ftdi_plugin,
@@ -58,115 +65,38 @@ JOURNAL_PATH = FIXTURE_ROOT / "bring-up-journal.json"
 #: mapping refuse it — this bench has no FTDI device attached.
 _URL = "ftdi://::0x0403:0x6001/1"
 
-
-class ScriptedFtdiDriver:
-    """The scripted ``FtdiDriver`` double: records every control-op call
-    (op, params), answers ``read_pins`` from a script, releases data-pipe
-    replies as each write lands (a device answers writes), and bounds its
-    parameters the way the real driver's firmware would — a mask of 999
-    never reaches it (the grammar refuses first), but the double's contract
-    still refuses it (the serial suite's fake-Transport posture, one level
-    up). ``fault_writes`` turns every later ``write_data`` into the
-    mid-conversation unplug fault (C7)."""
-
-    def __init__(
-        self, *, pins: list[int] | None = None, pipe: list[bytes] | None = None
-    ) -> None:
-        self.calls: list[tuple[str, dict[str, Any]]] = []
-        self.writes: list[bytes] = []
-        self.write_calls = 0
-        self.closes = 0
-        self.fault_writes = False
-        self._pins = list(pins or [])
-        self._pipe = list(pipe or [])
-        self._inbound = bytearray()
-
-    def _record(self, op: str, params: dict[str, Any]) -> None:
-        self.calls.append((op, dict(params)))
-
-    def reset_device(self) -> None:
-        self._record("reset_device", {})
-
-    def set_timeouts(self, read_ms: int, write_ms: int) -> None:
-        if read_ms < 0 or write_ms < 0:
-            raise ValueError("timeouts are nonnegative")
-        self._record("set_timeouts", {"read_ms": read_ms, "write_ms": write_ms})
-
-    def set_latency(self, ms: int) -> None:
-        if not 0 <= ms <= 255:
-            raise ValueError("latency timer is one byte")
-        self._record("set_latency", {"ms": ms})
-
-    def set_baud(self, baud: int) -> None:
-        if baud < 1:
-            raise ValueError("baud rate is positive")
-        self._record("set_baud", {"baud": baud})
-
-    def purge(self, queue: str) -> None:
-        if queue not in ("tx", "rx"):
-            raise ValueError("queue is 'tx' or 'rx'")
-        self._record("purge", {"queue": queue})
-
-    def set_bitmode(self, mask: int, mode: int) -> None:
-        if not 0 <= mask <= 255 or not 0 <= mode <= 255:
-            raise ValueError("mask and mode are one byte each")
-        self._record("set_bitmode", {"mask": mask, "mode": mode})
-
-    def read_pins(self) -> int:
-        self._record("read_pins", {})
-        if not self._pins:
-            raise AssertionError("the pin script is exhausted")
-        return self._pins.pop(0)
-
-    def write_data(self, data: bytes) -> int:
-        self.write_calls += 1
-        if self.fault_writes:
-            raise OSError("device unplugged")
-        self.writes.append(bytes(data))
-        if self._pipe:
-            self._inbound += self._pipe.pop(0)
-        return len(data)
-
-    def read_data(self, size: int) -> bytes:
-        out = bytes(self._inbound[:size])
-        del self._inbound[:size]
-        return out
-
-    def close(self) -> None:
-        self.closes += 1
+#: The negative-control transaction (amended §8, B1): the SAME
+#: provider-kind transaction, refused on serial, on the mock and on
+#: replay; only the ftdi transport dispatches it.
+_NEGATIVE_CONTROL = {"kind": "ftdi_control", "op": "set_baud", "baud": 115200}
 
 
-def _double_from_journal(journal: Any) -> ScriptedFtdiDriver:
-    """The parity rule's center: the double's script IS the journal — pin
-    answers from the provider rows' recorded results, data-pipe replies
-    from the stream rows' recorded responses."""
-    pins = [
-        row.result["data"][0]
-        for row in journal.rows
-        if row.result is not None and "data" in row.result
-    ]
-    pipe = [
-        row.response
-        for row in journal.rows
-        if row.command and row.kind in ("stream_send", "stream_exchange") and row.response
-    ]
-    return ScriptedFtdiDriver(pins=pins, pipe=pipe)
+def _journal_rows() -> list[dict[str, Any]]:
+    """The committed bring-up journal's raw rows (the script AND the
+    expectation derive from this one document — the parity rule)."""
+    return json.loads(JOURNAL_PATH.read_text())["rows"]
 
 
-def _provider_rows(journal: Any) -> list[tuple[str, dict[str, Any]]]:
-    """The journal's provider rows as the expected op-call sequence (op,
+def _double(rows: list[dict[str, Any]] | None = None) -> ScriptedFtdiDriver:
+    """The shipped double over the journal's rows (or doctored rows for
+    the fault arms)."""
+    return ScriptedFtdiDriver(rows if rows is not None else _journal_rows())
+
+
+def _provider_rows(rows: list[dict[str, Any]]) -> list[tuple[str, dict[str, Any]]]:
+    """The script's provider rows as the expected op-call sequence (op,
     params, order — the parity assertion's right-hand side)."""
     return [
         (
-            row.expected["op"],
+            row["transaction"]["op"],
             {
                 key: value
-                for key, value in row.expected.items()
+                for key, value in row["transaction"].items()
                 if key not in ("kind", "op")
             },
         )
-        for row in journal.rows
-        if row.expected is not None
+        for row in rows
+        if "op" in row["transaction"]
     ]
 
 
@@ -229,35 +159,68 @@ class _FakeSerialTransport:
 
 
 def test_b1_the_serial_backend_refuses_provider_kinds(plugin) -> None:
-    """The serial backend's own grammar gate refuses the fixture's provider
-    transaction by construction — the refusal this transport exists to
-    lift, WITHOUT changing it anywhere else (serial.py's ValueError)."""
+    """The negative control, arm one of three (amended §8): the SAME
+    provider-kind transaction the ftdi transport dispatches is refused by
+    the serial backend's own grammar gate — a provider plugin cannot
+    silently land on serial. The refusal this transport exists to lift,
+    WITHOUT changing it anywhere else (serial.py's ValueError)."""
     services = SerialCaptureServices(
         SerialLink(_FakeSerialTransport()), max_frame_bytes=4096
     )
     context = _context(services, "op-b1-serial")
     with pytest.raises(ValueError, match="not a section 8.1 stream transaction"):
-        asyncio.run(
-            services.transfer(
-                {"kind": "ftdi_control", "op": "reset_device"}, context
-            )
-        )
+        asyncio.run(services.transfer(_NEGATIVE_CONTROL, context))
     services.link.close()
 
 
 def test_b1_the_byte_stream_mock_refuses_provider_kinds() -> None:
-    """The same refusal through the SHARED imported _FIELDS (transport.py)
-    — the mock's honesty posture this design deliberately does not touch
-    (C5's other half)."""
+    """The negative control, arm two of three: the same refusal through the
+    SHARED imported _FIELDS (transport.py) — the mock's honesty posture
+    this design deliberately does not touch."""
     from benchweave_sdk_server.session import FrameRow
 
     host = ByteStreamMockHost([FrameRow("only", b"\x01", b"\x02")])
     context = MockContext("op-b1-mock", deadline_monotonic=host.monotonic() + 1)
     context.dispatched = True
     with pytest.raises(ValueError, match="not a section 8.1 stream transaction"):
-        asyncio.run(
-            host.transfer({"kind": "ftdi_control", "op": "reset_device"}, context)
-        )
+        asyncio.run(host.transfer(_NEGATIVE_CONTROL, context))
+
+
+def test_b1_the_replay_loader_refuses_the_provider_kind_for_a_wrong_grammar_plugin(
+    tmp_path: Path,
+) -> None:
+    """The negative control, arm three of three: on replay, a journal row
+    of the provider kind is admitted ONLY when the served plugin's pinned
+    grammar declares that kind. The reference-hid fixture (an admitted
+    contract, wrong grammar) is the ready-made wrong-grammar control: the
+    loader refuses the row before any conversation exists. A passing run
+    anywhere is NOT this control; the three refusals are — only the ftdi
+    transport dispatches the transaction (Metric A, B2)."""
+    hid = load_plugin_project(HID_FIXTURE_ROOT)
+    journal = {
+        "journal_version": "1",
+        "recorded": {"started_at": "2026-10-28T00:00:00Z", "source": "b1-control"},
+        "provider": {
+            "feature_id": "otdp.transport.reference-hid/1.0.0",
+            "id": "urn:otdp:transport-provider:reference-hid:1.0.0",
+            "sha256": hashlib.sha256(
+                (
+                    HID_FIXTURE_ROOT / "src" / "replay_hid_demo" / "reference-provider.json"
+                ).read_bytes()
+            ).hexdigest(),
+        },
+        "rows": [
+            {
+                "name": "the-negative-control",
+                "transaction": dict(_NEGATIVE_CONTROL),
+                "response": {},
+            }
+        ],
+    }
+    path = tmp_path / "b1.json"
+    path.write_text(json.dumps(journal))
+    with pytest.raises(ValueError, match="replay_journal_kind:"):
+        load_replay_journal(path, hid)
 
 
 # --------------------------------------------------------------------------
@@ -265,18 +228,19 @@ def test_b1_the_byte_stream_mock_refuses_provider_kinds() -> None:
 # --------------------------------------------------------------------------
 
 
-def test_metric_a_bring_up_over_the_double(tmp_path: Path, plugin, journal) -> None:
-    """The recorded bring-up conversation runs through ``ftdi_plugin_session``
-    over the scripted double: connect (the identify verb speaks the init
-    chain, the bitstream chunk and the DONE gate), one read (the status
-    exchange), every envelope ok, and the double's recorded op-call
+def test_metric_a_bring_up_over_the_double(tmp_path: Path, plugin) -> None:
+    """The recorded bring-up conversation runs the PRODUCTION session over
+    the SHIPPED double (amended §3): connect (the identify verb speaks the
+    init chain, the bitstream chunk and the DONE gate), one read (the
+    status exchange), every envelope ok, and the double's recorded op-call
     sequence equals the journal's provider rows exactly — the parity
     assertion. Zero ConformanceError (any would fail the run)."""
-    provider_rows = _provider_rows(journal)
+    rows = _journal_rows()
+    provider_rows = _provider_rows(rows)
     # A's denominator, stamped in the journal file this derives from: the
     # provider-row count (7 — the init chain's six ops plus the DONE gate).
     assert len(provider_rows) == 7
-    driver = _double_from_journal(journal)
+    driver = _double(rows)
     session = ftdi_plugin_session(
         plugin, _URL, driver_factory=lambda url: driver, capture_root=tmp_path / "caps"
     )
@@ -308,6 +272,69 @@ def test_metric_a_bring_up_over_the_double(tmp_path: Path, plugin, journal) -> N
 
 
 # --------------------------------------------------------------------------
+# The shipped double's own discipline (§3): exact match, honest exhaustion
+# --------------------------------------------------------------------------
+
+
+def test_the_shipped_double_refuses_on_exhaustion() -> None:
+    """The exact-match discipline, one boundary down: a call past the end
+    of the script is a ConformanceError naming the call — the rehearsal
+    never invents a device answer the recording does not carry."""
+    driver = ScriptedFtdiDriver(
+        [
+            {
+                "name": "only",
+                "transaction": {"kind": "ftdi_control", "op": "reset_device"},
+                "response": {},
+            }
+        ]
+    )
+    driver.reset_device()
+    with pytest.raises(ConformanceError, match="exhausted at call 'purge'"):
+        driver.purge("rx")
+
+
+def test_the_shipped_double_refuses_an_unexpected_call() -> None:
+    """The exact-match discipline's mismatch arm: a call that disagrees
+    with the head row (op or params) is a ConformanceError naming the row
+    and the call — a drifted builder cannot rehearse clean against the
+    recording."""
+    driver = ScriptedFtdiDriver(
+        [
+            {
+                "name": "bitmode-row",
+                "transaction": {
+                    "kind": "ftdi_control",
+                    "op": "set_bitmode",
+                    "mask": 0x0F,
+                    "mode": 0x40,
+                },
+                "response": {},
+            }
+        ]
+    )
+    with pytest.raises(ConformanceError, match="row 'bitmode-row' expects"):
+        driver.set_bitmode(0x0F, 0x20)  # the mode drifted
+
+
+def test_the_shipped_double_refuses_a_malformed_script_row() -> None:
+    """The constructor's own typed refusal: a row that is not the #564
+    journal row shape refuses at construction, never mid-rehearsal."""
+    with pytest.raises(ValueError, match="scripted_driver_row:"):
+        ScriptedFtdiDriver([{"transaction": {"kind": "stream_send", "data": "aa"}}])
+    with pytest.raises(ValueError, match="scripted_driver_row:"):
+        ScriptedFtdiDriver(
+            [
+                {
+                    "name": "bad-pins",
+                    "transaction": {"kind": "ftdi_control", "op": "read_pins"},
+                    "response": {},
+                }
+            ]
+        )
+
+
+# --------------------------------------------------------------------------
 # Metric B — the RED controls (permanent pins; the mutation runs reddens
 # each named test — evidence in the lane report)
 # --------------------------------------------------------------------------
@@ -317,9 +344,6 @@ def test_metric_b2_every_table_op_dispatches(plugin) -> None:
     """B2's named test: every op in the dispatch table dispatches onto the
     driver when its transaction conforms — reverting a table entry (the
     mutation) reddens here at that op's refusal, never a silent skip."""
-    driver = ScriptedFtdiDriver(pins=[0x00])
-    services = _services(plugin, driver)
-    context = _context(services, "op-b2")
     samples: dict[str, dict[str, Any]] = {
         "reset_device": {},
         "set_timeouts": {"read_ms": 50, "write_ms": 500},
@@ -329,6 +353,17 @@ def test_metric_b2_every_table_op_dispatches(plugin) -> None:
         "set_bitmode": {"mask": 0x0F, "mode": 0x40},
         "read_pins": {},
     }
+    rows = [
+        {
+            "name": f"probe-{index}",
+            "transaction": {"kind": "ftdi_control", "op": op, **params},
+            "response": {"data": "AA=="} if op == "read_pins" else {},
+        }
+        for index, (op, params) in enumerate(samples.items())
+    ]
+    driver = ScriptedFtdiDriver(rows)
+    services = _services(plugin, driver)
+    context = _context(services, "op-b2")
     for op, params in samples.items():
         result = asyncio.run(
             services.transfer({"kind": "ftdi_control", "op": op, **params}, context)
@@ -350,12 +385,14 @@ def test_metric_b3_busy_guard_refuses_control_under_parked_receive(
     this test reddens. The park is observed through the link's own
     receive-depth counter (the deterministic hook; a partial frame keeps
     the receive parked until its deadline)."""
-    driver = ScriptedFtdiDriver(
-        pins=[0x00, 0x80],
-        # A PARTIAL status reply (2 of the 4 exact bytes): the receive
-        # parks with a partial frame and stays parked until its deadline.
-        pipe=[b"\xc2\x00"],
-    )
+    # The journal's conversation with the status row doctored to a PARTIAL
+    # reply (2 of the 4 exact bytes): the receive parks with a partial
+    # frame and stays parked until its deadline. (The double accepts the
+    # row — a device can emit two bytes; it is the JOURNAL format that
+    # cannot record them, which is why this script is hand-doctored.)
+    rows = _journal_rows()
+    rows[-1]["response"] = {"data": "c200"}
+    driver = ScriptedFtdiDriver(rows)
     session = ftdi_plugin_session(
         plugin, _URL, driver_factory=lambda url: driver
     )
@@ -397,7 +434,17 @@ def test_metric_b4_result_grammar_refuses_a_two_byte_answer(plugin) -> None:
     refuses ``live_provider_result_grammar:`` — the live device is
     untrusted against its own pinned contract. With the validation
     reverted (the mutation) the refusal disappears and this test reddens."""
-    driver = ScriptedFtdiDriver(pins=[0x4403])  # two bytes' worth, not one
+    # A one-row script whose read_pins answer carries TWO bytes (0x4403):
+    # the double serves what it is scripted with; the ladder refuses it.
+    driver = ScriptedFtdiDriver(
+        [
+            {
+                "name": "two-byte-answer",
+                "transaction": {"kind": "ftdi_control", "op": "read_pins"},
+                "response": {"data": base64.b64encode(b"\x44\x03").decode("ascii")},
+            }
+        ]
+    )
     services = _services(plugin, driver)
     context = _context(services, "op-b4")
     with pytest.raises(ValueError, match="live_provider_result_grammar:"):
@@ -463,7 +510,7 @@ def test_metric_c1_seam_surfaces_report_ftdi_transport(
     connected ``device_get`` identity block. (The binding-row surface is
     serial-only by construction; the capture-row surface is C3's sidecar
     arm.)"""
-    driver = _double_from_journal(journal)
+    driver = _double()
     seam = _wired_seam(FIXTURE_ROOT, driver, tmp_path)
     assert seam.transport_kind == "ftdi"
     info = asyncio.run(seam.call("host_info"))
@@ -490,7 +537,7 @@ def test_metric_c2_banner_is_the_live_shape(
     from benchweave_sdk_server.security import GuardPolicy, new_token
     from benchweave_sdk_server.web import build_app
 
-    driver = _double_from_journal(journal)
+    driver = _double()
     seam = _wired_seam(FIXTURE_ROOT, driver, tmp_path)
     policy = GuardPolicy.complete(
         bound_host="127.0.0.1",
@@ -525,7 +572,15 @@ def test_metric_c3_sidecar_names_transport_and_contract_digest(
     (configure_capture → first append), read back from disk: file bytes,
     not in-memory state."""
     grammar, provider = verify_ftdi_plugin(plugin)
-    driver = ScriptedFtdiDriver()
+    driver = ScriptedFtdiDriver(
+        [
+            {
+                "name": "idle",
+                "transaction": {"kind": "ftdi_control", "op": "reset_device"},
+                "response": {},
+            }
+        ]
+    )
     link = SerialLink(FtdiStreamAdapter(driver))
     services = FtdiCaptureServices(
         link,
@@ -607,32 +662,39 @@ def test_metric_c4_cli_guards(
     assert "standalone_transport_device_live_only:" in capsys.readouterr().err
 
 
-def test_metric_c5_the_mock_still_refuses_provider_kinds_from_the_ftdi_side() -> None:
-    """C5: the plain mock still refuses provider kinds — the honest posture
-    (a builder-derived vectors script cannot script control ops), pinned
-    from THIS suite with the fixture's OWN builder transaction. The mock
-    session for a provider plugin refuses one step earlier still: it has no
-    vectors.json to script (a provider plugin's conversation is control
-    ops, which the mock cannot rehearse by design)."""
+def test_metric_c5_the_mock_still_refuses_provider_kinds_from_the_ftdi_side(
+    starter_project: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """C5 (amended): the plain mock still refuses provider kinds — the
+    honest posture, pinned from THIS suite with the fixture's OWN builder
+    transaction — and the mirror arm holds: a plugin that declares NO
+    provider cannot land on the ftdi transport either
+    (``live_provider_plugin_unpinned:`` at serve construction, exit 2). A
+    stream plugin must equally not silently land on ftdi."""
     import sys
 
-    from benchweave_sdk_server.session import FrameRow, mock_plugin_session
+    from benchweave_sdk_server.session import FrameRow, load_plugin_project, mock_plugin_session
 
     sys.path.insert(0, str(FIXTURE_ROOT / "src"))
     import ftdi_control_demo.protocol as proto
 
-    plugin = load_plugin_project(FIXTURE_ROOT)
     host = ByteStreamMockHost([FrameRow("only", b"\x01", b"\x02")])
     context = MockContext("op-c5", deadline_monotonic=host.monotonic() + 1)
     context.dispatched = True
     with pytest.raises(ValueError, match="not a section 8.1 stream transaction"):
         asyncio.run(host.transfer(proto.reset_device(), context))
-    session = mock_plugin_session(plugin)
+    session = mock_plugin_session(load_plugin_project(FIXTURE_ROOT))
     with pytest.raises(Exception) as raised:
         asyncio.run(session.connect())
     assert "vectors.json" in str(raised.value), (
         "a provider plugin has no mock script — the honest load refusal"
     )
+    # The mirror arm: the starter plugin (no provider pin) on --transport
+    # ftdi refuses at serve construction, never silently serves.
+    with pytest.raises(SystemExit) as exc:
+        _build_seam(starter_project, transport="ftdi", device=_URL)
+    assert exc.value.code == 2
+    assert "live_provider_plugin_unpinned:" in capsys.readouterr().err
 
 
 def test_metric_c6_unpinned_reconnect_refuses(plugin) -> None:
@@ -640,7 +702,7 @@ def test_metric_c6_unpinned_reconnect_refuses(plugin) -> None:
     removed) on a live session's reconnect refuses
     ``live_provider_plugin_unpinned:`` — the reload-and-reconnect
     re-verify over the CURRENT plugin (replay's reconnect posture)."""
-    driver = ScriptedFtdiDriver(pins=[0x00, 0x80])
+    driver = _double()
     session = ftdi_plugin_session(
         plugin, _URL, driver_factory=lambda url: driver
     )
@@ -669,7 +731,7 @@ def test_metric_c7_midconversation_fault_maps_not_ready_no_retry(
     seam's ``not_ready`` (the TRANSPORT_ERROR envelope mapping), and the
     double records exactly one call at the faulting op — one bounded
     attempt, never a host retry (A06)."""
-    driver = _double_from_journal(journal)
+    driver = _double()
     seam = _wired_seam(FIXTURE_ROOT, driver, tmp_path)
     asyncio.run(seam.call("device_connect", {"device_id": seam.session.device_id}))
     writes_after_connect = driver.write_calls
@@ -699,7 +761,15 @@ def test_transaction_grammar_refuses_out_of_envelope_params(plugin) -> None:
     """Grammar-first: an out-of-envelope control transaction refuses
     ``live_provider_transaction_grammar:`` before any state change — a
     mask of 999 never reaches the driver."""
-    driver = ScriptedFtdiDriver()
+    driver = ScriptedFtdiDriver(
+        [
+            {
+                "name": "idle",
+                "transaction": {"kind": "ftdi_control", "op": "reset_device"},
+                "response": {},
+            }
+        ]
+    )
     services = _services(plugin, driver)
     context = _context(services, "op-grammar")
     with pytest.raises(ValueError, match="live_provider_transaction_grammar:"):

@@ -11,16 +11,22 @@ pipe. The plugin-side adapter work stays on #562; recorded replay stays on
 
 Module contract (pinned by ``tests/server/test_ftdi.py``):
 
-- **Only the driver is doubled.** Every production branch between
-  :meth:`FtdiCaptureServices.transfer` and the driver call — grammar
-  validation, the closed check, the busy guard, liveness, the dispatch
-  marker, table dispatch, result validation, the inherited
-  :class:`~benchweave_sdk_server.serial.SerialLink` receive ladder over
-  :class:`FtdiStreamAdapter` — is exercised through a scripted
-  :class:`FtdiDriver` double whose script is the recorded bring-up journal,
-  so the rehearsal path and the recorded evidence cannot drift (the parity
-  rule; the live-device acceptance leg runs on a real bench, CI cannot
-  hold the device).
+- **Only the driver is doubled — and the double SHIPS here (§3, the
+  2026-10-28 ruling).** :class:`ScriptedFtdiDriver` is a committed,
+  documented :class:`FtdiDriver` double, not a test-internal fake: its
+  script is the #564 journal's row shape, it enforces the exact-match
+  discipline (an unexpected call or an exhausted script is a
+  ``ConformanceError`` naming the call), and the rehearsal it serves runs
+  the PRODUCTION path end to end — ``ftdi_plugin_session(plugin, url,
+  driver_factory=lambda url: ScriptedFtdiDriver(rows))`` mints real
+  :class:`FtdiCaptureServices` over it, so grammar validation, the feature
+  gate, the busy guard, dispatch marker, table dispatch, result
+  validation, the inherited :class:`~benchweave_sdk_server.serial.SerialLink`
+  receive ladder and the capture sidecar are all the shipped code. The
+  acceptance double's script is derived from the bring-up journal's rows,
+  so the rehearsal and the recorded evidence consume one document and
+  cannot drift (the parity rule; the live-device acceptance leg runs on a
+  real bench, CI cannot hold the device).
 - **The served set is bound twice.** The feature gate binds identity (the
   pinned contract must declare the banked FTDI common control feature
   family); the grammar probe binds surface (every op in the dispatch table
@@ -50,6 +56,8 @@ import contextlib
 import hashlib
 import re
 import time
+from collections import deque
+from collections.abc import Mapping, Sequence
 from typing import Any, Protocol
 
 from benchweave_sdk.testing import ConformanceError
@@ -227,6 +235,209 @@ def open_ftdi(url: str) -> FtdiDriver:
             "device's presence, then connect again"
         ) from exc
     return _PyftdiDriver(ftdi)
+
+
+class _ScriptEntry:
+    """One parsed script row: a control expectation (op + params + the
+    scripted ``read_pins`` answer) or a stream expectation (the exact
+    request bytes and the reply bytes the ``write`` releases)."""
+
+    __slots__ = ("name", "op", "params", "pins_answer", "request", "response")
+
+    def __init__(
+        self,
+        name: str,
+        *,
+        op: str | None = None,
+        params: dict[str, Any] | None = None,
+        pins_answer: int | None = None,
+        request: bytes | None = None,
+        response: bytes = b"",
+    ) -> None:
+        self.name = name
+        self.op = op
+        self.params = params
+        self.pins_answer = pins_answer
+        self.request = request
+        self.response = response
+
+
+class ScriptedFtdiDriver:
+    """The committed rehearsal double at the driver boundary (the design
+    record's §3, the 2026-10-28 ruling: mock parity rides in the slice as a
+    SHIPPED component, not a test helper).
+
+    The constructor takes a script in the #564 journal's row shape —
+    ``[{"name": ..., "transaction": {...}, "response": {...}}, ...]``. A row
+    whose ``transaction`` carries an ``op`` is a control row (the expected
+    op and params; a ``response.data`` base64 byte is the scripted
+    ``read_pins`` answer); a stream row's hex ``data`` is the exact request
+    a ``write`` must carry and its ``response.data`` the reply the write
+    releases to the data pipe; a response-only stream row releases its
+    reply at construction (a device-initiated frame). Every call is
+    recorded; each call must match the head of the remaining script or the
+    double refuses with :class:`ConformanceError` naming the row and the
+    call — the exact-match discipline, one boundary down from the mock
+    host's. ``fault_writes`` turns every later ``write_data`` into the
+    mid-conversation unplug fault (the faulted-posture rehearsal).
+
+    A plugin author rehearses without hardware by driving the production
+    session over this double; the operator-facing recorded rehearsal stays
+    the replay transport (#564) — neither claims to be the other, and no
+    device behavior is claimed or proven here.
+    """
+
+    def __init__(self, rows: Sequence[Mapping[str, Any]]) -> None:
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.writes: list[bytes] = []
+        self.write_calls = 0
+        self.closes = 0
+        self.fault_writes = False
+        self._script: deque[_ScriptEntry] = deque()
+        self._inbound = bytearray()
+        for index, row in enumerate(rows):
+            self._script.append(self._parse_row(row, index))
+            # A response-only stream row is a device-initiated frame: it is
+            # on the pipe from the start, exactly as a device that speaks
+            # first would be.
+            entry = self._script[-1]
+            if entry.op is None and entry.request is None and entry.response:
+                self._inbound += self._script.pop().response
+
+    def _parse_row(self, row: Mapping[str, Any], index: int) -> _ScriptEntry:
+        def malformed(detail: str) -> ValueError:
+            return ValueError(
+                f"scripted_driver_row: row {index}: {detail} (the script "
+                "carries the #564 journal row shape)"
+            )
+
+        name = row.get("name")
+        if not isinstance(name, str) or not name:
+            raise malformed("name is not a non-empty string")
+        transaction = row.get("transaction")
+        if not isinstance(transaction, dict):
+            raise malformed("transaction is not an object")
+        response = row.get("response", {})
+        if not isinstance(response, dict):
+            raise malformed("response is not an object")
+        if "op" in transaction:
+            params = {
+                key: value
+                for key, value in transaction.items()
+                if key not in ("kind", "op")
+            }
+            entry = _ScriptEntry(name, op=str(transaction["op"]), params=params)
+            if transaction["op"] == "read_pins":
+                answer = response.get("data")
+                if not isinstance(answer, str):
+                    raise malformed(
+                        "a read_pins row's response carries a base64 'data' byte"
+                    )
+                try:
+                    decoded = base64.b64decode(answer, validate=True)
+                except ValueError as exc:
+                    raise malformed(
+                        f"the read_pins answer {answer!r} is not valid base64"
+                    ) from exc
+                if not decoded:
+                    raise malformed("the read_pins answer carries no bytes")
+                entry.pins_answer = int.from_bytes(decoded, "big")
+            return entry
+        kind = transaction.get("kind")
+        if kind not in ("stream_send", "stream_exchange", "stream_receive"):
+            raise malformed(
+                f"kind {kind!r} is neither a control row (an 'op') nor a "
+                "section 8.1 stream kind"
+            )
+        if kind == "stream_receive":
+            if "data" in transaction:
+                raise malformed("a receive row carries no outgoing data")
+            return _ScriptEntry(name)
+        data = transaction.get("data")
+        if not isinstance(data, str):
+            raise malformed("a stream row's data is a hex byte string")
+        try:
+            request = bytes.fromhex(data)
+        except ValueError as exc:
+            raise malformed(f"the stream data {data!r} is not a hex byte string") from exc
+        reply = response.get("data", "")
+        if not isinstance(reply, str):
+            raise malformed("a stream row's response data is a hex byte string")
+        try:
+            response_bytes = bytes.fromhex(reply)
+        except ValueError as exc:
+            raise malformed(
+                f"the stream response {reply!r} is not a hex byte string"
+            ) from exc
+        return _ScriptEntry(name, request=request, response=response_bytes)
+
+    # -- the exact-match core --------------------------------------------------
+
+    def _next(self, call: str) -> _ScriptEntry:
+        if not self._script:
+            raise ConformanceError(
+                f"scripted driver: the script is exhausted at call {call!r} — "
+                "the conversation ran past its recording"
+            )
+        return self._script[0]
+
+    def _control(self, op: str, params: dict[str, Any]) -> Any:
+        entry = self._next(op)
+        if entry.op != op or entry.params != params:
+            raise ConformanceError(
+                f"scripted driver: row {entry.name!r} expects "
+                f"{entry.op} {entry.params}, got {op} {params}"
+            )
+        self._script.popleft()
+        self.calls.append((op, dict(params)))
+        return entry.pins_answer
+
+    def reset_device(self) -> None:
+        self._control("reset_device", {})
+
+    def set_timeouts(self, read_ms: int, write_ms: int) -> None:
+        self._control("set_timeouts", {"read_ms": read_ms, "write_ms": write_ms})
+
+    def set_latency(self, ms: int) -> None:
+        self._control("set_latency", {"ms": ms})
+
+    def set_baud(self, baud: int) -> None:
+        self._control("set_baud", {"baud": baud})
+
+    def purge(self, queue: str) -> None:
+        self._control("purge", {"queue": queue})
+
+    def set_bitmode(self, mask: int, mode: int) -> None:
+        self._control("set_bitmode", {"mask": mask, "mode": mode})
+
+    def read_pins(self) -> int:
+        answer = self._control("read_pins", {})
+        assert isinstance(answer, int)  # a read_pins row always carries an answer
+        return answer
+
+    def write_data(self, data: bytes) -> int:
+        self.write_calls += 1
+        if self.fault_writes:
+            raise OSError("device unplugged")
+        entry = self._next("write_data")
+        if entry.request != bytes(data):
+            raise ConformanceError(
+                f"scripted driver: row {entry.name!r} expects the frame "
+                f"{entry.request.hex() if entry.request is not None else '<none>'}, "
+                f"got {bytes(data).hex()}"
+            )
+        self._script.popleft()
+        self.writes.append(bytes(data))
+        self._inbound += entry.response
+        return len(data)
+
+    def read_data(self, size: int) -> bytes:
+        out = bytes(self._inbound[:size])
+        del self._inbound[:size]
+        return out
+
+    def close(self) -> None:
+        self.closes += 1
 
 
 class FtdiStreamAdapter:
