@@ -173,7 +173,10 @@ def test_new_project_tree_matches_fixture_provider(tmp_path: Path) -> None:
     provider_files = set(_tree(FIXTURES / "provider"))
     base_files = set(_tree(FIXTURES / "base"))
     assert "src/example_plugin/ftdi-control-provider.json" in provider_files
-    assert "src/example_plugin/vectors.json" not in provider_files
+    # The provider shape ships BOTH its contract and its corpus (#570's
+    # ruling); the serial default carries the corpus but never the
+    # provider contract.
+    assert "src/example_plugin/vectors.json" in provider_files
     assert "src/example_plugin/vectors.json" in base_files
     assert "src/example_plugin/ftdi-control-provider.json" not in base_files
 

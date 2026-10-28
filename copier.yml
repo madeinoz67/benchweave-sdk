@@ -23,15 +23,14 @@ sdk_version:
 otdp_version:
   type: str
 _subdirectory: template
-# The two shapes exclude each other's shape-specific file (copier 9 renders
-# each `_exclude` value as jinja). The pattern is the DESTINATION name
-# (`.jinja` stripped, relative to the subdirectory root). The provider shape
-# carries no vectors.json (the mock's stream-only dialects cannot script
-# control operations); the serial-stream default carries no provider
-# contract. The exclusion re-applies on `copier update`, so neither shape
-# ever grows the other's file.
+# The serial default excludes the provider contract; the provider shape
+# ships BOTH its contract and its vectors.json (copier 9 renders each
+# `_exclude` value as jinja; the pattern is the DESTINATION name,
+# `.jinja` stripped, relative to the subdirectory root). The exclusion
+# re-applies on `copier update`, so the serial shape never grows the
+# contract file.
 _exclude:
-  - "{% if provider_transport %}vectors.json{% else %}ftdi-control-provider.json{% endif %}"
+  - "{% if not provider_transport %}ftdi-control-provider.json{% endif %}"
 # The globstars are load-bearing (spike-proven at update time): a single
 # `*` does NOT cross `/` in copier's update-time skip matching, so `src/*`
 # left src/<pkg>/adapter.py unprotected — the 3-way merge could push

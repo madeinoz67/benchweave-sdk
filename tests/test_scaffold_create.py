@@ -107,10 +107,12 @@ def test_provider_transport_scaffold_pins_the_banked_contract(tmp_path: Path) ->
     assert pinned_bytes == banked.read_bytes()
     assert hashlib.sha256(pinned_bytes).hexdigest() == pin["sha256"]
     assert verify_provider_pin(descriptor, package / "descriptor.json") is not None
-    # No vectors.json in the provider shape: the mock's stream-only
-    # dialects cannot script control ops, and the scaffold does not ship a
-    # script that pretends otherwise.
-    assert not (package / "vectors.json").exists()
+    # The provider shape ships a provider-dialect vectors.json (issue
+    # #570's ruling): the mock rehearses the bring-up at the transaction
+    # boundary from the plugin's own corpus.
+    corpus = json.loads((package / "vectors.json").read_text())
+    assert corpus["transaction_dialect"] == "provider"
+    assert len(corpus["exchanges"]) >= 9
 
 
 def test_provider_transport_scaffold_rehearses_on_the_double(tmp_path: Path) -> None:

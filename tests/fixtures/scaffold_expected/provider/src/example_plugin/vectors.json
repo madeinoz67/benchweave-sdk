@@ -1,0 +1,17 @@
+{
+  "evidence": "synthetic",
+  "transaction_dialect": "provider",
+  "exchanges": [
+    {"name": "reset", "transaction": {"kind": "ftdi_control", "op": "reset_device"}, "response": {}},
+    {"name": "purge-rx", "transaction": {"kind": "ftdi_control", "op": "purge", "queue": "rx"}, "response": {}},
+    {"name": "latency", "transaction": {"kind": "ftdi_control", "op": "set_latency", "ms": 16}, "response": {}},
+    {"name": "baud", "transaction": {"kind": "ftdi_control", "op": "set_baud", "baud": 115200}, "response": {}},
+    {"name": "bitmode", "transaction": {"kind": "ftdi_control", "op": "set_bitmode", "mask": 15, "mode": 64}, "response": {}},
+    {"name": "pins-idle", "transaction": {"kind": "ftdi_control", "op": "read_pins"}, "response": {"data": "AA=="}},
+    {"name": "bitstream-chunk", "transaction": {"kind": "stream_send", "data": "deadbeefcafebabe"}, "response": {}},
+    {"name": "pins-done", "transaction": {"kind": "ftdi_control", "op": "read_pins"}, "response": {"data": "gA=="}},
+    {"name": "status-1", "transaction": {"kind": "stream_exchange", "data": "55a1", "max_bytes": 8, "termination": "lf", "exact_bytes": 4}, "response": {"data": "c200015a"}},
+    {"name": "status-2", "transaction": {"kind": "stream_exchange", "data": "55a1", "max_bytes": 8, "termination": "lf", "exact_bytes": 4}, "response": {"data": "c200015a"}},
+    {"name": "status-3", "transaction": {"kind": "stream_exchange", "data": "55a1", "max_bytes": 8, "termination": "lf", "exact_bytes": 4}, "response": {"data": "c200015a"}}
+  ]
+}

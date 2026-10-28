@@ -313,33 +313,41 @@ def _load_row(
     index: int,
     names: set[str],
     grammar: dict[str, GrammarEntry],
+    *,
+    code: str = "replay_journal_row_shape",
 ) -> ReplayRow:
+    """Validate and normalize one journal row into ABI form. ``code`` names
+    the document family in every row-shape refusal: the journal lane's
+    default keeps its historical literal byte-identical, and the #570
+    provider-dialect compile passes ``standalone_vectors_row_shape`` so a
+    vectors corpus's refusals name the vectors file, never "journal" — one
+    validator, two documents (the anti-drift rule vectors.py states)."""
     """Validate and normalize one journal row into ABI form."""
     if not isinstance(row, dict):
-        raise ValueError(f"replay_journal_row_shape: row {index}: not an object")
+        raise ValueError(f"{code}: row {index}: not an object")
     name = row.get("name")
     if not isinstance(name, str) or not name:
         raise ValueError(
-            f"replay_journal_row_shape: row {index}: name is not a non-empty string"
+            f"{code}: row {index}: name is not a non-empty string"
         )
     if name in names:
         raise ValueError(
-            f"replay_journal_row_shape: row {name}: duplicate row name "
+            f"{code}: row {name}: duplicate row name "
             "(row names name the offending row in every diagnostic)"
         )
     names.add(name)
     transaction = row.get("transaction")
     if not isinstance(transaction, dict):
         raise ValueError(
-            f"replay_journal_row_shape: row {name}: transaction is not an object"
+            f"{code}: row {name}: transaction is not an object"
         )
     kind = transaction.get("kind")
     if not isinstance(kind, str):
-        raise ValueError(f"replay_journal_row_shape: row {name}: kind is not a string")
+        raise ValueError(f"{code}: row {name}: kind is not a string")
     failure = row.get("recorded_failure")
     if failure is not None and failure not in ("timeout", "connection"):
         raise ValueError(
-            f"replay_journal_row_shape: row {name}: recorded_failure {failure!r} "
+            f"{code}: row {name}: recorded_failure {failure!r} "
             'is not a recorded outcome this format carries '
             '("timeout" or "connection")'
         )
@@ -352,25 +360,25 @@ def _load_row(
         entry = grammar[kind]
         if failure is not None:
             raise ValueError(
-                f"replay_journal_row_shape: row {name}: recorded_failure applies "
+                f"{code}: row {name}: recorded_failure applies "
                 "to receive rows, not provider transactions"
             )
         if not isinstance(response_raw, dict):
             raise ValueError(
-                f"replay_journal_row_shape: row {name}: a provider row's response "
+                f"{code}: row {name}: a provider row's response "
                 "must be an object"
             )
         document = {key: value for key, value in transaction.items() if key != "kind"}
         error = _first_schema_error(entry.request_validator, document)
         if error is not None:
             raise ValueError(
-                f"replay_journal_row_shape: row {name}: the transaction does not "
+                f"{code}: row {name}: the transaction does not "
                 f"satisfy the admitted {kind} grammar: {error}"
             )
         error = _first_schema_error(entry.result_validator, dict(response_raw))
         if error is not None:
             raise ValueError(
-                f"replay_journal_row_shape: row {name}: the recorded result does "
+                f"{code}: row {name}: the recorded result does "
                 f"not satisfy the admitted {kind} grammar: {error}"
             )
         expected: dict[str, Any] = {"kind": kind}
@@ -402,7 +410,7 @@ def _load_row(
         )
 
     if kind in _FIELDS:
-        return _load_stream_row(name, transaction, failure, response_raw)
+        return _load_stream_row(name, transaction, failure, response_raw, code=code)
 
     raise ValueError(
         f"replay_journal_kind: row {name}: kind {kind!r} is neither a generic "
@@ -423,6 +431,8 @@ def _load_stream_row(
     transaction: dict[str, Any],
     failure: str | None,
     response_raw: Any,
+    *,
+    code: str = "replay_journal_row_shape",
 ) -> ReplayRow:
     """Validate one §8.1 stream row through the SHARED field sets and
     bounds definitions (one definition family for backend, mock and replay
@@ -444,7 +454,7 @@ def _load_stream_row(
     )
     if set(transaction) != fields:
         raise ValueError(
-            f"replay_journal_row_shape: row {name}: not a section 8.1 stream "
+            f"{code}: row {name}: not a section 8.1 stream "
             f"transaction: {sorted(transaction)}"
         )
     request: bytes | None = None
@@ -453,7 +463,7 @@ def _load_stream_row(
     if inline:
         if kind == "stream_receive":
             raise ValueError(
-                f"replay_journal_row_shape: row {name}: a receive row carries no "
+                f"{code}: row {name}: a receive row carries no "
                 "outgoing data"
             )
         request = _hex_decode(transaction["data"], name, "data")
@@ -467,7 +477,7 @@ def _load_stream_row(
     elif digest is not None or byte_length is not None:
         if kind == "stream_receive":
             raise ValueError(
-                f"replay_journal_row_shape: row {name}: a receive row carries no "
+                f"{code}: row {name}: a receive row carries no "
                 "outgoing digest pair"
             )
         if (
@@ -476,7 +486,7 @@ def _load_stream_row(
             or any(char not in "0123456789abcdef" for char in digest)
         ):
             raise ValueError(
-                f"replay_journal_row_shape: row {name}: data_sha256 is not a "
+                f"{code}: row {name}: data_sha256 is not a "
                 "64-character lowercase hex digest"
             )
         if (
@@ -485,14 +495,14 @@ def _load_stream_row(
             or byte_length < 1
         ):
             raise ValueError(
-                f"replay_journal_row_shape: row {name}: byte_length is not a "
+                f"{code}: row {name}: byte_length is not a "
                 "positive integer"
             )
         row_digest = digest
         row_length = byte_length
     elif kind != "stream_receive":
         raise ValueError(
-            f"replay_journal_row_shape: row {name}: a send row carries either "
+            f"{code}: row {name}: a send row carries either "
             "inline data or the digest pair (data_sha256 + byte_length)"
         )
     bounds: tuple[int, str, int] | None = None
@@ -510,14 +520,14 @@ def _load_stream_row(
         )
     if failure is not None and kind == "stream_send":
         raise ValueError(
-            f"replay_journal_row_shape: row {name}: recorded_failure applies to "
+            f"{code}: row {name}: recorded_failure applies to "
             "receive rows, not sends"
         )
     response = b""
     if failure is None and response_raw is not None:
         if not isinstance(response_raw, dict) or set(response_raw) - {"data"}:
             raise ValueError(
-                f"replay_journal_row_shape: row {name}: a stream row's response "
+                f"{code}: row {name}: a stream row's response "
                 'carries at most {"data"}'
             )
         if "data" in response_raw:
@@ -529,7 +539,7 @@ def _load_stream_row(
         # rejects three neighbouring contradictions. Recorded evidence
         # never vanishes without a diagnostic.
         raise ValueError(
-            f"replay_journal_row_shape: row {name}: a recorded failure row "
+            f"{code}: row {name}: a recorded failure row "
             "carries no response data — the failure IS the recorded outcome"
         )
     if bounds is not None:

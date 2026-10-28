@@ -358,7 +358,7 @@ You can author, derive and preview a composed user interface with no gateway. Th
    benchweave-sdk new acme-widget --package acme_widget_plugin --with-ui
    ```
 
-   Pass `--provider-transport` instead for a plugin that declares a transport provider: the scaffold pins the banked FTDI control contract inside the package, emits provider-shaped builders and adapter, and writes no `vectors.json` (the mock cannot rehearse control operations). Rehearsal for that shape runs over the SDK's shipped driver double; the section "Live FTDI transport (provider control)" below states the serve and record commands.
+   Pass `--provider-transport` instead for a plugin that declares a transport provider: the scaffold pins the banked FTDI control contract inside the package, emits provider-shaped builders and adapter, and writes a provider-dialect `vectors.json`. The mock transport rehearses the bring-up conversation from that corpus at the transaction boundary. The generated test suite also runs the shipped driver double, which proves the executor path one boundary down. The section "Live FTDI transport (provider control)" below states the serve and record commands.
 
 3. Write the composed action class document in the plugin package, beside the descriptor. The section "Author a composed action class" above gives the document shape. A composed member declaration uses the same pin seam. The section "Author a composed member declaration" above gives that document shape.
 
@@ -494,7 +494,7 @@ A plugin can declare a local stylesheet override for its preview pages. The mani
 
 ## Mock transports (offline rehearsal)
 
-The standalone host serves a plugin on a scripted mock transport when you run `serve --transport mock` or `preview-ui`. For `serve`, the `mock` transport is the default. The script comes from the evidence file of the plugin, `src/<package>/vectors.json`. The file declares which of the two transaction dialects the adapter uses. The host serves the mock that matches the dialect.
+The standalone host serves a plugin on a scripted mock transport when you run `serve --transport mock` or `preview-ui`. For `serve`, the `mock` transport is the default. The script comes from the evidence file of the plugin, `src/<package>/vectors.json`. The file declares which of the three transaction dialects the adapter uses. The host serves the mock that matches the dialect.
 
 **The two dialects.** Declare the dialect with the file-level `transaction_dialect` key. If you omit the key, the file is a `stream_exchange` script. Every row is a `{"request": ..., "response": ...}` pair of strings. The mock serves whole-dict exchanges. This is the shape of the starter protocol. The request is `ID?\n` and the response is one line.
 

@@ -11,26 +11,21 @@ from example_plugin.adapter import create_plugin
 from example_plugin import protocol as proto
 
 
+def _corpus():
+    """This plugin's OWN vectors.json exchanges — the one document both
+    rehearsals consume (the driver double below and the mock test in this
+    suite), so the corpus and the rehearsals cannot drift."""
+    document = json.loads(files("example_plugin").joinpath("vectors.json").read_text())
+    return document["exchanges"]
+
+
 def _script():
     """The bring-up conversation as a double script (the #564 row shape),
-    spelled from this package's own protocol builders. The recorded-evidence
-    story is the replay journal a bench session records with --record; this
-    script is a rehearsal smoke, not evidence (it claims nothing)."""
-    return [
-        {"name": "reset", "transaction": proto.reset_device(), "response": {}},
-        {"name": "purge", "transaction": proto.purge_rx(), "response": {}},
-        {"name": "latency", "transaction": proto.set_latency(), "response": {}},
-        {"name": "baud", "transaction": proto.set_baud(), "response": {}},
-        {"name": "bitmode", "transaction": proto.set_bitmode(), "response": {}},
-        {"name": "pins-idle", "transaction": proto.read_pins(),
-         "response": {"data": base64.b64encode(bytes([proto.PINS_IDLE])).decode()}},
-        {"name": "bitstream", "transaction": proto.stream_send(proto.BITSTREAM_CHUNK),
-         "response": {}},
-        {"name": "pins-done", "transaction": proto.read_pins(),
-         "response": {"data": base64.b64encode(bytes([proto.DONE_BYTE])).decode()}},
-        {"name": "status", "transaction": proto.status_exchange(),
-         "response": {"data": proto.STATUS_REPLY.hex()}},
-    ]
+    read from the plugin's own vectors corpus — one document, two
+    rehearsals. The recorded-evidence story is the replay journal a bench
+    session records with --record; this script is a rehearsal smoke, not
+    evidence (it claims nothing)."""
+    return _corpus()
 
 
 def test_descriptor_pin_and_contract():
@@ -41,6 +36,50 @@ def test_descriptor_pin_and_contract():
     )
     assert pinned is not None
     assert pinned["feature_id"].startswith("otdp.transport.ftdi-control/")
+
+
+def test_bring_up_rehearses_on_the_mock():
+    """The transaction-boundary rehearsal (issue #570): the provider plugin
+    connects under the DEFAULT mock transport — no hardware, no journal —
+    the three authored polls serve the reads, the consumption trace equals
+    the corpus whole-dict in order, and the script completes."""
+    import asyncio as _asyncio
+
+    from benchweave_sdk_server.session import load_plugin_project, mock_plugin_session
+
+    project = Path(__file__).resolve().parents[1]
+    plugin = load_plugin_project(project)
+    corpus = _corpus()
+    session = mock_plugin_session(plugin)
+
+    async def run():
+        await session.connect()
+        for _ in range(3):
+            read = await session.execute("read", {"parameter": "line_status"})
+            assert read["status"] == "ok"
+            assert read["data"]["value"] == 0x5A
+        host = session.services
+        expected = []
+        for row in corpus:
+            t = dict(row["transaction"])
+            if "data" in t:
+                t["data"] = bytes.fromhex(t["data"])
+            expected.append(t)
+        assert [dict(x) for x in host.transfers] == expected
+        host.assert_complete()
+
+    _asyncio.run(run())
+
+
+def test_vectors_evidence_claims_carry_recorded_bytes():
+    """The anti-circularity invariant (issue #566): a vectors.json that
+    claims hardware evidence must carry at least one hand-recorded
+    exchange. The scaffold ships synthetic evidence, which claims
+    nothing."""
+    from benchweave_sdk.vectors import validate_vectors_evidence
+
+    document = json.loads(files("example_plugin").joinpath("vectors.json").read_text())
+    validate_vectors_evidence(document, source=Path("vectors.json"))
 
 
 def test_bring_up_rehearses_on_the_shipped_double(tmp_path):
@@ -95,7 +134,11 @@ def test_uncertain_response_after_dispatch(tmp_path):
         project = Path(__file__).resolve().parents[1]
         plugin = load_plugin_project(project)
         rows = _script()
-        rows[-1]["response"] = {"data": "c200"}  # a partial reply: the exchange times out
+        # Doctor the FIRST status exchange — the row the read consumes
+        # after connect's eight bring-up rows.
+        next(row for row in rows if row["transaction"].get("kind") == "stream_exchange")[
+            "response"
+        ] = {"data": "c200"}  # a partial reply: the exchange times out
         driver = ScriptedFtdiDriver(rows)
         session = ftdi_plugin_session(
             plugin, "ftdi://::0x0403:0x6001/1", driver_factory=lambda url: driver,

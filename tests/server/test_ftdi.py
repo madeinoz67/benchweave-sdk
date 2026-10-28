@@ -688,18 +688,20 @@ def test_metric_c4_cli_guards(
     assert "standalone_transport_device_live_only:" in capsys.readouterr().err
 
 
-def test_metric_c5_the_mock_still_refuses_provider_kinds_from_the_ftdi_side(
+def test_metric_c5_the_mock_stream_dialects_still_refuse_provider_kinds(
     starter_project: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """C5 (amended): the plain mock still refuses provider kinds — the
-    honest posture, pinned from THIS suite with the fixture's OWN builder
-    transaction — and the mirror arm holds: a plugin that declares NO
-    provider cannot land on the ftdi transport either
-    (``live_provider_plugin_unpinned:`` at serve construction, exit 2). A
-    stream plugin must equally not silently land on ftdi."""
+    """C5 (amended by #570): the plain mock's STREAM DIALECTS still refuse
+    provider kinds — the _FIELDS gate, untouched — pinned from THIS suite
+    with the fixture's OWN builder transaction; the provider dialect now
+    serves them from a grammar-validated corpus (tests/server/
+    test_mock_provider.py carries the amended three-refusal pin). The
+    mirror arm holds: a plugin that declares NO provider cannot land on
+    the ftdi transport either (live_provider_plugin_unpinned: at serve
+    construction, exit 2)."""
     import sys
 
-    from benchweave_sdk_server.session import FrameRow, load_plugin_project, mock_plugin_session
+    from benchweave_sdk_server.session import FrameRow
 
     sys.path.insert(0, str(FIXTURE_ROOT / "src"))
     import ftdi_control_demo.protocol as proto
@@ -709,12 +711,6 @@ def test_metric_c5_the_mock_still_refuses_provider_kinds_from_the_ftdi_side(
     context.dispatched = True
     with pytest.raises(ValueError, match="not a section 8.1 stream transaction"):
         asyncio.run(host.transfer(proto.reset_device(), context))
-    session = mock_plugin_session(load_plugin_project(FIXTURE_ROOT))
-    with pytest.raises(Exception) as raised:
-        asyncio.run(session.connect())
-    assert "vectors.json" in str(raised.value), (
-        "a provider plugin has no mock script — the honest load refusal"
-    )
     # The mirror arm: the starter plugin (no provider pin) on --transport
     # ftdi refuses at serve construction, never silently serves.
     with pytest.raises(SystemExit) as exc:

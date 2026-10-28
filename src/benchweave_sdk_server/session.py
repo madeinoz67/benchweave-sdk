@@ -174,11 +174,15 @@ def transport_ceiling(settings: dict[str, Any]) -> int:
     return min(declared, TRANSFER_CEILING)
 
 
-#: The vectors.json dialect vocabulary (issue #394's owner ruling (a)):
-#: ``stream_exchange`` is the omitted-key default — today's behaviour,
-#: byte-for-byte — and ``send_receive`` scripts binary §8.1 SEND/RECEIVE
-#: conversations, request-less rows valid (device-initiated frames).
-_DIALECTS = ("stream_exchange", "send_receive")
+#: The vectors.json dialect vocabulary (issue #394's owner ruling (a);
+#: "provider" added by issue #570): ``stream_exchange`` is the
+#: omitted-key default — today's behaviour, byte-for-byte —
+#: ``send_receive`` scripts binary §8.1 SEND/RECEIVE conversations,
+#: request-less rows valid (device-initiated frames), and ``provider``
+#: scripts a provider plugin's bring-up from journal-shaped rows (the
+#: pinned grammar's provider kinds plus the §8.1 stream kinds, one
+#: document — the #564 row vocabulary).
+_DIALECTS = ("stream_exchange", "send_receive", "provider")
 
 #: The payload encoding vocabulary: ``ascii`` (a row string's ASCII bytes —
 #: today's behaviour) and ``hex`` (``bytes.fromhex``).
@@ -281,8 +285,14 @@ def vectors_script(plugin: LoadedPlugin) -> VectorsScript:
     if dialect not in _DIALECTS:
         raise PluginLoadError(
             f"standalone_vectors_dialect_unknown: {dialect!r} (expected "
-            f'"stream_exchange" or "send_receive") in {path}'
+            f'"stream_exchange", "send_receive" or "provider") in {path}'
         )
+    if dialect == "provider":
+        # The provider dialect's rows are journal-shaped, not stream
+        # payloads — the stream row loop below cannot decode them. Return
+        # the dialect marker only; provider_script (the compile) re-reads
+        # the file and validates every row against the pinned grammar.
+        return VectorsScript(dialect="provider", encoding="ascii", frames=[])
     encoding = vectors.get("encoding", "ascii")
     if encoding not in _ENCODINGS:
         raise PluginLoadError(
@@ -471,6 +481,99 @@ def _cycle_plan(rows: list[FrameRow]) -> tuple[int, list[FrameRow], int]:
     return 1, cycle, 0
 
 
+def provider_script(
+    plugin: LoadedPlugin,
+) -> tuple[list[tuple[dict[str, Any], dict[str, Any] | Exception]], int]:
+    """Compile the provider dialect's vectors.json into MockHost exchanges
+    (issue #570): each journal-shaped row becomes one exact-dict exchange —
+    provider rows ``(row.expected, row.result)``, stream rows
+    ``(row.expected, {"data": row.response})`` — and the establishment is
+    the replay cycle plan's own derivation over the SAME rows (a corpus
+    that proves a repeating unit recycles it; one that cannot cycles its
+    whole tail — the mock's ambiguous-corpus rule, the split replay.py's
+    docstrings state).
+
+    Refusals are the ``standalone_vectors_*`` family, naming the vectors
+    document (never "journal"): the row refusals interpolate
+    ``standalone_vectors_row_shape`` through the SHARED validator (one
+    validator, two documents — the anti-drift rule vectors.py states); an
+    unpinned plugin refuses (a provider corpus requires a pinned
+    contract); ``encoding`` and ``recorded_failure`` keys refuse under
+    this dialect (their semantics would be silent no-ops or unscripted
+    failure shapes — bounds D2/D5 of the design record own the latter).
+
+    The replay imports here are FUNCTION-LEVEL: replay imports this module
+    at module level (replay.py's own imports), so a module-level import
+    would cycle — the ``mock_transport_factory`` lazy-import precedent.
+    """
+    from benchweave_sdk.validation import verify_provider_pin
+
+    from .replay import _grammar, _load_row, _replay_cycle_plan
+
+    path = plugin.package_dir / "vectors.json"
+    vectors = json.loads(read_file(path))
+    if "encoding" in vectors:
+        raise PluginLoadError(
+            "standalone_vectors_encoding_unsupported: the provider dialect "
+            "spells its payloads in the journal's own forms (hex for §8.1 "
+            "stream data, base64 for the grammar's byte fields); an "
+            "`encoding` key would be a silent no-op — remove it"
+        )
+    pinned = verify_provider_pin(plugin.descriptor, plugin.package_dir / "descriptor.json")
+    if pinned is None:
+        raise PluginLoadError(
+            "standalone_vectors_provider_unpinned: the provider dialect "
+            "scripts a provider plugin's bring-up; this plugin's descriptor "
+            "declares no transport provider to validate the corpus against"
+        )
+    grammar = _grammar(pinned)
+    raw_rows = vectors.get("exchanges", [])
+    names: set[str] = set()
+    replay_rows = [
+        _load_row(row, index, names, grammar, code="standalone_vectors_row_shape")
+        for index, row in enumerate(raw_rows)
+    ]
+    if not replay_rows:
+        raise PluginLoadError(
+            "standalone_vectors_row_shape: the provider corpus carries no rows"
+        )
+    for row in replay_rows:
+        if row.failure is not None:
+            raise PluginLoadError(
+                "standalone_vectors_row_shape: row "
+                f"{row.name}: recorded_failure rows are not scriptable under "
+                "the provider dialect (the design record's bound D2; the "
+                "driver double's fault flags cover fault rehearsal)"
+            )
+    exchanges: list[tuple[dict[str, Any], dict[str, Any] | Exception]] = []
+    for validated, raw in zip(replay_rows, raw_rows, strict=True):
+        raw_transaction = raw.get("transaction", {})
+        if validated.expected is not None:
+            # A provider row: the validated ABI forms of both sides.
+            exchanges.append((validated.expected, dict(validated.result or {})))
+            continue
+        # A stream row: the expected is the raw transaction with its hex
+        # `data` decoded to the ABI bytes the adapter sends; the response
+        # is the validated reply bytes ({} for a send).
+        expected = {key: value for key, value in raw_transaction.items()}
+        if "data" in expected:
+            if not isinstance(expected["data"], str):
+                raise PluginLoadError(
+                    "standalone_vectors_row_shape: row "
+                    f"{validated.name}: a stream row's data is a hex byte string"
+                )
+            try:
+                expected["data"] = bytes.fromhex(expected["data"])
+            except ValueError as exc:
+                raise PluginLoadError(
+                    "standalone_vectors_row_shape: row "
+                    f"{validated.name}: the stream data is not a hex byte string"
+                ) from exc
+        exchanges.append((expected, {"data": validated.response}))
+    establishment, _unit, _rotate = _replay_cycle_plan(replay_rows)
+    return exchanges, establishment
+
+
 def mock_transport_factory(
     plugin: LoadedPlugin, *, capture_root: Any = None
 ) -> Callable[[], HostServices]:
@@ -488,6 +591,9 @@ def mock_transport_factory(
     from .transport import ByteStreamMockHost, LoopingMockHost
 
     dialect = vectors_script(plugin).dialect
+    if dialect == "provider":
+        exchanges, establishment = provider_script(plugin)
+        return lambda: LoopingMockHost(exchanges, establishment=establishment)
     if dialect == "send_receive":
         settings = plugin.descriptor.get("transport", {}).get("settings", {})
         max_frame = transport_ceiling(settings)
