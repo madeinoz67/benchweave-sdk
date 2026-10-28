@@ -638,15 +638,65 @@ def _owner_name(repo: Path) -> str:
     return proc.stdout.strip()
 
 
+def _owner_identities(repo: Path) -> set[str]:
+    """Every author spelling that is the OPERATOR (release fold F6):
+    git config user.name, plus the GitHub handle derived from the origin
+    remote — web-committed work lands as ``<handle>`` or
+    ``<handle> <handle>@users.noreply.github.com`` in %an/%ae, and the
+    handle spelling is NOT the configured user.name, so the old
+    name-only exclusion named the operator as a human contributor. The
+    remote-derived handle also survives a fresh clone where user.name is
+    unset and the name exclusion is empty."""
+    identities = set()
+    name = _owner_name(repo)
+    if name:
+        identities.add(name)
+    # `remote get-url` is a read but not one of _git's read-only verb set;
+    # subprocess directly, the _owner_name precedent for non-listed verbs.
+    proc = subprocess.run(
+        ["git", "-C", str(repo), "remote", "get-url", "origin"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    url = proc.stdout.strip()
+    match = re.search(r"[:/]([^/:]+?)/[^/]+(?:\.git)?$", url)
+    if match:
+        handle = match.group(1)
+        identities.add(handle)
+        identities.add(f"{handle} <{handle}@users.noreply.github.com>")
+        identities.add(f"{handle}@users.noreply.github.com")
+    return identities
+
+
 def contributor_line(repo: Path, prev_tag: str) -> str:
     """The contributor-window row, computed: commit count + authors minus
-    the operator (git config user.name) and [bot] authors. Empty window is
-    a recorded result, never a skipped step."""
-    log = _git(repo, "log", f"{prev_tag}..HEAD", "--format=%an")
-    authors = sorted({line for line in log.splitlines() if line.strip()})
-    humans = [
-        a for a in authors if not BOT_RE.search(a) and a != _owner_name(repo)
-    ]
+    the operator's identities (git config user.name AND the origin
+    remote's GitHub handle — release fold F6: the handle spelling is the
+    operator too, and a fresh clone with no user.name keeps the handle
+    exclusion) and [bot] authors. Empty window is a recorded result,
+    never a skipped step."""
+    log = _git(repo, "log", f"{prev_tag}..HEAD", "--format=%an%x1f%ae")
+    identities = _owner_identities(repo)
+    noreply_handles = {
+        identity.split(" <", 1)[0]
+        for identity in identities
+        if "<" in identity
+    }
+    humans = []
+    for line in log.splitlines():
+        if not line.strip():
+            continue
+        author, _, email = line.partition("\x1f")
+        if BOT_RE.search(author) or author in identities or email in identities:
+            continue
+        if email.endswith("@users.noreply.github.com") and (
+            email.removesuffix("@users.noreply.github.com") in noreply_handles
+        ):
+            continue
+        if author not in humans:
+            humans.append(author)
+    humans = sorted(humans)
     total = len([line_ for line_ in log.splitlines() if line_.strip()])
     listed = ", ".join(humans) if humans else "none"
     return (
