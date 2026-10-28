@@ -151,6 +151,7 @@ def _build_seam(
     serial_hooks: Any = None,
     retention: Any | None = None,
     replay: Path | None = None,
+    record: Path | None = None,
 ) -> tuple[StandaloneSeam, ScenarioSelection | None]:
     """Compose the seam over one transport (§4.1's composition step).
 
@@ -263,6 +264,18 @@ def _build_seam(
             err=True,
         )
         raise SystemExit(2)
+    if record is not None and transport != "ftdi":
+        # Row b (owner directive 2026-10-28): --record names the ftdi
+        # transport's live journal recording — meaningless on the mock,
+        # and the serial and replay transports do not serve provider
+        # kinds to record. One flag one meaning, the --device family.
+        click.echo(
+            "standalone_transport_record_ftdi_only: --record applies only to "
+            "--transport ftdi (it records the live provider session as a "
+            "replay journal)",
+            err=True,
+        )
+        raise SystemExit(2)
     if transport == "serial":
         from .binding import BindingStore, binding_endpoint, bindings_path
 
@@ -367,6 +380,7 @@ def _build_seam(
                     device,
                     driver_factory=driver_factory,
                     capture_root=capture_root,
+                    record_path=record,
                 ),
                 transport_kind="ftdi",
                 unattended=unattended,
@@ -436,6 +450,18 @@ def cli() -> None:
         "--transport ftdi (for example 'ftdi://::0x0403:0x6001/1' — this "
         "transport has no binding store and no discovery). Refused on "
         "non-live transports."
+    ),
+)
+@click.option(
+    "--record",
+    "record",
+    type=click.Path(path_type=Path),
+    default=None,
+    help=(
+        "Record the live session as a replay journal (ftdi transport only): "
+        "every completed exchange the device made is written to this path as "
+        "a #564-format journal at session close, so the bench session "
+        "produces replay evidence directly. Refused on other transports."
     ),
 )
 @click.option(
@@ -512,6 +538,7 @@ def serve(
     transport: str,
     replay: Path | None,
     device: str | None,
+    record: Path | None,
     bindings: Path | None,
     capture_root: Path | None,
     scenario: str | None,
@@ -582,6 +609,7 @@ def serve(
         capture_root=capture_root,
         retention=retention,
         replay=replay,
+        record=record,
     )
     if seam.session.plugin.load_diagnostic is not None:
         # §4.5: the degraded load BINDS (exit 0) with its diagnostic on

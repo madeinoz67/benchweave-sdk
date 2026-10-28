@@ -822,3 +822,179 @@ def test_conformance_error_still_importable() -> None:
     dispatch-marker refusal it names is exercised through every envelope
     above; the marker discipline itself is the parent's, pinned there)."""
     assert issubclass(ConformanceError, Exception)
+
+
+# --------------------------------------------------------------------------
+# --record (row b, owner directive 2026-10-28): a live session emits a
+# #564-format journal — the recording helper the falsification session
+# wants. Honesty rules: rows record completed exchanges; a timed-out
+# receive records recorded_failure "timeout"; a refused or never-dispatched
+# transaction records nothing; nothing is laundered into a clean row.
+# --------------------------------------------------------------------------
+
+
+def test_record_emits_a_replayable_journal(tmp_path: Path, plugin) -> None:
+    """The marquee property: a session recorded over the double emits a
+    journal that (a) validates through the replay transport's own loader
+    against the same pin, (b) carries the conversation's provider rows
+    exactly, and (c) REPLAYS — the recorded session completes the same
+    bring-up and read through ``replay_plugin_session``, closing the loop
+    record-on-ftdi → replay-on-#564."""
+    from benchweave_sdk_server.replay import replay_plugin_session
+
+    record_path = tmp_path / "recorded-journal.json"
+    driver = _double()
+    session = ftdi_plugin_session(
+        plugin,
+        _URL,
+        driver_factory=lambda url: driver,
+        record_path=record_path,
+    )
+    asyncio.run(session.connect())
+    read = asyncio.run(session.execute("read", {"parameter": "line_status"}))
+    assert read["status"] == "ok"
+    asyncio.run(session.close())
+    assert record_path.is_file(), "close writes the journal"
+
+    document = json.loads(record_path.read_text())
+    assert document["journal_version"] == "1"
+    assert document["recorded"]["source"] == "live_ftdi_session"
+    emitted_provider_rows = _provider_rows(document["rows"])
+    assert emitted_provider_rows == _provider_rows(_journal_rows()) == (
+        [(op, dict(params)) for op, params in driver.calls]
+    ), "the journal records what the device did — op, params, order"
+
+    # The loop closes: the emitted journal replays the same conversation.
+    parsed = load_replay_journal(record_path, plugin)
+    assert parsed.row_count == 9
+    replay_session = replay_plugin_session(plugin, record_path)
+    asyncio.run(replay_session.connect())
+    replayed = asyncio.run(
+        replay_session.execute("read", {"parameter": "line_status"})
+    )
+    assert replayed["status"] == "ok"
+    assert replayed["data"]["value"] == 0x5A
+    host = replay_session.services
+    from benchweave_sdk_server.replay import ReplayHost
+
+    assert isinstance(host, ReplayHost)
+    host.assert_complete()
+
+
+def test_record_refuses_off_the_ftdi_transport(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """One flag one meaning: ``--record`` names the ftdi transport's live
+    recording; on every other transport it is refused, never silently
+    ignored (the --device/--bindings guard family)."""
+    journal_copy = tmp_path / "journal.json"
+    journal_copy.write_text(JOURNAL_PATH.read_text())
+    for kwargs in (
+        {"transport": "mock"},
+        {"transport": "serial", "device": "/dev/nowhere"},
+        {"transport": "replay", "replay": journal_copy},
+    ):
+        with pytest.raises(SystemExit) as exc:
+            _build_seam(
+                FIXTURE_ROOT,
+                record=tmp_path / "recorded.json",
+                **kwargs,
+            )
+        assert exc.value.code == 2
+        assert "standalone_transport_record_ftdi_only:" in capsys.readouterr().err
+
+
+def test_a_timed_out_receive_records_the_timeout(tmp_path: Path, plugin) -> None:
+    """The honesty rule: a receive whose deadline expired records
+    ``recorded_failure: "timeout"`` — never a fabricated frame, never a
+    laundered clean row."""
+    from benchweave_sdk_server.ftdi import RecordingFtdiCaptureServices
+
+    # A script whose status reply is a PARTIAL frame (2 of the 4 exact
+    # bytes): the write releases the partial, the receive parks with it
+    # buffered, and the deadline expires into the backend's TimeoutError
+    # posture (the retained partial is not an outcome). The script holds
+    # ONLY the status row — the arm drives the exchange directly, and the
+    # exact-match double refuses out-of-order calls.
+    rows = [_journal_rows()[-1]]
+    rows[0]["response"] = {"data": "c200"}
+    driver = ScriptedFtdiDriver(rows)
+    grammar, provider = verify_ftdi_plugin(plugin)
+    link = SerialLink(FtdiStreamAdapter(driver))
+    services = RecordingFtdiCaptureServices(
+        link,
+        driver,
+        grammar,
+        provider=provider,
+        max_frame_bytes=4096,
+        record_path=tmp_path / "timeout-journal.json",
+    )
+    context = MockContext("op-rec-timeout", deadline_monotonic=services.monotonic() + 0.3)
+    context.dispatched = True
+    with pytest.raises(TimeoutError):
+        asyncio.run(
+            services.transfer(
+                {
+                    "kind": "stream_exchange",
+                    "data": bytes.fromhex("55a1"),
+                    "max_bytes": 8,
+                    "termination": "lf",
+                    "exact_bytes": 4,
+                },
+                context,
+            )
+        )
+
+    async def close() -> None:
+        await services.close_transport(context)
+
+    asyncio.run(close())
+    document = json.loads((tmp_path / "timeout-journal.json").read_text())
+    timeouts = [row for row in document["rows"] if "recorded_failure" in row]
+    assert len(timeouts) == 1
+    assert timeouts[0]["recorded_failure"] == "timeout"
+    assert "response" not in timeouts[0] or not timeouts[0].get("response")
+    link.close()
+
+
+def test_a_refused_transaction_records_nothing(tmp_path: Path, plugin) -> None:
+    """The honesty rule's other half: a transaction the ladder refused
+    before dispatch (grammar-first) never reached the device and records
+    no row — the journal's rows are what the device did."""
+    from benchweave_sdk_server.ftdi import RecordingFtdiCaptureServices
+
+    driver = ScriptedFtdiDriver(
+        [
+            {
+                "name": "idle",
+                "transaction": {"kind": "ftdi_control", "op": "reset_device"},
+                "response": {},
+            }
+        ]
+    )
+    grammar, provider = verify_ftdi_plugin(plugin)
+    link = SerialLink(FtdiStreamAdapter(driver))
+    services = RecordingFtdiCaptureServices(
+        link,
+        driver,
+        grammar,
+        provider=provider,
+        max_frame_bytes=4096,
+        record_path=tmp_path / "refused-journal.json",
+    )
+    context = _context(services, "op-rec-refused")
+    with pytest.raises(ValueError, match="live_provider_transaction_grammar:"):
+        asyncio.run(
+            services.transfer(
+                {"kind": "ftdi_control", "op": "set_bitmode", "mask": 999, "mode": 1},
+                context,
+            )
+        )
+
+    async def close() -> None:
+        await services.close_transport(context)
+
+    asyncio.run(close())
+    document = json.loads((tmp_path / "refused-journal.json").read_text())
+    assert document["rows"] == [], "a refused transaction records no row"
+    link.close()

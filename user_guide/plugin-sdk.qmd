@@ -562,6 +562,8 @@ The section 8.1 stream kinds ride the same device data pipe. Send and receive be
 
 The transport needs the `server` extra. Without pyftdi, serve refuses with `live_provider_backend_missing:`. With no device at the URL, connect refuses with `live_provider_device_unavailable:` and names the exception class. Each connect is one attempt. The host does not scan and does not retry.
 
+`--record <path>` records the live session as a replay journal. Pass it with `--transport ftdi`; the host refuses it on every other transport. The host writes the journal at session close. Each row records one completed exchange the device made. A receive that expired at its deadline records a `timeout` row. A transaction the host refused records no row. The recorded journal replays with `--transport replay`, so a bench session produces replay evidence directly.
+
 Rehearsal parity: the SDK test suite drives its scripted driver double from the bring-up journal, and the replay transport validates the same journal. Rehearse a control plugin against its journal with `--transport replay`. Prove the device itself on a real bench with `--transport ftdi`.
 
 ## Capture without a gateway (standalone writer)

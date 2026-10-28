@@ -54,6 +54,8 @@ import asyncio
 import base64
 import contextlib
 import hashlib
+import json
+import logging
 import re
 import time
 from collections import deque
@@ -62,9 +64,16 @@ from typing import Any, Protocol
 
 from benchweave_sdk.testing import ConformanceError
 
-from .replay import GrammarEntry, _first_schema_error, _grammar
+from .replay import (
+    BULK_INLINE_LIMIT,
+    GrammarEntry,
+    _first_schema_error,
+    _grammar,
+)
 from .serial import SerialCaptureServices, SerialLink
 from .session import LoadedPlugin, PluginSession, transport_ceiling
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class FtdiDriver(Protocol):
@@ -720,6 +729,190 @@ def verify_ftdi_plugin(plugin: LoadedPlugin) -> tuple[dict[str, GrammarEntry], d
     return grammar, provider
 
 
+class RecordingFtdiCaptureServices(FtdiCaptureServices):
+    """The live session's journal recorder (row b, the owner directive of
+    2026-10-28): ``--record <path>`` emits a #564-format journal of what
+    the device did, so a bench session produces replay evidence directly.
+
+    The honesty rules (the recording never launders):
+
+    - A COMPLETED exchange records its row: provider transactions in
+      document form (bytes as the contract's base64 spelling), stream
+      sends as hex frames (digest rows at the #564 bulk bound), receives
+      with their bounds and their delivered frame — the quiet line
+      ``b""`` records as the row's empty response, exactly as a recording
+      of a quiet window should.
+    - A receive whose deadline expired records
+      ``recorded_failure: "timeout"`` and NO frame — the partial that
+      stays buffered was never an outcome. Disclosed imprecision: a
+      ``stream_exchange`` whose context expired before its write records
+      the same timeout row (the row's request bytes replay as sent); the
+      alternative — dropping post-send timeouts — would launder the
+      common case, and the adapter driving a dead context is its own bug.
+    - A REFUSED transaction records nothing: every ladder refusal
+      (grammar, closed, busy, liveness, marker, unknown op) happens
+      before dispatch, and a failed driver call has no journalable
+      outcome — the rows are what the device did, never what it was
+    asked. The overlong-line discard records nothing for the same reason
+      (no representable outcome; the #564 format cannot carry it).
+
+    The journal file writes at :meth:`close_transport` — the conversation
+    is complete evidence once the session closes. A write failure warns
+    and never blocks the device close (A07's posture: evidence storage is
+    never a dependency of the close path).
+    """
+
+    def __init__(
+        self,
+        link: SerialLink,
+        driver: FtdiDriver,
+        grammar: dict[str, GrammarEntry],
+        *,
+        provider: dict[str, str],
+        max_frame_bytes: int,
+        capture_root: Any = None,
+        capture_max_bytes: int | None = None,
+        record_path: Any = None,
+    ) -> None:
+        super().__init__(
+            link,
+            driver,
+            grammar,
+            provider=provider,
+            max_frame_bytes=max_frame_bytes,
+            capture_root=capture_root,
+            capture_max_bytes=capture_max_bytes,
+        )
+        self._record_path = record_path
+        self._rows: list[dict[str, Any]] = []
+        self._started_at = self.utc_now()
+        self._counter = 0
+
+    # -- row composition ------------------------------------------------------
+
+    def _name(self) -> str:
+        self._counter += 1
+        return f"row-{self._counter}"
+
+    def _provider_row(self, transaction: dict[str, Any], result: dict[str, Any]) -> None:
+        entry = self._grammar[transaction["kind"]]
+        document = {
+            key: (
+                base64.b64encode(value).decode("ascii")
+                if key in entry.request_b64 and isinstance(value, bytes)
+                else value
+            )
+            for key, value in transaction.items()
+            if key != "kind"
+        }
+        response = {
+            key: (
+                base64.b64encode(value).decode("ascii")
+                if key in entry.result_b64 and isinstance(value, bytes)
+                else value
+            )
+            for key, value in result.items()
+        }
+        self._rows.append(
+            {
+                "name": self._name(),
+                "transaction": dict(transaction, **document),
+                "response": response,
+            }
+        )
+
+    def _frame_fields(self, data: bytes) -> dict[str, Any]:
+        """The send-side fields in the #564 spelling: inline hex below the
+        bulk bound, the digest pair at or above it."""
+        if len(data) >= BULK_INLINE_LIMIT:
+            return {
+                "data_sha256": hashlib.sha256(data).hexdigest(),
+                "byte_length": len(data),
+            }
+        return {"data": data.hex()}
+
+    def _bounds_fields(self, transaction: dict[str, Any]) -> dict[str, Any]:
+        if "max_bytes" not in transaction:
+            return {}
+        return {
+            "max_bytes": transaction["max_bytes"],
+            "termination": transaction["termination"],
+            "exact_bytes": transaction["exact_bytes"],
+        }
+
+    def _stream_row(self, transaction: dict[str, Any], result: dict[str, Any]) -> None:
+        kind = transaction["kind"]
+        fields: dict[str, Any] = {"kind": kind}
+        if kind != "stream_receive":
+            fields.update(self._frame_fields(transaction["data"]))
+        fields.update(self._bounds_fields(transaction))
+        response: dict[str, Any] = {}
+        if kind != "stream_send" and result.get("data"):
+            response = {"data": result["data"].hex()}
+        self._rows.append(
+            {"name": self._name(), "transaction": fields, "response": response}
+        )
+
+    def _timeout_row(self, transaction: dict[str, Any]) -> None:
+        kind = transaction["kind"]
+        fields: dict[str, Any] = {"kind": kind}
+        if kind != "stream_receive":
+            fields.update(self._frame_fields(transaction["data"]))
+        fields.update(self._bounds_fields(transaction))
+        self._rows.append(
+            {
+                "name": self._name(),
+                "transaction": fields,
+                "recorded_failure": "timeout",
+            }
+        )
+
+    # -- the recording ladder ---------------------------------------------------
+
+    async def transfer(
+        self, transaction: dict[str, Any], context: Any
+    ) -> dict[str, Any]:
+        kind = transaction.get("kind")
+        if isinstance(kind, str) and kind in self._grammar:
+            result = await super().transfer(transaction, context)
+            self._provider_row(transaction, result)
+            return result
+        try:
+            result = await super().transfer(transaction, context)
+        except TimeoutError:
+            # The receive-bearing kinds record the honest ambiguous
+            # outcome; a pre-dispatch expiry on a send-only kind recorded
+            # nothing (see the class docstring's disclosed imprecision).
+            if isinstance(kind, str) and kind in ("stream_receive", "stream_exchange"):
+                self._timeout_row(transaction)
+            raise
+        self._stream_row(transaction, result)
+        return result
+
+    async def close_transport(self, context: Any) -> None:
+        document = {
+            "journal_version": "1",
+            "recorded": {
+                "started_at": self._started_at,
+                "source": "live_ftdi_session",
+                "single_owner": True,
+            },
+            "provider": dict(self._provider),
+            "rows": self._rows,
+        }
+        try:
+            assert self._record_path is not None
+            self._record_path.write_text(
+                json.dumps(document, indent=2, sort_keys=False) + "\n",
+                encoding="utf-8",
+            )
+        except (OSError, ValueError, AssertionError) as exc:
+            _LOGGER.warning(
+                "live_provider_record_write: the journal was not written: %s", exc
+            )
+        await super().close_transport(context)
+
+
 def ftdi_plugin_session(
     plugin: LoadedPlugin,
     url: str,
@@ -727,6 +920,7 @@ def ftdi_plugin_session(
     driver_factory: Any = None,
     capture_root: Any = None,
     capture_max_bytes: int | None = None,
+    record_path: Any = None,
 ) -> PluginSession:
     """A ``PluginSession`` over the live FTDI provider transport: each
     connection re-verifies the CURRENT plugin's pin, feature and grammar
@@ -735,7 +929,9 @@ def ftdi_plugin_session(
     device per connection — a fresh conversation over a fresh driver and
     link (the M1 fold's per-connection law). ``driver_factory`` is the
     injection axis for tests (the ``open_port`` precedent); production
-    uses :func:`open_ftdi` and its one bounded open attempt."""
+    uses :func:`open_ftdi` and its one bounded open attempt.
+    ``record_path`` arms the live journal recorder (row b): the session's
+    exchanges emit a #564-format journal at close."""
     open_driver = driver_factory or open_ftdi
 
     def factory() -> FtdiCaptureServices:
@@ -743,15 +939,29 @@ def ftdi_plugin_session(
         driver = open_driver(url)
         link = SerialLink(FtdiStreamAdapter(driver))
         settings = session.plugin.descriptor.get("transport", {}).get("settings", {})
-        return FtdiCaptureServices(
-            link,
-            driver,
-            grammar,
-            provider=provider,
-            max_frame_bytes=transport_ceiling(settings),
-            capture_root=capture_root,
-            capture_max_bytes=capture_max_bytes,
-        )
+        services: FtdiCaptureServices
+        if record_path is None:
+            services = FtdiCaptureServices(
+                link,
+                driver,
+                grammar,
+                provider=provider,
+                max_frame_bytes=transport_ceiling(settings),
+                capture_root=capture_root,
+                capture_max_bytes=capture_max_bytes,
+            )
+        else:
+            services = RecordingFtdiCaptureServices(
+                link,
+                driver,
+                grammar,
+                provider=provider,
+                max_frame_bytes=transport_ceiling(settings),
+                capture_root=capture_root,
+                capture_max_bytes=capture_max_bytes,
+                record_path=record_path,
+            )
+        return services
 
     session: PluginSession = PluginSession(plugin, factory)
     return session
