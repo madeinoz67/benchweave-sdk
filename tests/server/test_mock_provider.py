@@ -400,7 +400,31 @@ def test_d3_served_stream_outcomes_equal_the_computed_ladder() -> None:
     from benchweave_sdk_server.serial import _stream_receive_bounds
 
     plugin = load_plugin_project(FIXTURE_ROOT)
-    corpus = _corpus(plugin)
+    # M3: the arm runs over a doctored corpus carrying one terminator-
+    # mode row so the else branch is DRIVEN — the fixture is otherwise
+    # all exact-mode (the dead-branch finding).
+    import tempfile
+
+    doctored = Path(tempfile.mkdtemp()) / "d3"
+    shutil.copytree(FIXTURE_ROOT, doctored)
+    corpus_path = doctored / "src" / "ftdi_control_demo" / "vectors.json"
+    document = json.loads(corpus_path.read_text())
+    document["exchanges"].append(
+        {
+            "name": "status-lf",
+            "transaction": {
+                "kind": "stream_exchange",
+                "data": "55a1",
+                "max_bytes": 8,
+                "termination": "lf",
+                "exact_bytes": None,
+            },
+            "response": {"data": "c200015a0a"},
+        }
+    )
+    corpus_path.write_text(json.dumps(document, indent=2) + "\n")
+    corpus = document["exchanges"]
+    plugin = load_plugin_project(doctored)
     session = mock_plugin_session(plugin)
     asyncio.run(session.connect())
     from benchweave_sdk.testing import MockContext
@@ -419,8 +443,10 @@ def test_d3_served_stream_outcomes_equal_the_computed_ladder() -> None:
         if exact:
             computed = recorded  # exact precedence: the frame is the count
         else:
-            computed = None
-            assert computed is not None or terminator in recorded
+            # Terminator mode (M3's dead branch, now driven): the
+            # computed outcome is the terminated frame the ladder pops.
+            assert recorded.endswith(terminator), (row["name"], recorded)
+            computed = recorded
         assert served == {"data": computed}, (row["name"], served)
 
 

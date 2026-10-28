@@ -663,7 +663,7 @@ def _owner_identities(repo: Path) -> set[str]:
         check=False,
     )
     url = proc.stdout.strip()
-    match = re.search(r"[:/]([^/:]+?)/[^/]+(?:\.git)?$", url)
+    match = re.search(r"[:/]([^/:]+?)/[^/]+(?:\.git)?/?$", url)
     if match:
         handle = match.group(1)
         identities.add(handle)
@@ -737,7 +737,13 @@ def standards_families(repo: Path) -> int:
     "six" rotted at v0.13.0 when the seventh family landed; a derived
     count cannot rot again."""
     lock = json.loads((repo / LOCK).read_text(encoding="utf-8"))
-    return len({row["id"] for row in lock["standards"]})
+    return len(
+        {
+            row["id"]
+            for row in lock["standards"]
+            if row.get("active", True)
+        }
+    )
 
 
 def matrix_scaffold(
