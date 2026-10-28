@@ -554,6 +554,7 @@ def test_e_a_second_family_registers_and_serves(tmp_path: Path) -> None:
         feature_prefix="otdp.transport.test-second/",
         transport_kind="ftdi",
         probe_payloads={"ping": {"op": "ping"}},
+        ops={"ping": ()},
         banked_resolver=lambda tail: banked_path if tail == "1.0.0" else None,
     )
     PROVIDER_EXECUTORS["test-second"] = executor
@@ -601,5 +602,151 @@ def test_e_a_second_family_registers_and_serves(tmp_path: Path) -> None:
         )
         with pytest.raises(ValueError, match="live_provider_feature_unsupported"):
             verify_ftdi_plugin(load_plugin_project(lookalike))
+    finally:
+        PROVIDER_EXECUTORS.pop("test-second", None)
+
+
+def test_e1_a_registered_second_family_serves_through_the_transport(tmp_path: Path) -> None:
+    """E1 (mechanism refute): the registry's claim was admission-only —
+    the synthetic second family passed verify and its op then refused
+    live_provider_op_unknown because dispatch read the module-level FTDI
+    table. The executor now supplies the dispatch table; a registered
+    family's op SERVES."""
+    import hashlib
+
+    from benchweave_sdk_server.ftdi import PROVIDER_EXECUTORS, ProviderExecutor
+
+    banked = {
+        "contract_version": "0.1.0",
+        "id": "urn:otdp:transport-provider:test-second:1.0.0",
+        "feature_id": "otdp.transport.test-second/1.0.0",
+        "version": "1.0.0",
+        "description": "Test-only second family: exercises the executor registry.",
+        "transport_kind": "test_second",
+        "transaction_grammar": [
+            {
+                "kind": "test_second",
+                "request_schema": {
+                    "type": "object",
+                    "properties": {"op": {"const": "ping"}, "n": {"type": "integer"}},
+                    "required": ["op", "n"],
+                    "additionalProperties": False,
+                },
+                "result_schema": {
+                    "type": "object",
+                    "properties": {
+                        "data": {
+                            "type": "string",
+                            "contentEncoding": "base64",
+                            "minLength": 4,
+                            "maxLength": 4,
+                            "pattern": "^[A-Za-z0-9+/]{2}==$",
+                        }
+                    },
+                    "required": ["data"],
+                    "additionalProperties": False,
+                },
+                "limits": {},
+            }
+        ],
+        "security_scope": "commissioned_connection",
+        "host_requirements": {"summary": "none", "native_libraries": [], "privileges": []},
+        "approval": {
+            "approved_by": "BenchWeave SDK",
+            "approved_at": "2026-10-28T00:00:00Z",
+            "expires_at": "2027-10-28T00:00:00Z",
+            "evidence": [
+                {
+                    "category": "protocol",
+                    "report": {"id": "registry-exercise", "version": "1.0.0", "sha256": "0" * 64},
+                    "tested_at": "2026-10-28T00:00:00Z",
+                    "scope": "Synthetic registry exercise; not a production claim",
+                    "result": "partial",
+                    "limitations": ["Test-only family; schema shape, not a test claim"],
+                }
+            ],
+        },
+    }
+    raw = json.dumps(banked, indent=2).encode() + b"\n"
+    banked_path = tmp_path / "test-second-control-1.0.0.json"
+    banked_path.write_bytes(raw)
+
+    executor = ProviderExecutor(
+        family="test-second",
+        feature_prefix="otdp.transport.test-second/",
+        transport_kind="ftdi",
+        probe_payloads={"ping": {"op": "ping", "n": 1}},
+        ops={"ping": ("n",)},
+        byte_answer_ops=frozenset({"ping"}),
+        banked_resolver=lambda tail: banked_path if tail == "1.0.0" else None,
+    )
+    PROVIDER_EXECUTORS["test-second"] = executor
+    try:
+        project = tmp_path / "second-plugin"
+        shutil.copytree(FIXTURE_ROOT, project)
+        package = project / "src" / "ftdi_control_demo"
+        (package / "ftdi-control-provider.json").write_bytes(raw)
+        descriptor_path = package / "descriptor.json"
+        descriptor = json.loads(descriptor_path.read_text())
+        descriptor["transport"]["provider"] = {
+            "feature_id": banked["feature_id"],
+            "id": banked["id"],
+            "path": "ftdi-control-provider.json",
+            "sha256": hashlib.sha256(raw).hexdigest(),
+        }
+        descriptor["required_features"] = [
+            "otdp.core/0.1.0",
+            "otdp.adapter/0.1.0",
+            banked["feature_id"],
+        ]
+        descriptor_path.write_text(json.dumps(descriptor, indent=2) + "\n")
+        from benchweave_sdk_server.ftdi import (
+            FtdiCaptureServices,
+            FtdiStreamAdapter,
+            verify_ftdi_plugin,
+        )
+        from benchweave_sdk_server.serial import SerialLink
+
+        contract = verify_ftdi_plugin(load_plugin_project(project))
+        assert contract.ops == {"ping": ("n",)}, "the executor's table serves"
+
+        class PingDriver:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, dict[str, Any]]] = []
+
+            def ping(self, n: int) -> int:
+                self.calls.append(("ping", {"n": n}))
+                return 0x2A
+
+            def write_data(self, data: bytes) -> int:
+                return len(data)
+
+            def read_data(self, size: int) -> bytes:
+                return b""
+
+            def close(self) -> None: ...
+
+        driver = PingDriver()
+        link = SerialLink(FtdiStreamAdapter(driver))
+        services = FtdiCaptureServices(
+            link,
+            driver,
+            contract.grammar,
+            provider=contract.provider,
+            max_frame_bytes=4096,
+            limits=contract.limits,
+            ops=contract.ops,
+            byte_answer_ops=contract.byte_answer_ops,
+        )
+        from benchweave_sdk.testing import MockContext
+
+        context = MockContext("op-e1", deadline_monotonic=services.monotonic() + 2)
+        context.dispatched = True
+        result = asyncio.run(
+            services.transfer({"kind": "test_second", "op": "ping", "n": 1}, context)
+        )
+        assert result == {"data": b"\x2a"}, result
+        assert driver.calls == [("ping", {"n": 1})]
+        link.close()
     finally:
         PROVIDER_EXECUTORS.pop("test-second", None)

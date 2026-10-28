@@ -63,8 +63,8 @@ import re
 import time
 import uuid
 from collections import deque
-from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -555,6 +555,8 @@ class FtdiCaptureServices(SerialCaptureServices):
         capture_max_bytes: int | None = None,
         limits: Mapping[str, Any] | None = None,
         rehearsal: bool = False,
+        ops: Mapping[str, tuple[str, ...]] | None = None,
+        byte_answer_ops: Iterable[str] | None = None,
     ) -> None:
         super().__init__(
             link,
@@ -566,6 +568,14 @@ class FtdiCaptureServices(SerialCaptureServices):
         self._grammar = grammar
         self._provider = dict(provider)
         self._limits = dict(limits or {})
+        #: The op dispatch table (E1): the EXECUTOR's table, injected —
+        #: the module-level FTDI table was the admission/serving gap.
+        self._ops = dict(ops) if ops is not None else dict(_OPS)
+        #: The executor's byte-answer ops (see ProviderExecutor's field
+        #: comment for why the grammar cannot discriminate) — the
+        #: contract's set, falling back to the FTDI family's for direct
+        #: construction.
+        self._byte_answer_ops = frozenset(byte_answer_ops or {"read_pins"})
         #: Whether this session runs over the SHIPPED SCRIPTED DOUBLE
         #: rather than live hardware (the acceptance review's A): the
         #: marker reaches the capture sidecar and the mode banner — a
@@ -759,13 +769,13 @@ class FtdiCaptureServices(SerialCaptureServices):
             raise ConformanceError("Transmission needs a dispatch marker")
         # 5. Dispatch: the table is the vocabulary (the version-skew belt).
         op = transaction.get("op")
-        if not isinstance(op, str) or op not in _OPS:
+        if not isinstance(op, str) or op not in self._ops:
             raise ValueError(
                 f"live_provider_op_unknown: op {op!r} is not in this "
                 "executor's op table; the pinned contract may be newer than "
                 "the SDK — upgrade the SDK to serve it"
             )
-        params = _OPS[op]
+        params = self._ops[op]
         args = [transaction[name] for name in params]
         # One bounded attempt, never a retry (A06): a driver exception maps
         # to ConnectionError naming the class — a faulted driver stays
@@ -782,21 +792,26 @@ class FtdiCaptureServices(SerialCaptureServices):
         #    document form and validates; actuation ops answer {} —
         #    transport acceptance carries no device meaning (the contract's
         #    own result-schema wording).
-        if op == "read_pins":
+        entry = self._grammar[kind]
+        if op in self._byte_answer_ops:
+            # A byte-answer op (the FTDI family's read_pins; any family
+            # whose result schema declares a base64 "data" property): the
+            # driver's one-byte answer is validated against the admitted
+            # result schema — the live device is untrusted against its
+            # own pinned contract.
             if not isinstance(result, int) or isinstance(result, bool) or not (
                 0 <= result <= 255
             ):
                 raise ValueError(
-                    f"live_provider_result_grammar: read_pins answered "
+                    f"live_provider_result_grammar: op {op!r} answered "
                     f"{result!r}, which is not the one byte the admitted "
                     "result schema declares"
                 )
-            entry = self._grammar[kind]
             document = {"data": base64.b64encode(bytes([result])).decode("ascii")}
             error = _first_schema_error(entry.result_validator, document)
             if error is not None:
                 raise ValueError(
-                    f"live_provider_result_grammar: the device's read_pins "
+                    f"live_provider_result_grammar: the device's {op!r} "
                     f"answer does not satisfy the admitted {kind} grammar: "
                     f"{error}"
                 )
@@ -845,6 +860,17 @@ class ProviderExecutor:
     feature_prefix: str
     transport_kind: str
     probe_payloads: Mapping[str, dict[str, Any]]
+    #: The op dispatch table (E1, the mechanism refute): the executor
+    #: supplies the table so a registered family SERVES through the
+    #: transport, not merely admits — the module-level table was the
+    #: admission/serving gap.
+    ops: Mapping[str, tuple[str, ...]]
+    #: The family's byte-answer ops: the driver returns one byte, the
+    #: result validates against the admitted schema in base64 document
+    #: form. The FTDI contract's result schema is shared across its
+    #: seven ops (an empty branch and a data branch), so the GRAMMAR
+    #: cannot discriminate per op — the executor declares the set.
+    byte_answer_ops: frozenset[str] = frozenset({"read_pins"})
     #: The banked-instance resolver: the packaged providers directory by
     #: default; a test-only family points its own banked copy (the
     #: registry's honesty constraint — exactly one real family exists).
@@ -874,6 +900,7 @@ PROVIDER_EXECUTORS: dict[str, ProviderExecutor] = {
         feature_prefix=_FEATURE_PREFIX,
         transport_kind="ftdi",
         probe_payloads=_PROBE_PAYLOADS,
+        ops=_OPS,
     ),
 }
 
@@ -976,6 +1003,8 @@ class FtdiContract:
     grammar: dict[str, GrammarEntry]
     provider: dict[str, str]
     limits: dict[str, Any]
+    ops: dict[str, tuple[str, ...]]
+    byte_answer_ops: set[str] = field(default_factory=set)
 
 
 def verify_ftdi_plugin(plugin: LoadedPlugin) -> FtdiContract:
@@ -1001,7 +1030,15 @@ def verify_ftdi_plugin(plugin: LoadedPlugin) -> FtdiContract:
         row = entry.get("limits")
         if isinstance(row, dict):
             limits.update(row)
-    return FtdiContract(grammar=grammar, provider=provider, limits=limits)
+    executor = executor_for(pinned)
+    assert executor is not None, "the feature gate admitted this pin"
+    return FtdiContract(
+        grammar=grammar,
+        provider=provider,
+        limits=limits,
+        ops=dict(executor.ops),
+        byte_answer_ops=set(executor.byte_answer_ops),
+    )
 
 
 class _JournalState:
@@ -1094,6 +1131,8 @@ class RecordingFtdiCaptureServices(FtdiCaptureServices):
         limits: Mapping[str, Any] | None = None,
         journal: _JournalState | None = None,
         stream: FtdiStreamAdapter | None = None,
+        ops: Mapping[str, tuple[str, ...]] | None = None,
+        byte_answer_ops: Iterable[str] | None = None,
     ) -> None:
         super().__init__(
             link,
@@ -1104,6 +1143,8 @@ class RecordingFtdiCaptureServices(FtdiCaptureServices):
             capture_root=capture_root,
             capture_max_bytes=capture_max_bytes,
             limits=limits,
+            ops=ops,
+            byte_answer_ops=byte_answer_ops,
         )
         # A shared state object carries the session's accumulation across
         # reconnects (F4); a bare record_path mints a private one (the
@@ -1481,6 +1522,8 @@ def ftdi_plugin_session(
             "capture_root": capture_root,
             "capture_max_bytes": capture_max_bytes,
             "limits": contract.limits,
+            "ops": contract.ops,
+            "byte_answer_ops": contract.byte_answer_ops,
         }
         services: FtdiCaptureServices
         if journal is None:
