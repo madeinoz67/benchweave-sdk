@@ -312,7 +312,7 @@ The lanes figure shows the declared structure only. The acquisition line shows `
 - `conformance`: reusable operation and quiet lifecycle checks, with configurable wall-clock timeouts for cooperative async calls. Authors must add device-specific failure, profile and measurement tests. Use process isolation for code that blocks, or for code that suppresses cancellation.
 - `presentation`: bounded offline validation of presentation resources and complete configuration presets, with the same validator bytes as the gateway.
 - `packaging`: inventory and integrity checks for a prepared bundle, including rejection of duplicates, unsafe paths and symlinks. It does not install, sign, publish or execute dependencies.
-- `capture`: `StandaloneCaptureWriter`, a local-filesystem implementation of the three capture methods of the eight-member `CaptureServices` protocol. It publishes capture events under `capture_root()` when no gateway is present. It does not apply the gateway's `capture_limits` or storage quota checks. Nothing imports its captures into a gateway.
+- `capture`: `StandaloneCaptureWriter`, a local-filesystem implementation of the three capture methods of the ten-member `CaptureServices` protocol. It publishes capture events under `capture_root()` when no gateway is present. It does not apply the gateway's `capture_limits` or storage quota checks. Nothing imports its captures into a gateway.
 
 ## Compatibility and limits
 

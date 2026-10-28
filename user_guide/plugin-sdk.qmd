@@ -570,7 +570,7 @@ The SDK test suite drives its scripted driver double from the synthetic bring-up
 
 ## Capture without a gateway (standalone writer)
 
-Plugin and bench development happens on machines that never run the gateway. `benchweave_sdk.capture.StandaloneCaptureWriter` implements the three capture methods that an adapter calls in gateway mode: `artifact_append`, `artifact_finalise` and `artifact_abort`. The writer works over one directory per capture on a local filesystem. It is three of the eight `CaptureServices` members. Device I/O still comes from a transport that a composing runtime supplies.
+Plugin and bench development happens on machines that never run the gateway. `benchweave_sdk.capture.StandaloneCaptureWriter` implements the three capture methods that an adapter calls in gateway mode: `artifact_append`, `artifact_finalise` and `artifact_abort`. The writer works over one directory per capture on a local filesystem. It is three of the ten `CaptureServices` members. The host also demands two host-lifecycle members at capture start: `configure_capture` and `capture_progress`. The `CaptureServices` protocol in `benchweave_sdk.interfaces` declares both beside the artifact methods. Device I/O still comes from a transport that a composing runtime supplies.
 
 ```python
 from benchweave_sdk.capture import StandaloneCaptureWriter
@@ -602,7 +602,7 @@ There is no automatic import of standalone captures into the gateway. Ingest is 
 
 ### A standalone runtime around the writer (worked example)
 
-The writer is three of the eight members. A bench script that drives an adapter without a gateway needs the other five as well: clocks, evidence, and the transport. The example below is one complete `CaptureServices` object for a device on a serial port. A contributor fork of the ADC board wrote a serial host for the same purpose, and this example is adapted from it.
+The writer is three of the ten members. A bench script that drives an adapter without a gateway needs the other seven as well: clocks, evidence, the transport, and the two host-lifecycle members. The example below is one complete `CaptureServices` object for a device on a serial port. A contributor fork of the ADC board wrote a serial host for the same purpose, and this example is adapted from it.
 
 It implements the three scoped stream transactions of OTDP §8.1 exactly. It adds one behaviour that the spec leaves unspecified: the quiet-line answer below. The transactions are `stream_send`, `stream_receive` and `stream_exchange`. In them, `exact_bytes` takes precedence over `termination`. Only `lf` and `crlf` terminators exist here, because serial has no `eom`. Unspecified fields are refused. An incomplete frame is never returned as complete.
 

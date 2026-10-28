@@ -120,7 +120,7 @@ class CaptureServices(HostServices, Protocol):
     backend (one capture in flight per instance) for hostless development
     and bench testing; the gateway's capture path is a separate
     implementation of the same three methods over its store. The writer is
-    three of eight members — it supplies no ``transfer``/``close_transport``
+    three of ten members — it supplies no ``transfer``/``close_transport``
     and no clocks, so a full ``CaptureServices`` still awaits a composing
     runtime that binds a transport-backed services object around a writer,
     and no conformance check exercises the composed protocol yet. A host
