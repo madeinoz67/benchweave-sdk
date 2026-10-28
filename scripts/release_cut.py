@@ -678,12 +678,22 @@ def served_set_line(repo: Path, prev_tag: str) -> str:
     )
 
 
+def standards_families(repo: Path) -> int:
+    """Row 5's badge count, DERIVED from the lock (release fold F5): the
+    number of distinct standards ids the lock carries. The hand-written
+    "six" rotted at v0.13.0 when the seventh family landed; a derived
+    count cannot rot again."""
+    lock = json.loads((repo / LOCK).read_text(encoding="utf-8"))
+    return len({row["id"] for row in lock["standards"]})
+
+
 def matrix_scaffold(
     version: str,
     date: str,
     prev_tag: str,
     contributors: str,
     served_set: str,
+    families: int,
 ) -> str:
     """The result-record scaffold (row 8, derived): every row pre-filled —
     the walk CONFIRMS; it no longer discovers. No class verdict (D7)."""
@@ -704,8 +714,8 @@ def matrix_scaffold(
         "zero-literal gate battery's three anchors, #524) |\n"
         f"| 4 | Compatibility tagline | updated — SDK {version} against the "
         "main-repository floor by release-cut (occurrence-validated) |\n"
-        "| 5 | Standards badges | walk confirms — enumerate all six against the lock's "
-        "ACTIVE rows |\n"
+        f"| 5 | Standards badges | walk confirms — enumerate all {families} against "
+        "the lock's ACTIVE rows |\n"
         f"| 6 | great-docs.yml versions | PHASE-2 — the tag commit applies the staged "
         "patch (the ordering constraint) |\n"
         f"| 7 | Contributor window `{prev_tag}..HEAD` | {contributors} |\n"
@@ -812,6 +822,7 @@ def cmd_cut(repo: Path, version: str, *, force: bool) -> int:
             prev_tag=prev_tag,
             contributors=contributor_line(repo, prev_tag),
             served_set=served_set_line(repo, prev_tag),
+            families=standards_families(repo),
         )
         matrix_path = repo / MATRIX
         matrix_path.write_text(

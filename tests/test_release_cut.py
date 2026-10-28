@@ -937,6 +937,7 @@ def test_matrix_scaffold_pre_fills_every_row_and_guesses_no_class() -> None:
         prev_tag=f"v{OLD}",
         contributors="16 commits — authors: synthetic-operator; the walk acknowledges",
         served_set="n-a — no served-set motion in the window",
+        families=7,
     )
     appended = matrix + scaffold
     assert f"## Result record — v{NEW} (2026-10-06)" in appended
