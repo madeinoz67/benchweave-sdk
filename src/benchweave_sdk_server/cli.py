@@ -145,6 +145,7 @@ def _build_seam(
     unattended: bool = False,
     device: str | None = None,
     open_port: Any = None,
+    driver_factory: Any = None,
     capture_root: Any = None,
     bindings: Path | None = None,
     serial_hooks: Any = None,
@@ -229,10 +230,27 @@ def _build_seam(
             err=True,
         )
         raise SystemExit(2)
-    if device is not None and transport != "serial":
+    if transport == "ftdi" and device is None:
+        # The replay-needs-journal shape (#568): this transport has no
+        # binding store and no discovery in the first slice, so the URL is
+        # the only endpoint source.
         click.echo(
-            "standalone_transport_device_serial_only: --device applies only to "
-            "--transport serial",
+            "standalone_transport_ftdi_device_required: --transport ftdi needs "
+            "--device <ftdi-url> (the device selector URL, for example "
+            "'ftdi://::0x0403:0x6001/1'); this transport has no binding store "
+            "and no discovery",
+            err=True,
+        )
+        raise SystemExit(2)
+    if device is not None and transport not in ("serial", "ftdi"):
+        # One flag one meaning (maintainer ruling 2, issue #568): --device
+        # names the constant endpoint of a LIVE transport — a port path on
+        # serial, an FTDI URL on ftdi. The guard row is AMENDED (the
+        # serial-only wording retired with the second live transport), not
+        # duplicated.
+        click.echo(
+            "standalone_transport_device_live_only: --device applies only to "
+            "a live transport (--transport serial or --transport ftdi)",
             err=True,
         )
         raise SystemExit(2)
@@ -328,6 +346,35 @@ def _build_seam(
             ),
             None,
         )
+    if transport == "ftdi":
+        from .ftdi import ftdi_plugin_session, verify_ftdi_plugin
+
+        # The hoisted guards proved the device URL is present.
+        assert device is not None
+        try:
+            # Fail fast (the journal precedent): the pin, the feature gate,
+            # the grammar probe and the pyftdi backend all verify BEFORE
+            # the seam exists — a refused plugin or a missing backend never
+            # binds a port.
+            verify_ftdi_plugin(plugin)
+        except (ValueError, RuntimeError) as exc:
+            click.echo(str(exc), err=True)
+            raise SystemExit(2) from exc
+        return (
+            StandaloneSeam(
+                ftdi_plugin_session(
+                    plugin,
+                    device,
+                    driver_factory=driver_factory,
+                    capture_root=capture_root,
+                ),
+                transport_kind="ftdi",
+                unattended=unattended,
+                capture_root=capture_root,
+                retention=retention,
+            ),
+            None,
+        )
     return (
         StandaloneSeam(
             mock_plugin_session(plugin, capture_root=capture_root),
@@ -361,7 +408,7 @@ def cli() -> None:
 @click.option("--no-open", is_flag=True)
 @click.option(
     "--transport",
-    type=click.Choice(["mock", "serial", "replay"]),
+    type=click.Choice(["mock", "serial", "replay", "ftdi"]),
     default="mock",
     show_default=True,
 )
@@ -382,10 +429,13 @@ def cli() -> None:
     "--device",
     default=None,
     help=(
-        "Serial device path: the headless constant endpoint (the binding "
-        "bypass). Without it, a serial host serves binding-pending until an "
-        "endpoint is picked in the UI, or a stored binding resolves. "
-        "Refused on non-serial transports."
+        "The constant endpoint of a live transport: a serial port path on "
+        "--transport serial (the binding bypass; without it a serial host "
+        "serves binding-pending until an endpoint is picked in the UI, or a "
+        "stored binding resolves), or the FTDI device selector URL on "
+        "--transport ftdi (for example 'ftdi://::0x0403:0x6001/1' — this "
+        "transport has no binding store and no discovery). Refused on "
+        "non-live transports."
     ),
 )
 @click.option(

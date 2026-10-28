@@ -1,0 +1,61 @@
+{
+  "journal_version": "1",
+  "recorded": {
+    "started_at": "2026-10-28T00:00:00Z",
+    "source": "synthetic_fixture",
+    "single_owner": true,
+    "operator_note": "The bring-up recording the live provider transport rehearses against: the init chain, one bitstream chunk, the DONE-gated pin poll, one status exchange. Spelled independently of the fixture builders; the pinned contract is the grammar both speak."
+  },
+  "provider": {
+    "feature_id": "otdp.transport.ftdi-control/1.0.0",
+    "id": "urn:otdp:transport-provider:ftdi-control:1.0.0",
+    "sha256": "762c7397eeabfb65830948de848a1cf7c0867583f11cc289f25c6be3acf97e92"
+  },
+  "rows": [
+    {
+      "name": "reset",
+      "transaction": {"kind": "ftdi_control", "op": "reset_device"},
+      "response": {}
+    },
+    {
+      "name": "purge-rx",
+      "transaction": {"kind": "ftdi_control", "op": "purge", "queue": "rx"},
+      "response": {}
+    },
+    {
+      "name": "latency",
+      "transaction": {"kind": "ftdi_control", "op": "set_latency", "ms": 16},
+      "response": {}
+    },
+    {
+      "name": "baud",
+      "transaction": {"kind": "ftdi_control", "op": "set_baud", "baud": 115200},
+      "response": {}
+    },
+    {
+      "name": "bitmode",
+      "transaction": {"kind": "ftdi_control", "op": "set_bitmode", "mask": 15, "mode": 64},
+      "response": {}
+    },
+    {
+      "name": "pins-idle",
+      "transaction": {"kind": "ftdi_control", "op": "read_pins"},
+      "response": {"data": "AA=="}
+    },
+    {
+      "name": "bitstream-chunk",
+      "transaction": {"kind": "stream_send", "data": "deadbeefcafebabe"},
+      "response": {}
+    },
+    {
+      "name": "pins-done",
+      "transaction": {"kind": "ftdi_control", "op": "read_pins"},
+      "response": {"data": "gA=="}
+    },
+    {
+      "name": "status",
+      "transaction": {"kind": "stream_exchange", "data": "55a1", "max_bytes": 8, "termination": "lf", "exact_bytes": 4},
+      "response": {"data": "c200015a"}
+    }
+  ]
+}

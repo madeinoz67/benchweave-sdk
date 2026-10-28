@@ -550,6 +550,20 @@ But a script can prove only what its rows record. A script that does not match t
 
 Use the replay to prove that the plugin still speaks the recorded conversation. Do not use it for timing, and do not use it for any claim about the device. A replay proves what the recording shows.
 
+## Live FTDI transport (provider control)
+
+`benchweave-sdk-server serve <project> --transport ftdi --device <ftdi-url>` serves a plugin over an FTDI-class USB device. The URL is the pyftdi device selector, for example `ftdi://::0x0403:0x6001/1`. The descriptor's `connection_key` stays the logical identity of the device. The URL is the only endpoint source on this transport. This transport has no binding store and no scan. A serve without `--device` refuses.
+
+The plugin must pin the FTDI common control contract in its descriptor. A plugin that declares no provider refuses with `live_provider_plugin_unpinned:`. A plugin that pins a different contract refuses with `live_provider_feature_unsupported:`.
+
+Control transactions are the seven operations of the pinned contract: `reset_device`, `set_timeouts`, `set_latency`, `set_baud`, `purge`, `set_bitmode` and `read_pins`. The host checks each transaction against the pinned grammar before any device call. A transaction outside the grammar refuses with `live_provider_transaction_grammar:`. A device answer outside the contract refuses with `live_provider_result_grammar:`. A control transaction under a parked receive refuses with `live_provider_line_busy:`.
+
+The section 8.1 stream kinds ride the same device data pipe. Send and receive behave as on the serial backend.
+
+The transport needs the `server` extra. Without pyftdi, serve refuses with `live_provider_backend_missing:`. With no device at the URL, connect refuses with `live_provider_device_unavailable:` and names the exception class. Each connect is one attempt. The host does not scan and does not retry.
+
+Rehearsal parity: the SDK test suite drives its scripted driver double from the bring-up journal, and the replay transport validates the same journal. Rehearse a control plugin against its journal with `--transport replay`. Prove the device itself on a real bench with `--transport ftdi`.
+
 ## Capture without a gateway (standalone writer)
 
 Plugin and bench development happens on machines that never run the gateway. `benchweave_sdk.capture.StandaloneCaptureWriter` implements the three capture methods that an adapter calls in gateway mode: `artifact_append`, `artifact_finalise` and `artifact_abort`. The writer works over one directory per capture on a local filesystem. It is three of the eight `CaptureServices` members. Device I/O still comes from a transport that a composing runtime supplies.
