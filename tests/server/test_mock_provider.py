@@ -750,3 +750,57 @@ def test_e1_a_registered_second_family_serves_through_the_transport(tmp_path: Pa
         link.close()
     finally:
         PROVIDER_EXECUTORS.pop("test-second", None)
+
+
+def test_m1_a_doctored_provider_corpus_refuses_naming_the_corpus(tmp_path: Path) -> None:
+    """M1 (mechanism refute): three provider-dialect refusal cells still
+    said "journal" — replay_journal_kind, replay_journal_outcome, and
+    _hex_decode's replay_journal_row_shape — against a doctored
+    vectors.json. The provider dialect's refusals name the corpus
+    document, never "journal" (881946c's stated purpose)."""
+    # Each doctoring in its own corpus: the loader refuses at the FIRST
+    # bad row, so one corpus cannot exercise three cells.
+    doctorings = [
+        # A row of a kind neither grammar nor stream: the kind arm.
+        (
+            "kind",
+            {"name": "foreign-kind", "transaction": {"kind": "no_such_kind"}, "response": {}},
+            "standalone_vectors_kind",
+        ),
+        # A stream row whose outcome its bounds cannot produce: the outcome arm.
+        (
+            "outcome",
+            {
+                "name": "impossible-outcome",
+                "transaction": {
+                    "kind": "stream_exchange",
+                    "data": "55a1",
+                    "max_bytes": 8,
+                    "termination": "lf",
+                    "exact_bytes": 4,
+                },
+                "response": {"data": "aa"},
+            },
+            "standalone_vectors_outcome",
+        ),
+        # A stream row with a non-hex data payload: the hex-decode arm.
+        (
+            "hex",
+            {
+                "name": "bad-hex",
+                "transaction": {"kind": "stream_send", "data": "zz"},
+                "response": {},
+            },
+            "standalone_vectors_row_shape",
+        ),
+    ]
+    for label, row, fragment in doctorings:
+        project = tmp_path / f"m1-{label}"
+        shutil.copytree(FIXTURE_ROOT, project)
+        corpus_path = project / "src" / "ftdi_control_demo" / "vectors.json"
+        corpus = json.loads(corpus_path.read_text())
+        corpus["exchanges"].append(row)
+        corpus_path.write_text(json.dumps(corpus, indent=2) + "\n")
+        plugin = load_plugin_project(project)
+        with pytest.raises(Exception, match=fragment):
+            provider_script(plugin)

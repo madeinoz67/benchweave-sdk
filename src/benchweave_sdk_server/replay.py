@@ -119,32 +119,34 @@ _RECEIVE_FIELDS = {
 }
 
 
-def _b64_decode(text: Any, row: str, field: str) -> bytes:
+def _b64_decode(text: Any, row: str, field: str, code: str = "replay_journal_row_shape") -> bytes:
     """Decode one base64 contract-document field to ABI bytes; typed refusal."""
     if not isinstance(text, str):
         raise ValueError(
-            f"replay_journal_row_shape: row {row}: {field} must be a base64 string"
+            f"{code}: row {row}: {field} must be a base64 string"
         )
     try:
         return base64.b64decode(text, validate=True)
     except ValueError as exc:  # binascii.Error is a ValueError
         raise ValueError(
-            f"replay_journal_row_shape: row {row}: {field} is not valid base64"
+            f"{code}: row {row}: {field} is not valid base64"
         ) from exc
 
 
-def _hex_decode(text: Any, row: str, field: str) -> bytes:
+def _hex_decode(
+    text: Any, row: str, field: str, code: str = "replay_journal_row_shape"
+) -> bytes:
     """Decode one hex field (stream payloads carry hex, the vectors.json
-    convention); typed refusal naming the row."""
+    convention); typed refusal naming the row and the document family."""
     if not isinstance(text, str):
         raise ValueError(
-            f"replay_journal_row_shape: row {row}: {field} must be a hex string"
+            f"{code}: row {row}: {field} must be a hex string"
         )
     try:
         return bytes.fromhex(text)
     except ValueError as exc:
         raise ValueError(
-            f"replay_journal_row_shape: row {row}: {field} is not a hex byte string"
+            f"{code}: row {row}: {field} is not a hex byte string"
         ) from exc
 
 
@@ -280,7 +282,11 @@ class ReplayJournal:
 
 
 def _outcome_check(
-    row: str, bounds: tuple[int, str, int], response: bytes, failure: str | None
+    row: str,
+    bounds: tuple[int, str, int],
+    response: bytes,
+    failure: str | None,
+    code: str = "replay_journal_outcome",
 ) -> None:
     """The recorded outcome must be one the recorded bounds could produce —
     a journal that records an impossible exchange (a 5-byte reply to an
@@ -295,14 +301,14 @@ def _outcome_check(
     if exact:
         if len(response) != exact:
             raise ValueError(
-                f"replay_journal_outcome: row {row}: exact_bytes {exact} but the "
+                f"{code}: row {row}: exact_bytes {exact} but the "
                 f"recorded outcome is {len(response)} bytes"
             )
         return
     terminator = _TERMINATORS[termination]
     if len(response) > max_bytes or not response.endswith(terminator):
         raise ValueError(
-            f"replay_journal_outcome: row {row}: a {len(response)}-byte outcome "
+            f"{code}: row {row}: a {len(response)}-byte outcome "
             f"without a terminating {termination!r} inside max_bytes {max_bytes} "
             "is not an outcome these bounds can produce"
         )
@@ -413,9 +419,9 @@ def _load_row(
         return _load_stream_row(name, transaction, failure, response_raw, code=code)
 
     raise ValueError(
-        f"replay_journal_kind: row {name}: kind {kind!r} is neither a generic "
-        f"section 8.1 stream kind nor an admitted grammar kind "
-        f"({sorted(grammar) or 'none'})"
+        f"{code.removesuffix('_row_shape') + '_kind'}: row {name}: kind {kind!r} is "
+        f"neither a generic section 8.1 stream kind nor an admitted grammar "
+        f"kind ({sorted(grammar) or 'none'})"
     )
 
 
@@ -466,7 +472,7 @@ def _load_stream_row(
                 f"{code}: row {name}: a receive row carries no "
                 "outgoing data"
             )
-        request = _hex_decode(transaction["data"], name, "data")
+        request = _hex_decode(transaction["data"], name, "data", code=code)
         if len(request) >= BULK_INLINE_LIMIT:
             raise ValueError(
                 f"replay_journal_bulk: row {name}: inline payload is "
@@ -531,7 +537,7 @@ def _load_stream_row(
                 'carries at most {"data"}'
             )
         if "data" in response_raw:
-            response = _hex_decode(response_raw["data"], name, "response.data")
+            response = _hex_decode(response_raw["data"], name, "response.data", code=code)
     if failure is not None and response_raw:
         # The delta refute's residual 3: a row carrying BOTH a failure and
         # a response used to load and silently discard the response (the
@@ -543,7 +549,13 @@ def _load_stream_row(
             "carries no response data — the failure IS the recorded outcome"
         )
     if bounds is not None:
-        _outcome_check(name, bounds, response, failure)
+        _outcome_check(
+            name,
+            bounds,
+            response,
+            failure,
+            code=code.removesuffix("_row_shape") + "_outcome",
+        )
     if kind == "stream_receive":
         return ReplayRow(
             name=name,
