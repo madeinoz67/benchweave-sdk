@@ -5,11 +5,12 @@ The parity rule (the design record's §3, as amended 2026-10-28): the
 scripted double SHIPS product-side (``ScriptedFtdiDriver`` in
 ``ftdi.py``), its script is the #564 journal's row shape, and it drives
 the PRODUCTION services end to end — only the driver is doubled. The
-acceptance script is derived from the committed bring-up journal's rows —
-the same evidence document the replay transport validates — so the
-rehearsal path and the recorded conversation cannot drift: if the
-journal's recorded conversation and the double's rehearsal ever disagree,
-the parity test reddens.
+acceptance script is the committed bring-up fixture — a SYNTHETIC
+document authored to the #564 journal's row shape (no recording exists
+in-tree; the fixture self-declares synthetic_fixture and claims none),
+which the replay loader validates independently — so the rehearsal path
+and the fixture cannot drift: if the fixture's conversation and the
+double's rehearsal ever disagree, the parity test reddens.
 
 The arms carry the design record's pre-committed acceptance (§8, amended):
 
@@ -58,7 +59,7 @@ from benchweave_sdk_server.transport import ByteStreamMockHost
 
 FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "fixtures" / "ftdi_control_plugin"
 HID_FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "fixtures" / "replay_hid_plugin"
-JOURNAL_PATH = FIXTURE_ROOT / "bring-up-journal.json"
+JOURNAL_PATH = FIXTURE_ROOT / "src" / "ftdi_control_demo" / "bring-up-journal.json"
 
 #: The device URL every arm selects (pyftdi's selector spelling). The
 #: double ignores it; the absent-device arm (B6) lets the real pyftdi
@@ -72,8 +73,9 @@ _NEGATIVE_CONTROL = {"kind": "ftdi_control", "op": "set_baud", "baud": 115200}
 
 
 def _journal_rows() -> list[dict[str, Any]]:
-    """The committed bring-up journal's raw rows (the script AND the
-    expectation derive from this one document — the parity rule)."""
+    """The committed synthetic bring-up fixture's raw rows (the script
+    AND the expectation derive from this one document — the parity rule;
+    authored to the #564 journal's row shape, claiming no recording)."""
     return json.loads(JOURNAL_PATH.read_text())["rows"]
 
 
@@ -817,6 +819,31 @@ def test_the_journal_is_a_valid_replay_document(plugin, journal) -> None:
     # The pin bytes are what the pinned contract's result schema declares:
     # one byte, padded base64 (the pattern that closes the three-byte door).
     assert base64.b64encode(pin_replies[1]).decode("ascii") == "gA=="
+
+
+def test_the_fixture_contract_copy_is_byte_equal_to_the_banked_contract() -> None:
+    """Refute lane B, finding 2: the design promised byte-equal-with-a-
+    test between the fixture's contract copy and the banked instance;
+    without this pin, an in-place edit of the banked contract would leave
+    the suite green against stale fixture bytes (and the banked-bind gate
+    would refuse the fixture — hiding which side moved)."""
+    banked = (
+        Path(__file__).resolve().parents[2]
+        / "src"
+        / "benchweave_sdk"
+        / "providers"
+        / "ftdi-control-1.0.0.json"
+    )
+    copy = (
+        FIXTURE_ROOT
+        / "src"
+        / "ftdi_control_demo"
+        / "ftdi-control-provider.json"
+    )
+    assert copy.read_bytes() == banked.read_bytes(), (
+        "the fixture's contract copy must stay byte-equal to the banked "
+        "instance — regenerate the copy, never hand-edit either side"
+    )
 
 
 def test_conformance_error_still_importable() -> None:

@@ -92,8 +92,8 @@
     "test_vectors": [
       {
         "id": "bring-up-journal",
-        "path": "ftdi-control-provider.json",
-        "purpose": "The bring-up journal lives in this fixture package, spelled independently of the builders; the pinned contract is the grammar both speak"
+        "path": "bring-up-journal.json",
+        "purpose": "The bring-up journal, spelled independently of the builders; the pinned contract is the grammar both speak"
       }
     ]
   }

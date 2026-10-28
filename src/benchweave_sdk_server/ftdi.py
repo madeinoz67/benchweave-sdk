@@ -23,10 +23,11 @@ Module contract (pinned by ``tests/server/test_ftdi.py``):
   gate, the busy guard, dispatch marker, table dispatch, result
   validation, the inherited :class:`~benchweave_sdk_server.serial.SerialLink`
   receive ladder and the capture sidecar are all the shipped code. The
-  acceptance double's script is derived from the bring-up journal's rows,
-  so the rehearsal and the recorded evidence consume one document and
-  cannot drift (the parity rule; the live-device acceptance leg runs on a
-  real bench, CI cannot hold the device).
+  acceptance double's script is the SYNTHETIC bring-up fixture (a fixture
+  authored to the #564 journal's row shape — no recording exists in-tree,
+  and the fixture claims none): the rehearsal and the fixture consume one
+  document and cannot drift (the parity rule; the live-device acceptance
+  leg runs on a real bench, CI cannot hold the device).
 - **The served set is bound twice.** The feature gate binds identity (the
   pinned contract must declare the banked FTDI common control feature
   family); the grammar probe binds surface (every op in the dispatch table

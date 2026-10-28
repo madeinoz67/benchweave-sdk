@@ -369,6 +369,24 @@ surface as today: build-time refusals exit 2 with the message
 not_ready/unavailable mapping (`seam.py:604-630`) with the prefix preserved
 in the message. No `SeamError` code motion.
 
+**Fold-wave declarations (refute lanes A/B, 2026-10-28) — the refusal
+surface grew without new prefixes, and one guard prefix was renamed:**
+
+- The `--device` guard prefix `standalone_transport_device_serial_only:`
+  became `standalone_transport_device_live_only:` — machine-matchable API
+  motion, declared here (the row is amended, not duplicated; its old
+  wording would lie once ftdi became legal). The `--record` guard adds
+  `standalone_transport_record_ftdi_only:` in the same family.
+- `live_provider_feature_unsupported:` now also carries the ANTI-LAUNDERING
+  bind: the pinned contract's bytes must be digest-equal to the banked
+  instance for the feature line it claims (a feature-id prefix alone
+  launders semantics), and a version tail with no banked instance refuses
+  outright.
+- `live_provider_transaction_grammar:` also carries the contract's declared
+  `limits` enforcement (out-of-envelope values refuse before the driver)
+  and the `purge` queue enum (an unknown queue refuses before I/O — never
+  defaults to a queue the caller did not ask for).
+
 ---
 
 ## 3. Mock parity — the scripted control double, IN THIS SLICE (2026-10-28 ruling)
@@ -395,13 +413,15 @@ the ruling binds it here. The mechanism:
   capture sidecar: everything but the USB boundary is the shipped code. This
   is the serial lane's own injectability posture (`serial.py:119-132`),
   promoted from a test convenience to the slice's named rehearsal mechanism.
-- **The double's script is the recorded journal.** The acceptance script is
-  DERIVED from the provider rows of the #564 replay acceptance journal (op +
-  params + order), so the rehearsal and the recorded hardware evidence
-  consume one document and cannot drift: if the journal's conversation and
-  the double's rehearsal ever disagree, the parity test reddens. The
-  rehearsal proves something about the live path because both read the same
-  evidence through the same ladder.
+- **The double's script is the synthetic bring-up fixture.** The
+  acceptance script is the fixture authored to the #564 journal's row
+  shape (a synthetic document — no recording exists in-tree, and the
+  fixture self-declares `synthetic_fixture` and claims no recording's
+  authority): the rehearsal and the fixture consume one document and
+  cannot drift: if the fixture's conversation and the double's rehearsal
+  ever disagree, the parity test reddens. The rehearsal proves something
+  about the live path because both read the same document through the
+  same ladder.
 - **Why a driver-boundary double, not a MockHost arm:** a `MockHost` script
   speaks transactions, and the mock's two dialects are stream-shaped by
   construction (`session.py:181` `_DIALECTS`); a bitmode call is not a
@@ -458,12 +478,33 @@ version of our artifacts.
 | Device absent / busy / permission / no libusb backend | `live_provider_device_unavailable:` naming the exception class, at connect; seam answers `not_ready` — one attempt, no scan, no retry |
 | Plugin declares no provider | `live_provider_plugin_unpinned:` at serve construction — a stream plugin cannot silently land on this transport |
 | Wrong contract (feature or grammar) | `live_provider_feature_unsupported:` / `live_provider_contract_unsupported:` at serve construction and reconnect — the re-pin-a-different-contract reconnect refuses exactly as replay's does (`replay.py:1141-1153`) |
-| Device unplugged mid-session | the next driver call faults → `ConnectionError` → `not_ready`; a faulted driver stays faulted; a parked stream receive wakes through the link's fault path (`serial.py:312-315`); no retry, reconnect mints a fresh conversation |
+| Device unplugged mid-session | the next driver call faults → `ConnectionError` → `not_ready`; a faulted driver stays faulted (the latch now ENFORCES this, refute F6: every later transaction on the connection refuses `ConnectionError` before the driver); a parked stream receive wakes through the link's fault path (`serial.py:312-315`); no retry, reconnect mints a fresh conversation |
 | Device answers garbage | `live_provider_result_grammar:` — the live device is untrusted against its own pinned contract |
 | Deadline / cancellation | `TimeoutError` posture; a stream partial stays buffered; a control op is discrete — it completed or it raised, and the envelope says which. `dispatch_state` stays the adapter's own honesty; this host contributes never-fabricate and never-retry, the replay module contract's posture |
 | A 1.1.0 grammar adds an eighth op | the probe still passes (the seven validate), the eighth op arrives, `live_provider_op_unknown:` refuses it at runtime — the disclosed version-skew posture: this executor predates the op; upgrade the SDK. What the guard does not catch: a 1.1.0 op whose NAME collides with a 1.0.0 op but whose params differ — the grammar-first refusal catches param drift, the probe does not; the contract's semver discipline owns that seam |
 
 Never, on any path: a silent fall back to replay, or a no-op that reports ok.
+
+**Fold-wave disclosures (refute lanes A/B, 2026-10-28) — what the guards
+do not catch, stated rather than left implicit:**
+
+- **The mapping coerces; the device decides (F1/F3c).** `set_bitmode`
+  coerces the transaction's int mode into pyftdi's `BitMode` enum before
+  the USB call (a raw int raised `AttributeError` before any device I/O —
+  every live `set_bitmode` was unservable until the fold). After
+  coercion, the FT232-class device applies its own mode semantics —
+  including masking mask bits a mode cannot express. The executor
+  enforces the contract's declared `limits` and nothing more (A02: the
+  contract's declaration governs, never a host constant); which
+  mode/mask pairings a given device expresses is the plugin's
+  qualification seam, not this host's.
+- **The declared-limits scope (F3b).** The banked contract declares a
+  `set_baud_minimum` but no maximum: a 2**40 baud rate is inside the
+  declared envelope and dispatches (lane A's example was half-right —
+  `set_timeouts read_ms=2**63` IS refused by its declared range).
+  Inventing a baud maximum would be a host constant; the device-side
+  inexpressibility of an undeclared-maximum rate is the contract's own
+  disclosure seam.
 
 ---
 
