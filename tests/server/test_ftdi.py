@@ -998,3 +998,149 @@ def test_a_refused_transaction_records_nothing(tmp_path: Path, plugin) -> None:
     document = json.loads((tmp_path / "refused-journal.json").read_text())
     assert document["rows"] == [], "a refused transaction records no row"
     link.close()
+
+
+# --------------------------------------------------------------------------
+# The mapping arm the double cannot give (refute lane A, F1/F3a): against
+# the REAL pyftdi class, with no device attached, every mapped call must
+# reach the library's own device stage — never a mapping-level Python
+# error. F1's signature was AttributeError: 'int' object has no attribute
+# 'name' from set_bitmode's raw int; F3a's was an unknown purge queue
+# silently acting as "rx".
+# --------------------------------------------------------------------------
+
+
+def _require_real_pyftdi() -> bool:
+    try:
+        import pyftdi.ftdi  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
+def test_the_real_mapping_reaches_the_device_stage_on_every_call() -> None:
+    """F1's CI-honest mapping arm: over an UNOPENED real ``Ftdi`` (no
+    device, no open), each mapped call either completes (the library's own
+    no-op paths) or raises the library's own state error — the device
+    stage — and never an attribute-level error from OUR mapping. The
+    double is structurally blind to this class: it doubles the Protocol,
+    not pyftdi's surface."""
+    assert _require_real_pyftdi(), "this arm needs the real pyftdi installed"
+    from pyftdi.ftdi import Ftdi
+
+    from benchweave_sdk_server.ftdi import _PyftdiDriver
+
+    driver = _PyftdiDriver(Ftdi())
+    calls: list[tuple[str, Any]] = [
+        ("reset_device", lambda: driver.reset_device()),
+        ("set_timeouts", lambda: driver.set_timeouts(50, 500)),
+        ("set_latency", lambda: driver.set_latency(16)),
+        ("set_baud", lambda: driver.set_baud(115200)),
+        ("purge:tx", lambda: driver.purge("tx")),
+        ("purge:rx", lambda: driver.purge("rx")),
+        ("set_bitmode", lambda: driver.set_bitmode(0x0F, 0x40)),
+        ("read_pins", lambda: driver.read_pins()),
+        ("write_data", lambda: driver.write_data(b"xy")),
+        ("read_data", lambda: driver.read_data(4)),
+        ("close", lambda: driver.close()),
+    ]
+    for name, call in calls:
+        try:
+            call()  # the library's own no-op path is also the device stage
+        except Exception as exc:
+            message = str(exc)
+            assert not isinstance(exc, AttributeError) or "NoneType" in message, (
+                f"{name}: our mapping raised an attribute-level error "
+                f"({type(exc).__name__}: {message}) before reaching the "
+                "device stage — the F1 class"
+            )
+
+
+def test_the_real_purge_refuses_an_unknown_queue_before_io() -> None:
+    """F3a: an unknown purge queue must refuse typed before any I/O —
+    never default to a queue the caller did not ask for (the
+    admitted-but-unexpressible class: an unreviewed value acting as if it
+    were approved)."""
+    assert _require_real_pyftdi()
+    from pyftdi.ftdi import Ftdi
+
+    from benchweave_sdk_server.ftdi import _PyftdiDriver
+
+    driver = _PyftdiDriver(Ftdi())
+    with pytest.raises(ValueError, match="live_provider_transaction_grammar:"):
+        driver.purge("both")
+
+
+# --------------------------------------------------------------------------
+# F2 (refute lane A): the feature gate binds the served contract to the
+# BANKED bytes. A self-authored lookalike under an approved feature name
+# must refuse — approval never launders onto foreign semantics.
+# --------------------------------------------------------------------------
+
+
+def _lookalike_plugin(
+    tmp_path: Path,
+    *,
+    feature_tail: str,
+    widen: bool,
+) -> Path:
+    """A copy of the fixture plugin whose pinned contract is a widened
+    lookalike under the ftdi-control feature name: same feature family,
+    self-authored semantics. ``widen`` edits the grammar (the purge enum);
+    the digest and descriptor pin follow the edited bytes so the pin itself
+    is internally consistent — the laundering shape."""
+    import shutil
+
+    project = tmp_path / f"lookalike-{feature_tail.replace('.', '-')}"
+    shutil.copytree(FIXTURE_ROOT, project)
+    package = project / "src" / "ftdi_control_demo"
+    contract_path = package / "ftdi-control-provider.json"
+    contract = json.loads(contract_path.read_text())
+    contract["feature_id"] = f"otdp.transport.ftdi-control/{feature_tail}"
+    contract["id"] = f"urn:otdp:transport-provider:ftdi-control:{feature_tail}"
+    contract["version"] = feature_tail
+    if widen:
+        for entry in contract["transaction_grammar"]:
+            for branch in entry["request_schema"]["oneOf"]:
+                if branch["properties"].get("op", {}).get("const") == "purge":
+                    branch["properties"]["queue"] = {"enum": ["tx", "rx", "both"]}
+    raw = json.dumps(contract, indent=2).encode() + b"\n"
+    contract_path.write_bytes(raw)
+    descriptor_path = package / "descriptor.json"
+    descriptor = json.loads(descriptor_path.read_text())
+    descriptor["transport"]["provider"]["feature_id"] = contract["feature_id"]
+    descriptor["transport"]["provider"]["id"] = contract["id"]
+    descriptor["transport"]["provider"]["sha256"] = hashlib.sha256(raw).hexdigest()
+    descriptor["required_features"] = [
+        contract["feature_id"] if row.startswith("otdp.transport.ftdi-control/")
+        else row
+        for row in descriptor["required_features"]
+    ]
+    descriptor_path.write_text(json.dumps(descriptor, indent=2) + "\n")
+    return project
+
+
+def test_a_lookalike_contract_under_the_banked_feature_name_refuses(
+    tmp_path: Path,
+) -> None:
+    """F2's named arm: a self-authored contract pinning the BANKED feature
+    line (`ftdi-control/1.0.0`) with widened semantics (the purge enum) is
+    internally consistent — its pin verifies against its own bytes — and
+    must still refuse: the served grammar is bound to the banked
+    instance's bytes, never to a feature-id prefix."""
+    project = _lookalike_plugin(tmp_path, feature_tail="1.0.0", widen=True)
+    plugin = load_plugin_project(project)
+    with pytest.raises(ValueError, match="live_provider_feature_unsupported:") as raised:
+        verify_ftdi_plugin(plugin)
+    assert "sha256" in str(raised.value), "the refusal names the digest mismatch"
+
+
+def test_an_unbanked_feature_version_refuses(tmp_path: Path) -> None:
+    """The other laundering face: a lookalike under a version tail with NO
+    banked instance (1.1.0) refuses — the executor serves banked feature
+    lines only."""
+    project = _lookalike_plugin(tmp_path, feature_tail="1.1.0", widen=True)
+    plugin = load_plugin_project(project)
+    with pytest.raises(ValueError, match="live_provider_feature_unsupported:"):
+        verify_ftdi_plugin(plugin)

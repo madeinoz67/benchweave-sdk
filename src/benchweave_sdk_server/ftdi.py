@@ -60,6 +60,7 @@ import re
 import time
 from collections import deque
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 from typing import Any, Protocol
 
 from benchweave_sdk.testing import ConformanceError
@@ -180,10 +181,19 @@ def _require_backend() -> Any:
 class _PyftdiDriver:
     """The real driver: pyftdi's ``Ftdi`` behind the executor's protocol
     names. The only class that knows pyftdi's call names; ``open_ftdi`` is
-    the only constructor path."""
+    the only constructor path.
+
+    Two mapping rules the refute lane's F1/F3a arms pin: ``set_bitmode``
+    COERCES the transaction's int mode into pyftdi's ``BitMode`` enum
+    (pyftdi 0.57 dereferences ``mode.name`` first — a raw int raises
+    AttributeError before any USB call, unservable on a device); and an
+    unknown ``purge`` queue refuses typed BEFORE I/O, never defaulting to
+    a queue the caller did not ask for.
+    """
 
     def __init__(self, ftdi: Any) -> None:
         self._ftdi = ftdi
+        self._bitmode_cls = ftdi.BitMode
 
     def reset_device(self) -> None:
         self._ftdi.reset()
@@ -200,11 +210,16 @@ class _PyftdiDriver:
     def purge(self, queue: str) -> None:
         if queue == "tx":
             self._ftdi.purge_tx_buffer()
-        else:
+        elif queue == "rx":
             self._ftdi.purge_rx_buffer()
+        else:
+            raise ValueError(
+                f"live_provider_transaction_grammar: purge queue {queue!r} "
+                "is not in the contract's declared enum ('tx' or 'rx')"
+            )
 
     def set_bitmode(self, mask: int, mode: int) -> None:
-        self._ftdi.set_bitmode(mask, mode)
+        self._ftdi.set_bitmode(mask, self._bitmode_cls(mode))
 
     def read_pins(self) -> int:
         return int(self._ftdi.read_pins())
@@ -678,10 +693,14 @@ def _ftdi_pinned_contract(plugin: LoadedPlugin) -> tuple[dict[str, Any], str]:
     return pinned, digest
 
 
-def _require_ftdi_feature(pinned: dict[str, Any]) -> None:
-    """The identity half of the served-set bind: the pinned contract must
-    declare the banked FTDI common control feature family
-    (``otdp.transport.ftdi-control/<semver>``)."""
+def _require_ftdi_feature(pinned: dict[str, Any], digest: str) -> None:
+    """The identity half of the served-set bind — and the anti-laundering
+    gate (refute lane A, F2): the pinned contract must declare the banked
+    FTDI common control feature family (``otdp.transport.ftdi-control/
+    <semver>``) AND its bytes must BE the banked instance for that version
+    (digest-equal). A feature-id prefix alone launders an unreviewed
+    contract's semantics under an approved name; a version tail with no
+    banked instance is not served at all."""
     feature_id = pinned.get("feature_id")
     if not (
         isinstance(feature_id, str)
@@ -694,6 +713,31 @@ def _require_ftdi_feature(pinned: dict[str, Any]) -> None:
             f"pinned contract declares {feature_id!r} — pin the banked FTDI "
             "control contract or serve this plugin on its own transport"
         )
+    tail = feature_id[len(_FEATURE_PREFIX) :]
+    banked = _banked_contract_path(tail)
+    if banked is None:
+        raise ValueError(
+            f"live_provider_feature_unsupported: no banked FTDI control "
+            f"contract exists for version {tail}; this executor serves "
+            "banked feature lines only"
+        )
+    banked_digest = hashlib.sha256(banked.read_bytes()).hexdigest()
+    if digest != banked_digest:
+        raise ValueError(
+            f"live_provider_feature_unsupported: the pinned contract for "
+            f"{feature_id} hashes to sha256 {digest} but the banked "
+            f"instance hashes to {banked_digest}; this transport serves "
+            "the banked bytes only — pin the banked contract"
+        )
+
+
+def _banked_contract_path(tail: str) -> Any:
+    """The banked contract instance for one feature version tail, or None
+    when this SDK banks no such version."""
+    from importlib.resources import files
+
+    banked = files("benchweave_sdk").joinpath("providers", f"ftdi-control-{tail}.json")
+    return banked if Path(str(banked)).is_file() else None
 
 
 def _probe_grammar(pinned: dict[str, Any]) -> dict[str, GrammarEntry]:
@@ -728,7 +772,7 @@ def verify_ftdi_plugin(plugin: LoadedPlugin) -> tuple[dict[str, GrammarEntry], d
     any port binds (the journal precedent's posture)."""
     _require_backend()
     pinned, digest = _ftdi_pinned_contract(plugin)
-    _require_ftdi_feature(pinned)
+    _require_ftdi_feature(pinned, digest)
     grammar = _probe_grammar(pinned)
     provider = {
         "feature_id": str(pinned["feature_id"]),
