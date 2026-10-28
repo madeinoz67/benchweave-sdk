@@ -606,9 +606,12 @@ def regenerate_fixtures(fixtures_root: Path, version: str) -> None:
     it), then pin the answers. The stage is a RESOLVED tempdir: the
     scaffold's path validation rejects symlinked roots, and macOS /var is
     a symlink to /private/var — tempfile.mkdtemp() then Path.resolve() is
-    designed in. The provider arm (row f) must NOT receive
-    create_ui_resources: the shapes are mutually exclusive per copier.yml's
-    conditional exclude."""
+    designed in. The provider arm (row f) does NOT receive
+    create_ui_resources — the regen's own discipline, not copier
+    enforcement: the conditional exclude governs only the contract file,
+    and create_project(with_ui=True, provider_transport=True) renders
+    without refusal. The shipped provider fixture is ui-less because the
+    tool keeps it that way."""
     from benchweave_sdk.presentation import create_ui_resources
     from benchweave_sdk.scaffold import create_project
 
