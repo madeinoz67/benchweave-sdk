@@ -480,3 +480,126 @@ def test_d4_a_mid_unit_corpus_restores_rotated() -> None:
     asyncio.run(host.transfer(dict(exchanges[3][0]), context))
     head = host._script[0][0] if host._script else None
     assert head == {"kind": "x", "n": 1}, head  # n1 follows n3 in the unit
+
+
+# --------------------------------------------------------------------------
+# Row e (the owner expansion): the provider-agnostic executor registry —
+# a second family plugs in by registering; the banked-bytes bind survives
+# the abstraction intact (a lookalike of the SECOND family refuses too).
+# The second family is TEST-ONLY — exactly one real family exists and no
+# fabricated production contract justifies the registry.
+# --------------------------------------------------------------------------
+
+
+def test_e_a_second_family_registers_and_serves(tmp_path: Path) -> None:
+    """The registry is exercised by the FTDI family plus this test-only
+    synthetic family: register an executor whose banked copy lives beside
+    the test, verify a plugin pinning IT passes the bind, and serve its
+    grammar through the same transport machinery."""
+    import hashlib
+
+    from benchweave_sdk_server.ftdi import PROVIDER_EXECUTORS, ProviderExecutor
+
+    # The synthetic banked contract: a minimal one-kind grammar.
+    banked = {
+        "contract_version": "0.1.0",
+        "id": "urn:otdp:transport-provider:test-second:1.0.0",
+        "feature_id": "otdp.transport.test-second/1.0.0",
+        "version": "1.0.0",
+        "description": "Test-only second family: exercises the executor registry.",
+        "transport_kind": "test_second",
+        "transaction_grammar": [
+            {
+                "kind": "test_second",
+                "request_schema": {
+                    "type": "object",
+                    "properties": {"op": {"const": "ping"}},
+                    "required": ["op"],
+                    "additionalProperties": False,
+                },
+                "result_schema": {"type": "object", "maxProperties": 0},
+                "limits": {},
+            }
+        ],
+        "security_scope": "commissioned_connection",
+        "host_requirements": {"summary": "none", "native_libraries": [], "privileges": []},
+        "approval": {
+            "approved_by": "BenchWeave SDK",
+            "approved_at": "2026-10-28T00:00:00Z",
+            "expires_at": "2027-10-28T00:00:00Z",
+            "evidence": [
+                {
+                    "category": "protocol",
+                    "report": {
+                        "id": "registry-exercise",
+                        "version": "1.0.0",
+                        "sha256": "0" * 64,
+                    },
+                    "tested_at": "2026-10-28T00:00:00Z",
+                    "scope": "Synthetic registry exercise; not a production claim",
+                    "result": "partial",
+                    "limitations": [
+                        "Test-only family; the evidence row is schema shape, not a test claim"
+                    ],
+                }
+            ],
+        },
+    }
+    raw = json.dumps(banked, indent=2).encode() + b"\n"
+    banked_path = tmp_path / "test-second-control-1.0.0.json"
+    banked_path.write_bytes(raw)
+
+    executor = ProviderExecutor(
+        family="test-second",
+        feature_prefix="otdp.transport.test-second/",
+        transport_kind="ftdi",
+        probe_payloads={"ping": {"op": "ping"}},
+        banked_resolver=lambda tail: banked_path if tail == "1.0.0" else None,
+    )
+    PROVIDER_EXECUTORS["test-second"] = executor
+    try:
+        # A plugin pinning the second family: byte-equal to ITS banked copy.
+        project = tmp_path / "second-plugin"
+        shutil.copytree(FIXTURE_ROOT, project)
+        package = project / "src" / "ftdi_control_demo"
+        (package / "ftdi-control-provider.json").write_bytes(raw)
+        descriptor_path = package / "descriptor.json"
+        descriptor = json.loads(descriptor_path.read_text())
+        descriptor["transport"]["provider"] = {
+            "feature_id": banked["feature_id"],
+            "id": banked["id"],
+            "path": "ftdi-control-provider.json",
+            "sha256": hashlib.sha256(raw).hexdigest(),
+        }
+        descriptor["required_features"] = [
+            "otdp.core/0.1.0",
+            "otdp.adapter/0.1.0",
+            banked["feature_id"],
+        ]
+        descriptor_path.write_text(json.dumps(descriptor, indent=2) + "\n")
+        plugin = load_plugin_project(project)
+        from benchweave_sdk_server.ftdi import verify_ftdi_plugin
+
+        contract = verify_ftdi_plugin(plugin)
+        assert contract.provider["feature_id"] == banked["feature_id"]
+
+        # The banked bind survives the abstraction: a lookalike of the
+        # SECOND family (same feature line, different bytes) refuses.
+        lookalike = tmp_path / "second-lookalike"
+        shutil.copytree(project, lookalike)
+        package2 = lookalike / "src" / "ftdi_control_demo"
+        widened = dict(banked)
+        widened["description"] = "lookalike"
+        raw2 = json.dumps(widened, indent=2).encode() + b"\n"
+        (package2 / "ftdi-control-provider.json").write_bytes(raw2)
+        descriptor2 = json.loads((package2 / "descriptor.json").read_text())
+        descriptor2["transport"]["provider"]["sha256"] = hashlib.sha256(
+            raw2
+        ).hexdigest()
+        (package2 / "descriptor.json").write_text(
+            json.dumps(descriptor2, indent=2) + "\n"
+        )
+        with pytest.raises(ValueError, match="live_provider_feature_unsupported"):
+            verify_ftdi_plugin(load_plugin_project(lookalike))
+    finally:
+        PROVIDER_EXECUTORS.pop("test-second", None)

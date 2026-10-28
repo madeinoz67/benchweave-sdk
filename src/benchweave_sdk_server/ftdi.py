@@ -827,6 +827,69 @@ def _ftdi_pinned_contract(plugin: LoadedPlugin) -> tuple[dict[str, Any], str]:
     return pinned, digest
 
 
+@dataclass(frozen=True)
+class ProviderExecutor:
+    """One provider family's executor descriptor (row e, the owner
+    expansion): everything the transport needs to serve a family, so a
+    second family plugs in by REGISTERING one of these — the transport's
+    machinery (the services ladder, the seam wiring, the CLI branch) is
+    family-agnostic and does not edit per family.
+
+    The anti-laundering bind rides the executor UNCHANGED: the pinned
+    contract must be digest-equal to the BANKED instance the executor's
+    ``banked_path`` resolves — generalising the registry did not weaken
+    the gate (the lookalike arms pin both families).
+    """
+
+    family: str
+    feature_prefix: str
+    transport_kind: str
+    probe_payloads: Mapping[str, dict[str, Any]]
+    #: The banked-instance resolver: the packaged providers directory by
+    #: default; a test-only family points its own banked copy (the
+    #: registry's honesty constraint — exactly one real family exists).
+    banked_resolver: Callable[[str], Path | None] | None = None
+
+    def banked_path(self, tail: str) -> Path | None:
+        """The banked contract instance for one feature version tail."""
+        if self.banked_resolver is not None:
+            return self.banked_resolver(tail)
+        from importlib.resources import files
+
+        banked = files("benchweave_sdk").joinpath(
+            "providers", f"{self.family}-control-{tail}.json"
+        )
+        candidate = Path(str(banked))
+        return candidate if candidate.is_file() else None
+
+
+#: The registry (row e): the FTDI family is the one production member —
+#: exactly one real family exists, so the registry's second exerciser is a
+#: TEST-ONLY family registered by the suite, never a fabricated production
+#: contract. A family registers here; nothing in the transport names a
+#: family inline.
+PROVIDER_EXECUTORS: dict[str, ProviderExecutor] = {
+    "ftdi": ProviderExecutor(
+        family="ftdi",
+        feature_prefix=_FEATURE_PREFIX,
+        transport_kind="ftdi",
+        probe_payloads=_PROBE_PAYLOADS,
+    ),
+}
+
+
+def executor_for(pinned: dict[str, Any]) -> ProviderExecutor | None:
+    """The executor whose feature family the pinned contract declares (or
+    None — the caller refuses live_provider_feature_unsupported)."""
+    feature_id = pinned.get("feature_id")
+    if not isinstance(feature_id, str):
+        return None
+    for executor in PROVIDER_EXECUTORS.values():
+        if feature_id.startswith(executor.feature_prefix):
+            return executor
+    return None
+
+
 def _require_ftdi_feature(pinned: dict[str, Any], digest: str) -> None:
     """The identity half of the served-set bind — and the anti-laundering
     gate (refute lane A, F2): the pinned contract must declare the banked
@@ -836,24 +899,27 @@ def _require_ftdi_feature(pinned: dict[str, Any], digest: str) -> None:
     contract's semantics under an approved name; a version tail with no
     banked instance is not served at all."""
     feature_id = pinned.get("feature_id")
-    if not (
+    executor = executor_for(pinned)
+    if executor is None or not (
         isinstance(feature_id, str)
-        and feature_id.startswith(_FEATURE_PREFIX)
-        and _SEMVER.match(feature_id[len(_FEATURE_PREFIX) :])
+        and _SEMVER.match(feature_id[len(executor.feature_prefix) :])
     ):
-        raise ValueError(
-            f"live_provider_feature_unsupported: this transport serves the "
-            f"FTDI common control surface ({_FEATURE_PREFIX}<semver>); the "
-            f"pinned contract declares {feature_id!r} — pin the banked FTDI "
-            "control contract or serve this plugin on its own transport"
+        families = ", ".join(
+            f"{row.feature_prefix}<semver>" for row in PROVIDER_EXECUTORS.values()
         )
-    tail = feature_id[len(_FEATURE_PREFIX) :]
-    banked = _banked_contract_path(tail)
+        raise ValueError(
+            f"live_provider_feature_unsupported: this transport serves "
+            f"registered provider families ({families}); the pinned "
+            f"contract declares {feature_id!r} — pin a banked contract or "
+            "serve this plugin on its own transport"
+        )
+    tail = feature_id[len(executor.feature_prefix) :]
+    banked = executor.banked_path(tail)
     if banked is None:
         raise ValueError(
-            f"live_provider_feature_unsupported: no banked FTDI control "
-            f"contract exists for version {tail}; this executor serves "
-            "banked feature lines only"
+            f"live_provider_feature_unsupported: no banked "
+            f"{executor.family} control contract exists for version "
+            f"{tail}; this executor serves banked feature lines only"
         )
     banked_digest = hashlib.sha256(banked.read_bytes()).hexdigest()
     if digest != banked_digest:
@@ -881,7 +947,9 @@ def _probe_grammar(pinned: dict[str, Any]) -> dict[str, GrammarEntry]:
     serves exactly the FTDI common control surface the pinned grammar
     declares. An op no admitted kind can express refuses naming the op."""
     grammar = _grammar(pinned)
-    for op, payload in _PROBE_PAYLOADS.items():
+    executor = executor_for(pinned)
+    assert executor is not None, "the feature gate admitted this pin"
+    for op, payload in executor.probe_payloads.items():
         document = dict(payload)
         if not any(
             _first_schema_error(entry.request_validator, document) is None
