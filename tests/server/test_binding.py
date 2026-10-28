@@ -166,7 +166,7 @@ def test_open_refuses_an_oversize_document(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     "mutation",
     [
-        pytest.param({"config_version": "2"}, id="wrong-config-version"),
+        pytest.param({"config_version": "3"}, id="wrong-config-version"),
         pytest.param({"extra": 1}, id="unknown-top-level-key"),
         pytest.param(
             lambda row: row.pop("port_path"), id="missing-port-path"
@@ -250,7 +250,7 @@ def test_bind_writes_a_valid_document_and_leaves_no_temp(
     store = BindingStore.open(path)
     store.bind(_row())
     document = json.loads(path.read_text(encoding="utf-8"))
-    assert document["config_version"] == "1"
+    assert document["config_version"] == "2"
     assert [r["port_path"] for r in document["bindings"]] == ["/dev/match-b"]
     assert not list(path.parent.glob("*.tmp")), "the temp file is replaced, not left"
 
@@ -511,3 +511,113 @@ def test_bindings_path_refusals_carry_the_machine_prefix(
     package_parent = Path(binding_module.__file__).resolve().parent.parent
     with pytest.raises(ValueError, match=r"^standalone_binding_path:"):
         bindings_path(package_parent / "nested" / "device-bindings.json")
+
+
+# --------------------------------------------------------------------------
+# A1 (mechanism refute): the bindings document's format compatibility —
+# a v1 file (pre-ftdi, no ftdi_url key) loads and serves on the tip; a
+# tip-written (v2) document through the v1 rules refuses naming the
+# version, never a schema brick.
+# --------------------------------------------------------------------------
+
+
+def _v1_document() -> dict:
+    """A document exactly as the pre-ftdi writer spelled it: no ftdi_url
+    key anywhere, config_version '1'."""
+    return {
+        "config_version": "1",
+        "bindings": [
+            {
+                "connection_key": "example_device",
+                "plugin_package": "example_plugin",
+                "transport": "serial",
+                "endpoint_kind": "port_path",
+                "usb_serial": None,
+                "vid": None,
+                "pid": None,
+                "port_path": "/dev/legacy-a",
+                "ftdi_url": None,
+                "identity": {
+                    "manufacturer": "SDK Example",
+                    "model": "demo",
+                    "firmware": None,
+                },
+                "bound_at": "2026-10-01T00:00:00Z",
+                "bound_via": "ui",
+            }
+        ],
+    }
+
+
+def test_a1_a_pre_ftdi_document_with_no_ftdi_url_key_loads(tmp_path) -> None:
+    """The executed break: a file written before the ftdi key existed
+    (row dicts carry NO ftdi_url key at all) refused on the tip with
+    "'ftdi_url' is a required property", bricking serve construction on
+    both live transports. Old documents load and serve."""
+    path = tmp_path / "device-bindings.json"
+    document = _v1_document()
+    # Strip the key entirely — the true pre-change spelling.
+    for row in document["bindings"]:
+        row.pop("ftdi_url")
+    path.write_text(json.dumps(document, indent=2))
+    store = BindingStore.open(path)
+    row = store.get("example_plugin", "example_device")
+    assert row is not None and row["ftdi_url"] is None
+    assert row["port_path"] == "/dev/legacy-a"
+
+
+def test_a1_a_tip_written_document_through_the_v1_rules_names_the_version(
+    tmp_path,
+) -> None:
+    """The reverse break: a tip-written document in older code gave
+    "Additional properties are not allowed ('ftdi_url')" — a schema brick
+    with no remediation. With the version bump, the v1 rules refuse
+    naming the version (the typed, comprehensible refusal)."""
+    path = tmp_path / "device-bindings.json"
+    store = BindingStore.open(path)
+    store.bind(
+        {
+            "connection_key": "ftdi_demo",
+            "plugin_package": "ftdi_control_demo",
+            "transport": "ftdi",
+            "endpoint_kind": "ftdi_url",
+            "usb_serial": None,
+            "vid": None,
+            "pid": None,
+            "port_path": None,
+            "ftdi_url": "ftdi://::0x0403:0x6001/1",
+            "identity": {
+                "manufacturer": "OTDP Reference",
+                "model": "ftdi-control-demo",
+                "firmware": None,
+            },
+            "bound_at": "2026-10-28T00:00:00Z",
+            "bound_via": "test",
+        }
+    )
+    document = json.loads(path.read_text())
+    # The v1 rules: config_version const "1" (the old reader's schema).
+    v1_rules = {"const": "1"}
+    assert document["config_version"] != v1_rules["const"], (
+        "the tip writes the bumped version"
+    )
+    # And the old reader's refusal names the version, not a property.
+    from jsonschema import Draft202012Validator
+
+    old_document_schema = {
+        "type": "object",
+        "properties": {
+            "config_version": v1_rules,
+            "bindings": {"type": "array"},
+        },
+        "required": ["config_version", "bindings"],
+        "additionalProperties": False,
+    }
+    errors = list(
+        Draft202012Validator(old_document_schema).iter_errors(document)
+    )
+    # The old reader's refusal names the VERSION property (the module
+    # formats the error's path into the message: "['config_version']:
+    # '1' was expected") — not a row property. That is the typed,
+    # comprehensible refusal the version gate buys.
+    assert errors and list(errors[0].absolute_path) == ["config_version"]

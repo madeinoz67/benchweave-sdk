@@ -53,7 +53,7 @@ _ENV_BINDINGS = "BENCHWEAVE_STANDALONE_BINDINGS"
 _MAX_BINDINGS_BYTES = 1_048_576
 
 #: The one config version this store understands.
-CONFIG_VERSION = "1"
+CONFIG_VERSION = "2"
 
 #: The corpus's own connection-key pattern (the descriptor schema's
 #: transport defs) — a lowercase identifier, mirrored not reinvented. The
@@ -129,7 +129,6 @@ _BINDING_ROW_SCHEMA: dict[str, Any] = {
         "vid",
         "pid",
         "port_path",
-        "ftdi_url",
         "identity",
         "bound_at",
         "bound_via",
@@ -362,6 +361,20 @@ def _read_rows(path: Path) -> dict[tuple[str, str], dict[str, Any]]:
         raise ValueError(
             f"standalone_binding_unreadable: {path}: {exc}"
         ) from exc
+    # The v1 -> v2 migration (A1, the mechanism refute): rows written
+    # before the ftdi transport carried no ``ftdi_url`` key — the
+    # closed shape's honest "not the key" spelling of that era. Default
+    # it to None so a pre-change document LOADS on this reader (the
+    # executed break refused it at the required-property gate, bricking
+    # serve construction on both live transports). A v2 document in a
+    # v1 reader refuses at the version gate — typed, not a schema brick.
+    if isinstance(document, dict) and document.get("config_version") == "1":
+        migrated = document.get("bindings")
+        if isinstance(migrated, list):
+            for row in migrated:
+                if isinstance(row, dict) and "ftdi_url" not in row:
+                    row["ftdi_url"] = None
+        document["config_version"] = CONFIG_VERSION
     findings = sorted(
         _DOCUMENT_VALIDATOR.iter_errors(document),
         key=lambda error: list(error.absolute_path),
