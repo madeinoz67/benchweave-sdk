@@ -621,7 +621,8 @@ def regenerate_fixtures(fixtures_root: Path, version: str) -> None:
         create_project(stage / "ui", "example_plugin", with_ui=True)
         create_ui_resources(stage / "ui", "example_plugin")
         create_project(stage / "provider", "example_plugin", provider_transport=True)
-        for arm in ("base", "ui", "provider"):
+        arms = tuple(sorted(p.name for p in stage.iterdir() if p.is_dir()))
+        for arm in arms:
             canonical_pin_answers(stage / arm, version)
             target = fixtures_root / arm
             if target.exists():

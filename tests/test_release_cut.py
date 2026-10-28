@@ -21,6 +21,14 @@ from typing import Any
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
+
+def fixture_arms() -> tuple[str, ...]:
+    """The scaffold arm set, enumerated from the fixture directory (R2 —
+    the mechanism, not a hand-written list; the copier module's twin
+    definition)."""
+    from test_scaffold_copier import fixture_arms as _arms
+
+    return _arms()
 SCRIPT = ROOT / "scripts" / "release_cut.py"
 
 OLD = "0.7.1"
@@ -891,7 +899,7 @@ def test_fixture_regen_reproduces_the_committed_fixture_bytes(tmp_path: Path) ->
     drift = _load()
     scratch = tmp_path / "fixtures"
     drift.regenerate_fixtures(scratch, __version__)
-    for arm in ("base", "ui", "provider"):
+    for arm in fixture_arms():
         rendered = _tree(scratch / arm)
         committed = _tree(ROOT / "tests" / "fixtures" / "scaffold_expected" / arm)
         assert sorted(rendered) == sorted(committed), arm

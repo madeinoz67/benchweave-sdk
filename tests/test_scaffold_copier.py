@@ -40,6 +40,21 @@ from benchweave_sdk.presentation import create_ui_resources
 from benchweave_sdk.scaffold import create_project
 
 FIXTURES = Path(__file__).parent / "fixtures" / "scaffold_expected"
+
+
+def fixture_arms() -> tuple[str, ...]:
+    """The scaffold arm set, ENUMERATED from the fixture directory — the
+    mechanism, not a hand-written list (R2, the mechanism refute: a
+    planted fourth arm passed the whole battery because every tuple was
+    written down). A new arm directory IS a new arm; nothing to forget
+    to update."""
+    return tuple(sorted(p.name for p in FIXTURES.iterdir() if p.is_dir()))
+
+
+def test_the_arm_set_is_exactly_the_fixture_directories() -> None:
+    """R2's tripwire: the committed battery enumerates its arms from the
+    fixture root, so a planted or removed arm reddens HERE first."""
+    assert fixture_arms() == ("base", "provider", "ui"), fixture_arms()
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CANONICAL_TEMPLATE_URL = "https://github.com/madeinoz67/benchweave-sdk"
 

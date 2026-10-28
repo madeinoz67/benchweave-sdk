@@ -47,6 +47,17 @@ TEMPLATE = REPO / "template"
 GUIDE = REPO / "user_guide" / "plugin-sdk.qmd"
 FIXTURES = REPO / "tests" / "fixtures" / "scaffold_expected"
 
+
+def fixture_arms() -> tuple[str, ...]:
+    """The scaffold arm set, enumerated from the fixture directory (R2 —
+    the mechanism, not a hand-written list)."""
+    return tuple(sorted(p.name for p in FIXTURES.iterdir() if p.is_dir()))
+
+
+def test_the_arm_set_is_exactly_the_fixture_directories() -> None:
+    """R2's tripwire (the agent-asset side)."""
+    assert fixture_arms() == ("base", "provider", "ui"), fixture_arms()
+
 # Project-relative asset path -> template member (unrendered; tokens are inert
 # to every check below — `{{ package_name }}` never appears in subcommand
 # position and `{{ sdk_version }}` is the only version carrier, asserted).
@@ -368,7 +379,7 @@ def test_ai_guide_names_the_preview_override() -> None:
     """AR-L8-1 arm 3: both arms' AI-GUIDE.md name the override stylesheet.
     The AI-GUIDE paragraph is unconditional (with-ui framed in prose), so
     both arms must carry it."""
-    for arm in ("base", "ui", "provider"):
+    for arm in fixture_arms():
         guide = (FIXTURES / arm / "AI-GUIDE.md").read_text(encoding="utf-8")
         assert "preview.css" in guide, f"{arm} arm AI-GUIDE.md does not name preview.css"
 
@@ -460,7 +471,7 @@ def test_ai_guide_fixture_arms_carry_the_composed_path() -> None:
     """Both fixture arms RENDER the decision rule — the fixture IS the
     render, so this arm reddens when a template change ships without
     regenerating the fixtures (same shape as the preview.css arm 3)."""
-    for arm in ("base", "ui", "provider"):
+    for arm in fixture_arms():
         guide = (FIXTURES / arm / "AI-GUIDE.md").read_text(encoding="utf-8")
         assert "### Vendor features the class reference does not cover" in guide, (
             f"{arm} arm AI-GUIDE.md does not carry the composed-path section"
@@ -518,7 +529,7 @@ def test_fixture_arms_carry_the_composed_path_homes() -> None:
     """The regenerated fixture arms carry every home: develop-plugin in
     both arms (unconditional package content), the project instructions
     in the ui arm alone (the paragraph is with-ui framed)."""
-    for arm in ("base", "ui", "provider"):
+    for arm in fixture_arms():
         skill = (
             FIXTURES / arm / "src" / "example_plugin" / "skills" / "develop-plugin" / "SKILL.md"
         ).read_text(encoding="utf-8")
@@ -572,7 +583,7 @@ def test_fixture_arms_grow_exactly_the_managed_assets() -> None:
     the R-2 parity tests — and the fixture's agent-asset set is EXACTLY the
     managed set, so a template growth in `.claude/**` or a new root guide is
     a deliberate change that updates ASSET_MEMBERS."""
-    for arm in ("base", "ui", "provider"):
+    for arm in fixture_arms():
         fixture_agent_files = {
             entry.relative_to(FIXTURES / arm).as_posix()
             for entry in (FIXTURES / arm).rglob("*")
