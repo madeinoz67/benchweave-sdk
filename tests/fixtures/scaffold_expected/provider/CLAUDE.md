@@ -1,0 +1,8 @@
+# Agent notes — the example_plugin plugin project
+
+@AGENTS.md
+
+## This file is yours
+
+`AGENTS.md` above is SDK-managed (upgraded by `benchweave-sdk upgrade`). Keep your
+project-specific notes here; they never block an upgrade.

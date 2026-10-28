@@ -358,6 +358,8 @@ You can author, derive and preview a composed user interface with no gateway. Th
    benchweave-sdk new acme-widget --package acme_widget_plugin --with-ui
    ```
 
+   Pass `--provider-transport` instead for a plugin that declares a transport provider: the scaffold pins the banked FTDI control contract inside the package, emits provider-shaped builders and adapter, and writes no `vectors.json` (the mock cannot rehearse control operations). Rehearsal for that shape runs over the SDK's shipped driver double; the section "Live FTDI transport (provider control)" above states the serve and record commands.
+
 3. Write the composed action class document in the plugin package, beside the descriptor. The section "Author a composed action class" above gives the document shape. A composed member declaration uses the same pin seam. The section "Author a composed member declaration" above gives that document shape.
 
 4. Pin the document in `descriptor.json` under `contracts[]`. The pin gives an id, a path relative to the descriptor, and the sha256 of the file bytes. The same section gives the row shape. The digest is the digest of the current bytes. Update the pin after each edit of the document. A pin that does not match the bytes refuses the derivation with `classref_vendor_catalog_digest_mismatch:`.

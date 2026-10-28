@@ -77,3 +77,93 @@ def test_interrupted_generation_leaves_no_destination(
 def test_reserved_package_name_refused(tmp_path: Path) -> None:
     with pytest.raises(ValueError):
         create_project(tmp_path / "x", "benchweave_sdk")
+
+
+def test_provider_transport_scaffold_pins_the_banked_contract(tmp_path: Path) -> None:
+    """Row f (issue #568, owner directive 2026-10-28): ``new
+    --provider-transport`` emits a provider-declaring plugin — the custom
+    transport with the banked FTDI control contract pinned byte-exactly,
+    no vectors.json (the mock cannot rehearse provider kinds — the honest
+    posture), and a conversation that serves on ``--transport ftdi`` over
+    the shipped driver double."""
+    import json
+
+    destination = tmp_path / "prov"
+    create_project(destination, "example_plugin", provider_transport=True)
+    package = destination / "src" / "example_plugin"
+    descriptor = json.loads((package / "descriptor.json").read_text())
+    assert descriptor["transport"]["type"] == "custom"
+    pin = descriptor["transport"]["provider"]
+    assert pin["feature_id"].startswith("otdp.transport.ftdi-control/")
+    # The pinned bytes are the BANKED contract, byte-equal.
+    import hashlib
+
+    from benchweave_sdk.validation import verify_provider_pin
+
+    banked = Path(__file__).resolve().parents[1] / (
+        "src/benchweave_sdk/providers/ftdi-control-1.0.0.json"
+    )
+    pinned_bytes = (package / pin["path"]).read_bytes()
+    assert pinned_bytes == banked.read_bytes()
+    assert hashlib.sha256(pinned_bytes).hexdigest() == pin["sha256"]
+    assert verify_provider_pin(descriptor, package / "descriptor.json") is not None
+    # No vectors.json in the provider shape: the mock's stream-only
+    # dialects cannot script control ops, and the scaffold does not ship a
+    # script that pretends otherwise.
+    assert not (package / "vectors.json").exists()
+
+
+def test_provider_transport_scaffold_rehearses_on_the_double(tmp_path: Path) -> None:
+    """The provider scaffold's own rehearsal story: the generated plugin
+    serves on ``--transport ftdi`` over the SHIPPED driver double, driven
+    through the production session — the row-f answer to the mock-parity
+    question (no third vectors dialect; the double at the driver
+    boundary)."""
+    import asyncio
+    import base64
+    import sys
+
+    destination = tmp_path / "prov"
+    create_project(destination, "example_plugin", provider_transport=True)
+    sys.path.insert(0, str(destination / "src"))
+    import example_plugin.protocol as proto
+
+    from benchweave_sdk_server.ftdi import ScriptedFtdiDriver, ftdi_plugin_session
+    from benchweave_sdk_server.session import load_plugin_project
+
+    script = [
+        {"name": "reset", "transaction": proto.reset_device(), "response": {}},
+        {"name": "purge", "transaction": proto.purge_rx(), "response": {}},
+        {"name": "latency", "transaction": proto.set_latency(), "response": {}},
+        {"name": "baud", "transaction": proto.set_baud(), "response": {}},
+        {"name": "bitmode", "transaction": proto.set_bitmode(), "response": {}},
+        {
+            "name": "pins-idle",
+            "transaction": proto.read_pins(),
+            "response": {"data": base64.b64encode(bytes([proto.PINS_IDLE])).decode()},
+        },
+        {
+            "name": "bitstream",
+            "transaction": proto.stream_send(proto.BITSTREAM_CHUNK),
+            "response": {},
+        },
+        {
+            "name": "pins-done",
+            "transaction": proto.read_pins(),
+            "response": {"data": base64.b64encode(bytes([proto.DONE_BYTE])).decode()},
+        },
+        {
+            "name": "status",
+            "transaction": proto.status_exchange(),
+            "response": {"data": proto.STATUS_REPLY.hex()},
+        },
+    ]
+    plugin = load_plugin_project(destination)
+    driver = ScriptedFtdiDriver(script)
+    session = ftdi_plugin_session(
+        plugin, "ftdi://::0x0403:0x6001/1", driver_factory=lambda url: driver
+    )
+    asyncio.run(session.connect())
+    read = asyncio.run(session.execute("read", {"parameter": "line_status"}))
+    assert read["status"] == "ok", read
+    asyncio.run(session.close())

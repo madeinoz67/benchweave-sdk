@@ -1,0 +1,207 @@
+# Build a BenchWeave device plugin with AI
+
+Use one prompt at a time and review its result. This project is a synthetic
+read-only example. The hardware is the device; this Python package is its plugin.
+Use plugins/<manufacturer>/<name>/ as the project root in a plugin collection,
+with src/<package>/ inside. That project can become its own external repository.
+The SDK implementation lives separately in BenchWeave's packages/sdk/.
+This project declares a transport provider: the descriptor pins the FTDI common
+control contract (ftdi-control-provider.json inside the package, byte-equal to
+the SDK's banked copy), and the adapter speaks the contract's seven control
+operations plus the generic stream kinds. There is no vectors.json: the mock's
+stream-only dialects cannot script control operations, and the scaffold does not
+ship a script that pretends otherwise. Rehearse without hardware over the SDK's
+shipped driver double (ScriptedFtdiDriver, see tests/test_plugin.py); rehearse
+against recorded evidence with `benchweave-sdk-server serve --transport replay
+--replay <journal.json>`; serve the device with `--transport ftdi --device
+<ftdi-url>` and record a bench session as a replay journal with
+`--record <path>`. The SDK user guide's "Live FTDI transport" section states
+the refusals and the recording rules.
+
+
+## Project layout
+
+Run installation, pytest and uv build from the directory containing pyproject.toml.
+The generated project contains README.md, this AI-GUIDE.md, CLAUDE.md (agent
+notes for the repository root), tests/test_plugin.py, and src/<package>/ with
+__init__.py, adapter.py, protocol.py, wire.py, descriptor.json, protocol.md,
+vectors.json and skills/. The skills directory holds two seeded agent skills.
+develop-plugin supports the authoring workflow. drive-device is the synthetic
+demo driver to rewrite. The protocol and vectors files begin as synthetic
+evidence. wire.py carries the
+wire-discipline helpers (see "Wire discipline" below). The skills are
+distributable content inside the package.
+
+With --with-ui, the SDK also generates UI-GUIDE.md at the project root and
+presentation.json, binding-catalogue.json and ui/manifest.json inside src/<package>/.
+Add optional settings schemas under src/<package>/ui/settings/, complete presets
+under src/<package>/ui/presets/, and declared assets under src/<package>/ui/assets/.
+A stylesheet at `src/<package>/ui/preview.css`, declared in the manifest
+with `path` exactly `preview.css`, restyles the preview pages; see
+UI-GUIDE.md and the user guide section
+"The plugin stylesheet override (preview.css)".
+Those optional directories and configuration files are author-supplied. See
+UI-GUIDE.md when present. For configuration without UI, use src/<package>/config/
+with settings.schema.json and presets/. When UI presents those settings, keep one
+authoritative copy under ui/settings/ and ui/presets/ rather than duplicating it.
+
+### What derive-ui cannot decide
+
+A class-conformant descriptor derives its presentation set from the class
+reference for its profile. The derivation cannot decide everything. The SDK
+shows the `cannot_derive` items when it derives the set. This guide names the
+same items:
+
+- `thresholds`: the safe `threshold_v` range for the logic family. Put the
+  limits in the settings schema with the `input_constraints` key on the
+  descriptor.
+- `arm-safety`: the safe sequence of the trigger and arm actions. The safe
+  sequence is specific to the device and the device under test. The reference
+  binds the buttons. It does not give the sequence.
+- `lane-names`: lane names beyond the descriptor labels. The descriptor owns
+  channel identity. Label the channels in the descriptor.
+- `presets`: preset settings values. Presets are commissioned evidence, never
+  derived. Write `ui/presets/*.json`. Check each file with `check-preset`.
+  The expander gives the scaffold only.
+- `decode-settings`: decode options beyond the closed unions. Declare
+  `decoders[]` on the descriptor.
+
+A successful derivation is not admission, approval to apply settings, or
+permission to operate hardware.
+
+### Vendor features the class reference does not cover
+
+The class reference places the surfaces it covers. Decide the rest. A
+member the reference already places needs nothing. A device that is mostly
+a class with a few vendor features declares them: a pinned composed action
+class supplies the catalog side of an action no catalog describes, and a
+pinned composed member declaration supplies the slot and the page the
+reference does not place. Both documents live in the package, beside the
+descriptor, pinned under `contracts[]` in `descriptor.json`. A member that
+no class reference and no catalog covers stays a residual member: the
+derivation places it in the `Custom device actions` section and reports
+it. It does not refuse. The plugin SDK guide gives the document shapes:
+section "Author a composed action class" and
+section "Author a composed member declaration". The normative rule
+lives in the class reference family README in the main repository,
+`standards/plugin-ui-class-reference/`, section
+`Composed member declarations (normative, gateway issue #556)`.
+
+Optional project-root docs/compatibility.md and docs/qualification.md describe
+supported models/firmware and supervised hardware evidence. firmware/README.md
+and firmware/release-notes/ can hold vendor source/checksum references and upgrade
+constraints. They do not enable SDK firmware discovery or flashing. Additional
+tests/test_configuration.py, tests/test_presentation.py and tests/fixtures/ can
+cover those features and firmware-specific protocol exchanges. These files are
+recommended author additions, not generated by the scaffold.
+
+Keep distributable resources inside src/<package>/ for inclusion in the wheel.
+Generate uv.lock for development dependencies; build outputs go in dist/.
+Keep credentials, deployment configuration and collected runtime data outside the
+plugin source package. A preset is configuration, not a retained measurement.
+
+## 1. Establish the facts
+
+> Inspect this project and my supplied device manual/protocol evidence. List
+> exact model/firmware support, intended operations, command sources, ranges,
+> transport bounds, side effects and unknowns. Map them to OTDP 0.2.2 and adapter
+> API 1.1. Do not invent commands. Propose a small implementation plan before
+> editing. Do not contact hardware, flash firmware, energise outputs or publish.
+
+## 2. Implement against mocks
+
+> Implement the agreed protocol in protocol.py and async adapter.py. Update the
+> descriptor and trace every command to evidence. Keep create_plugin no-argument,
+> construction/open free of device I/O, and transport behind supplied scoped
+> services — a device needing a non-scoped transport declares a pinned
+> transport-provider contract (see the vendored otdp-transport-provider schema;
+> benchweave-sdk check verifies the pin offline). Mark dispatch before transmit,
+> honour monotonic deadlines and cancellation, never retry silently, and
+> preserve uncertain outcomes. Keep imports relative within this package or
+> standard-library-only for the current gateway loader. Run the synthetic
+> identify/read example before replacing it.
+
+
+## Wire discipline
+
+Four rules come from hardware evidence. They apply to every device plugin.
+The helpers live in src/<package>/wire.py and use standard-library imports
+only.
+
+Evidence kinds are closed names, not inline strings. Give every kind one
+module-level constant, as wire.py does for its own kinds. Reference the
+constant. A misspelled constant fails at import. A typed string does not.
+
+1. **One counter sequences the wire.** When the device echoes a command
+counter that advances by one on every command, feed every parsed counter
+to `CommandCounter.advance`. The first observation sets the baseline. A
+gap is a lost or a duplicated frame. The helper records the evidence
+before the refusal, and the refusal names the expected counter, the
+observed counter and the exchange index. If the counter is one byte, give
+the counter's byte modulus (`modulus=256`). Without the modulus, the roll
+0xFF to 0x00 reads as a gap. On the mock, a strict counter rehearses
+only as many cycles as the corpus carries: capture three cycles, not
+two (the user guide's session-continuity paragraph gives the bound).
+2. **A declared poll interval is a budget the loop must honour.** A
+declared interval that no loop reads is a defect. Poll through
+`paced_poll`. The helper owns the wait between attempts, so a loop cannot
+skip the pace. A device that answers on its own timer reports not-ready
+until its cadence passes. A loop that polls faster than the cadence
+exhausts its attempts before the device becomes ready. The timeout is
+then false.
+3. **Completion pins gate success.** An operation whose hardware
+completion signal is not asserted never reports ok. Call
+`require_completion` on the parsed signal verdict. Report the refusal as a
+device failure with the outcome your contract requires, never as ok.
+4. **Hardware evidence needs recorded bytes.** A `vectors.json` that
+claims `"evidence": "hardware"` must carry at least one row with
+hand-recorded bytes and a `recorded` object whose `when` names the capture
+moment. Builder-generated vectors cannot supply this: a script your own
+builder wrote proves only that the builder agrees with itself. The host
+refuses a hardware claim without recorded bytes. The check proves the
+claim comes with recorded provenance; it cannot prove the provenance is
+true. Record the bytes from a real capture session.
+
+The corpus rows are ordered as the driver demands them. The shipped
+driver walks the descriptor: identify, then each readable parameter in
+declaration order. Order the corpus to that walk. The seeded
+`test_vectors_walk_order_matches_the_descriptor_walk` rehearses the walk
+and refuses on drift. The corpus alone cannot say which row serves which
+parameter: that mapping is your protocol code, so the rehearsal with the
+adapter is the check. Rows the walk never reaches are named, not
+ignored.
+
+## 3. Demonstrate behaviour
+
+> Extend the exact-exchange tests for supported operations, wrong correlation,
+> invalid arguments, expiry/cancellation before and after dispatch, malformed or
+> truncated responses, transport loss and repeated/failed-open cleanup. Use SDK
+> validation and conformance helpers. Run the tests and show commands/results.
+> List applicable S/C/M requirements these helpers do not prove. Label synthetic
+> evidence separately from device captures. Do not claim hardware qualification.
+
+## 4. Review and qualify separately
+
+> Prepare this exact revision, descriptor, compatibility claims and evidence for
+> an independent review using BenchWeave's AI device integration reviewer role.
+> Report defects and missing evidence with closure tests. Draft a supervised
+> hardware qualification plan; do not execute it without separate authority.
+
+## 5. Prepare a release for owner review
+
+> Build the plugin wheel and source distribution. Prepare the registry manifest,
+> exact payload inventory/hashes, dependency locks, licence, provenance and
+> evidence status required by the registry contract; the seeded skills under
+> src/<package>/skills/ are catalogued with the skill role, while CLAUDE.md is
+> repository tooling - the wheel packages src/<package>/ only, so it reaches a
+> release payload solely by deliberate publisher inclusion (catalogued as
+> documentation). A Python wheel is not a registry admission bundle. Test the
+> installed plugin against the supported gateway version. Show me the artefacts
+> and remaining gaps before publishing.
+
+The SDK does not install a plugin into a live gateway. A Docker deployment needs
+an admitted bundle and gateway deployment configuration; an SDK development
+install changes only the development environment. Capture/profile operations,
+physical providers and complete OTDP conformance require additional work beyond
+this starter. Async test timeouts cannot stop blocking or hostile Python code;
+use an isolated process without bench access for candidate-code execution.

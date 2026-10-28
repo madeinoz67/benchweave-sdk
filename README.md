@@ -113,7 +113,7 @@ benchweave-sdk new plugins/acme/model100 --package benchweave_acme_model100 --wi
 cd plugins/acme/model100
 ```
 
-The destination must not already exist. A destination that you reach through a symlinked directory is canonicalized before any write. On macOS, `/tmp/...` is such a symlink. Messages report the real path. Omit `--with-ui` for a plugin without presentation metadata.
+The destination must not already exist. A destination that you reach through a symlinked directory is canonicalized before any write. On macOS, `/tmp/...` is such a symlink. Messages report the real path. Omit `--with-ui` for a plugin without presentation metadata. Pass `--provider-transport` for a plugin that declares a transport provider: the scaffold pins the banked FTDI control contract inside the package, emits provider-shaped builders and adapter, and writes no `vectors.json` (the mock cannot rehearse control operations; rehearsal runs over the SDK's shipped driver double).
 
 ```text
 plugins/acme/model100/                 # independent plugin project

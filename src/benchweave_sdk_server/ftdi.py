@@ -363,17 +363,26 @@ class ScriptedFtdiDriver:
                 raise malformed("a receive row carries no outgoing data")
             return _ScriptEntry(name)
         data = transaction.get("data")
-        if not isinstance(data, str):
-            raise malformed("a stream row's data is a hex byte string")
-        try:
-            request = bytes.fromhex(data)
-        except ValueError as exc:
-            raise malformed(f"the stream data {data!r} is not a hex byte string") from exc
+        if isinstance(data, bytes):
+            # The ABI spelling (a builder's own transaction dict) is
+            # accepted beside the journal's hex form — both are exact.
+            request = data
+        elif isinstance(data, str):
+            try:
+                request = bytes.fromhex(data)
+            except ValueError as exc:
+                raise malformed(
+                    f"the stream data {data!r} is not a hex byte string"
+                ) from exc
+        else:
+            raise malformed(
+                "a stream row's data is a hex byte string or bytes"
+            )
         reply = response.get("data", "")
-        if not isinstance(reply, str):
+        if not isinstance(reply, (str, bytes)):
             raise malformed("a stream row's response data is a hex byte string")
         try:
-            response_bytes = bytes.fromhex(reply)
+            response_bytes = reply if isinstance(reply, bytes) else bytes.fromhex(reply)
         except ValueError as exc:
             raise malformed(
                 f"the stream response {reply!r} is not a hex byte string"

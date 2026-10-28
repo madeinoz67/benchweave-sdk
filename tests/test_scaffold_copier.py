@@ -160,6 +160,24 @@ def test_new_project_tree_matches_fixture_with_ui(tmp_path: Path) -> None:
     _assert_tree_equal(destination, FIXTURES / "ui")
 
 
+def test_new_project_tree_matches_fixture_provider(tmp_path: Path) -> None:
+    """Row f (issue #568): the provider-transport variant renders its own
+    pinned tree — the contract copy in, the vectors script out, the
+    provider-shaped builders/adapter/AI-GUIDE/tests."""
+    destination = tmp_path / "example_plugin"
+    create_project(destination, "example_plugin", provider_transport=True)
+    _assert_tree_equal(destination, FIXTURES / "provider")
+    # The shape-specific file discipline, stated as a set (regenerable from
+    # the copier config's conditional exclude): the provider tree carries
+    # the contract and no vectors script; the base tree the reverse.
+    provider_files = set(_tree(FIXTURES / "provider"))
+    base_files = set(_tree(FIXTURES / "base"))
+    assert "src/example_plugin/ftdi-control-provider.json" in provider_files
+    assert "src/example_plugin/vectors.json" not in provider_files
+    assert "src/example_plugin/vectors.json" in base_files
+    assert "src/example_plugin/ftdi-control-provider.json" not in base_files
+
+
 def _answers_of(project: Path) -> dict[str, str]:
     lines = (project / ".copier-answers.yml").read_text(encoding="utf-8").splitlines()
     return {
@@ -188,6 +206,41 @@ def test_answers_pin_records_with_ui_arm(tmp_path: Path) -> None:
     destination = tmp_path / "example_plugin"
     create_project(destination, "example_plugin", with_ui=True)
     assert _answers_of(destination)["with_ui"] == "true"
+
+
+def test_answers_pin_records_the_provider_arm(tmp_path: Path) -> None:
+    """The variant is answer-recorded, so `copier update` re-renders with
+    the same shape (the exclusion re-applies; the project never grows the
+    other shape's files)."""
+    destination = tmp_path / "example_plugin"
+    create_project(destination, "example_plugin", provider_transport=True)
+    answers = _answers_of(destination)
+    assert answers["provider_transport"] == "true"
+    assert answers["with_ui"] == "false"
+
+
+def test_the_generated_provider_suite_runs(tmp_path: Path) -> None:
+    """The provider fixture's generated test suite is RUNNABLE, not just
+    byte-pinned: its rehearsal drives the shipped double through the
+    production session — the row-f rehearsal story a plugin author copies.
+    Run in a subprocess against the freshly rendered project (PYTHONPATH
+    carries its src/; the SDK is this checkout's)."""
+    import os
+    import subprocess
+    import sys
+
+    destination = tmp_path / "example_plugin"
+    create_project(destination, "example_plugin", provider_transport=True)
+    environment = dict(os.environ, PYTHONPATH=str(destination / "src"))
+    result = subprocess.run(
+        [sys.executable, "-m", "pytest", "tests/test_plugin.py", "-q", "--no-header"],
+        cwd=destination,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_scaffold_extra_absent_refusal_names_install_command(
