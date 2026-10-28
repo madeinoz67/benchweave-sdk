@@ -483,9 +483,9 @@ def cli() -> None:
         "--transport serial (the binding bypass; without it a serial host "
         "serves binding-pending until an endpoint is picked in the UI, or a "
         "stored binding resolves), or the FTDI device selector URL on "
-        "--transport ftdi (for example 'ftdi://::0x0403:0x6001/1' — this "
-        "transport has no binding store and no discovery). Refused on "
-        "non-live transports."
+        "--transport ftdi (for example 'ftdi://::0x0403:0x6001/1' — without "
+        "it, an FTDI host also serves binding-pending, and a stored binding "
+        "resolves). Refused on non-live transports."
     ),
 )
 @click.option(

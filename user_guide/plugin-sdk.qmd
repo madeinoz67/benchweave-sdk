@@ -554,7 +554,7 @@ Use the replay to prove that the plugin still speaks the recorded conversation. 
 
 ## Live FTDI transport (provider control)
 
-`benchweave-sdk-server serve <project> --transport ftdi --device <ftdi-url>` serves a plugin over an FTDI-class USB device. The URL is the pyftdi device selector, for example `ftdi://::0x0403:0x6001/1`. The descriptor's `connection_key` stays the logical identity of the device. The URL is the only endpoint source on this transport. This transport has no binding store and no scan. If the command line has no `--device`, serve refuses.
+`benchweave-sdk-server serve <project> --transport ftdi --device <ftdi-url>` serves a plugin over an FTDI-class USB device. The URL is the pyftdi device selector, for example `ftdi://::0x0403:0x6001/1`. The descriptor's `connection_key` stays the logical identity of the device. With `--device`, the URL is a constant endpoint: the host serves that URL on every connection. Without `--device`, the serve starts binding-pending. The index page shows the scan button; a scan confirms each FTDI device by its identify answer, and the Bind button persists the picked URL in the binding document, so a later serve needs no `--device`. The binding behaves as the serial binding does: it survives a restart, it refuses `binding_stale` when the bound URL is gone, and bind and unbind need the operator action token.
 
 The plugin must pin the FTDI common control contract in its descriptor. If the plugin declares no provider, serve refuses with `live_provider_plugin_unpinned:`. If the plugin pins a different contract, serve refuses with `live_provider_feature_unsupported:`.
 
@@ -562,7 +562,7 @@ Control transactions are the seven operations of the pinned contract: `reset_dev
 
 The generic stream kinds of section 8.1 use the same data pipe on the device. Send and receive behave as they do on the serial backend.
 
-The transport needs the `server` extra. Without pyftdi, serve refuses with `live_provider_backend_missing:`. With no device at the URL, connect refuses with `live_provider_device_unavailable:` and names the exception class. Each connect is one attempt. The host does not scan and does not retry.
+The transport needs the `server` extra. Without pyftdi, serve refuses with `live_provider_backend_missing:`. With no device at the URL, connect refuses with `live_provider_device_unavailable:` and names the exception class. Each connect is one attempt and never retries. An explicit scan enumerates the FTDI devices and confirms each by identify; without pyftdi the scan refuses with `live_provider_enumeration_failed:`.
 
 Pass `--record <path>` with `--transport ftdi` to record the live session as a replay journal. The host refuses `--record` on every other transport. The host writes the journal when the session closes. Each row records one completed exchange that the device made. A receive that does not complete before its deadline records a `timeout` row, and a transaction that the host refused records no row. The recorded journal replays with `--transport replay`, so a bench session produces replay evidence directly.
 
