@@ -179,14 +179,32 @@ def _start(count: int | None = None, **extra: Any) -> dict[str, Any]:
 
 
 def test_capture_start_refuses_without_capture_services(seam) -> None:
-    """The mock transport's host does not implement the capture members:
-    the refusal is unavailable, naming the gap (the conftest disclosure)."""
+    """The acceptance review's B: the duck-check refusal is TYPED — the
+    machine-matchable prefix names the gap and the missing members, never
+    an untyped string, and never the parenthetical that blamed the mock
+    even on a provider transport. The seam code stays the standard's
+    closed vocabulary (`unavailable` = the capability is unavailable);
+    the typed surface is the prefix plus the `reason` detail (the
+    binding-refusal precedent)."""
 
     async def scenario() -> None:
         await _connected(seam)
         with pytest.raises(SeamError) as caught:
             await seam.call("capture_start", _start(count=4))
         assert "unavailable" in str(caught.value.code)
+        message = str(caught.value.message)
+        assert message.startswith("capture_services_incomplete:"), message
+        assert "configure_capture" in message and "capture_progress" in message
+        assert "artifact_finalise" in message
+        assert "mock" not in message, (
+            "the refusal names the missing members, never a transport blame"
+        )
+        assert caught.value.details.get("reason") == "capture_services_incomplete"
+        assert caught.value.details.get("missing") == [
+            "configure_capture",
+            "capture_progress",
+            "artifact_finalise",
+        ]
 
     asyncio.run(scenario())
 

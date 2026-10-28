@@ -1750,16 +1750,41 @@ class StandaloneSeam:
                 correlation,
             )
         services = self._session.services
-        if not all(
-            callable(getattr(services, name, None))
-            for name in ("configure_capture", "capture_progress", "artifact_finalise")
-        ):
+        # The acceptance review's B: the duck-check refusal is TYPED — the
+        # machine-matchable prefix names the missing members (the
+        # binding-refusal precedent: code plus typed reason detail), and
+        # the old parenthetical that blamed the mock even on a provider
+        # transport is gone. The code stays the standard's closed
+        # vocabulary ("unavailable" = the capability is unavailable);
+        # departing it needs interface-corpus motion (errors.py's own
+        # contract: a refusal cannot name what the host cannot mean).
+        required = ("configure_capture", "capture_progress", "artifact_finalise")
+        if services is None:
+            # A connected session with no services object is a structural
+            # inconsistency (session.py keeps them together) — its own
+            # message under the same prefix, never a bare attribute miss.
             raise self._fail(
                 "unavailable",
-                "the connected transport's services do not implement capture "
-                "(the mock transport's host does not; connect a "
-                "capture-capable device)",
+                "capture_services_incomplete: the connected session "
+                "exposes no services object — a structural inconsistency; "
+                "reconnect",
                 correlation,
+                reason="capture_services_incomplete",
+                missing=[],
+            )
+        missing = [
+            name for name in required if not callable(getattr(services, name, None))
+        ]
+        if missing:
+            raise self._fail(
+                "unavailable",
+                f"capture_services_incomplete: the connected transport's "
+                f"services are missing {', '.join(missing)} — the host "
+                f"demands them at capture start "
+                f"(benchweave_sdk.interfaces.CaptureServices declares them)",
+                correlation,
+                reason="capture_services_incomplete",
+                missing=missing,
             )
         verb = self._resolve_capture_verb(correlation)
         capture_services = cast("_CaptureCapable", services)
