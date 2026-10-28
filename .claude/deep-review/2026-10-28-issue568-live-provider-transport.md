@@ -437,7 +437,12 @@ the ruling binds it here. The mechanism:
   `--transport mock` a third dialect would fork the script surface instead
   (and is the scaffold/mock-parity row's carrier question, §7 row f). The
   plain mock keeps refusing provider kinds — pinned from this slice's side
-  too (C5), the untouched honesty posture.
+  too (C5), the untouched honesty posture. **[Both conclusions superseded
+  by issue #570's build, 2026-10-28: the third dialect shipped WITHOUT
+  forking the script surface (MockHost's exact-dict matching carried it);
+  the mock's STREAM DIALECTS keep refusing provider kinds while the
+  provider dialect serves them from a grammar-validated corpus. This
+  section stands as the design history that was tested and corrected.]**
 - **The operator-facing recorded rehearsal stays replay** (existing, #564):
   a journal replays through `serve --transport replay` with its own banner
   and sidecar discipline. The double is the developer/plugin-facing
@@ -554,9 +559,10 @@ cannot be built in this repository.**
   plugin author composing services reads the demand off the Protocol
   instead of discovering it at capture start. The original follow-on's
   second half (a prefixed refusal replacing the duck-check's anonymous
-  `unavailable`) did not land: the owner's instruction kept the
-  duck-check as the backstop, and no transport ships that needs the
-  typed refusal.
+  `unavailable`) landed at the acceptance fold (506d9fd): the refusal is
+  typed `capture_services_incomplete:` naming the missing members, with
+  the standard `unavailable` code (the closed interface-0.1.0 vocabulary
+  — a new code needs corpus motion) and the reason/missing details.
 - **Row b — live journal recording**: `serve --transport ftdi --record
   <path>` emits a #564-format journal at session close (completed
   exchanges as rows, timed-out receives as `recorded_failure: "timeout"`,
