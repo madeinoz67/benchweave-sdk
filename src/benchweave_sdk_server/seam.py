@@ -1024,7 +1024,7 @@ class StandaloneSeam:
             if self._bindings is None:
                 raise self._fail(
                     "not_found",
-                    "endpoint binding is a serial-transport surface",
+                    "endpoint binding is a live-transport surface",
                     correlation,
                 )
             if self._session.connected:

@@ -690,7 +690,7 @@ def test_metric_c4_cli_guards(
             bindings=tmp_path / "device-bindings.json",
         )
     assert exc.value.code == 2
-    assert "standalone_transport_bindings_serial_only:" in capsys.readouterr().err
+    assert "standalone_transport_bindings_live_only:" in capsys.readouterr().err
 
     with pytest.raises(SystemExit) as exc:
         _build_seam(FIXTURE_ROOT, device=_URL)  # the default transport is mock

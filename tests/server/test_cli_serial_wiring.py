@@ -373,4 +373,4 @@ def test_bindings_on_a_non_serial_transport_refuses(
             bindings=starter_project.parent / "device-bindings.json",
         )
     assert exc.value.code == 2
-    assert "standalone_transport_bindings_serial_only:" in capsys.readouterr().err
+    assert "standalone_transport_bindings_live_only:" in capsys.readouterr().err

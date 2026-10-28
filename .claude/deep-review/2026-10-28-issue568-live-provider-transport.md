@@ -382,7 +382,11 @@ surface grew without new prefixes, and one guard prefix was renamed:**
   became `standalone_transport_device_live_only:` — machine-matchable API
   motion, declared here (the row is amended, not duplicated; its old
   wording would lie once ftdi became legal). The `--record` guard adds
-  `standalone_transport_record_ftdi_only:` in the same family.
+  `standalone_transport_record_ftdi_only:` in the same family. The
+  claims-surface fold (2026-10-28) renamed one more on the same
+  rename-on-lie rule: `standalone_transport_bindings_serial_only:` →
+  `standalone_transport_bindings_live_only:` (the flag accepts both live
+  transports since row a).
 - `live_provider_feature_unsupported:` now also carries the ANTI-LAUNDERING
   bind: the pinned contract's bytes must be digest-equal to the banked
   instance for the feature line it claims (a feature-id prefix alone

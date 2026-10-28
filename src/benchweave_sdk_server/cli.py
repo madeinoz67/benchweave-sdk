@@ -249,7 +249,7 @@ def _build_seam(
         # binding document; on any other transport it is not silently
         # ignored. Widened to ftdi by row a (issue #568).
         click.echo(
-            "standalone_transport_bindings_serial_only: --bindings applies only "
+            "standalone_transport_bindings_live_only: --bindings applies only "
             "to a live transport (--transport serial or --transport ftdi)",
             err=True,
         )
