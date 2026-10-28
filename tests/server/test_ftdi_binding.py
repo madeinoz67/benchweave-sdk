@@ -331,3 +331,47 @@ def test_f2_a_vanished_ftdi_pick_refuses_the_ftdi_enumeration(
             await seam.bind_device(_URL)
 
     asyncio.run(scenario())
+
+
+def __plugin_for_session():
+    from benchweave_sdk_server.session import load_plugin_project
+
+    return load_plugin_project(FIXTURE_ROOT)
+
+
+def _plugin_for_session():
+    from benchweave_sdk_server.session import load_plugin_project
+
+    return load_plugin_project(FIXTURE_ROOT)
+
+
+def test_a3_the_endpoint_resolves_once_per_connect(tmp_path: Path) -> None:
+    """A3 (mechanism refute): the factory resolved the endpoint TWICE —
+    the driver opened call 1's URL while last_resolution recorded call
+    2's. A mutable endpoint (a rebind landing between the two calls, or
+    this counter-backed double) desynced them. Resolve once: the opened
+    URL and the recorded resolution are the same value, pinned by
+    counting the endpoint's calls."""
+    import json as _json
+
+    all_rows = _json.loads(
+        (FIXTURE_ROOT / "src" / "ftdi_control_demo" / "vectors.json").read_text()
+    )["exchanges"]
+    from benchweave_sdk_server.ftdi import FtdiEndpoint, ScriptedFtdiDriver, ftdi_plugin_session
+
+    calls: list[str] = []
+
+    def source() -> str:
+        calls.append("resolve")
+        return _URL
+
+    endpoint = FtdiEndpoint(source)
+    session = ftdi_plugin_session(
+        _plugin_for_session(),
+        endpoint,
+        driver_factory=lambda url: ScriptedFtdiDriver(all_rows),
+    )
+    asyncio.run(session.connect())
+    assert len(calls) == 1, "one resolve per connect (the desync was two)"
+    assert endpoint.last_resolution == _URL
+    asyncio.run(session.close())

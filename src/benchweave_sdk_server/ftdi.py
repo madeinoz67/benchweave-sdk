@@ -1509,9 +1509,13 @@ def ftdi_plugin_session(
 
     def factory() -> FtdiCaptureServices:
         contract = verify_ftdi_plugin(session.plugin)
-        driver = open_driver(resolve_url())
-        settings = session.plugin.descriptor.get("transport", {}).get("settings", {})
+        # A3 (the mechanism refute): resolve the endpoint ONCE — the
+        # driver opens the URL this call returns and last_resolution
+        # records the SAME value. The double call was an executed desync
+        # (a mutable endpoint served a different URL to each).
         resolved_url = resolve_url()
+        driver = open_driver(resolved_url)
+        settings = session.plugin.descriptor.get("transport", {}).get("settings", {})
         if isinstance(url, FtdiEndpoint):
             url.last_resolution = resolved_url
         stream = FtdiStreamAdapter(driver)
