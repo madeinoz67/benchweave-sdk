@@ -553,6 +553,7 @@ class FtdiCaptureServices(SerialCaptureServices):
         capture_root: Any = None,
         capture_max_bytes: int | None = None,
         limits: Mapping[str, Any] | None = None,
+        rehearsal: bool = False,
     ) -> None:
         super().__init__(
             link,
@@ -564,6 +565,11 @@ class FtdiCaptureServices(SerialCaptureServices):
         self._grammar = grammar
         self._provider = dict(provider)
         self._limits = dict(limits or {})
+        #: Whether this session runs over the SHIPPED SCRIPTED DOUBLE
+        #: rather than live hardware (the acceptance review's A): the
+        #: marker reaches the capture sidecar and the mode banner — a
+        #: rehearsal must never read as a live device.
+        self.rehearsal = rehearsal
         # The faulted-driver latch (refute lane A, F6): a driver exception
         # latches THIS connection's services — every later transaction
         # refuses ConnectionError before the driver. "A faulted driver
@@ -581,22 +587,25 @@ class FtdiCaptureServices(SerialCaptureServices):
         metadata: dict[str, Any],
         max_bytes: int | None = None,
     ) -> None:
-        """Arm the capture with the live-provider evidence composed INTO the
+        """Arm the capture with the provider evidence composed INTO the
         sidecar (the replay host's precedent: the durable evidence names
-        what served — here, that this capture ran over the live FTDI
-        transport and which contract revision governed its wire grammar)."""
+        what served — the transport, the contract revision that governed
+        its wire grammar, and — when the session runs over the shipped
+        scripted double — the rehearsal marker. A capture over a double
+        must never read as a live hardware capture: ``config.rehearsal``
+        names it, mirroring replay's ``replay_journal`` block)."""
         config = metadata.get("config")
-        stamped = dict(
-            metadata,
-            config={
-                **(config if isinstance(config, dict) else {}),
-                "transport": "ftdi",
-                "provider": {
-                    "feature_id": self._provider["feature_id"],
-                    "sha256": self._provider["sha256"],
-                },
+        stamped_config: dict[str, Any] = {
+            **(config if isinstance(config, dict) else {}),
+            "transport": "ftdi",
+            "provider": {
+                "feature_id": self._provider["feature_id"],
+                "sha256": self._provider["sha256"],
             },
-        )
+        }
+        if self.rehearsal:
+            stamped_config["rehearsal"] = {"driver": "scripted"}
+        stamped = dict(metadata, config=stamped_config)
         super().configure_capture(capture_id, metadata=stamped, max_bytes=max_bytes)
 
     # -- the provider ladder -------------------------------------------------
@@ -1231,4 +1240,10 @@ def ftdi_plugin_session(
         return services
 
     session: PluginSession = PluginSession(plugin, factory)
+    # The rehearsal marker (the acceptance review's A): a session over an
+    # INJECTED driver factory runs the shipped scripted double, and every
+    # surface that speaks "ftdi" must disclose it. The CLI never injects
+    # (production is always live); embedded hosts and generated test
+    # suites do, and they must not read as hardware.
+    session.rehearsal = driver_factory is not None
     return session

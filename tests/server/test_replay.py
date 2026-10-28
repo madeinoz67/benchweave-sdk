@@ -385,6 +385,7 @@ def test_metric_c1_seam_surfaces_report_replay_transport(tmp_path: Path, plugin)
 
 def test_metric_c2_banner_is_distinct_from_mock_and_live() -> None:
     from benchweave_sdk_server.presentation import (
+        REHEARSAL_MODE_WORDING,
         REPLAY_MODE_WORDING,
         mode_banner_html,
     )
@@ -392,13 +393,24 @@ def test_metric_c2_banner_is_distinct_from_mock_and_live() -> None:
     replay = mode_banner_html(simulated=False, replay=True)
     mock = mode_banner_html(simulated=True)
     live = mode_banner_html(simulated=False)
+    rehearsal = mode_banner_html(simulated=False, rehearsal=True)
     assert REPLAY_MODE_WORDING in replay
     assert "SIMULATED PRESENTATION DATA" not in replay
     assert "SIMULATED PRESENTATION DATA" in mock
     assert REPLAY_MODE_WORDING not in mock
     assert REPLAY_MODE_WORDING not in live
     assert "SIMULATED PRESENTATION DATA" not in live
-    assert replay != mock and replay != live and mock != live
+    # The acceptance review's A: the SCRIPTED REHEARSAL row is a fourth
+    # truth — four-way distinctness, and the rehearsal row lives in none
+    # of the other three shapes.
+    assert REHEARSAL_MODE_WORDING in rehearsal
+    assert REPLAY_MODE_WORDING not in rehearsal
+    assert "SIMULATED PRESENTATION DATA" not in rehearsal
+    assert REHEARSAL_MODE_WORDING not in live
+    assert REHEARSAL_MODE_WORDING not in mock
+    assert REHEARSAL_MODE_WORDING not in replay
+    shapes = (mock, replay, rehearsal, live)
+    assert len(set(shapes)) == 4, "the four banner shapes are pairwise distinct"
 
 
 def test_metric_c3_capture_sidecar_carries_the_journal_evidence(

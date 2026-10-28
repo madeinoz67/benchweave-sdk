@@ -518,6 +518,13 @@ def test_metric_c1_seam_surfaces_report_ftdi_transport(
     assert seam.transport_kind == "ftdi"
     info = asyncio.run(seam.call("host_info"))
     assert info["transport"] == "ftdi"
+    # The acceptance review's A: a session over the SCRIPTED DOUBLE must
+    # not read as live hardware on any state surface — the rehearsal
+    # marker rides beside transport (the assertion was inverted: the old
+    # pin held the laundering as correct).
+    assert info["rehearsal"] is True, (
+        "a double-driven session must disclose its rehearsal on host_info"
+    )
     asyncio.run(seam.call("device_connect", {"device_id": seam.session.device_id}))
     device = asyncio.run(
         seam.call("device_get", {"device_id": seam.session.device_id})
@@ -526,17 +533,22 @@ def test_metric_c1_seam_surfaces_report_ftdi_transport(
     asyncio.run(seam.session.close())
 
 
-def test_metric_c2_banner_is_the_live_shape(
+def test_metric_c2_the_rehearsal_banner_discloses_the_scripted_double(
     tmp_path: Path, journal
 ) -> None:
-    """C2: the mode banner over the ftdi seam renders the LIVE shape —
-    the three standalone truths, no ``simulated`` row, no replay row —
-    string-pinned against the presentation literals, through the real
-    page-rendering path (web.py classifies by exclusion: ftdi is neither
-    mock nor replay)."""
+    """C2, inverted by the acceptance review's A: a session over the
+    scripted double must NOT render the plain LIVE banner — the old pin
+    held the laundering as correct. The rehearsal banner carries the
+    three standalone truths plus the rehearsal row; it is not the mock's
+    simulation row and not the replay row; and it is distinct from the
+    live shape (which carries neither)."""
     from fastapi.testclient import TestClient
 
-    from benchweave_sdk_server.presentation import REPLAY_MODE_WORDING
+    from benchweave_sdk_server.presentation import (
+        REHEARSAL_MODE_WORDING,
+        REPLAY_MODE_WORDING,
+        mode_banner_html,
+    )
     from benchweave_sdk_server.security import GuardPolicy, new_token
     from benchweave_sdk_server.web import build_app
 
@@ -548,6 +560,7 @@ def test_metric_c2_banner_is_the_live_shape(
         bearer_token=new_token(),
         csrf_token=new_token(),
     )
+    live = mode_banner_html(simulated=False)
     with TestClient(
         build_app(seam, policy=policy), base_url="http://127.0.0.1:8477"
     ) as client:
@@ -562,9 +575,13 @@ def test_metric_c2_banner_is_the_live_shape(
                 "NO POLICY ENGINE · POLICY CHECKS UNAVAILABLE",
             ):
                 assert wording in body, (page, wording)
+            assert REHEARSAL_MODE_WORDING in body, (
+                "the rehearsal row discloses the scripted double"
+            )
             assert "SIMULATED PRESENTATION DATA" not in body, page
             assert REPLAY_MODE_WORDING not in body, page
             assert 'data-bw-mode="simulated"' not in body, page
+            assert body != live, "the rehearsal banner is not the live shape"
 
 
 def test_metric_c3_sidecar_names_transport_and_contract_digest(
@@ -593,6 +610,7 @@ def test_metric_c3_sidecar_names_transport_and_contract_digest(
         max_frame_bytes=4096,
         capture_root=tmp_path / "caps",
         limits=contract.limits,
+        rehearsal=True,  # over the scripted double, declared (A)
     )
 
     async def run() -> None:
@@ -619,6 +637,10 @@ def test_metric_c3_sidecar_names_transport_and_contract_digest(
     sidecar = json.loads(sidecars[0].read_text())
     config = sidecar["config"]
     assert config["transport"] == "ftdi"
+    # The acceptance review's A: the durable evidence names the rehearsal
+    # too — a capture over the scripted double must never read as a live
+    # hardware capture (replay's replay_journal block is the precedent).
+    assert config["rehearsal"] == {"driver": "scripted"}
     pinned = json.loads(
         (FIXTURE_ROOT / "src" / "ftdi_control_demo" / "ftdi-control-provider.json").read_text()
     )

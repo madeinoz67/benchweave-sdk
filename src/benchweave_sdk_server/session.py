@@ -788,6 +788,13 @@ class PluginSession:
         # object, so link events ride the seam bus. None = no publisher;
         # the services publish nothing.
         self.link_event_publisher: Callable[[dict[str, Any]], None] | None = None
+        # The rehearsal marker (issue #568, the acceptance review's A):
+        # set by session factories whose transport supports driver
+        # injection when an injected driver is in use — the session then
+        # runs a scripted double, not live hardware, and every surface
+        # that speaks its transport kind must disclose that. Factories
+        # without an injection axis leave it False (live).
+        self.rehearsal: bool = False
 
     @property
     def plugin(self) -> LoadedPlugin:

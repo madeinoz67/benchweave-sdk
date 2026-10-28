@@ -323,6 +323,15 @@ class StandaloneSeam:
         return self._transport_kind
 
     @property
+    def rehearsal(self) -> bool:
+        """Whether this session runs over a scripted double rather than
+        live hardware (the acceptance review's A): set by the session
+        factories that support injection (the ftdi factory marks it from
+        its driver_factory); absent means live. The mode banner and every
+        state surface read it — a rehearsal must never read as a device."""
+        return bool(getattr(self._session, "rehearsal", False))
+
+    @property
     def presentation(self) -> HostPresentation:
         """The host presentation model (built once, seam-owned)."""
         return self._presentation
@@ -492,6 +501,9 @@ class StandaloneSeam:
                 "descriptor_sha256": plugin.descriptor_sha256,
             },
             "transport": self._transport_kind,
+            # The acceptance review's A: a session over a scripted double
+            # discloses it on the state surface beside transport.
+            "rehearsal": self.rehearsal,
             "sdk_version": sdk_version(),
             "link": self._link_state(),
             "presentation": {

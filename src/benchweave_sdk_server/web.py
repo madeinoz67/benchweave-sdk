@@ -704,7 +704,14 @@ def _add_html_routes(
     # the replay disclosure row instead of the mock's (issue #564, C2) — a
     # page served over a recorded journal must never read as live hardware.
     replaying = seam.transport_kind == "replay"
-    mode_banner = Markup(mode_banner_html(simulated=simulated, replay=replaying))
+    # A session over the shipped scripted double carries its own row (the
+    # acceptance review's A) — a rehearsal must never read as a device.
+    rehearsing = seam.rehearsal
+    mode_banner = Markup(
+        mode_banner_html(
+            simulated=simulated, replay=replaying, rehearsal=rehearsing
+        )
+    )
 
     def _operator_valid(request: Request) -> bool:
         """Whether the request presented the per-launch operator action

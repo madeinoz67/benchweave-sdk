@@ -633,9 +633,18 @@ test:
   proves the import-and-refuse path, not device behavior.
 
 **Metric C — the honesty arms (all must pass; 7).**
-- C1: every seam state surface reports `transport: "ftdi"`;
-- C2: the mode banner renders the LIVE shape — no `simulated` row, no replay
-  row — string-pinned against `presentation.py`'s fixture literals;
+- C1: every seam state surface reports `transport: "ftdi"` **and the
+  rehearsal marker when the session runs over the shipped scripted
+  double** (corrected by the acceptance review's A, 2026-10-28: C1 was
+  written from the double's perspective and forgot that a rehearsal must
+  be disclosed — the old arm held the laundering as correct);
+- C2: the mode banner carries its shape's own disclosure row — the live
+  shape (no `simulated`, no replay, no rehearsal row) only for LIVE
+  hardware sessions; a double-driven session renders the REHEARSAL row
+  and is distinct from the live shape — string-pinned against
+  `presentation.py`'s fixture literals **and four-way distinct with the
+  mock and replay shapes** (corrected by the same review: the old arm
+  asserted the rehearsal banner WAS the live shape, which was the bug);
 - C3: the capture sidecar carries `config.transport = "ftdi"` and the
   provider digest;
 - C4: `--transport ftdi` without `--device` refuses typed exit 2; `--replay`
