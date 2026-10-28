@@ -116,7 +116,7 @@ class CaptureServices(HostServices, Protocol):
 
     First partial implementation:
     :class:`benchweave_sdk.capture.StandaloneCaptureWriter` implements the
-    three capture methods of this eight-member protocol over a filesystem
+    three artifact methods of this ten-member protocol over a filesystem
     backend (one capture in flight per instance) for hostless development
     and bench testing; the gateway's capture path is a separate
     implementation of the same three methods over its store. The writer is

@@ -445,6 +445,11 @@ def adopt_project(
                 "with the SDK version that scaffolded this project"
             )
     with_ui = (project / "UI-GUIDE.md").is_file()
+    # The provider variant is distinguishable by its pinned contract (issue
+    # #568 row f): a provider-transport project carries the banked contract
+    # beside the descriptor; the serial-stream default does not. Adoption
+    # infers the shape from the tree, exactly as it infers with_ui.
+    provider_transport = (project / "src" / name / "ftdi-control-provider.json").is_file()
     # Byte-exact write (Windows text mode would CRLF-ify and diverge from
     # what `new` writes on every other platform).
     answers.write_bytes(
@@ -454,6 +459,7 @@ def adopt_project(
             f"_src_path: {CANONICAL_TEMPLATE_URL}\n"
             f"otdp_version: {active_version('otdp')}\n"
             f"package_name: {name}\n"
+            f"provider_transport: {'true' if provider_transport else 'false'}\n"
             f"sdk_version: {version}\n"
             f"with_ui: {'true' if with_ui else 'false'}\n"
         ).encode()

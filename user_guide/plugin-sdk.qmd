@@ -651,7 +651,7 @@ class BenchContext:
 
 
 class SerialStandaloneHost:
-    """All eight CaptureServices members over one serial port, without a gateway.
+    """All ten CaptureServices members over one serial port, without a gateway.
 
     ``port`` is anything with pyserial's ``write(bytes)``, ``read(size) -> bytes``
     (returning early on the port's own short timeout, which bounds how quickly a
@@ -668,6 +668,7 @@ class SerialStandaloneHost:
         self._quiet_s = quiet_s
         self._pending = bytearray()  # read from the port, not yet returned
         self._closed = False
+        self._capture_bytes: dict[str, int] = {}
         self.evidence: list[dict[str, Any]] = []
 
     # clocks
@@ -763,8 +764,18 @@ class SerialStandaloneHost:
                 stream.write(json.dumps(record, sort_keys=True) + "\n")
 
     # capture: the SDK's standalone writer
+    def configure_capture(self, capture_id: str, *, metadata: dict[str, Any],
+                          max_bytes: int | None = None) -> None:
+        """Arm one capture's configuration (the host lifecycle's call)."""
+        self._capture_bytes.setdefault(capture_id, 0)
+
+    def capture_progress(self, capture_id: str) -> int:
+        """The bytes this host handed the writer (zero for an unknown id)."""
+        return self._capture_bytes.get(capture_id, 0)
+
     async def artifact_append(self, capture_id: str, data: bytes, context: Any) -> None:
         await self._writer.artifact_append(capture_id, data, context)
+        self._capture_bytes[capture_id] = self._capture_bytes.get(capture_id, 0) + len(data)
 
     async def artifact_finalise(self, capture_id: str, metadata: dict[str, Any],
                                 context: Any) -> dict[str, Any]:

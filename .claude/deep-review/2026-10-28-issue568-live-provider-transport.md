@@ -493,17 +493,35 @@ at which point the issue's first acceptance bullet closes on that evidence.
 
 ## 7. Deferrals — one follow-on issue, the rest rows (per the 2026-10-28 ruling)
 
-**The one follow-on issue, filed at PR-open time (at most one per PR):**
+**Amended again 2026-10-28 by owner directive (no deferrals for what this
+repo can build): three of the rows below LANDED in this slice and are
+recorded here as landed; four structural rows remain, each because it
+cannot be built in this repository.**
 
-- **Capture-services declaration** — `interfaces.py`: declare the capture
-  lifecycle members (`configure_capture`, `capture_progress`) on
-  `CaptureServices` beside the artifact members, and a named typed refusal
-  when a connected transport's services lack any member the seam
-  duck-checks today (`seam.py:1737-1748`'s anonymous `unavailable` becomes
-  a prefixed refusal). Verified separable from this slice (§1.5): the ftdi
-  transport inherits all three members and passes the check unchanged.
-  Reopen trigger: this slice's PR opens the issue; it does not gate the
-  merge.
+**Landed in this slice (owner directive, 2026-10-28):**
+
+- **Capture-services declaration** (was the one follow-on issue): the
+  capture lifecycle members (`configure_capture`, `capture_progress`) are
+  declared on `CaptureServices` beside the artifact members
+  (`interfaces.py`), keeping the runtime duck-check as the backstop — a
+  plugin author composing services reads the demand off the Protocol
+  instead of discovering it at capture start. The original follow-on's
+  second half (a prefixed refusal replacing the duck-check's anonymous
+  `unavailable`) did not land: the owner's instruction kept the
+  duck-check as the backstop, and no transport ships that needs the
+  typed refusal.
+- **Row b — live journal recording**: `serve --transport ftdi --record
+  <path>` emits a #564-format journal at session close (completed
+  exchanges as rows, timed-out receives as `recorded_failure: "timeout"`,
+  refused transactions recording nothing), and the emitted journal
+  validates through the replay loader and replays the same conversation —
+  a bench session produces replay evidence directly.
+- **Row f — the scaffold provider variant**: `benchweave-sdk new
+  --provider-transport` renders the provider shape (the banked contract
+  pinned byte-exactly inside the package, provider-shaped builders and
+  adapter, no `vectors.json`), with the row's carried question answered
+  by §3: no third vectors dialect — the rehearsal is the shipped driver
+  double, and the generated suite carries that rehearsal.
 
 **Deferral rows (carrier = this record's table, no issue filed; each names
 its reopen trigger):**
@@ -511,11 +529,9 @@ its reopen trigger):**
 | Row | Deferred | Reopen trigger |
 |---|---|---|
 | a | FTDI discovery + binding-store integration (the #385 endpoint model for USB URLs; scan/pick/bind UI arms) | the first bench with more than one FTDI device to pick from |
-| b | Live journal recording (`--record` emitting a #564-format journal from a live session) — the recording helper the falsification session wants | the next falsification session, or the live-device closure run (§6), whichever comes first |
-| c | The contract's `native_libraries` naming (pyftdi/libftdi with exact versions — a 1.1.0 contract revision; the schema treats host_requirements as review surface, not runtime gate, so this is disclosure, not enforcement) | the first commissioned bring-up review |
+| c | The contract's `native_libraries` naming (pyftdi/libftdi with exact versions — a 1.1.0 contract revision; the schema treats host_requirements as review surface, not runtime gate, so this is disclosure, not enforcement) — a plugin-tree governance pass on the contract bytes, not this repository | the first commissioned bring-up review |
 | d | The gateway commissioned provider runtime (executor + grant seam, gateway-side) | unchanged from the #562 design's deferral 2 — gateway-side design of its own |
 | e | A provider-agnostic executor registry (non-FTDI provider families on one transport) | the second provider family in existence |
-| f | The scaffold variant for a custom transport (`new` emits serial-stream only — verified: `src/benchweave_sdk/cli.py:66-71` carries no transport variant, `copier.yml` no knob), and with it the question whether mock rehearsal of provider kinds grows a third vectors dialect instead of the driver-boundary double | the second plugin authored FROM the scaffold that declares a provider pin |
 | g | MPSSE / multi-interface FTDI shapes beyond interface A of the FT232 class | a plugin whose device needs it names the URL shape |
 | h | Serial-link control (baud renegotiation via `reconfigure_link`) on the ftdi transport — not wanted: `set_baud` is a provider transaction here; the not-configured refusal is the correct permanent posture | a plugin that needs a mid-session line reset outside the contract's ops |
 

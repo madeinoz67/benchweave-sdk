@@ -125,8 +125,18 @@ def test_provider_transport_scaffold_rehearses_on_the_double(tmp_path: Path) -> 
 
     destination = tmp_path / "prov"
     create_project(destination, "example_plugin", provider_transport=True)
+    # Evict any example_plugin cached from ANOTHER project's src (the
+    # starter-project fixtures use the same package name): the import must
+    # resolve THIS project's provider-shaped bytes, never a cached twin.
+    for name in [m for m in sys.modules if m.startswith("example_plugin")]:
+        del sys.modules[name]
     sys.path.insert(0, str(destination / "src"))
-    import example_plugin.protocol as proto
+    try:
+        import example_plugin.protocol as proto
+    finally:
+        sys.path.remove(str(destination / "src"))
+        for name in [m for m in sys.modules if m.startswith("example_plugin")]:
+            del sys.modules[name]
 
     from benchweave_sdk_server.ftdi import ScriptedFtdiDriver, ftdi_plugin_session
     from benchweave_sdk_server.session import load_plugin_project
