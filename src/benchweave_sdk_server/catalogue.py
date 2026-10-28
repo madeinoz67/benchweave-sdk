@@ -99,6 +99,11 @@ _HOST_INFO_RESULT = _object(
             "additionalProperties": False,
         },
         "transport": {"type": "string"},
+        # The rehearsal disclosure (issue #568, acceptance A): true when
+        # the session runs over a scripted double rather than live
+        # hardware — a rehearsal must never read as a device on this
+        # surface either.
+        "rehearsal": {"type": "boolean"},
         "sdk_version": {"type": "string"},
         "link": _LINK_BLOCK,
         "presentation": {
@@ -125,7 +130,7 @@ _HOST_INFO_RESULT = _object(
         },
     },
     ["mode", "absent_guarantees", "served_operations", "deferred_operations",
-     "plugin", "transport", "sdk_version", "link", "presentation"],
+     "plugin", "transport", "rehearsal", "sdk_version", "link", "presentation"],
 )
 
 _DEVICE_SUMMARY = {
