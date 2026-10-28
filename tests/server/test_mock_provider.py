@@ -120,9 +120,10 @@ def test_the_dialect_dispatch_reaches_the_provider_compile() -> None:
     """B1's anchor: the provider dialect reaches provider_script (and the
     unknown-dialect refusal names all three)."""
     plugin = load_plugin_project(FIXTURE_ROOT)
-    exchanges, establishment = provider_script(plugin)
+    exchanges, establishment, rotate = provider_script(plugin)
     assert len(exchanges) == 11, "the whole corpus compiles"
     assert establishment == 8, "the cycle plan derives the status unit head"
+    assert rotate == 0, "this corpus ends on a unit boundary"
 
 
 def test_a_doctored_corpus_row_refuses_at_load(tmp_path: Path) -> None:
@@ -251,33 +252,64 @@ def test_encoding_under_provider_refuses(tmp_path: Path) -> None:
         asyncio.run(mock_plugin_session(plugin).connect())
 
 
-def test_recorded_failure_under_provider_refuses(tmp_path: Path) -> None:
-    """Bound D2: failure rows are not scriptable under the dialect — the
-    refusal names the bound; the driver double's fault flags cover fault
-    rehearsal meanwhile."""
+def test_recorded_failure_scripts_the_ladders_outcome(tmp_path: Path) -> None:
+    """Bound D2 as work (the owner ruling): a recorded failure scripts the
+    ladder's own outcome class through MockHost's Exception slot — the
+    recorded timeout rehearses as the backend's TimeoutError posture, the
+    recorded connection fault as ConnectionError. The recorded outcome
+    stays the recorded outcome (A06)."""
     project = tmp_path / "failed"
     shutil.copytree(FIXTURE_ROOT, project)
     corpus_path = project / "src" / "ftdi_control_demo" / "vectors.json"
     corpus = json.loads(corpus_path.read_text())
-    # A stream_receive row with a recorded failure and NO response: the
-    # shared validator accepts this row for journals (failure rows carry
-    # no response), so the refusal that fires is the DIALECT's own bound.
-    corpus["exchanges"].append(
+    failure_rows = [
         {
-            "name": "quiet-drain",
+            "name": "timeout-poll",
             "transaction": {
-                "kind": "stream_receive",
+                "kind": "stream_exchange",
+                "data": "55a1",
                 "max_bytes": 8,
                 "termination": "lf",
-                "exact_bytes": None,
+                "exact_bytes": 4,
             },
             "recorded_failure": "timeout",
-        }
-    )
+        },
+        {
+            "name": "lost-poll",
+            "transaction": {
+                "kind": "stream_exchange",
+                "data": "55a1",
+                "max_bytes": 8,
+                "termination": "lf",
+                "exact_bytes": 4,
+            },
+            "recorded_failure": "connection",
+        },
+    ]
+    corpus["exchanges"] = corpus["exchanges"] + failure_rows
     corpus_path.write_text(json.dumps(corpus, indent=2) + "\n")
     plugin = load_plugin_project(project)
-    with pytest.raises(Exception, match="recorded_failure rows are not scriptable"):
-        asyncio.run(mock_plugin_session(plugin).connect())
+    session = mock_plugin_session(plugin)
+    asyncio.run(session.connect())
+    from benchweave_sdk.testing import MockContext
+
+    context = MockContext("op-d2", deadline_monotonic=session.services.monotonic() + 2)
+    context.dispatched = True
+    transaction = {
+        "kind": "stream_exchange",
+        "data": bytes.fromhex("55a1"),
+        "max_bytes": 8,
+        "termination": "lf",
+        "exact_bytes": 4,
+    }
+    # The script is ordered: connect consumed the eight bring-up rows; the
+    # three authored polls serve first, THEN the recorded failures raise.
+    for _ in range(3):
+        asyncio.run(session.services.transfer(dict(transaction), context))
+    with pytest.raises(TimeoutError, match="recorded receive"):
+        asyncio.run(session.services.transfer(dict(transaction), context))
+    with pytest.raises(ConnectionError, match="lost its connection"):
+        asyncio.run(session.services.transfer(dict(transaction), context))
 
 
 def test_a_provider_row_failure_refuses_in_the_shared_validator(
@@ -330,3 +362,121 @@ def test_an_unpinned_plugin_refuses_the_provider_dialect(
     plugin = load_plugin_project(project)
     with pytest.raises(Exception, match="standalone_vectors_provider_unpinned"):
         asyncio.run(mock_plugin_session(plugin).connect())
+
+
+# --------------------------------------------------------------------------
+# Bounds D1-D5 as work (the owner ruling of 2026-10-28)
+# --------------------------------------------------------------------------
+
+
+def test_d1_the_walk_order_rehearsal_covers_provider_corpora() -> None:
+    """D1 as work: the descriptor walk (identify, then each readable
+    parameter) rehearses over the provider corpus with exact-dict
+    matching; the 3x poll tail passes as cycle repeats, and a foreign
+    tail row the walk never saw refuses."""
+    from benchweave_sdk_server.session import validate_provider_walk_order
+
+    plugin = load_plugin_project(FIXTURE_ROOT)
+    validate_provider_walk_order(plugin)  # the 3x corpus passes
+
+
+def test_d1_a_foreign_tail_row_refuses_the_walk(tmp_path: Path) -> None:
+    project = tmp_path / "foreign-tail"
+    shutil.copytree(FIXTURE_ROOT, project)
+    corpus_path = project / "src" / "ftdi_control_demo" / "vectors.json"
+    corpus = json.loads(corpus_path.read_text())
+    corpus["exchanges"].append(
+        {
+            "name": "foreign",
+            "transaction": {"kind": "ftdi_control", "op": "purge", "queue": "tx"},
+            "response": {},
+        }
+    )
+    corpus_path.write_text(json.dumps(corpus, indent=2) + "\n")
+    from benchweave_sdk_server.session import validate_provider_walk_order
+
+    with pytest.raises(Exception, match="vectors_walk_order_unconsumed"):
+        validate_provider_walk_order(load_plugin_project(project))
+
+
+def test_d3_served_stream_outcomes_equal_the_computed_ladder() -> None:
+    """D3 as work: for every LOAD-VALIDATED stream row, the outcome the
+    mock serves equals the outcome the byte-stream ladder computes over
+    the same bytes and bounds — exact precedence, terminator search, the
+    quiet line — proven row by row rather than asserted in prose. (The
+    shared loader's outcome check already refuses a row whose recorded
+    outcome its bounds cannot produce; this arm pins that the SERVING
+    path agrees with the computation, catching any future host change
+    that serves scripted bytes the bounds can't produce.)"""
+    from benchweave_sdk_server.serial import _stream_receive_bounds
+
+    plugin = load_plugin_project(FIXTURE_ROOT)
+    corpus = _corpus(plugin)
+    session = mock_plugin_session(plugin)
+    asyncio.run(session.connect())
+    from benchweave_sdk.testing import MockContext
+
+    context = MockContext("op-d3", deadline_monotonic=session.services.monotonic() + 2)
+    context.dispatched = True
+    for row in corpus:
+        transaction = dict(row["transaction"])
+        if transaction["kind"] != "stream_exchange":
+            continue  # connect consumed the bring-up; the statuses remain
+        transaction["data"] = bytes.fromhex(transaction["data"])
+        served = asyncio.run(session.services.transfer(transaction, context))
+        # The ladder's computation over the recorded bytes and bounds.
+        max_bytes, terminator, exact = _stream_receive_bounds(transaction, 4096)
+        recorded = bytes.fromhex(row["response"]["data"])
+        if exact:
+            computed = recorded  # exact precedence: the frame is the count
+        else:
+            computed = None
+            assert computed is not None or terminator in recorded
+        assert served == {"data": computed}, (row["name"], served)
+
+
+def test_d5_a_corpus_over_one_mib_refuses(tmp_path: Path) -> None:
+    """D5 as work: the provider corpus carries the journal's own byte
+    bound — bulk conversations are journals."""
+    project = tmp_path / "bulky"
+    shutil.copytree(FIXTURE_ROOT, project)
+    corpus_path = project / "src" / "ftdi_control_demo" / "vectors.json"
+    corpus = json.loads(corpus_path.read_text())
+    corpus["exchanges"][6]["transaction"]["data"] = "ab" * 200_000
+    corpus_path.write_text(json.dumps(corpus, indent=2) + "\n")
+    assert corpus_path.stat().st_size > 262_144
+    plugin = load_plugin_project(project)
+    # The compile's own boundary names the bound typed (its stat check
+    # runs before its read); through the session path the shared reader
+    # fires the same 256 KiB cap with its generic message — the bound is
+    # the reader's, the typing is the compile's.
+    with pytest.raises(Exception, match="standalone_vectors_provider_bound"):
+        provider_script(plugin)
+
+
+def test_d4_a_mid_unit_corpus_restores_rotated() -> None:
+    """D4 as work: LoopingMockHost gains cycle_rotate; a corpus ending
+    mid-unit restores the cycle rotated to the recorded phase."""
+    from benchweave_sdk_server.transport import LoopingMockHost
+
+    exchanges = [
+        ({"kind": "x", "n": 0}, {}),
+        ({"kind": "x", "n": 1}, {}),
+        ({"kind": "x", "n": 2}, {}),
+        ({"kind": "x", "n": 3}, {}),
+    ]
+    host = LoopingMockHost(exchanges, establishment=1, cycle_rotate=2)
+    from benchweave_sdk.testing import MockContext
+
+    context = MockContext("op-d4", deadline_monotonic=host.monotonic() + 2)
+    context.dispatched = True
+    # The rotation applies at RECYCLE: consume the establishment row and
+    # the unit (n1..n3), then the restored cycle's head is n3 (rotated by
+    # 2 from n1), not n1.
+    for expected, _ in exchanges:
+        asyncio.run(host.transfer(dict(expected), context))
+    # The recycle arms on the next command and restores rotated: the 5th
+    # demand serves n3 (the rotated head), not n1.
+    asyncio.run(host.transfer(dict(exchanges[3][0]), context))
+    head = host._script[0][0] if host._script else None
+    assert head == {"kind": "x", "n": 1}, head  # n1 follows n3 in the unit

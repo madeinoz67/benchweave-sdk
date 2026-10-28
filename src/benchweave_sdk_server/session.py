@@ -40,7 +40,7 @@ import shutil
 import sys
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -483,7 +483,7 @@ def _cycle_plan(rows: list[FrameRow]) -> tuple[int, list[FrameRow], int]:
 
 def provider_script(
     plugin: LoadedPlugin,
-) -> tuple[list[tuple[dict[str, Any], dict[str, Any] | Exception]], int]:
+) -> tuple[list[tuple[dict[str, Any], dict[str, Any] | Exception]], int, int]:
     """Compile the provider dialect's vectors.json into MockHost exchanges
     (issue #570): each journal-shaped row becomes one exact-dict exchange —
     provider rows ``(row.expected, row.result)``, stream rows
@@ -511,6 +511,21 @@ def provider_script(
     from .replay import _grammar, _load_row, _replay_cycle_plan
 
     path = plugin.package_dir / "vectors.json"
+    # Bound D5: the corpus byte bound. The SDK's shared bounded reader
+    # caps every vectors.json at 256 KiB (INPUT_BYTE_LIMIT) before any
+    # dialect parse; this typed refusal names that bound for the provider
+    # dialect rather than letting the reader's generic error surface —
+    # bulk conversations are journals (1 MiB with digest-row compaction).
+    from benchweave_sdk.presentation import INPUT_BYTE_LIMIT
+
+    size = path.stat().st_size
+    if size > INPUT_BYTE_LIMIT:
+        raise PluginLoadError(
+            f"standalone_vectors_provider_bound: the corpus is {size} bytes, "
+            f"over the {INPUT_BYTE_LIMIT}-byte bounded-read cap; record a "
+            "journal for bulk conversations (its digest rows carry bulk "
+            "sends compactly)"
+        )
     vectors = json.loads(read_file(path))
     if "encoding" in vectors:
         raise PluginLoadError(
@@ -537,14 +552,9 @@ def provider_script(
         raise PluginLoadError(
             "standalone_vectors_row_shape: the provider corpus carries no rows"
         )
-    for row in replay_rows:
-        if row.failure is not None:
-            raise PluginLoadError(
-                "standalone_vectors_row_shape: row "
-                f"{row.name}: recorded_failure rows are not scriptable under "
-                "the provider dialect (the design record's bound D2; the "
-                "driver double's fault flags cover fault rehearsal)"
-            )
+    # D2's provider-row face refuses in the shared validator itself (the
+    # journal format carries recorded_failure only on receive rows); the
+    # stream face is scripted below through MockHost's Exception slot.
     exchanges: list[tuple[dict[str, Any], dict[str, Any] | Exception]] = []
     for validated, raw in zip(replay_rows, raw_rows, strict=True):
         raw_transaction = raw.get("transaction", {})
@@ -569,9 +579,118 @@ def provider_script(
                     "standalone_vectors_row_shape: row "
                     f"{validated.name}: the stream data is not a hex byte string"
                 ) from exc
+        if validated.failure is not None:
+            # D2: a recorded failure scripts the ladder's own outcome class
+            # through MockHost's Exception slot — the recorded timeout
+            # rehearses as the backend's TimeoutError posture, the recorded
+            # connection fault as ConnectionError (A06: the recorded
+            # outcome stays the recorded outcome).
+            failure = (
+                ConnectionError(
+                    f"vectors row {validated.name}: the recorded exchange "
+                    "lost its connection after the send"
+                )
+                if validated.failure == "connection"
+                else TimeoutError(
+                    f"vectors row {validated.name}: the recorded receive "
+                    "expired at its deadline with no complete frame"
+                )
+            )
+            exchanges.append((expected, failure))
+            continue
         exchanges.append((expected, {"data": validated.response}))
-    establishment, _unit, _rotate = _replay_cycle_plan(replay_rows)
-    return exchanges, establishment
+    establishment, _unit, rotate = _replay_cycle_plan(replay_rows)
+    return exchanges, establishment, rotate
+
+
+class _ProviderWalkDouble:
+    """The exact-dict walk double for provider corpora (bound D1 as work):
+    demands are the compiled corpus exchanges in order, matched on the
+    whole transaction dict — MockHost's posture, driven by the walk runner.
+    Mismatch and exhaustion are walk verdicts, never silent passes."""
+
+    def __init__(
+        self,
+        exchanges: list[tuple[dict[str, Any], dict[str, Any] | Exception]],
+    ) -> None:
+        self._demands = list(exchanges)
+
+    def transfer(self, transaction: Mapping[str, Any], context: Any) -> dict[str, Any]:
+        from benchweave_sdk.vectors import _WalkVerdict
+
+        if not self._demands:
+            raise _WalkVerdict(
+                "vectors_walk_order_exhausted",
+                f"the corpus carries no row for {dict(transaction)!r}",
+            )
+        expected, response = self._demands.pop(0)
+        if dict(transaction) != expected:
+            raise _WalkVerdict(
+                "vectors_walk_order_mismatch",
+                f"corpus row expects {expected!r}, the adapter demands "
+                f"{dict(transaction)!r}",
+            )
+        if isinstance(response, Exception):
+            raise _WalkVerdict(
+                "vectors_walk_order_unwalkable",
+                f"corpus row is a recorded failure ({response}); the walk "
+                "rehearsal does not script failures",
+            )
+        return dict(response)
+
+    def leftover(self) -> list[dict[str, Any]]:
+        return [expected for expected, _ in self._demands]
+
+
+def validate_provider_walk_order(
+    plugin: LoadedPlugin, *, source: str = "vectors.json"
+) -> None:
+    """Rehearse the descriptor walk over a provider corpus (bound D1 as
+    work, the owner ruling of 2026-10-28): identify, then each readable
+    parameter in declaration order, driven over the compiled exchanges
+    with exact-dict matching. The refusal family is the shared
+    ``vectors_walk_order_*`` vocabulary — mismatch, exhaustion, rows the
+    walk never reaches, and the adapter refusing a step.
+    """
+    from benchweave_sdk.vectors import _run_walk_sync, _WalkVerdict
+
+    exchanges, _establishment, _rotate = provider_script(plugin)
+    double = _ProviderWalkDouble(exchanges)
+    descriptor = plugin.descriptor
+    create = plugin.adapter_factory
+    if create is None:
+        raise PluginLoadError(
+            "standalone_vectors_walk_order_unwalkable: the plugin has no "
+            "adapter factory to walk"
+        )
+    from typing import cast
+
+    try:
+        _run_walk_sync(create, descriptor, cast("Any", double))
+    except _WalkVerdict as verdict:
+        raise PluginLoadError(
+            f"{verdict.code}: {source}: {verdict.detail}"
+        ) from None
+    leftover = double.leftover()
+    if leftover:
+        # The cycle-repeat tolerance: the guide's own three-cycle rule
+        # authors the poll unit more times than the walk consumes, so a
+        # leftover row that REPEATS a transaction the walk already
+        # consumed (in unit order) is the corpus sustaining the derived
+        # cycle — not an ordering defect. A leftover the walk never saw
+        # at all is the refusal.
+        consumed = [dict(expected) for expected, _ in exchanges]
+        walk_prefix = consumed[: len(consumed) - len(leftover)]
+        every_leftover_repeats_a_walked_row = all(
+            row in walk_prefix for row in leftover
+        )
+        if not every_leftover_repeats_a_walked_row:
+            raise PluginLoadError(
+                f"vectors_walk_order_unconsumed: {source}: the walk the "
+                f"descriptor defines never reaches {leftover!r} — author "
+                "the corpus in walk order (identify, then each readable "
+                "parameter; extra rows must repeat the cycle unit)"
+            )
 
 
 def mock_transport_factory(
@@ -592,8 +711,10 @@ def mock_transport_factory(
 
     dialect = vectors_script(plugin).dialect
     if dialect == "provider":
-        exchanges, establishment = provider_script(plugin)
-        return lambda: LoopingMockHost(exchanges, establishment=establishment)
+        exchanges, establishment, rotate = provider_script(plugin)
+        return lambda: LoopingMockHost(
+            exchanges, establishment=establishment, cycle_rotate=rotate
+        )
     if dialect == "send_receive":
         settings = plugin.descriptor.get("transport", {}).get("settings", {})
         max_frame = transport_ceiling(settings)

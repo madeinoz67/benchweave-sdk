@@ -71,6 +71,20 @@ def test_bring_up_rehearses_on_the_mock():
     _asyncio.run(run())
 
 
+def test_vectors_walk_order_matches_the_descriptor_walk():
+    """The walk-order rehearsal (bound D1, built per the owner ruling):
+    identify, then each readable parameter in declaration order, driven
+    over the corpus with exact-dict matching — extra cycle repeats pass;
+    a foreign tail row refuses."""
+    from benchweave_sdk_server.session import (
+        load_plugin_project,
+        validate_provider_walk_order,
+    )
+
+    project = Path(__file__).resolve().parents[1]
+    validate_provider_walk_order(load_plugin_project(project))
+
+
 def test_vectors_evidence_claims_carry_recorded_bytes():
     """The anti-circularity invariant (issue #566): a vectors.json that
     claims hardware evidence must carry at least one hand-recorded

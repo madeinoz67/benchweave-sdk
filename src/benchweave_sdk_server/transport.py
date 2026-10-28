@@ -73,6 +73,7 @@ class LoopingMockHost(MockHost):
         *,
         cycles: int | None = None,
         establishment: int = 1,
+        cycle_rotate: int = 0,
     ) -> None:
         super().__init__(exchanges)
         if cycles is not None and cycles < 1:
@@ -92,6 +93,14 @@ class LoopingMockHost(MockHost):
             self._cycle = deque(original[establishment:])
         else:
             self._cycle = deque(original)
+        if cycle_rotate and self._cycle:
+            # Bound D4 (issue #570): a corpus that ends MID-UNIT restores
+            # rotated to the recorded phase, so the recycled unit continues
+            # where the recording stopped (the send_receive dialect's
+            # refinement, generalized to the provider dialect).
+            unit = list(self._cycle)
+            offset = cycle_rotate % len(unit)
+            self._cycle = deque(unit[offset:] + unit[:offset])
         self._cycles = cycles
         self._plays = 1
 
