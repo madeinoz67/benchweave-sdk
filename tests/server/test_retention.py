@@ -9,6 +9,11 @@ nothing, both pinned captures survive everywhere, and an unparseable
 ``started_at`` keeps its capture (deletion needs positive evidence). The
 rules document's every malformed shape refuses with the
 ``standalone_retention_rules_invalid:`` prefix (STD-4).
+
+Every age in the corpus is RELATIVE to the evaluator's clock: the corpus
+anchor pairs with the clock each test evaluates at (see ``_write_corpus``) —
+a fixed calendar anchor under a wall-clock evaluator is what rotted the
+CLI suite on 2026-10-26 (issue #575).
 """
 
 from __future__ import annotations
@@ -111,13 +116,28 @@ def _digest(capture_id: str) -> str:
     return f"{abs(hash(capture_id)) % 16**64:064x}"
 
 
-def _write_corpus(root: Path) -> dict[str, str]:
+def _write_corpus(root: Path, *, anchor: datetime | None = None) -> dict[str, str]:
     """Publish every corpus row as a real event directory (manifest plus
-    metadata — the files the library's rebuild reads); returns the digests."""
+    metadata — the files the library's rebuild reads); returns the digests.
+
+    ``started_at`` stamps are RELATIVE to ``anchor`` — the clock the test's
+    evaluator will read. The default is the wall clock (the CLI prune, the
+    scheduler loop and the captures page all evaluate at ``datetime.now``);
+    tests that evaluate at an explicit ``now=NOW`` pass ``anchor=NOW`` so the
+    pairing is stated at the call site, never accidental. A corpus stamped
+    from a clock the evaluator does not use is the #575 rot: the fixed
+    2026-10-06 anchor left the 10-day mcp row crossing the 30-day cutoff on
+    2026-10-26, 18 days after the last code change. The pairing is robust to
+    sub-day skew between anchor and evaluation — including a midnight
+    rollover — because every calendar-dependent margin in the corpus is
+    structural: the nearest rule boundary is 20 days (the 10-day row against
+    the 30-day cutoff) and the nearest ordering gap is 2 days (the 3-day and
+    5-day rows)."""
+    now = datetime.now(UTC) if anchor is None else anchor
     digests: dict[str, str] = {}
     for capture_id, surface, project, age, byte_length, pinned in CORPUS:
         started_at = (
-            (NOW - timedelta(days=age)).isoformat()
+            (now - timedelta(days=age)).isoformat()
             if age is not None
             else "not-a-date"
         )
@@ -240,7 +260,7 @@ def test_load_config_refuses_mangled_json(tmp_path: Path) -> None:
 
 def test_plan_matches_the_hand_computed_golden_set(tmp_path: Path) -> None:
     root = tmp_path / "captures"
-    _write_corpus(root)
+    _write_corpus(root, anchor=NOW)
     config = load_config(_rules_file(tmp_path))
     removals = plan(config.rules, _rows(root), now=NOW)
     assert [(m.capture_id, m.rule_id, m.bytes) for m in removals] == list(GOLDEN)
@@ -254,7 +274,7 @@ def test_plan_excludes_in_flight_captures(tmp_path: Path) -> None:
     them all and selects nothing, so lima falls to rule c (the attribution
     recomputes over the eligible set, it does not subtract)."""
     root = tmp_path / "captures"
-    _write_corpus(root)
+    _write_corpus(root, anchor=NOW)
     config = load_config(_rules_file(tmp_path))
     removals = plan(
         config.rules, _rows(root), now=NOW, in_flight_ids={"cap-golf"}
@@ -274,7 +294,7 @@ def test_a_poisoned_plan_including_the_in_flight_capture_is_not_the_plan(
     """The control's other half: a plan that DID include the armed capture
     fails the golden comparison — the assertion the RED arm leans on."""
     root = tmp_path / "captures"
-    _write_corpus(root)
+    _write_corpus(root, anchor=NOW)
     config = load_config(_rules_file(tmp_path))
     actual = plan(
         config.rules, _rows(root), now=NOW, in_flight_ids={"cap-golf"}
@@ -288,7 +308,7 @@ def test_plan_with_no_rules_keeps_everything(tmp_path: Path) -> None:
     (deletion needs a selecting rule — the shipped default is the ruled
     document, composed in effective_config, never a change here)."""
     root = tmp_path / "captures"
-    _write_corpus(root)
+    _write_corpus(root, anchor=NOW)
     assert plan((), _rows(root), now=NOW) == []
 
 
@@ -324,7 +344,7 @@ def test_the_ruled_defaults_plan_over_the_corpus(tmp_path: Path) -> None:
     unpinned mcp older than 30 d selected, the pinned mcp row and the
     10-day mcp row kept."""
     root = tmp_path / "captures"
-    _write_corpus(root)
+    _write_corpus(root, anchor=NOW)
     removals = plan(effective_config(None).rules, _rows(root), now=NOW)
     assert [(m.capture_id, m.rule_id, m.bytes) for m in removals] == [
         (capture_id, rule_id, byte_length)
@@ -356,7 +376,7 @@ def test_a_custom_document_is_additive_on_the_ruled_defaults(
     on top of the defaults' own selections (union, first-in-id-order
     attribution: a-ui-7d sorts before default-mcp-30d)."""
     root = tmp_path / "captures"
-    _write_corpus(root)
+    _write_corpus(root, anchor=NOW)
     custom = tmp_path / "custom-rules.json"
     custom.write_text(
         json.dumps({"rules": [{"id": "a-ui-7d", "source": "ui", "max_age_d": 7}]}),
@@ -381,7 +401,7 @@ def test_a_custom_rule_cannot_loosen_the_ruled_mcp_floor(
     Pinning stays the only keep-forever mechanism (the ruling's "unless
     pinned")."""
     root = tmp_path / "captures"
-    _write_corpus(root)
+    _write_corpus(root, anchor=NOW)
     custom = tmp_path / "custom-rules.json"
     custom.write_text(
         json.dumps({"rules": [{"id": "a-mcp-90d", "source": "mcp", "max_age_d": 90}]}),
@@ -450,7 +470,7 @@ def test_the_ruled_defaults_prune_through_the_seam_schedule(
     from test_capture_lifecycle import _host
 
     root = tmp_path / "captures"
-    _write_corpus(root)
+    _write_corpus(root, anchor=NOW)
     host = _host(tmp_path, mode="ok", retention=effective_config(None))
     payload = host.run_retention_once(now=NOW, clock=NOW.timestamp())
     assert payload == {
@@ -480,7 +500,7 @@ def test_the_ruled_defaults_prune_through_the_seam_schedule(
 
 def test_plan_is_deterministic_across_row_order(tmp_path: Path) -> None:
     root = tmp_path / "captures"
-    _write_corpus(root)
+    _write_corpus(root, anchor=NOW)
     config = load_config(_rules_file(tmp_path))
     rows = _rows(root)
     shuffled = list(reversed(rows))
@@ -975,7 +995,7 @@ def _scheduled_host(tmp_path: Path) -> Any:
     """A capture-capable host over the golden corpus with the rules armed."""
     from test_capture_lifecycle import _host
 
-    _write_corpus(tmp_path / "captures")
+    _write_corpus(tmp_path / "captures", anchor=NOW)
     config = load_config(_rules_file(tmp_path))
     return _host(tmp_path, mode="ok", retention=config)
 
@@ -1163,7 +1183,7 @@ def test_next_effects_label_every_corpus_row(tmp_path: Path) -> None:
     from benchweave_sdk_server.retention import next_effects
 
     root = tmp_path / "captures"
-    _write_corpus(root)
+    _write_corpus(root, anchor=NOW)
     config = load_config(_rules_file(tmp_path))
     effects = next_effects(config.rules, _rows(root), now=NOW)
     assert effects["cap-alpha"]["label"] == "prunable now by a-mcp-aging"
@@ -1187,7 +1207,7 @@ def test_next_effects_keep_everything_without_rules(tmp_path: Path) -> None:
     from benchweave_sdk_server.retention import next_effects
 
     root = tmp_path / "captures"
-    _write_corpus(root)
+    _write_corpus(root, anchor=NOW)
     effects = next_effects((), _rows(root), now=NOW)
     assert all(row["label"] == "kept" for row in effects.values())
 
@@ -1196,7 +1216,7 @@ def test_next_effects_keep_the_armed_capture(tmp_path: Path) -> None:
     from benchweave_sdk_server.retention import next_effects
 
     root = tmp_path / "captures"
-    _write_corpus(root)
+    _write_corpus(root, anchor=NOW)
     config = load_config(_rules_file(tmp_path))
     effects = next_effects(
         config.rules, _rows(root), now=NOW, in_flight_ids={"cap-golf"}
@@ -1556,7 +1576,7 @@ def test_a_mid_run_log_failure_keeps_prior_rows(tmp_path: Path) -> None:
     from test_capture_lifecycle import _host
 
     root = tmp_path / "captures"
-    _write_corpus(root)
+    _write_corpus(root, anchor=NOW)
     config = load_config(_rules_file(tmp_path))
     host = _host(tmp_path, mode="ok", retention=config)
     sink = _BudgetedSink(record, budget=2)
@@ -1661,7 +1681,7 @@ def test_a_rules_host_evaluation_arms_the_root_lock(tmp_path: Path) -> None:
     from test_capture_lifecycle import _host
 
     root = tmp_path / "captures"
-    _write_corpus(root)
+    _write_corpus(root, anchor=NOW)
     config = load_config(_rules_file(tmp_path))
     host = _host(tmp_path, mode="ok", retention=config)
     assert not (root / "library.lock").exists()
