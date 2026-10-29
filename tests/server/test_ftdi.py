@@ -1508,3 +1508,42 @@ def test_a_missing_backend_does_not_mask_a_contract_refusal(
     unpinned = load_plugin_project(starter_project)
     with pytest.raises(ValueError, match="live_provider_plugin_unpinned:"):
         verify_ftdi_plugin(unpinned)
+
+
+def test_the_stream_reply_wakes_the_reader_not_the_sleep_quantum(
+    tmp_path: Path, plugin, monkeypatch
+) -> None:
+    """The macOS CI failure (PR #221), reproduced deterministically and
+    pinned. The mechanism, proven by directed repro on this machine: the
+    read's stream reply sits in the driver's pipe the moment the write
+    returns, but the SerialLink reader thread delivers it into the ring on
+    its next poll — a poll that waits out the adapter's idle quantum when
+    the pipe was empty. take() answers the QUIET LINE after the 100ms
+    quiet window; the adapter then fails the decode and the fixture
+    adapter honestly maps the post-dispatch ValueError to status UNKNOWN.
+    The CI runner's slow suite (287s) delayed the reader's pickup past
+    the window; a loaded local run five times slower did NOT reproduce it
+    (the pickup normally lands within one 50ms quantum), so the margin —
+    the quiet window minus up to one idle quantum — is the dependence.
+
+    The fix removes the quantum from the delivery path: a full write
+    WAKES the reader (the reply-follows-request causality of this pipe),
+    so the delivery margin becomes the whole quiet window instead of the
+    window minus the quantum. This arm amplifies the quantum (5s) to
+    make the race deterministic: pre-fix the recorded read answers the
+    quiet line (status unknown); post-fix the wake delivers the reply
+    and the read is ok."""
+    import benchweave_sdk_server.ftdi as ftdi_module
+
+    monkeypatch.setattr(ftdi_module, "_IDLE_SLEEP_S", 5.0)
+    record_path = tmp_path / "recorded-journal.json"
+    driver = _double()
+    session = ftdi_plugin_session(
+        plugin,
+        _URL,
+        driver_factory=lambda url: driver,
+        record_path=record_path,
+    )
+    asyncio.run(session.connect())
+    read = asyncio.run(session.execute("read", {"parameter": "line_status"}))
+    assert read["status"] == "ok", read

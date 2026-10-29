@@ -60,7 +60,7 @@ import hashlib
 import json
 import logging
 import re
-import time
+import threading
 import uuid
 from collections import deque
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -511,17 +511,33 @@ class FtdiStreamAdapter:
         #: land on a later receive fault — a partial never claims to have
         #: gone out whole).
         self.completed = False
+        #: The reply-follows-request wake (the macOS CI failure's fix):
+        #: a full write sets this event, so the reader thread's pending
+        #: idle wait returns IMMEDIATELY instead of sleeping out its
+        #: quantum — the stream reply's delivery margin is the whole
+        #: quiet window, not the window minus the quantum. A missed wake
+        #: (set between the reader's clear and its next wait) costs one
+        #: quantum, exactly the pre-fix latency — the event widens the
+        #: margin, never narrows it. The reply-follows-request causality
+        #: holds for the real device too: the wake makes the reader poll
+        #: once more per write; a device with nothing yet in the pipe
+        #: answers empty and the reader parks again (no hot spin — one
+        #: immediate poll per write).
+        self._wake = threading.Event()
 
     def write(self, data: bytes) -> int | None:
         self.completed = False
         sent = self._driver.write_data(data)
         self.completed = sent == len(data)
+        if self.completed:
+            self._wake.set()
         return sent
 
     def read(self, size: int = 1) -> bytes:
         data = self._driver.read_data(size)
         if not data:
-            time.sleep(_IDLE_SLEEP_S)
+            self._wake.wait(_IDLE_SLEEP_S)
+            self._wake.clear()
         return data
 
     def close(self) -> None:
