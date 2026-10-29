@@ -150,14 +150,27 @@ def refusal_severity(code: str, adapter: Mapping[str, Any] | None) -> Severity:
 #: row joins the banner here rather than there.
 REPLAY_MODE_WORDING = "REPLAYED RECORDED EXCHANGES · NOT A LIVE DEVICE"
 
+#: The scripted-double disclosure row (the acceptance review's A): a
+#: session rehearsed over the shipped driver double is neither the mock's
+#: simulation nor replayed recordings nor live hardware — the banner must
+#: say which of the four it is, and a rehearsal must never read as a live
+#: device (A06's launder guard, the same posture as the replay row).
+#: Server-owned wording beside :data:`REPLAY_MODE_WORDING`; the row rides
+#: the SAME cast path (``ModeKey`` closes over the ui-html fixture set).
+REHEARSAL_MODE_WORDING = "SCRIPTED REHEARSAL · NOT A LIVE DEVICE"
 
-def mode_banner_entries(*, simulated: bool, replay: bool = False) -> ModeBannerData:
+
+def mode_banner_entries(
+    *, simulated: bool, replay: bool = False, rehearsal: bool = False
+) -> ModeBannerData:
     """The banner entries in §D.1's fixed order: the three standalone
     truths always, ``simulated`` iff the transport is the mock (#309-B's
-    rule carried onto the one contract component), and the replay
-    disclosure row iff the transport is replay — replay is not simulation,
-    so the two rows never appear together. The wordings are the package's
-    own §D.1 mode-row literals — import-compared, never copied."""
+    rule carried onto the one contract component), the replay disclosure
+    row iff the transport is replay, and the scripted-rehearsal row iff
+    the session runs over the shipped driver double (the acceptance
+    review's A) — each disclosure row is its own truth and they never
+    conflate. The wordings are the package's own §D.1 mode-row literals —
+    import-compared, never copied."""
     if simulated and replay:
         raise ValueError(
             "standalone_mode_banner: a transport is either simulated or "
@@ -168,20 +181,32 @@ def mode_banner_entries(*, simulated: bool, replay: bool = False) -> ModeBannerD
         for entry in MODES
         if entry.key != "simulated" or simulated
     )
+    # The cast crosses the vendored vocabulary boundary: ModeKey's
+    # Literal closes over the ui-html fixture set's four keys, and the
+    # pinned package cannot grow a fifth for a server-owned row — the
+    # renderer consumes key/wording generically, and these rows are
+    # deliberately versioned HERE (the wording constants' comments). The
+    # rehearsal row takes this SAME append path — never a third boolean
+    # on the simulated/replay axis.
     if replay:
-        # The cast crosses the vendored vocabulary boundary: ModeKey's
-        # Literal closes over the ui-html fixture set's four keys, and the
-        # pinned package cannot grow a fifth for a server-owned row — the
-        # renderer consumes key/wording generically, and this row is
-        # deliberately versioned HERE (the wording constant's comment).
         entries += (
             ModeEntry(key=cast("ModeKey", "replay"), wording=REPLAY_MODE_WORDING),
+        )
+    if rehearsal:
+        entries += (
+            ModeEntry(
+                key=cast("ModeKey", "rehearsal"), wording=REHEARSAL_MODE_WORDING
+            ),
         )
     return ModeBannerData(modes=entries)
 
 
-def mode_banner_html(*, simulated: bool, replay: bool = False) -> str:
-    return render_mode_banner(mode_banner_entries(simulated=simulated, replay=replay))
+def mode_banner_html(
+    *, simulated: bool, replay: bool = False, rehearsal: bool = False
+) -> str:
+    return render_mode_banner(
+        mode_banner_entries(simulated=simulated, replay=replay, rehearsal=rehearsal)
+    )
 
 
 # --- the reading tile ----------------------------------------------------------

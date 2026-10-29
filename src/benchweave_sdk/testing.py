@@ -129,6 +129,9 @@ class MockHost:
         self._time = start
         self._script = deque(deepcopy(exchanges))
         self.transfers: list[dict[str, Any]] = []
+        #: Whether a scripted exception has been served (M2's latch —
+        #: a faulted double stays faulted, the live ladder's posture).
+        self._faulted: bool = False
         self.evidence: list[dict[str, Any]] = []
         self.closed = False
 
@@ -210,6 +213,13 @@ class MockHost:
         self._check(context)
         if self.closed:
             raise ConnectionError("Transport closed")
+        if self._faulted:
+            # M2's latch: a faulted double stays faulted — the next
+            # transfer refuses, never serves past a served fault.
+            raise ConnectionError(
+                "mock transport faulted (a scripted exception was served); "
+                "a faulted transport stays faulted"
+            )
         if transaction.get("kind") not in ("stream_receive", "can_receive") and not getattr(
             context, "dispatched", False
         ):
@@ -222,6 +232,12 @@ class MockHost:
         self._script.popleft()
         self.transfers.append(deepcopy(transaction))
         if isinstance(response, Exception):
+            # A served fault LATCHES (the live ladder's posture, one
+            # boundary up): a faulted transport stays faulted, and a
+            # later transfer never serves as if the fault had not
+            # happened — the double must not accept what the live path
+            # refuses (M2, the mechanism refute).
+            self._faulted = True
             raise response
         return deepcopy(response)
 

@@ -67,14 +67,31 @@ def cli() -> None:
 @click.argument("directory", type=click.Path(path_type=Path))
 @click.option("--package", "package_name", default="example_plugin", show_default=True)
 @click.option("--with-ui", is_flag=True, help="Add optional read-only UI resources")
+@click.option(
+    "--provider-transport",
+    is_flag=True,
+    help=(
+        "Render the provider-transport variant: the custom transport with "
+        "the banked FTDI control contract pinned, provider-shaped builders "
+        "and adapter, and no vectors.json (rehearsal is the SDK's shipped "
+        "driver double, never a third vectors dialect)"
+    ),
+)
 @_domain_errors
-def new_command(directory: Path, package_name: str, with_ui: bool) -> None:
+def new_command(
+    directory: Path, package_name: str, with_ui: bool, provider_transport: bool
+) -> None:
     """Create a synthetic external plugin project."""
     # Resolve before the first write: `new --with-ui` reads the descriptor back
     # through the symlink-refusing walk, so a destination reached through a
     # symlinked ancestor must become its canonical path up front.
     destination = directory.expanduser().resolve()
-    create_project(destination, package_name, with_ui=with_ui)
+    create_project(
+        destination,
+        package_name,
+        with_ui=with_ui,
+        provider_transport=provider_transport,
+    )
     if with_ui:
         from .presentation import create_ui_resources
 

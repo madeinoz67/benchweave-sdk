@@ -86,9 +86,12 @@ def _receive(**fields: Any) -> dict[str, Any]:
     }
 
 
-def test_the_host_carries_all_eight_members_and_the_context_all_of_its_own() -> None:
+def test_the_host_carries_all_ten_members_and_the_context_all_of_its_own() -> None:
+    """Ten since issue #568 declared the capture lifecycle members on the
+    Protocol (configure_capture, capture_progress) — the guide's example
+    host implements them beside the artifact members."""
     assert _members(CaptureServices) <= set(dir(Host))
-    assert len(_members(CaptureServices)) == 8
+    assert len(_members(CaptureServices)) == 10
     instance = BenchContext("op", 1.0)
     assert _members(OperationContext) <= set(dir(instance))
     assert hasattr(instance, "operation_id") and hasattr(instance, "dataset_id")

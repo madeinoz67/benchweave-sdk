@@ -25,6 +25,21 @@
       ]
     }
   },
+{%- if provider_transport %}
+  "transport": {
+    "type": "custom",
+    "connection_key": "example_device",
+    "settings": {
+      "protocol_reference": "Synthetic FTDI common control bring-up; the grammar is the pinned provider contract"
+    },
+    "provider": {
+      "feature_id": "otdp.transport.ftdi-control/1.1.0",
+      "id": "urn:otdp:transport-provider:ftdi-control:1.1.0",
+      "path": "ftdi-control-provider.json",
+      "sha256": "b4b5a8ccad6d11a15f9383649a619d152423f873a01420ff0da30258b8a73f13"
+    }
+  },
+{%- else %}
   "transport": {
     "type": "serial",
     "connection_key": "example_device",
@@ -37,6 +52,7 @@
       "max_frame_bytes": 128
     }
   },
+{%- endif %}
   "capabilities": [
     "identify",
     "read"
@@ -57,6 +73,26 @@
       "completion": "acknowledged"
     }
   },
+{%- if provider_transport %}
+  "parameters": [
+    {
+      "name": "line_status",
+      "description": "Line status byte reported by the control surface",
+      "type": "int",
+      "access": "ro",
+      "semantic": "measurement",
+      "unit": "count",
+      "binding": {
+        "kind": "adapter",
+        "key": "line_status"
+      },
+      "read_policy": {
+        "max_age_ms": 0,
+        "destructive": false
+      }
+    }
+  ],
+{%- else %}
   "parameters": [
     {
       "name": "voltage",
@@ -75,9 +111,11 @@
       }
     }
   ],
+{%- endif %}
   "required_features": [
     "otdp.core/0.1.0",
-    "otdp.adapter/0.1.0"
+    "otdp.adapter/0.1.0"{% if provider_transport %},
+    "otdp.transport.ftdi-control/1.1.0"{% endif %}
   ],
   "provenance": {
     "sources": [
@@ -87,6 +125,15 @@
         "revision": "0.1.0"
       }
     ],
+{%- if provider_transport %}
+    "test_vectors": [
+      {
+        "id": "bring-up-rehearsal",
+        "path": "ftdi-control-provider.json",
+        "purpose": "Rehearsal scripts speak the pinned contract's grammar; record a journal on the bench with --record"
+      }
+    ]
+{%- else %}
     "test_vectors": [
       {
         "id": "example",
@@ -94,5 +141,6 @@
         "purpose": "Synthetic identify/read exchanges"
       }
     ]
+{%- endif %}
   }
 }

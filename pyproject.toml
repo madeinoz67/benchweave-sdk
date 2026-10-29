@@ -57,6 +57,12 @@ server = [
   # The serial provider backend (issue #285 I3a): pyserial rides the server
   # extra ONLY — the default install never gains it (PKG-1/2 hold).
   "pyserial>=3.5,<4",
+  # The live FTDI provider transport (issue #568): pyftdi rides the server
+  # extra beside pyserial, same posture. A bounded range, mirroring the
+  # pyserial shape rather than the corpus-twin exact pin — the upper bound
+  # is the API-drift fence; a patch release must not need a code change
+  # (maintainer ruling 1, 2026-10-28).
+  "pyftdi>=0.56,<1",
   # WS2: the folded authoring lane's plugin_new renders through the copier
   # template too (the standalone tree's benchweave-sdk[scaffold] dep, rebased).
   "copier>=9.18,<10",

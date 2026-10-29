@@ -602,10 +602,16 @@ def canonical_pin_answers(project: Path, version: str) -> None:
 
 
 def regenerate_fixtures(fixtures_root: Path, version: str) -> None:
-    """Render base and ui arms into fixtures_root (replacing it), then pin
-    the answers. The stage is a RESOLVED tempdir: the scaffold's path
-    validation rejects symlinked roots, and macOS /var is a symlink to
-    /private/var — tempfile.mkdtemp() then Path.resolve() is designed in."""
+    """Render the base, ui and provider arms into fixtures_root (replacing
+    it), then pin the answers. The stage is a RESOLVED tempdir: the
+    scaffold's path validation rejects symlinked roots, and macOS /var is
+    a symlink to /private/var — tempfile.mkdtemp() then Path.resolve() is
+    designed in. The provider arm (row f) does NOT receive
+    create_ui_resources — the regen's own discipline, not copier
+    enforcement: the conditional exclude governs only the contract file,
+    and create_project(with_ui=True, provider_transport=True) renders
+    without refusal. The shipped provider fixture is ui-less because the
+    tool keeps it that way."""
     from benchweave_sdk.presentation import create_ui_resources
     from benchweave_sdk.scaffold import create_project
 
@@ -614,7 +620,9 @@ def regenerate_fixtures(fixtures_root: Path, version: str) -> None:
         create_project(stage / "base", "example_plugin")
         create_project(stage / "ui", "example_plugin", with_ui=True)
         create_ui_resources(stage / "ui", "example_plugin")
-        for arm in ("base", "ui"):
+        create_project(stage / "provider", "example_plugin", provider_transport=True)
+        arms = tuple(sorted(p.name for p in stage.iterdir() if p.is_dir()))
+        for arm in arms:
             canonical_pin_answers(stage / arm, version)
             target = fixtures_root / arm
             if target.exists():
@@ -634,15 +642,65 @@ def _owner_name(repo: Path) -> str:
     return proc.stdout.strip()
 
 
+def _owner_identities(repo: Path) -> set[str]:
+    """Every author spelling that is the OPERATOR (release fold F6):
+    git config user.name, plus the GitHub handle derived from the origin
+    remote — web-committed work lands as ``<handle>`` or
+    ``<handle> <handle>@users.noreply.github.com`` in %an/%ae, and the
+    handle spelling is NOT the configured user.name, so the old
+    name-only exclusion named the operator as a human contributor. The
+    remote-derived handle also survives a fresh clone where user.name is
+    unset and the name exclusion is empty."""
+    identities = set()
+    name = _owner_name(repo)
+    if name:
+        identities.add(name)
+    # `remote get-url` is a read but not one of _git's read-only verb set;
+    # subprocess directly, the _owner_name precedent for non-listed verbs.
+    proc = subprocess.run(
+        ["git", "-C", str(repo), "remote", "get-url", "origin"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    url = proc.stdout.strip()
+    match = re.search(r"[:/]([^/:]+?)/[^/]+(?:\.git)?/?$", url)
+    if match:
+        handle = match.group(1)
+        identities.add(handle)
+        identities.add(f"{handle} <{handle}@users.noreply.github.com>")
+        identities.add(f"{handle}@users.noreply.github.com")
+    return identities
+
+
 def contributor_line(repo: Path, prev_tag: str) -> str:
     """The contributor-window row, computed: commit count + authors minus
-    the operator (git config user.name) and [bot] authors. Empty window is
-    a recorded result, never a skipped step."""
-    log = _git(repo, "log", f"{prev_tag}..HEAD", "--format=%an")
-    authors = sorted({line for line in log.splitlines() if line.strip()})
-    humans = [
-        a for a in authors if not BOT_RE.search(a) and a != _owner_name(repo)
-    ]
+    the operator's identities (git config user.name AND the origin
+    remote's GitHub handle — release fold F6: the handle spelling is the
+    operator too, and a fresh clone with no user.name keeps the handle
+    exclusion) and [bot] authors. Empty window is a recorded result,
+    never a skipped step."""
+    log = _git(repo, "log", f"{prev_tag}..HEAD", "--format=%an%x1f%ae")
+    identities = _owner_identities(repo)
+    noreply_handles = {
+        identity.split(" <", 1)[0]
+        for identity in identities
+        if "<" in identity
+    }
+    humans = []
+    for line in log.splitlines():
+        if not line.strip():
+            continue
+        author, _, email = line.partition("\x1f")
+        if BOT_RE.search(author) or author in identities or email in identities:
+            continue
+        if email.endswith("@users.noreply.github.com") and (
+            email.removesuffix("@users.noreply.github.com") in noreply_handles
+        ):
+            continue
+        if author not in humans:
+            humans.append(author)
+    humans = sorted(humans)
     total = len([line_ for line_ in log.splitlines() if line_.strip()])
     listed = ", ".join(humans) if humans else "none"
     return (
@@ -674,12 +732,28 @@ def served_set_line(repo: Path, prev_tag: str) -> str:
     )
 
 
+def standards_families(repo: Path) -> int:
+    """Row 5's badge count, DERIVED from the lock (release fold F5): the
+    number of distinct standards ids the lock carries. The hand-written
+    "six" rotted at v0.13.0 when the seventh family landed; a derived
+    count cannot rot again."""
+    lock = json.loads((repo / LOCK).read_text(encoding="utf-8"))
+    return len(
+        {
+            row["id"]
+            for row in lock["standards"]
+            if row.get("active", True)
+        }
+    )
+
+
 def matrix_scaffold(
     version: str,
     date: str,
     prev_tag: str,
     contributors: str,
     served_set: str,
+    families: int,
 ) -> str:
     """The result-record scaffold (row 8, derived): every row pre-filled —
     the walk CONFIRMS; it no longer discovers. No class verdict (D7)."""
@@ -700,8 +774,8 @@ def matrix_scaffold(
         "zero-literal gate battery's three anchors, #524) |\n"
         f"| 4 | Compatibility tagline | updated — SDK {version} against the "
         "main-repository floor by release-cut (occurrence-validated) |\n"
-        "| 5 | Standards badges | walk confirms — enumerate all six against the lock's "
-        "ACTIVE rows |\n"
+        f"| 5 | Standards badges | walk confirms — enumerate all {families} against "
+        "the lock's ACTIVE rows |\n"
         f"| 6 | great-docs.yml versions | PHASE-2 — the tag commit applies the staged "
         "patch (the ordering constraint) |\n"
         f"| 7 | Contributor window `{prev_tag}..HEAD` | {contributors} |\n"
@@ -808,6 +882,7 @@ def cmd_cut(repo: Path, version: str, *, force: bool) -> int:
             prev_tag=prev_tag,
             contributors=contributor_line(repo, prev_tag),
             served_set=served_set_line(repo, prev_tag),
+            families=standards_families(repo),
         )
         matrix_path = repo / MATRIX
         matrix_path.write_text(

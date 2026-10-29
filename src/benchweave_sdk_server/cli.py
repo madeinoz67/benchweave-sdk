@@ -145,11 +145,14 @@ def _build_seam(
     unattended: bool = False,
     device: str | None = None,
     open_port: Any = None,
+    driver_factory: Any = None,
+    driver_hooks: Any = None,
     capture_root: Any = None,
     bindings: Path | None = None,
     serial_hooks: Any = None,
     retention: Any | None = None,
     replay: Path | None = None,
+    record: Path | None = None,
 ) -> tuple[StandaloneSeam, ScenarioSelection | None]:
     """Compose the seam over one transport (§4.1's composition step).
 
@@ -229,19 +232,37 @@ def _build_seam(
             err=True,
         )
         raise SystemExit(2)
-    if device is not None and transport != "serial":
+    if device is not None and transport not in ("serial", "ftdi"):
+        # One flag one meaning (maintainer ruling 2, issue #568): --device
+        # names the constant endpoint of a LIVE transport — a port path on
+        # serial, an FTDI URL on ftdi. The guard row is AMENDED (the
+        # serial-only wording retired with the second live transport), not
+        # duplicated.
         click.echo(
-            "standalone_transport_device_serial_only: --device applies only to "
-            "--transport serial",
+            "standalone_transport_device_live_only: --device applies only to "
+            "a live transport (--transport serial or --transport ftdi)",
             err=True,
         )
         raise SystemExit(2)
-    if bindings is not None and transport != "serial":
-        # drift-2 (review fold): --bindings names the serial binding
-        # document; on any other transport it is not silently ignored.
+    if bindings is not None and transport not in ("serial", "ftdi"):
+        # drift-2 (review fold): --bindings names the live transports'
+        # binding document; on any other transport it is not silently
+        # ignored. Widened to ftdi by row a (issue #568).
         click.echo(
-            "standalone_transport_bindings_serial_only: --bindings applies only "
-            "to --transport serial",
+            "standalone_transport_bindings_live_only: --bindings applies only "
+            "to a live transport (--transport serial or --transport ftdi)",
+            err=True,
+        )
+        raise SystemExit(2)
+    if record is not None and transport != "ftdi":
+        # Row b (owner directive 2026-10-28): --record names the ftdi
+        # transport's live journal recording — meaningless on the mock,
+        # and the serial and replay transports do not serve provider
+        # kinds to record. One flag one meaning, the --device family.
+        click.echo(
+            "standalone_transport_record_ftdi_only: --record applies only to "
+            "--transport ftdi (it records the live provider session as a "
+            "replay journal)",
             err=True,
         )
         raise SystemExit(2)
@@ -328,6 +349,82 @@ def _build_seam(
             ),
             None,
         )
+    if transport == "ftdi":
+        from .binding import BindingStore, binding_endpoint, bindings_path
+        from .ftdi import (
+            FtdiDeviceHooks,
+            FtdiEndpoint,
+            default_ftdi_hooks,
+            ftdi_plugin_session,
+            verify_ftdi_plugin,
+        )
+
+        try:
+            # Fail fast (the journal precedent): the pin, the feature gate,
+            # the grammar probe and the pyftdi backend all verify BEFORE
+            # the seam exists — a refused plugin or a missing backend never
+            # binds a port.
+            verify_ftdi_plugin(plugin)
+        except (ValueError, RuntimeError) as exc:
+            click.echo(str(exc), err=True)
+            raise SystemExit(2) from exc
+        # The endpoint lifecycle (row a, the serial lane's shape one
+        # transport over): --device is the headless CONSTANT endpoint; a
+        # serve without it starts BINDING-PENDING over the same store, and
+        # the UI drives the scan-and-pick. The binding document is opened
+        # and validated HERE (a malformed document refuses construction).
+        try:
+            store = BindingStore.open(bindings_path(bindings))
+        except ValueError as exc:
+            click.echo(str(exc), err=True)
+            raise SystemExit(2) from exc
+        base_hooks = driver_hooks or default_ftdi_hooks()
+
+        def open_resolved(resolved_url: str) -> Any:
+            if driver_factory is not None:
+                return driver_factory(resolved_url)
+            return base_hooks.open_url(resolved_url)
+
+        effective_hooks = FtdiDeviceHooks(
+            enumerate_urls=base_hooks.enumerate_urls,
+            open_url=open_resolved,
+        )
+        if device:
+            # The --device form is the constant endpoint (the binding
+            # bypass): the store is loaded and validated but never
+            # consulted for resolution.
+            endpoint_any: Any = FtdiEndpoint(device)
+        else:
+            # F-385-2's shape: serve starts BINDING-PENDING — the refusal
+            # moved to connect time so the UI can render the pick.
+            endpoint_any = FtdiEndpoint(
+                binding_endpoint(
+                    store,
+                    plugin.package,
+                    plugin.device_id,
+                    lambda: [],
+                    enumerate_urls=base_hooks.enumerate_urls,
+                )
+            )
+        return (
+            StandaloneSeam(
+                ftdi_plugin_session(
+                    plugin,
+                    endpoint_any,
+                    driver_factory=open_resolved,
+                    capture_root=capture_root,
+                    record_path=record,
+                ),
+                transport_kind="ftdi",
+                unattended=unattended,
+                ftdi_hooks=effective_hooks,
+                ftdi_endpoint=endpoint_any,
+                bindings=store,
+                capture_root=capture_root,
+                retention=retention,
+            ),
+            None,
+        )
     return (
         StandaloneSeam(
             mock_plugin_session(plugin, capture_root=capture_root),
@@ -361,7 +458,7 @@ def cli() -> None:
 @click.option("--no-open", is_flag=True)
 @click.option(
     "--transport",
-    type=click.Choice(["mock", "serial", "replay"]),
+    type=click.Choice(["mock", "serial", "replay", "ftdi"]),
     default="mock",
     show_default=True,
 )
@@ -382,10 +479,25 @@ def cli() -> None:
     "--device",
     default=None,
     help=(
-        "Serial device path: the headless constant endpoint (the binding "
-        "bypass). Without it, a serial host serves binding-pending until an "
-        "endpoint is picked in the UI, or a stored binding resolves. "
-        "Refused on non-serial transports."
+        "The constant endpoint of a live transport: a serial port path on "
+        "--transport serial (the binding bypass; without it a serial host "
+        "serves binding-pending until an endpoint is picked in the UI, or a "
+        "stored binding resolves), or the FTDI device selector URL on "
+        "--transport ftdi (for example 'ftdi://::0x0403:0x6001/1' — without "
+        "it, an FTDI host also serves binding-pending, and a stored binding "
+        "resolves). Refused on non-live transports."
+    ),
+)
+@click.option(
+    "--record",
+    "record",
+    type=click.Path(path_type=Path),
+    default=None,
+    help=(
+        "Record the live session as a replay journal (ftdi transport only): "
+        "every completed exchange the device made is written to this path as "
+        "a #564-format journal at session close, so the bench session "
+        "produces replay evidence directly. Refused on other transports."
     ),
 )
 @click.option(
@@ -462,6 +574,7 @@ def serve(
     transport: str,
     replay: Path | None,
     device: str | None,
+    record: Path | None,
     bindings: Path | None,
     capture_root: Path | None,
     scenario: str | None,
@@ -532,6 +645,7 @@ def serve(
         capture_root=capture_root,
         retention=retention,
         replay=replay,
+        record=record,
     )
     if seam.session.plugin.load_diagnostic is not None:
         # §4.5: the degraded load BINDS (exit 0) with its diagnostic on
@@ -605,11 +719,12 @@ def serve(
         click.echo(f"Bearer token (REST mutations and MCP over HTTP): {policy.bearer_token}")
         # trust-1: the per-launch operator action token, minted for every serve
         # (uniform and fail-closed — the routes refuse everything without one)
-        # but DELIVERED only where it has a consumer: the serial transport's
-        # bind/unbind routes. Two out-of-band channels, never a page GET: the
-        # banner line below, and a file under the capture-root family.
+        # but DELIVERED only where it has a consumer: the live transports'
+        # bind/unbind routes (row a widened ftdi into them). Two out-of-band
+        # channels, never a page GET: the banner line below, and a file
+        # under the capture-root family.
         launch_url = f"http://{host}:{port}"
-        if transport == "serial":
+        if transport in ("serial", "ftdi"):
             click.echo(
                 "Operator action token (endpoint bind/unbind in the UI): "
                 f"{policy.operator_action_token}"

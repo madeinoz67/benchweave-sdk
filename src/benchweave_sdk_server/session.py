@@ -40,7 +40,7 @@ import shutil
 import sys
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -174,11 +174,15 @@ def transport_ceiling(settings: dict[str, Any]) -> int:
     return min(declared, TRANSFER_CEILING)
 
 
-#: The vectors.json dialect vocabulary (issue #394's owner ruling (a)):
-#: ``stream_exchange`` is the omitted-key default — today's behaviour,
-#: byte-for-byte — and ``send_receive`` scripts binary §8.1 SEND/RECEIVE
-#: conversations, request-less rows valid (device-initiated frames).
-_DIALECTS = ("stream_exchange", "send_receive")
+#: The vectors.json dialect vocabulary (issue #394's owner ruling (a);
+#: "provider" added by issue #570): ``stream_exchange`` is the
+#: omitted-key default — today's behaviour, byte-for-byte —
+#: ``send_receive`` scripts binary §8.1 SEND/RECEIVE conversations,
+#: request-less rows valid (device-initiated frames), and ``provider``
+#: scripts a provider plugin's bring-up from journal-shaped rows (the
+#: pinned grammar's provider kinds plus the §8.1 stream kinds, one
+#: document — the #564 row vocabulary).
+_DIALECTS = ("stream_exchange", "send_receive", "provider")
 
 #: The payload encoding vocabulary: ``ascii`` (a row string's ASCII bytes —
 #: today's behaviour) and ``hex`` (``bytes.fromhex``).
@@ -281,8 +285,14 @@ def vectors_script(plugin: LoadedPlugin) -> VectorsScript:
     if dialect not in _DIALECTS:
         raise PluginLoadError(
             f"standalone_vectors_dialect_unknown: {dialect!r} (expected "
-            f'"stream_exchange" or "send_receive") in {path}'
+            f'"stream_exchange", "send_receive" or "provider") in {path}'
         )
+    if dialect == "provider":
+        # The provider dialect's rows are journal-shaped, not stream
+        # payloads — the stream row loop below cannot decode them. Return
+        # the dialect marker only; provider_script (the compile) re-reads
+        # the file and validates every row against the pinned grammar.
+        return VectorsScript(dialect="provider", encoding="ascii", frames=[])
     encoding = vectors.get("encoding", "ascii")
     if encoding not in _ENCODINGS:
         raise PluginLoadError(
@@ -471,6 +481,218 @@ def _cycle_plan(rows: list[FrameRow]) -> tuple[int, list[FrameRow], int]:
     return 1, cycle, 0
 
 
+def provider_script(
+    plugin: LoadedPlugin,
+) -> tuple[list[tuple[dict[str, Any], dict[str, Any] | Exception]], int, int]:
+    """Compile the provider dialect's vectors.json into MockHost exchanges
+    (issue #570): each journal-shaped row becomes one exact-dict exchange —
+    provider rows ``(row.expected, row.result)``, stream rows
+    ``(row.expected, {"data": row.response})`` — and the establishment is
+    the replay cycle plan's own derivation over the SAME rows (a corpus
+    that proves a repeating unit recycles it; one that cannot cycles its
+    whole tail — the mock's ambiguous-corpus rule, the split replay.py's
+    docstrings state).
+
+    Refusals are the ``standalone_vectors_*`` family, naming the vectors
+    document (never "journal"): the row refusals interpolate
+    ``standalone_vectors_row_shape`` through the SHARED validator (one
+    validator, two documents — the anti-drift rule vectors.py states); an
+    unpinned plugin refuses (a provider corpus requires a pinned
+    contract); ``encoding`` and ``recorded_failure`` keys refuse under
+    this dialect (their semantics would be silent no-ops or unscripted
+    failure shapes — bounds D2/D5 of the design record own the latter).
+
+    The replay imports here are FUNCTION-LEVEL: replay imports this module
+    at module level (replay.py's own imports), so a module-level import
+    would cycle — the ``mock_transport_factory`` lazy-import precedent.
+    """
+    from benchweave_sdk.validation import verify_provider_pin
+
+    from .replay import _grammar, _load_row, _replay_cycle_plan
+
+    path = plugin.package_dir / "vectors.json"
+    # Bound D5: the corpus byte bound. The SDK's shared bounded reader
+    # caps every vectors.json at 256 KiB (INPUT_BYTE_LIMIT) before any
+    # dialect parse; this typed refusal names that bound for the provider
+    # dialect rather than letting the reader's generic error surface —
+    # bulk conversations are journals (1 MiB with digest-row compaction).
+    from benchweave_sdk.presentation import INPUT_BYTE_LIMIT
+
+    size = path.stat().st_size
+    if size > INPUT_BYTE_LIMIT:
+        raise PluginLoadError(
+            f"standalone_vectors_provider_bound: the corpus is {size} bytes, "
+            f"over the {INPUT_BYTE_LIMIT}-byte bounded-read cap; record a "
+            "journal for bulk conversations (its digest rows carry bulk "
+            "sends compactly)"
+        )
+    vectors = json.loads(read_file(path))
+    if "encoding" in vectors:
+        raise PluginLoadError(
+            "standalone_vectors_encoding_unsupported: the provider dialect "
+            "spells its payloads in the journal's own forms (hex for §8.1 "
+            "stream data, base64 for the grammar's byte fields); an "
+            "`encoding` key would be a silent no-op — remove it"
+        )
+    pinned = verify_provider_pin(plugin.descriptor, plugin.package_dir / "descriptor.json")
+    if pinned is None:
+        raise PluginLoadError(
+            "standalone_vectors_provider_unpinned: the provider dialect "
+            "scripts a provider plugin's bring-up; this plugin's descriptor "
+            "declares no transport provider to validate the corpus against"
+        )
+    grammar = _grammar(pinned)
+    raw_rows = vectors.get("exchanges", [])
+    names: set[str] = set()
+    replay_rows = [
+        _load_row(row, index, names, grammar, code="standalone_vectors_row_shape")
+        for index, row in enumerate(raw_rows)
+    ]
+    if not replay_rows:
+        raise PluginLoadError(
+            "standalone_vectors_row_shape: the provider corpus carries no rows"
+        )
+    # D2's provider-row face refuses in the shared validator itself (the
+    # journal format carries recorded_failure only on receive rows); the
+    # stream face is scripted below through MockHost's Exception slot.
+    exchanges: list[tuple[dict[str, Any], dict[str, Any] | Exception]] = []
+    for validated, raw in zip(replay_rows, raw_rows, strict=True):
+        raw_transaction = raw.get("transaction", {})
+        if validated.expected is not None:
+            # A provider row: the validated ABI forms of both sides.
+            exchanges.append((validated.expected, dict(validated.result or {})))
+            continue
+        # A stream row: the expected is the raw transaction with its hex
+        # `data` decoded to the ABI bytes the adapter sends; the response
+        # is the validated reply bytes ({} for a send).
+        expected = {key: value for key, value in raw_transaction.items()}
+        if "data" in expected:
+            if not isinstance(expected["data"], str):
+                raise PluginLoadError(
+                    "standalone_vectors_row_shape: row "
+                    f"{validated.name}: a stream row's data is a hex byte string"
+                )
+            try:
+                expected["data"] = bytes.fromhex(expected["data"])
+            except ValueError as exc:
+                raise PluginLoadError(
+                    "standalone_vectors_row_shape: row "
+                    f"{validated.name}: the stream data is not a hex byte string"
+                ) from exc
+        if validated.failure is not None:
+            # D2: a recorded failure scripts the ladder's own outcome class
+            # through MockHost's Exception slot — the recorded timeout
+            # rehearses as the backend's TimeoutError posture, the recorded
+            # connection fault as ConnectionError (A06: the recorded
+            # outcome stays the recorded outcome).
+            failure = (
+                ConnectionError(
+                    f"vectors row {validated.name}: the recorded exchange "
+                    "lost its connection after the send"
+                )
+                if validated.failure == "connection"
+                else TimeoutError(
+                    f"vectors row {validated.name}: the recorded receive "
+                    "expired at its deadline with no complete frame"
+                )
+            )
+            exchanges.append((expected, failure))
+            continue
+        exchanges.append((expected, {"data": validated.response}))
+    establishment, _unit, rotate = _replay_cycle_plan(replay_rows)
+    return exchanges, establishment, rotate
+
+
+class _ProviderWalkDouble:
+    """The exact-dict walk double for provider corpora (bound D1 as work):
+    demands are the compiled corpus exchanges in order, matched on the
+    whole transaction dict — MockHost's posture, driven by the walk runner.
+    Mismatch and exhaustion are walk verdicts, never silent passes."""
+
+    def __init__(
+        self,
+        exchanges: list[tuple[dict[str, Any], dict[str, Any] | Exception]],
+    ) -> None:
+        self._demands = list(exchanges)
+
+    def transfer(self, transaction: Mapping[str, Any], context: Any) -> dict[str, Any]:
+        from benchweave_sdk.vectors import _WalkVerdict
+
+        if not self._demands:
+            raise _WalkVerdict(
+                "vectors_walk_order_exhausted",
+                f"the corpus carries no row for {dict(transaction)!r}",
+            )
+        expected, response = self._demands.pop(0)
+        if dict(transaction) != expected:
+            raise _WalkVerdict(
+                "vectors_walk_order_mismatch",
+                f"corpus row expects {expected!r}, the adapter demands "
+                f"{dict(transaction)!r}",
+            )
+        if isinstance(response, Exception):
+            raise _WalkVerdict(
+                "vectors_walk_order_unwalkable",
+                f"corpus row is a recorded failure ({response}); the walk "
+                "rehearsal does not script failures",
+            )
+        return dict(response)
+
+    def leftover(self) -> list[dict[str, Any]]:
+        return [expected for expected, _ in self._demands]
+
+
+def validate_provider_walk_order(
+    plugin: LoadedPlugin, *, source: str = "vectors.json"
+) -> None:
+    """Rehearse the descriptor walk over a provider corpus (bound D1 as
+    work, the owner ruling of 2026-10-28): identify, then each readable
+    parameter in declaration order, driven over the compiled exchanges
+    with exact-dict matching. The refusal family is the shared
+    ``vectors_walk_order_*`` vocabulary — mismatch, exhaustion, rows the
+    walk never reaches, and the adapter refusing a step.
+    """
+    from benchweave_sdk.vectors import _run_walk_sync, _WalkVerdict
+
+    exchanges, _establishment, _rotate = provider_script(plugin)
+    double = _ProviderWalkDouble(exchanges)
+    descriptor = plugin.descriptor
+    create = plugin.adapter_factory
+    if create is None:
+        raise PluginLoadError(
+            "standalone_vectors_walk_order_unwalkable: the plugin has no "
+            "adapter factory to walk"
+        )
+    from typing import cast
+
+    try:
+        _run_walk_sync(create, descriptor, cast("Any", double))
+    except _WalkVerdict as verdict:
+        raise PluginLoadError(
+            f"{verdict.code}: {source}: {verdict.detail}"
+        ) from None
+    leftover = double.leftover()
+    if leftover:
+        # The cycle-repeat tolerance: the guide's own three-cycle rule
+        # authors the poll unit more times than the walk consumes, so a
+        # leftover row that REPEATS a transaction the walk already
+        # consumed (in unit order) is the corpus sustaining the derived
+        # cycle — not an ordering defect. A leftover the walk never saw
+        # at all is the refusal.
+        consumed = [dict(expected) for expected, _ in exchanges]
+        walk_prefix = consumed[: len(consumed) - len(leftover)]
+        every_leftover_repeats_a_walked_row = all(
+            row in walk_prefix for row in leftover
+        )
+        if not every_leftover_repeats_a_walked_row:
+            raise PluginLoadError(
+                f"vectors_walk_order_unconsumed: {source}: the walk the "
+                f"descriptor defines never reaches {leftover!r} — author "
+                "the corpus in walk order (identify, then each readable "
+                "parameter; extra rows must repeat the cycle unit)"
+            )
+
+
 def mock_transport_factory(
     plugin: LoadedPlugin, *, capture_root: Any = None
 ) -> Callable[[], HostServices]:
@@ -488,6 +710,11 @@ def mock_transport_factory(
     from .transport import ByteStreamMockHost, LoopingMockHost
 
     dialect = vectors_script(plugin).dialect
+    if dialect == "provider":
+        exchanges, establishment, rotate = provider_script(plugin)
+        return lambda: LoopingMockHost(
+            exchanges, establishment=establishment, cycle_rotate=rotate
+        )
     if dialect == "send_receive":
         settings = plugin.descriptor.get("transport", {}).get("settings", {})
         max_frame = transport_ceiling(settings)
@@ -788,6 +1015,13 @@ class PluginSession:
         # object, so link events ride the seam bus. None = no publisher;
         # the services publish nothing.
         self.link_event_publisher: Callable[[dict[str, Any]], None] | None = None
+        # The rehearsal marker (issue #568, the acceptance review's A):
+        # set by session factories whose transport supports driver
+        # injection when an injected driver is in use — the session then
+        # runs a scripted double, not live hardware, and every surface
+        # that speaks its transport kind must disclose that. Factories
+        # without an injection axis leave it False (live).
+        self.rehearsal: bool = False
 
     @property
     def plugin(self) -> LoadedPlugin:

@@ -251,6 +251,7 @@ def test_a_stored_binding_resolves_without_the_device_flag(
             "vid": None,
             "pid": None,
             "port_path": _OTHER,
+            "ftdi_url": None,
             "identity": {"manufacturer": "SDK Example", "model": "demo", "firmware": None},
             "bound_at": "2026-10-04T09:00:00Z",
             "bound_via": "ui",
@@ -331,6 +332,7 @@ def test_ar_f_a_duplicate_row_document_refuses_serve_construction(
         "vid": None,
         "pid": None,
         "port_path": _CONNECTED,
+        "ftdi_url": None,
         "identity": {"manufacturer": "SDK Example", "model": "demo", "firmware": None},
         "bound_at": "2026-10-04T09:00:00Z",
         "bound_via": "ui",
@@ -348,11 +350,14 @@ def test_ar_f_a_duplicate_row_document_refuses_serve_construction(
 
 def test_a_device_on_the_mock_transport_refuses(starter_project: Path, capsys) -> None:
     """The sibling guard, previously pinned nowhere: ``--device`` applies
-    only to ``--transport serial``."""
+    only to a live transport. The row was amended for the second live
+    transport (issue #568, maintainer ruling 2: one flag, one meaning —
+    the constant endpoint of a live transport), so the serial-only wording
+    retired with it."""
     with pytest.raises(SystemExit) as exc:
         _build_seam(starter_project, device="/dev/nowhere")
     assert exc.value.code == 2
-    assert "standalone_transport_device_serial_only:" in capsys.readouterr().err
+    assert "standalone_transport_device_live_only:" in capsys.readouterr().err
 
 
 def test_bindings_on_a_non_serial_transport_refuses(
@@ -368,4 +373,4 @@ def test_bindings_on_a_non_serial_transport_refuses(
             bindings=starter_project.parent / "device-bindings.json",
         )
     assert exc.value.code == 2
-    assert "standalone_transport_bindings_serial_only:" in capsys.readouterr().err
+    assert "standalone_transport_bindings_live_only:" in capsys.readouterr().err

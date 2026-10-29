@@ -21,6 +21,14 @@ from typing import Any
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
+
+def fixture_arms() -> tuple[str, ...]:
+    """The scaffold arm set, enumerated from the fixture directory (R2 —
+    the mechanism, not a hand-written list; the copier module's twin
+    definition)."""
+    from test_scaffold_copier import fixture_arms as _arms
+
+    return _arms()
 SCRIPT = ROOT / "scripts" / "release_cut.py"
 
 OLD = "0.7.1"
@@ -880,16 +888,18 @@ def test_verify_red_when_the_patch_no_longer_applies(cut_env: Path) -> None:
 
 
 def test_fixture_regen_reproduces_the_committed_fixture_bytes(tmp_path: Path) -> None:
-    """The regen mechanism renders both arms under a RESOLVED tempdir (the
-    macOS /var symlink gotcha is designed in) and reproduces the committed
-    fixtures byte for byte at the installed version — the same claim the
-    byte-parity suite pins, exercised through the tool's own path."""
+    """The regen mechanism renders all three arms under a RESOLVED tempdir
+    (the macOS /var symlink gotcha is designed in) and reproduces the
+    committed fixtures byte for byte at the installed version — the same
+    claim the byte-parity suite pins, exercised through the tool's own
+    path. The provider arm (row f) must ride the same mechanism: the cut
+    would otherwise pass validation and die at post-cut smoke."""
     from benchweave_sdk import __version__
 
     drift = _load()
     scratch = tmp_path / "fixtures"
     drift.regenerate_fixtures(scratch, __version__)
-    for arm in ("base", "ui"):
+    for arm in fixture_arms():
         rendered = _tree(scratch / arm)
         committed = _tree(ROOT / "tests" / "fixtures" / "scaffold_expected" / arm)
         assert sorted(rendered) == sorted(committed), arm
@@ -935,6 +945,7 @@ def test_matrix_scaffold_pre_fills_every_row_and_guesses_no_class() -> None:
         prev_tag=f"v{OLD}",
         contributors="16 commits — authors: synthetic-operator; the walk acknowledges",
         served_set="n-a — no served-set motion in the window",
+        families=7,
     )
     appended = matrix + scaffold
     assert f"## Result record — v{NEW} (2026-10-06)" in appended
@@ -1189,7 +1200,8 @@ def test_matrix_test_surfaces_match_the_registry() -> None:
     regen_paths = {
         surface.path for surface in drift.DECLARED_SURFACES if surface.kind == "regen"
     }
-    # T1/T2 are the two fixture arms — declared as the one regen surface
+    # T1/T2 (and T2b) are the three fixture arms — declared as the one
+    # regen surface
     assert "scaffold_expected" in by_id["T1"] and "scaffold_expected" in by_id["T2"]
     assert regen_paths == {"tests/fixtures/scaffold_expected"}
     # T3 is the copier test's docstring — a procedure pointer, not a surface

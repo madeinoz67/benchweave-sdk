@@ -214,6 +214,8 @@ class StandaloneSeam:
         reload_wrapper: Callable[[Any], Any] | None = None,
         serial_ports: Any = None,
         serial_endpoint: SerialEndpoint | None = None,
+        ftdi_hooks: Any = None,
+        ftdi_endpoint: Any = None,
         bindings: BindingStore | None = None,
         capture_root: Any | None = None,
         retention: RetentionConfig | None = None,
@@ -233,6 +235,10 @@ class StandaloneSeam:
         # short-circuit reads it for a connected session (retiring the
         # parallel ``serial_device_path`` source of truth).
         self._serial_endpoint = serial_endpoint
+        # Row a (issue #568): the ftdi transport's device hooks and
+        # endpoint resolver — the serial lane's shape, one transport over.
+        self._ftdi_hooks = ftdi_hooks
+        self._ftdi_endpoint = ftdi_endpoint
         # The operator's binding store (None off the serial transport):
         # opened by the composer so a malformed document refuses SERVE
         # construction, never a mid-request traceback.
@@ -321,6 +327,15 @@ class StandaloneSeam:
     @property
     def transport_kind(self) -> str:
         return self._transport_kind
+
+    @property
+    def rehearsal(self) -> bool:
+        """Whether this session runs over a scripted double rather than
+        live hardware (the acceptance review's A): set by the session
+        factories that support injection (the ftdi factory marks it from
+        its driver_factory); absent means live. The mode banner and every
+        state surface read it — a rehearsal must never read as a device."""
+        return bool(getattr(self._session, "rehearsal", False))
 
     @property
     def presentation(self) -> HostPresentation:
@@ -492,6 +507,9 @@ class StandaloneSeam:
                 "descriptor_sha256": plugin.descriptor_sha256,
             },
             "transport": self._transport_kind,
+            # The acceptance review's A: a session over a scripted double
+            # discloses it on the state surface beside transport.
+            "rehearsal": self.rehearsal,
             "sdk_version": sdk_version(),
             "link": self._link_state(),
             "presentation": {
@@ -504,6 +522,26 @@ class StandaloneSeam:
     async def _op_device_discover(
         self, arguments: dict[str, Any], correlation: str
     ) -> dict[str, Any]:
+        if self._transport_kind == "ftdi":
+            from .ftdi import discover_ftdi_devices
+
+            session = self._session
+            async with self._op_mutex:
+                minted = (
+                    self._ftdi_endpoint
+                    if session.connected and self._ftdi_endpoint is not None
+                    else None
+                )
+                devices = await discover_ftdi_devices(
+                    session.plugin,
+                    hooks=self._ftdi_hooks,
+                    connected_url=(
+                        minted.last_resolution if minted is not None else None
+                    ),
+                    connected_identity=session.identity,
+                )
+            self._discovery_cache = list(devices)
+            return {"devices": devices}
         if self._transport_kind == "serial":
             from .serial import discover_serial_devices
 
@@ -774,7 +812,7 @@ class StandaloneSeam:
 
         if self._bindings is None:
             raise self._fail(
-                "not_found", "endpoint binding is a serial-transport surface", correlation
+                "not_found", "endpoint binding is a live-transport surface", correlation
             )
         if self._session.connected:
             raise self._fail(
@@ -794,6 +832,66 @@ class StandaloneSeam:
                 "of the listed ports",
                 correlation,
             )
+        if self._transport_kind == "ftdi":
+            # Row a (F2's fix): the live-presence cross-check runs against
+            # the FTDI enumeration — an ftdi:// URL never matches a pyserial
+            # port list, so the serial path below is a dead end here. The
+            # pick must still name a URL the LIVE enumeration carries (the
+            # unplug-between-scan-and-click posture, one transport over);
+            # the row is ftdi_url-shaped (the URL is the endpoint identity).
+            live_urls: list[str] = (
+                list(self._ftdi_hooks.enumerate_urls())
+                if self._ftdi_hooks is not None
+                else []
+            )
+            if str(port_path) not in live_urls:
+                raise self._fail(
+                    "invalid_request",
+                    f"standalone_binding_pick_vanished: {port_path} is no longer "
+                    "present; scan for devices, then pick one of the "
+                    "listed URLs",
+                    correlation,
+                )
+            ftdi_row: dict[str, Any] = {
+                "connection_key": self._session.device_id,
+                "plugin_package": self._session.plugin.package,
+                "transport": self._transport_kind,
+                "endpoint_kind": "ftdi_url",
+                "usb_serial": None,
+                "vid": None,
+                "pid": None,
+                "port_path": None,
+                "ftdi_url": str(port_path),
+                "identity": {
+                    "manufacturer": str(picked.get("manufacturer") or ""),
+                    "model": str(picked.get("model") or ""),
+                    "firmware": None,
+                },
+                "bound_at": binding_stamp(),
+                "bound_via": via,
+            }
+            try:
+                self._bindings.bind(ftdi_row)
+            except (OSError, ValueError) as exc:
+                raise self._fail(
+                    "internal_error",
+                    f"the binding store refused the write: {exc}",
+                    correlation,
+                ) from exc
+            self.events.publish(
+                "device_bound",
+                {
+                    "device_id": self._session.device_id,
+                    "endpoint_kind": "ftdi_url",
+                    "ftdi_url": str(port_path),
+                },
+            )
+            return {
+                "device_id": self._session.device_id,
+                "bound": True,
+                "endpoint_kind": "ftdi_url",
+                "ftdi_url": str(port_path),
+            }
         # The live-presence cross-check (fold wave 2, lane A F1): the
         # confirmed cache governs the PICK, but the pick must still name a
         # port the LIVE enumeration carries. A port that unplugged between
@@ -879,6 +977,7 @@ class StandaloneSeam:
             "vid": vid,
             "pid": pid,
             "port_path": str(port_path),
+            "ftdi_url": None,
             "identity": {
                 "manufacturer": str(picked.get("manufacturer") or ""),
                 "model": str(picked.get("model") or ""),
@@ -925,7 +1024,7 @@ class StandaloneSeam:
             if self._bindings is None:
                 raise self._fail(
                     "not_found",
-                    "endpoint binding is a serial-transport surface",
+                    "endpoint binding is a live-transport surface",
                     correlation,
                 )
             if self._session.connected:
@@ -1738,16 +1837,41 @@ class StandaloneSeam:
                 correlation,
             )
         services = self._session.services
-        if not all(
-            callable(getattr(services, name, None))
-            for name in ("configure_capture", "capture_progress", "artifact_finalise")
-        ):
+        # The acceptance review's B: the duck-check refusal is TYPED — the
+        # machine-matchable prefix names the missing members (the
+        # binding-refusal precedent: code plus typed reason detail), and
+        # the old parenthetical that blamed the mock even on a provider
+        # transport is gone. The code stays the standard's closed
+        # vocabulary ("unavailable" = the capability is unavailable);
+        # departing it needs interface-corpus motion (errors.py's own
+        # contract: a refusal cannot name what the host cannot mean).
+        required = ("configure_capture", "capture_progress", "artifact_finalise")
+        if services is None:
+            # A connected session with no services object is a structural
+            # inconsistency (session.py keeps them together) — its own
+            # message under the same prefix, never a bare attribute miss.
             raise self._fail(
                 "unavailable",
-                "the connected transport's services do not implement capture "
-                "(the mock transport's host does not; connect a "
-                "capture-capable device)",
+                "capture_services_incomplete: the connected session "
+                "exposes no services object — a structural inconsistency; "
+                "reconnect",
                 correlation,
+                reason="capture_services_incomplete",
+                missing=[],
+            )
+        missing = [
+            name for name in required if not callable(getattr(services, name, None))
+        ]
+        if missing:
+            raise self._fail(
+                "unavailable",
+                f"capture_services_incomplete: the connected transport's "
+                f"services are missing {', '.join(missing)} — the host "
+                f"demands them at capture start "
+                f"(benchweave_sdk.interfaces.CaptureServices declares them)",
+                correlation,
+                reason="capture_services_incomplete",
+                missing=missing,
             )
         verb = self._resolve_capture_verb(correlation)
         capture_services = cast("_CaptureCapable", services)

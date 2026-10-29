@@ -385,6 +385,7 @@ def test_metric_c1_seam_surfaces_report_replay_transport(tmp_path: Path, plugin)
 
 def test_metric_c2_banner_is_distinct_from_mock_and_live() -> None:
     from benchweave_sdk_server.presentation import (
+        REHEARSAL_MODE_WORDING,
         REPLAY_MODE_WORDING,
         mode_banner_html,
     )
@@ -392,13 +393,24 @@ def test_metric_c2_banner_is_distinct_from_mock_and_live() -> None:
     replay = mode_banner_html(simulated=False, replay=True)
     mock = mode_banner_html(simulated=True)
     live = mode_banner_html(simulated=False)
+    rehearsal = mode_banner_html(simulated=False, rehearsal=True)
     assert REPLAY_MODE_WORDING in replay
     assert "SIMULATED PRESENTATION DATA" not in replay
     assert "SIMULATED PRESENTATION DATA" in mock
     assert REPLAY_MODE_WORDING not in mock
     assert REPLAY_MODE_WORDING not in live
     assert "SIMULATED PRESENTATION DATA" not in live
-    assert replay != mock and replay != live and mock != live
+    # The acceptance review's A: the SCRIPTED REHEARSAL row is a fourth
+    # truth — four-way distinctness, and the rehearsal row lives in none
+    # of the other three shapes.
+    assert REHEARSAL_MODE_WORDING in rehearsal
+    assert REPLAY_MODE_WORDING not in rehearsal
+    assert "SIMULATED PRESENTATION DATA" not in rehearsal
+    assert REHEARSAL_MODE_WORDING not in live
+    assert REHEARSAL_MODE_WORDING not in mock
+    assert REHEARSAL_MODE_WORDING not in replay
+    shapes = (mock, replay, rehearsal, live)
+    assert len(set(shapes)) == 4, "the four banner shapes are pairwise distinct"
 
 
 def test_metric_c3_capture_sidecar_carries_the_journal_evidence(
@@ -1076,3 +1088,24 @@ def test_nit2_stream_kinds_match_their_recorded_kind(tmp_path: Path, plugin) -> 
     )
     assert reply == {"data": bytes.fromhex(_STATUS_HEX)}
     host.assert_complete()
+
+
+def test_a_row_with_a_failure_and_a_response_is_refused(tmp_path: Path, plugin) -> None:
+    """The delta refute's residual 3: a row carrying BOTH a
+    ``recorded_failure`` and a response used to load and silently discard
+    the response (the decode is gated on ``failure is None``) while the
+    loader rejects three neighbouring contradictions. Recorded evidence
+    never vanishes without a diagnostic."""
+    journal = _journal([
+        {"name": "poll-1",
+         "transaction": {"kind": "stream_send", "data": _POLL_HEX},
+         "response": {}},
+        {"name": "both",
+         "transaction": {"kind": "stream_receive", "max_bytes": 4,
+                         "termination": "lf", "exact_bytes": None},
+         "recorded_failure": "timeout",
+         "response": {"data": "55a10d"}},
+    ])
+    path = _write(tmp_path, journal)
+    with pytest.raises(ValueError, match="replay_journal_row_shape:"):
+        load_replay_journal(path, plugin)

@@ -358,6 +358,8 @@ You can author, derive and preview a composed user interface with no gateway. Th
    benchweave-sdk new acme-widget --package acme_widget_plugin --with-ui
    ```
 
+   Pass `--provider-transport` instead for a plugin that declares a transport provider: the scaffold pins the banked FTDI control contract inside the package, emits provider-shaped builders and adapter, and writes a provider-dialect `vectors.json`. The mock transport rehearses the bring-up conversation from that corpus at the transaction boundary. The generated test suite also runs the shipped driver double, which proves the executor path one boundary down. The section "Live FTDI transport (provider control)" below states the serve and record commands.
+
 3. Write the composed action class document in the plugin package, beside the descriptor. The section "Author a composed action class" above gives the document shape. A composed member declaration uses the same pin seam. The section "Author a composed member declaration" above gives that document shape.
 
 4. Pin the document in `descriptor.json` under `contracts[]`. The pin gives an id, a path relative to the descriptor, and the sha256 of the file bytes. The same section gives the row shape. The digest is the digest of the current bytes. Update the pin after each edit of the document. A pin that does not match the bytes refuses the derivation with `classref_vendor_catalog_digest_mismatch:`.
@@ -492,11 +494,15 @@ A plugin can declare a local stylesheet override for its preview pages. The mani
 
 ## Mock transports (offline rehearsal)
 
-The standalone host serves a plugin on a scripted mock transport when you run `serve --transport mock` or `preview-ui`. For `serve`, the `mock` transport is the default. The script comes from the evidence file of the plugin, `src/<package>/vectors.json`. The file declares which of the two transaction dialects the adapter uses. The host serves the mock that matches the dialect.
+The standalone host serves a plugin on a scripted mock transport when you run `serve --transport mock` or `preview-ui`. For `serve`, the `mock` transport is the default. The script comes from the evidence file of the plugin, `src/<package>/vectors.json`. The file declares which of the three transaction dialects the adapter uses. The host serves the mock that matches the dialect.
 
-**The two dialects.** Declare the dialect with the file-level `transaction_dialect` key. If you omit the key, the file is a `stream_exchange` script. Every row is a `{"request": ..., "response": ...}` pair of strings. The mock serves whole-dict exchanges. This is the shape of the starter protocol. The request is `ID?\n` and the response is one line.
+**The three dialects.** Declare the dialect with the file-level `transaction_dialect` key. If you omit the key, the file is a `stream_exchange` script. Every row is a `{"request": ..., "response": ...}` pair of strings. The mock serves whole-dict exchanges. This is the shape of the starter protocol. The request is `ID?\n` and the response is one line.
 
 If you declare `"transaction_dialect": "send_receive"`, the rows form a binary section 8.1 SEND/RECEIVE conversation. The strings of each row are frames. The `stream_send` of the adapter must match the next scripted request frame exactly. The mock serves `stream_receive` with the exact outcomes of the serial backend. The section "A standalone runtime around the writer" below states these outcomes.
+
+If you declare `"transaction_dialect": "provider"`, the rows carry a provider plugin's bring-up. Each row is a journal-shaped `{"name": ..., "transaction": ..., "response": ...}` record: the transaction is a provider control operation of the plugin's pinned contract, or a section 8.1 stream kind; the payloads spell themselves — hex for stream `data`, base64 for the grammar's byte fields. The mock matches each row on the whole transaction and serves the scripted result. A provider plugin that the scaffold emits with `--provider-transport` carries this dialect, so `serve --transport mock` rehearses its bring-up with no hardware and no journal.
+
+Which rehearsal to reach for: iterate on the adapter against the mock dialect (the default transport, the fastest loop); prove the executor path with the generated driver-double test (it runs in the emitted suite on every `pytest`); answer what the device did with a recorded journal on `--transport replay`; prove the device with `--transport ftdi`.
 
 **Encoding.** By default, the bytes of a row are the ASCII bytes of the row string. Set `"encoding": "hex"` at file level, or on one row, for binary frames. A string is then a hex byte string, for example `"response": "53544154000a"`. The `ascii` encoding refuses a string that is not ASCII. The `hex` encoding refuses an odd-length string or a non-hex string. Both refusals give the row.
 
@@ -550,9 +556,27 @@ But a script can prove only what its rows record. A script that does not match t
 
 Use the replay to prove that the plugin still speaks the recorded conversation. Do not use it for timing, and do not use it for any claim about the device. A replay proves what the recording shows.
 
+## Live FTDI transport (provider control)
+
+`benchweave-sdk-server serve <project> --transport ftdi --device <ftdi-url>` serves a plugin over an FTDI-class USB device. The URL is the pyftdi device selector, for example `ftdi://::0x0403:0x6001/1`. The descriptor's `connection_key` stays the logical identity of the device. With `--device`, the URL is a constant endpoint: the host serves that URL on every connection. Without `--device`, the serve starts binding-pending. The index page shows the scan button. A scan confirms each FTDI device by its identify answer. The Bind button persists the picked URL in the binding document, and a later serve resolves it on its own. The binding behaves as the serial binding does: it survives a restart, it refuses `binding_stale` when the bound URL is gone, and bind and unbind need the operator action token.
+
+The plugin must pin the FTDI common control contract in its descriptor. If the plugin declares no provider, serve refuses with `live_provider_plugin_unpinned:`. If the plugin pins a different contract, serve refuses with `live_provider_feature_unsupported:`.
+
+Control transactions are the seven operations of the pinned contract: `reset_device`, `set_timeouts`, `set_latency`, `set_baud`, `purge`, `set_bitmode` and `read_pins`. The host checks each transaction against the pinned grammar before any device call. The host refuses a transaction outside the grammar with `live_provider_transaction_grammar:`. The host refuses a device answer outside the contract with `live_provider_result_grammar:`. The host refuses a control transaction during a parked receive with `live_provider_line_busy:`.
+
+The generic stream kinds of section 8.1 use the same data pipe on the device. Send and receive behave as they do on the serial backend.
+
+The transport needs the `server` extra. Without pyftdi, serve refuses with `live_provider_backend_missing:`. With no device at the URL, connect refuses with `live_provider_device_unavailable:` and names the exception class. Each connect is one attempt, with no retry. An explicit scan enumerates the FTDI devices and confirms each by identify. When pyftdi is absent, the scan refuses with `live_provider_enumeration_failed:`.
+
+Other refusals the transport can answer with: a capture start on services that lack the capture members refuses with `capture_services_incomplete:` naming the missing members; a live recording whose journal could not be written warns with `live_provider_record_write:` and never blocks the device close; a provider-dialect vectors corpus refuses its own load problems with the `standalone_vectors_provider_*` and `standalone_vectors_dialect_unknown` prefixes (the mock-transports section above states the provider dialect).
+
+Pass `--record <path>` with `--transport ftdi` to record the live session as a replay journal. The host refuses `--record` on every other transport. The host writes the journal when the session closes. Each row records one completed exchange that the device made. A receive that does not complete before its deadline records a `timeout` row, and a transaction that the host refused records no row. The recorded journal replays with `--transport replay`, so a bench session produces replay evidence directly.
+
+The SDK test suite drives its scripted driver double from the synthetic bring-up journal, and the replay transport validates the same journal. Rehearse a control plugin against its journal with `--transport replay`. Use `--transport ftdi` on a real bench to prove the device itself. The live-device acceptance is not complete.
+
 ## Capture without a gateway (standalone writer)
 
-Plugin and bench development happens on machines that never run the gateway. `benchweave_sdk.capture.StandaloneCaptureWriter` implements the three capture methods that an adapter calls in gateway mode: `artifact_append`, `artifact_finalise` and `artifact_abort`. The writer works over one directory per capture on a local filesystem. It is three of the eight `CaptureServices` members. Device I/O still comes from a transport that a composing runtime supplies.
+Plugin and bench development happens on machines that never run the gateway. `benchweave_sdk.capture.StandaloneCaptureWriter` implements the three capture methods that an adapter calls in gateway mode: `artifact_append`, `artifact_finalise` and `artifact_abort`. The writer works over one directory per capture on a local filesystem. It is three of the ten `CaptureServices` members. The host also demands two host-lifecycle members at capture start: `configure_capture` and `capture_progress`. The `CaptureServices` protocol in `benchweave_sdk.interfaces` declares both beside the artifact methods. Device I/O still comes from a transport that a composing runtime supplies.
 
 ```python
 from benchweave_sdk.capture import StandaloneCaptureWriter
@@ -584,7 +608,7 @@ There is no automatic import of standalone captures into the gateway. Ingest is 
 
 ### A standalone runtime around the writer (worked example)
 
-The writer is three of the eight members. A bench script that drives an adapter without a gateway needs the other five as well: clocks, evidence, and the transport. The example below is one complete `CaptureServices` object for a device on a serial port. A contributor fork of the ADC board wrote a serial host for the same purpose, and this example is adapted from it.
+The writer is three of the ten members. A bench script that drives an adapter without a gateway needs the other seven as well: clocks, evidence, the transport, and the two host-lifecycle members. The example below is one complete `CaptureServices` object for a device on a serial port. A contributor fork of the ADC board wrote a serial host for the same purpose, and this example is adapted from it.
 
 It implements the three scoped stream transactions of OTDP §8.1 exactly. It adds one behaviour that the spec leaves unspecified: the quiet-line answer below. The transactions are `stream_send`, `stream_receive` and `stream_exchange`. In them, `exact_bytes` takes precedence over `termination`. Only `lf` and `crlf` terminators exist here, because serial has no `eom`. Unspecified fields are refused. An incomplete frame is never returned as complete.
 
@@ -633,7 +657,7 @@ class BenchContext:
 
 
 class SerialStandaloneHost:
-    """All eight CaptureServices members over one serial port, without a gateway.
+    """All ten CaptureServices members over one serial port, without a gateway.
 
     ``port`` is anything with pyserial's ``write(bytes)``, ``read(size) -> bytes``
     (returning early on the port's own short timeout, which bounds how quickly a
@@ -650,6 +674,7 @@ class SerialStandaloneHost:
         self._quiet_s = quiet_s
         self._pending = bytearray()  # read from the port, not yet returned
         self._closed = False
+        self._capture_bytes: dict[str, int] = {}
         self.evidence: list[dict[str, Any]] = []
 
     # clocks
@@ -745,8 +770,18 @@ class SerialStandaloneHost:
                 stream.write(json.dumps(record, sort_keys=True) + "\n")
 
     # capture: the SDK's standalone writer
+    def configure_capture(self, capture_id: str, *, metadata: dict[str, Any],
+                          max_bytes: int | None = None) -> None:
+        """Arm one capture's configuration (the host lifecycle's call)."""
+        self._capture_bytes.setdefault(capture_id, 0)
+
+    def capture_progress(self, capture_id: str) -> int:
+        """The bytes this host handed the writer (zero for an unknown id)."""
+        return self._capture_bytes.get(capture_id, 0)
+
     async def artifact_append(self, capture_id: str, data: bytes, context: Any) -> None:
         await self._writer.artifact_append(capture_id, data, context)
+        self._capture_bytes[capture_id] = self._capture_bytes.get(capture_id, 0) + len(data)
 
     async def artifact_finalise(self, capture_id: str, metadata: dict[str, Any],
                                 context: Any) -> dict[str, Any]:

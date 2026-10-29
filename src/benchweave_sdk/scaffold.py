@@ -324,7 +324,13 @@ def recorded_sdk_version(project: Path) -> str | None:
     return None
 
 
-def create_project(destination: Path, package: str, *, with_ui: bool = False) -> None:
+def create_project(
+    destination: Path,
+    package: str,
+    *,
+    with_ui: bool = False,
+    provider_transport: bool = False,
+) -> None:
     """Write a complete synthetic plugin project under ``destination``.
 
     Renders the copier template (``pyproject.toml``, a README, ``AI-GUIDE.md``,
@@ -346,6 +352,13 @@ def create_project(destination: Path, package: str, *, with_ui: bool = False) ->
         The UI resources themselves are derived from the descriptor's exact
         bytes by ``presentation.create_ui_resources`` after the project lands
         — SDK code, deliberately not template content.
+    provider_transport
+        The row-f variant (issue #568): render the provider-transport shape —
+        the custom transport with the banked FTDI control contract pinned
+        byte-exactly, provider-shaped builders and adapter, and NO
+        vectors.json (the mock's stream-only dialects cannot script control
+        operations; rehearsal is the shipped driver double, never a third
+        vectors dialect).
 
     Raises
     ------
@@ -402,6 +415,7 @@ def create_project(destination: Path, package: str, *, with_ui: bool = False) ->
                 data={
                     "package_name": package,
                     "with_ui": with_ui,
+                    "provider_transport": provider_transport,
                     "sdk_version": __version__,
                     "otdp_version": active_version("otdp"),
                 },

@@ -669,6 +669,15 @@ class SerialCaptureServices(WriterBackedCaptureServices):
         self._link = link
         self._max_frame_bytes = max_frame_bytes
         self._ceiling = min(link.transfer_ceiling, max_frame_bytes)
+        # The write refusals name the transport that actually short-wrote
+        # (refute lane A's observation): the serial default keeps the
+        # historical wording byte-identical on the two label lines; the
+        # ftdi subclass relabels. Disclosed reach of the same fold: a
+        # TYPED ConnectionError from the link is no longer rewrapped as
+        # "serial write failed: …" (and no longer carries the cause
+        # chain) — the passthrough is a behavior and wording change on
+        # the serial transport, kept as the honest fix.
+        self._write_label = "serial"
         self._evidence_path = evidence_path
         self.evidence: list[dict[str, Any]] = []
         # The link-control capability (issue #407): configuration, present-
@@ -748,10 +757,18 @@ class SerialCaptureServices(WriterBackedCaptureServices):
             data = transaction["data"]
             try:
                 sent = await asyncio.to_thread(self._link.write, data)
+            except ConnectionError:
+                # Already typed (a faulted link, a closed link): rewraping
+                # it as a write failure would mislabel the fault's stage.
+                raise
             except OSError as error:
-                raise ConnectionError(f"serial write failed: {error}") from error
+                raise ConnectionError(
+                    f"{self._write_label} write failed: {error}"
+                ) from error
             if sent is not None and sent != len(data):
-                raise ConnectionError(f"serial write reported {sent} of {len(data)} bytes")
+                raise ConnectionError(
+                    f"{self._write_label} write reported {sent} of {len(data)} bytes"
+                )
             if kind == "stream_send":
                 return {}
         received = await asyncio.to_thread(

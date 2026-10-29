@@ -5,7 +5,21 @@ read-only example. The hardware is the device; this Python package is its plugin
 Use plugins/<manufacturer>/<name>/ as the project root in a plugin collection,
 with src/<package>/ inside. That project can become its own external repository.
 The SDK implementation lives separately in BenchWeave's packages/sdk/.
+{% if provider_transport -%}
+This project declares a transport provider: the descriptor pins the FTDI common
+control contract (ftdi-control-provider.json inside the package, byte-equal to
+the SDK's banked copy), and the adapter speaks the contract's seven control
+operations plus the generic stream kinds. There is no vectors.json: the mock's
+stream-only dialects cannot script control operations, and the scaffold does not
+ship a script that pretends otherwise. Rehearse without hardware over the SDK's
+shipped driver double (ScriptedFtdiDriver, see tests/test_plugin.py); rehearse
+against recorded evidence with `benchweave-sdk-server serve --transport replay
+--replay <journal.json>`; serve the device with `--transport ftdi --device
+<ftdi-url>` and record a bench session as a replay journal with
+`--record <path>`. The SDK user guide's "Live FTDI transport" section states
+the refusals and the recording rules.
 
+{% endif %}
 ## Project layout
 
 Run installation, pytest and uv build from the directory containing pyproject.toml.

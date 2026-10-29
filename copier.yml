@@ -9,11 +9,29 @@ package_name:
 with_ui:
   type: bool
   default: false
+# Row f (issue #568) + the #570 dialect: the provider-transport variant.
+# The serial-stream default is unchanged; true renders the custom
+# transport with the banked FTDI control contract pinned, provider-shaped
+# builders and adapter, AND a provider-dialect vectors.json — the mock
+# rehearses the bring-up at the transaction boundary; the generated
+# suite's driver-double test proves the executor ladder one boundary
+# down (the division of proof the #570 record states).
+provider_transport:
+  type: bool
+  default: false
 sdk_version:
   type: str
 otdp_version:
   type: str
 _subdirectory: template
+# The serial default excludes the provider contract; the provider shape
+# ships BOTH its contract and its vectors.json (copier 9 renders each
+# `_exclude` value as jinja; the pattern is the DESTINATION name,
+# `.jinja` stripped, relative to the subdirectory root). The exclusion
+# re-applies on `copier update`, so the serial shape never grows the
+# contract file.
+_exclude:
+  - "{% if not provider_transport %}ftdi-control-provider.json{% endif %}"
 # The globstars are load-bearing (spike-proven at update time): a single
 # `*` does NOT cross `/` in copier's update-time skip matching, so `src/*`
 # left src/<pkg>/adapter.py unprotected — the 3-way merge could push

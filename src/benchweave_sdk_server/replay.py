@@ -36,10 +36,12 @@ test_replay.py``):
   the recorded row's is a conformance failure. Every mismatch is a
   ``ConformanceError`` naming the row — never a silently served substitute.
 - **Recorded failures stay failures.** A ``recorded_failure: "timeout"``
-  receive row answers with the backend's ``TimeoutError`` posture (the
-  recorded no-response stays a no-response; the timing compresses to
-  immediate, the outcome does not change). Replay invents no certainty the
-  recording lacks (A06).
+  receive row answers with the backend's ``TimeoutError`` posture and a
+  ``recorded_failure: "connection"`` row answers with the
+  ``ConnectionError`` posture (the recorded outcome stays the recorded
+  outcome; the timing compresses to immediate). A failure row carries NO
+  response — the contradiction refuses at load. Replay invents no
+  certainty the recording lacks (A06).
 - **The dispatch ladder is unchanged.** Grammar, then bounds, then payload,
   then liveness, then the closed transport, then the dispatch marker, then
   the row is consumed. A transmit without ``mark_dispatch_started`` is a
@@ -117,32 +119,34 @@ _RECEIVE_FIELDS = {
 }
 
 
-def _b64_decode(text: Any, row: str, field: str) -> bytes:
+def _b64_decode(text: Any, row: str, field: str, code: str = "replay_journal_row_shape") -> bytes:
     """Decode one base64 contract-document field to ABI bytes; typed refusal."""
     if not isinstance(text, str):
         raise ValueError(
-            f"replay_journal_row_shape: row {row}: {field} must be a base64 string"
+            f"{code}: row {row}: {field} must be a base64 string"
         )
     try:
         return base64.b64decode(text, validate=True)
     except ValueError as exc:  # binascii.Error is a ValueError
         raise ValueError(
-            f"replay_journal_row_shape: row {row}: {field} is not valid base64"
+            f"{code}: row {row}: {field} is not valid base64"
         ) from exc
 
 
-def _hex_decode(text: Any, row: str, field: str) -> bytes:
+def _hex_decode(
+    text: Any, row: str, field: str, code: str = "replay_journal_row_shape"
+) -> bytes:
     """Decode one hex field (stream payloads carry hex, the vectors.json
-    convention); typed refusal naming the row."""
+    convention); typed refusal naming the row and the document family."""
     if not isinstance(text, str):
         raise ValueError(
-            f"replay_journal_row_shape: row {row}: {field} must be a hex string"
+            f"{code}: row {row}: {field} must be a hex string"
         )
     try:
         return bytes.fromhex(text)
     except ValueError as exc:
         raise ValueError(
-            f"replay_journal_row_shape: row {row}: {field} is not a hex byte string"
+            f"{code}: row {row}: {field} is not a hex byte string"
         ) from exc
 
 
@@ -278,7 +282,11 @@ class ReplayJournal:
 
 
 def _outcome_check(
-    row: str, bounds: tuple[int, str, int], response: bytes, failure: str | None
+    row: str,
+    bounds: tuple[int, str, int],
+    response: bytes,
+    failure: str | None,
+    code: str = "replay_journal_outcome",
 ) -> None:
     """The recorded outcome must be one the recorded bounds could produce —
     a journal that records an impossible exchange (a 5-byte reply to an
@@ -293,14 +301,14 @@ def _outcome_check(
     if exact:
         if len(response) != exact:
             raise ValueError(
-                f"replay_journal_outcome: row {row}: exact_bytes {exact} but the "
+                f"{code}: row {row}: exact_bytes {exact} but the "
                 f"recorded outcome is {len(response)} bytes"
             )
         return
     terminator = _TERMINATORS[termination]
     if len(response) > max_bytes or not response.endswith(terminator):
         raise ValueError(
-            f"replay_journal_outcome: row {row}: a {len(response)}-byte outcome "
+            f"{code}: row {row}: a {len(response)}-byte outcome "
             f"without a terminating {termination!r} inside max_bytes {max_bytes} "
             "is not an outcome these bounds can produce"
         )
@@ -311,34 +319,43 @@ def _load_row(
     index: int,
     names: set[str],
     grammar: dict[str, GrammarEntry],
+    *,
+    code: str = "replay_journal_row_shape",
 ) -> ReplayRow:
+    """Validate and normalize one journal row into ABI form. ``code`` names
+    the document family in every row-shape refusal: the journal lane's
+    default keeps its historical literal byte-identical, and the #570
+    provider-dialect compile passes ``standalone_vectors_row_shape`` so a
+    vectors corpus's refusals name the vectors file, never "journal" — one
+    validator, two documents (the anti-drift rule vectors.py states)."""
     """Validate and normalize one journal row into ABI form."""
     if not isinstance(row, dict):
-        raise ValueError(f"replay_journal_row_shape: row {index}: not an object")
+        raise ValueError(f"{code}: row {index}: not an object")
     name = row.get("name")
     if not isinstance(name, str) or not name:
         raise ValueError(
-            f"replay_journal_row_shape: row {index}: name is not a non-empty string"
+            f"{code}: row {index}: name is not a non-empty string"
         )
     if name in names:
         raise ValueError(
-            f"replay_journal_row_shape: row {name}: duplicate row name "
+            f"{code}: row {name}: duplicate row name "
             "(row names name the offending row in every diagnostic)"
         )
     names.add(name)
     transaction = row.get("transaction")
     if not isinstance(transaction, dict):
         raise ValueError(
-            f"replay_journal_row_shape: row {name}: transaction is not an object"
+            f"{code}: row {name}: transaction is not an object"
         )
     kind = transaction.get("kind")
     if not isinstance(kind, str):
-        raise ValueError(f"replay_journal_row_shape: row {name}: kind is not a string")
+        raise ValueError(f"{code}: row {name}: kind is not a string")
     failure = row.get("recorded_failure")
-    if failure is not None and failure != "timeout":
+    if failure is not None and failure not in ("timeout", "connection"):
         raise ValueError(
-            f"replay_journal_row_shape: row {name}: recorded_failure {failure!r} "
-            'is not a recorded outcome this format carries (only "timeout")'
+            f"{code}: row {name}: recorded_failure {failure!r} "
+            'is not a recorded outcome this format carries '
+            '("timeout" or "connection")'
         )
     response_raw = row.get("response")
 
@@ -349,25 +366,25 @@ def _load_row(
         entry = grammar[kind]
         if failure is not None:
             raise ValueError(
-                f"replay_journal_row_shape: row {name}: recorded_failure applies "
+                f"{code}: row {name}: recorded_failure applies "
                 "to receive rows, not provider transactions"
             )
         if not isinstance(response_raw, dict):
             raise ValueError(
-                f"replay_journal_row_shape: row {name}: a provider row's response "
+                f"{code}: row {name}: a provider row's response "
                 "must be an object"
             )
         document = {key: value for key, value in transaction.items() if key != "kind"}
         error = _first_schema_error(entry.request_validator, document)
         if error is not None:
             raise ValueError(
-                f"replay_journal_row_shape: row {name}: the transaction does not "
+                f"{code}: row {name}: the transaction does not "
                 f"satisfy the admitted {kind} grammar: {error}"
             )
         error = _first_schema_error(entry.result_validator, dict(response_raw))
         if error is not None:
             raise ValueError(
-                f"replay_journal_row_shape: row {name}: the recorded result does "
+                f"{code}: row {name}: the recorded result does "
                 f"not satisfy the admitted {kind} grammar: {error}"
             )
         expected: dict[str, Any] = {"kind": kind}
@@ -399,12 +416,12 @@ def _load_row(
         )
 
     if kind in _FIELDS:
-        return _load_stream_row(name, transaction, failure, response_raw)
+        return _load_stream_row(name, transaction, failure, response_raw, code=code)
 
     raise ValueError(
-        f"replay_journal_kind: row {name}: kind {kind!r} is neither a generic "
-        f"section 8.1 stream kind nor an admitted grammar kind "
-        f"({sorted(grammar) or 'none'})"
+        f"{code.removesuffix('_row_shape') + '_kind'}: row {name}: kind {kind!r} is "
+        f"neither a generic section 8.1 stream kind nor an admitted grammar "
+        f"kind ({sorted(grammar) or 'none'})"
     )
 
 
@@ -420,6 +437,8 @@ def _load_stream_row(
     transaction: dict[str, Any],
     failure: str | None,
     response_raw: Any,
+    *,
+    code: str = "replay_journal_row_shape",
 ) -> ReplayRow:
     """Validate one §8.1 stream row through the SHARED field sets and
     bounds definitions (one definition family for backend, mock and replay
@@ -441,7 +460,7 @@ def _load_stream_row(
     )
     if set(transaction) != fields:
         raise ValueError(
-            f"replay_journal_row_shape: row {name}: not a section 8.1 stream "
+            f"{code}: row {name}: not a section 8.1 stream "
             f"transaction: {sorted(transaction)}"
         )
     request: bytes | None = None
@@ -450,10 +469,10 @@ def _load_stream_row(
     if inline:
         if kind == "stream_receive":
             raise ValueError(
-                f"replay_journal_row_shape: row {name}: a receive row carries no "
+                f"{code}: row {name}: a receive row carries no "
                 "outgoing data"
             )
-        request = _hex_decode(transaction["data"], name, "data")
+        request = _hex_decode(transaction["data"], name, "data", code=code)
         if len(request) >= BULK_INLINE_LIMIT:
             raise ValueError(
                 f"replay_journal_bulk: row {name}: inline payload is "
@@ -464,7 +483,7 @@ def _load_stream_row(
     elif digest is not None or byte_length is not None:
         if kind == "stream_receive":
             raise ValueError(
-                f"replay_journal_row_shape: row {name}: a receive row carries no "
+                f"{code}: row {name}: a receive row carries no "
                 "outgoing digest pair"
             )
         if (
@@ -473,7 +492,7 @@ def _load_stream_row(
             or any(char not in "0123456789abcdef" for char in digest)
         ):
             raise ValueError(
-                f"replay_journal_row_shape: row {name}: data_sha256 is not a "
+                f"{code}: row {name}: data_sha256 is not a "
                 "64-character lowercase hex digest"
             )
         if (
@@ -482,14 +501,14 @@ def _load_stream_row(
             or byte_length < 1
         ):
             raise ValueError(
-                f"replay_journal_row_shape: row {name}: byte_length is not a "
+                f"{code}: row {name}: byte_length is not a "
                 "positive integer"
             )
         row_digest = digest
         row_length = byte_length
     elif kind != "stream_receive":
         raise ValueError(
-            f"replay_journal_row_shape: row {name}: a send row carries either "
+            f"{code}: row {name}: a send row carries either "
             "inline data or the digest pair (data_sha256 + byte_length)"
         )
     bounds: tuple[int, str, int] | None = None
@@ -507,25 +526,36 @@ def _load_stream_row(
         )
     if failure is not None and kind == "stream_send":
         raise ValueError(
-            f"replay_journal_row_shape: row {name}: recorded_failure applies to "
+            f"{code}: row {name}: recorded_failure applies to "
             "receive rows, not sends"
         )
     response = b""
     if failure is None and response_raw is not None:
         if not isinstance(response_raw, dict) or set(response_raw) - {"data"}:
             raise ValueError(
-                f"replay_journal_row_shape: row {name}: a stream row's response "
+                f"{code}: row {name}: a stream row's response "
                 'carries at most {"data"}'
             )
         if "data" in response_raw:
-            response = _hex_decode(response_raw["data"], name, "response.data")
-    if failure is not None and response:
+            response = _hex_decode(response_raw["data"], name, "response.data", code=code)
+    if failure is not None and response_raw:
+        # The delta refute's residual 3: a row carrying BOTH a failure and
+        # a response used to load and silently discard the response (the
+        # decode above is gated on ``failure is None``) while this module
+        # rejects three neighbouring contradictions. Recorded evidence
+        # never vanishes without a diagnostic.
         raise ValueError(
-            f"replay_journal_row_shape: row {name}: a recorded failure row "
-            "carries no response data"
+            f"{code}: row {name}: a recorded failure row "
+            "carries no response data — the failure IS the recorded outcome"
         )
     if bounds is not None:
-        _outcome_check(name, bounds, response, failure)
+        _outcome_check(
+            name,
+            bounds,
+            response,
+            failure,
+            code=code.removesuffix("_row_shape") + "_outcome",
+        )
     if kind == "stream_receive":
         return ReplayRow(
             name=name,
@@ -1071,9 +1101,14 @@ class ReplayHost(WriterBackedCaptureServices, MockHost):
             row = self._match_receive(identity_bounds)
             if row is not None and row.failure is not None:
                 # The recorded failure replays honestly: the outcome class is
-                # the backend's TimeoutError posture, compressed to immediate
-                # (the recording already proved the wait); no byte is served
-                # and no clean quiet-line answer upgrades the ambiguity (A06).
+                # the backend's posture, compressed to immediate (the
+                # recording already proved the wait); no byte is served and
+                # no clean quiet-line answer upgrades the ambiguity (A06).
+                if row.failure == "connection":
+                    raise ConnectionError(
+                        f"replay recorded_failure at row {row.name}: the "
+                        "recorded exchange lost its connection after the send"
+                    )
                 raise TimeoutError(
                     f"replay recorded_failure at row {row.name}: the recorded "
                     "receive expired at its deadline with no complete frame"
@@ -1104,6 +1139,11 @@ class ReplayHost(WriterBackedCaptureServices, MockHost):
         if kind == "stream_send":
             return {}
         if row.failure is not None:
+            if row.failure == "connection":
+                raise ConnectionError(
+                    f"replay recorded_failure at row {row.name}: the "
+                    "recorded exchange lost its connection after the send"
+                )
             raise TimeoutError(
                 f"replay recorded_failure at row {row.name}: the recorded "
                 "receive expired at its deadline with no complete frame"
