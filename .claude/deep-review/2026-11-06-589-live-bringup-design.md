@@ -1115,3 +1115,28 @@ fixtures to assert the typed refusal, own commit, no deletion. `test_classref_ve
 inverted as the pattern commit (renamed to its honest name, derivation half kept, gate
 half asserting `profile_contract_invalid:` naming the pin); the remaining 12 modules
 carry the same mechanical pattern with the per-module pin map above.
+
+---
+
+## 11. Ledger addendum — D12 to D18 (appended 2026-11-07, post-freeze)
+
+Rows raised **after** rev 7 froze, and therefore absent from the §1 table above, which ends
+at D11. They are recorded here so the ledger is resolvable from a committed file: until this
+append they existed only in the session's untracked scratch, which is not a home for a
+pre-committed acceptance rule (and which a build agent correctly reported as unresolvable —
+that report is why this section exists). Rows are append-only; none of D1–D11 is altered.
+
+| Row | Defect | Status | Mechanism, as verified | Carrier |
+|---|---|---|---|---|
+| D12 | The preset home disagrees three ways | **Real, three-way** | The host reads `config/presets` (`seam.py:1217`); `derive-ui` writes `ui/presets`; the presets pin per-slot settings schemas that ARE the configure action's input schema with its corpus `$id` (`classref.py:3142-3147`). Copying one into `config/presets` still refuses, because its settings are action envelopes and `_stageable` (`seam.py:1423`) finds no writable parameter. Worse: the scaffold's own `AI-GUIDE.md.jinja:45-47` tells UI authors to keep ONE authoritative copy under `ui/`, so **a guide-following plugin never populates `config/presets` and the preset surface is silently empty**. No gateway parity constraint: `otdp_bridge.py` has zero preset surfaces (grep-verified) | PR-6 |
+| D13 | The rate payload slot is not served | **Resolved — PR-2's, not PR-6's** | The rate slot EXISTS in the vendored catalog: `otdp.logic_analyser.configure/1.0.0`'s input requires `sample_rate_hz` and `channels[].threshold_v`. The generic route that reaches it is invoke; `src/` greps clean of the name. The "rate payload not decoded" half is plugin-side and unverified here — the host's write path is verbatim `{parameter, value}` | PR-2 |
+| D14 | `parameter_read` filters out `threshold_v` | **WITHDRAWN with evidence** | The filter is descriptor-driven (`session.py:141-147`, access ro/rw) and `threshold_v` appears nowhere in `src/` — every threshold hit is power-analysis vocabulary. It is a per-channel INPUT of the configure action whose read-back home is that action's `effective_configuration` OUTPUT, which invoke surfaces. Not a defect | none (PR-6 keeps a guide row naming the two read surfaces, plus a `wo-parameter` disclosure) |
+| D15 | The host does not run the decoder | **BOUNDARY, not a gap — DON'T-BUILD the runner** | The vendored schema says "Structure only… the consuming action is side_effect none over a completed retained acquisition" (`otdp-decoder.schema.json:5`); the decode ACTION is the runner and both decode actions are in the vendored catalog with full schemas. The host renders | none |
+| D16 | `purge("rx")` does not clear the SerialLink ring | **Mechanism verified; magnitude measured in the arm** | `ftdi.py`'s purge control reached only `purge_tx_buffer()`/`purge_rx_buffer()` — the FTDI **hardware** buffers — and touched no ring, while `serial.py` runs a dedicated reader thread draining the transport into a bounded ring. So after a flush every `stream_receive` popped whatever the ring still held. Reported from the bench with the right experiment behind it: `pyftdi` alone replicating the vendor's loader answers the command dialect eight of eight, while the same device through the SDK transport returns filler — the wrapper is the variable, and the ring is the only wrapper-owned state a hardware purge leaves behind. **Sole-source is claimed by neither the reporting session nor this record:** that is an argument, and the fix is the experiment — the reporting session re-runs its recorder against the change and that re-run is the measurement | PR-7 |
+| D17 | The receive ladder is left parked after establish, blocking control sends with `live_provider_line_busy` until a reconnect | **UNVERIFIED** | Reported plugin-side; it names the host's establish/connect path, so it is SDK-side if it reproduces. Not dropped — the mechanism is read before the carrier is assigned | TBD (PR-2 or PR-6, whichever owns the connect path) |
+| D18 | The SDK's check lanes carry zero decoder validation, and `classref` silently skips unloadable decoder documents | **Real, same silent-empty class as D12** | `classref.py:2950-2953` skips a decoder document that fails to load and produces no finding anywhere, so a decoder that cannot load is invisible to every lane | a sibling check-lane PR |
+
+**The pattern worth naming, because it recurred three times in this run:** the preset list, the
+decoder validation, and the generality gate's own coverage claims were each **silently empty
+rather than loudly refusing**. That is one shape, not three coincidences, and it is why this
+ledger prefers a refusal that names itself.
