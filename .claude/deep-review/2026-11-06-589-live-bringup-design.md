@@ -170,7 +170,7 @@ The principal's directive, made a structural property rather than a comment:
 
 ---
 
-## 1. Defect ledger — nine filed, one withdrawn, every row carried by a named PR
+## 1. Defect ledger — nine red-team defects, two found by other means, one withdrawn, every row carried by a named carrier
 
 | # | Defect | Status | Evidence (read, not inherited) | PR |
 |---|---|---|---|---|
@@ -183,6 +183,26 @@ The principal's directive, made a structural property rather than a comment:
 | D7 | No capture verb, no artifact members, inline snapshot never admitted, `capture_stop` never stops the device | **Real blocker in its data half; moot in its capture half under the dataset model** | §5: with D4's dataset admission, an invoke-only plugin's data path is invoke→dataset; the streaming-capture members belong to plugins that declare a capture verb | PR-3 (+ seam S2) |
 | D8 | `reset` verb unreachable; widened: an action's declared parameter range admits work its verb budget forbids | **Real (two rows)** | `verb_timeout_ms` (`session.py:1054-1060`) reads only `operations[verb].timeout_ms` — grep across `benchweave_sdk_server` finds ZERO reads of `actions[`, `side_effect`, `cancellable`, `"retry"`; the plugin's `attempts` max 20 × 22.96 s/slot breaches the 60 s invoke budget with nothing to catch it | PR-2 |
 | D9 | Declared descriptor surfaces the host ignores | **Real, split across PRs** | unread: `actions`' four behavioural fields (PR-2), `identify` returning `None` for `serial`/`firmware` where `_IDENTITY_RESULT` (`catalogue.py:164-178`) requires strings (PR-2), `required_features`, `read_policy.side_effect`, `profiles` (PR-5), `channels` (cross-checked in PR-3's dataset validation), `contracts` (read from PR-2) | PR-2/3/5 |
+| **D10** | **The GATEWAY requires `dataset_publish`; the standard now says the host admits on result.** Created by the principal's ruling (verified #589 `2026-11-06T12:24:22Z`), not filed by the red team — the ruling's own "what follows" row says the gateway stops requiring it | **Real, and it lives in the OTHER repository** | `otdp_bridge.py:1462-1479` returns `InvalidInvokeResult` unless the action published; the plugin declares host-admission (`adapter.py:1216-1217`) and does not change. The SDK side closes in PR-3; the gateway side needs its own PR on `madeinoz67/benchweave` | **GW-1 (gateway repo)**, opened at PR-3's open time; until it merges, the divergence is DISCLOSED in the three places the ruling names (§4): this record, `host_info`, and the refusal text |
+
+| **D11** | **A CARRIER defect, not a content defect: the slice's first commit carried four-revisions-stale bytes under a message claiming a later revision.** The drafting agent regenerated the design record from its own context instead of copying the frozen file, so it committed 704 lines of rev 2 — before the generality gate, the nine-defect ledger and the PR stack existed — while the message said rev 5 | **FIXED before any code was accepted** | `git show HEAD:…design.md \| wc -l` → 704 and title `(rev 2)` against a "rev 5" message; amended to the frozen rev 7 (958 lines). Caught by reading the committed artifact, not by any gate: **every gate planned for this slice would have passed it** | PR-1 (its first commit, amended) |
+
+**Every row has a carrier, and D10 is the one that is not in this repository.** It is
+recorded here rather than left implicit because the ruling permits an interim disclosure
+and a disclosure is only honest if it is a scheduled row with a named owner. PR-3 must
+not close while GW-1 is unopened. **GW-1 is a NAMED carrier WITHOUT an owner as of this
+revision**: the standing carve-out for working the principal's designated repo covers
+issues on one named repo, and that field is unpopulated in both sessions' operational
+rules, so neither session may authorise an outward-facing gateway write on its own
+judgement. D10 is surfaced to the principal with GW-1 ready to fire.
+
+**D11 is the row this record exists to make embarrassing.** A design record's whole
+function is proving the acceptance rules were pre-committed; one that silently omits
+three revisions of itself satisfies the form and defeats the purpose, and it is
+indistinguishable from an honest stale commit until someone diffs the bytes. It is
+recorded as a carrier defect — the artefact carrying the rules was wrong, not the rules —
+because that is the class the process review should walk, and it outranks any single
+content finding from the refute lanes in consequence.
 
 The red team's framing, quoted for the rationale: **"Five defects found on one instrument
 is a plugin problem. Five defects that four of nine device classes share is an SDK design
