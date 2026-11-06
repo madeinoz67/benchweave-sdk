@@ -474,11 +474,15 @@ def test_metric_b5_wrong_feature_refuses(capsys: pytest.CaptureFixture[str]) -> 
 
 
 def test_metric_b6_absent_device_refuses(plugin) -> None:
-    """B6's named test: REAL pyftdi, no device attached (this bench has
-    none) — the connect refuses ``live_provider_device_unavailable:``
-    naming the exception class, one attempt, no scan, no retry. With the
-    availability refusal deleted and a fabricated ok returned (the
-    mutation) this test reddens."""
+    """B6's named test: REAL pyftdi, no device attached — the connect
+    refuses ``live_provider_device_unavailable:`` naming the selector, the
+    failing class and the enumeration result. One bounded OPEN attempt, no
+    retry (A06 keeps holding); since #589's ladder the selector RESOLUTION
+    may enumerate once, so the "no scan" wording is retired while the
+    prefix assertion stands (on a device-less machine the ladder answers
+    "enumeration found 0 matching device(s)" — strictly more diagnostic
+    than the bare class). With the availability refusal deleted and a
+    fabricated ok returned (the mutation) this test reddens."""
     session = ftdi_plugin_session(plugin, _URL)  # driver_factory=None: the real open
     with pytest.raises(RuntimeError, match="live_provider_device_unavailable:"):
         asyncio.run(session.connect())
