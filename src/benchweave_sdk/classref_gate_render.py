@@ -10,6 +10,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .packaging import _package_dir
+
 
 def render_pages(project: Path, page_ids: list[str]) -> dict[str, str]:
     """Serve one plugin project in-process and return each page's HTML."""
@@ -33,11 +35,7 @@ def render_pages(project: Path, page_ids: list[str]) -> dict[str, str]:
     from benchweave_sdk_server.transport import LoopingMockHost
     from benchweave_sdk_server.web import build_app
 
-    package_dir = next(
-        (path for path in (project / "src").iterdir() if path.is_dir()), None
-    )
-    if package_dir is None:
-        raise ValueError(f"classref_gate_project: no package under {project / 'src'}")
+    package_dir = _package_dir(project, refusal="classref_gate_project")
     plugin = load_plugin_project(project)
     json.loads((package_dir / "descriptor.json").read_bytes())
     seam = StandaloneSeam(

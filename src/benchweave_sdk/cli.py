@@ -16,7 +16,7 @@ import click
 
 from . import __version__
 from .console import ConsoleOutput
-from .packaging import inventory
+from .packaging import _package_dir, inventory
 from .publishing import (
     build_submission,
     parse_dependency,
@@ -162,11 +162,9 @@ def _ui_staleness_notice(project: Path) -> str | None:
     from .presentation import read_file
     from .served import _tuple, active_version
 
-    src = project / "src"
-    if not src.is_dir():
-        return None
-    package_dir = next((path for path in src.iterdir() if path.is_dir()), None)
-    if package_dir is None:
+    try:
+        package_dir = _package_dir(project, refusal="ui_staleness_no_package")
+    except ValueError:
         return None
     active = active_version("plugin-ui")
     stale: set[str] = set()
@@ -491,24 +489,6 @@ def migrate_ui_command(
         "and commit. Offline migration is not admission or approval to apply settings.",
         style="green",
     )
-
-
-def _package_dir(project: Path, *, refusal: str) -> Path:
-    """The single package directory under ``<project>/src`` — derive-ui's own
-    discovery, minted as a helper when regen-fixtures became its second user
-    (issue #463 row 8). The refusal prefix is the CALLER's (STD-4: each
-    command refuses in its own voice). The ``is_dir`` guard covers the
-    missing-src/ half of the input space too: ``iterdir`` on an absent
-    directory is a raw errno, and the named refusal is the better message."""
-    src = project / "src"
-    package_dir = (
-        next((path for path in src.iterdir() if path.is_dir()), None)
-        if src.is_dir()
-        else None
-    )
-    if package_dir is None:
-        raise ValueError(f"{refusal}: no package under {project / 'src'}")
-    return package_dir
 
 
 @cli.command("derive-ui")

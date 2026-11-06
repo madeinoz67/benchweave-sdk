@@ -1,10 +1,44 @@
-"""Deterministic file inventory helpers; no publication or dependency installation."""
+"""Deterministic file inventory and plugin-package discovery helpers; no
+publication or dependency installation."""
 
 from __future__ import annotations
 
 import hashlib
 from pathlib import Path, PurePosixPath
 from typing import Any
+
+
+def _package_dir(project: Path, *, refusal: str) -> Path:
+    """The single package directory under ``<project>/src`` — derive-ui's own
+    discovery, minted as a helper when regen-fixtures became its second user
+    (issue #463 row 8) and shared with the classref gate since the wheel
+    install made the pick load-bearing. A real wheel install (``uv pip
+    install --target``) leaves the package tree beside its
+    ``<name>-<version>.dist-info`` metadata directory, so those, ``.egg-info``
+    and ``__pycache__`` are never the package, and the candidates are read in
+    sorted order — the pick must not depend on the filesystem's ``iterdir``
+    order. The refusal prefix is the CALLER's (STD-4: each command refuses in
+    its own voice). The ``is_dir`` guard covers the missing-src/ half of the
+    input space too: ``iterdir`` on an absent directory is a raw errno, and
+    the named refusal is the better message."""
+    src = project / "src"
+    package_dir = (
+        next(
+            (
+                path
+                for path in sorted(src.iterdir())
+                if path.is_dir()
+                and path.name != "__pycache__"
+                and not path.name.endswith((".dist-info", ".egg-info"))
+            ),
+            None,
+        )
+        if src.is_dir()
+        else None
+    )
+    if package_dir is None:
+        raise ValueError(f"{refusal}: no package under {project / 'src'}")
+    return package_dir
 
 
 def _file(root: Path, name: str) -> Path:
