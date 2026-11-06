@@ -630,6 +630,29 @@ def test_the_numeric_serial_round_trips_into_the_fallback_open(
     ]
 
 
+def test_twins_sharing_one_serial_get_actionable_advice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fold K-2: when the ambiguous candidates report the SAME serial, "add
+    the device's serial" is advice with nothing to buy — the message says
+    so and names the two things that DO distinguish the devices: unplug
+    one, or address one by pyftdi's bus/address URL form, which this
+    grammar passes through to pyftdi verbatim (the opaque URL arm)."""
+    _install_backend(
+        monkeypatch,
+        devices=[
+            ((0x0403, _OFFICIAL_PID, "610042"), 1),
+            ((0x0403, _OFFICIAL_PID, "610042"), 1),
+        ],
+    )
+    with pytest.raises(RuntimeError, match="live_provider_device_ambiguous:") as excinfo:
+        open_ftdi("0403:6001")
+    message = str(excinfo.value)
+    assert "report the same serial" in message
+    assert "ftdi://::<bus>:<address>" in message
+    assert "add the device's serial" not in message
+
+
 def test_twins_without_a_serial_refuse_ambiguity_listing_every_candidate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -300,10 +300,21 @@ def _device_ambiguous(selector: FtdiSelector, rows: list[_DeviceRow]) -> Runtime
         f"0x{vid:04x}:0x{pid:04x}:{serial or 'no-serial'}"
         for vid, pid, serial, _ in rows
     )
+    if len({serial for _, _, serial, _ in rows}) == len(rows):
+        advice = "add the device's serial to the selector to pick one"
+    else:
+        # Two clones reporting the SAME serial: the standard advice has
+        # nothing to buy (fold K-2). Name what does tell them apart — the
+        # bus/address URL form reaches the opaque passthrough arm verbatim.
+        advice = (
+            "the candidates report the same serial, so a serial cannot "
+            "tell them apart — unplug one, or address one directly with "
+            "pyftdi's bus/address URL form ftdi://::<bus>:<address>/"
+            "<interface>"
+        )
     return RuntimeError(
         f"live_provider_device_ambiguous: the selector {selector.raw!r} "
-        f"matches {len(rows)} attached devices ({candidates}); add the "
-        "device's serial to the selector to pick one"
+        f"matches {len(rows)} attached devices ({candidates}); {advice}"
     )
 
 
