@@ -299,7 +299,16 @@ class SerialLink:
         the fence drops whole chunks, never parts of one, so the
         terminator-bearing tail can be delivered as a frame that reads as
         complete — a caller that must not accept partial frames
-        resynchronises after purging."""
+        resynchronises after purging.
+
+        The obligation above stands in for machinery this contract does
+        not build, and the trigger that would force that machinery is: a
+        caller that CANNOT resynchronise. At that point the fence needs to
+        carry a resynchronise-required state and ``stream_receive`` must
+        refuse a headless frame rather than deliver it, because a
+        truncated frame that reads as complete is corruption and not a
+        retry. Until such a caller exists, a caller-initiated purge with a
+        stated resync obligation is the smaller and honest shape."""
         with self._cond:
             self._purge_epoch += 1
             del self._ring[:]
