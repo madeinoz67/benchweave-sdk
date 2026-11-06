@@ -58,7 +58,7 @@ construction — the same bytes the gateway's loader refuses at activation.
 Measured on this tree: ``verify-ui`` exits 1 naming
 ``urn:meridian:composed-burst:1.0.0``; ``preview-ui`` prints the same
 refusal and exits before binding. The clean-gate, REPORTED-deviation and
-served-page arms below are therefore parked (their skip reasons name the
+listener arms below are therefore parked (their skip reasons name the
 carrier): the loop's own measurements now pin the typed refusals — the
 verify step, the serve step, and the control arm's flip of WHICH pin the
 gate names. The scaffold, derive, ledger and loader-probe halves still run
@@ -147,13 +147,14 @@ SPAWN_SKIPPED_ON_WINDOWS = pytest.mark.skipif(
     ),
 )
 
-#: The #589 PR-2 inversion: the served-page arms need a listener that no
+#: The #589 PR-2 inversion: the listener arms need a listener that no
 #: longer starts — preview-ui refuses the loop fixture's contracts[] pins at
 #: seam construction and exits before binding (module docstring). The serve
 #: step's own refusal is still measured, once, by
-#: ``test_the_serve_step_refuses_the_pinned_contracts``; everything below
-#: this marker returns only with the R2 corpus motion (vendor pins move out
-#: of contracts[], main-side).
+#: ``test_the_serve_step_refuses_the_pinned_contracts``; every property
+#: parked below returns only with the R2 corpus motion (vendor pins move out
+#: of contracts[], main-side). Each marker names the property ITS arm
+#: measures, so a future reader can tell park-by-cause from park-by-accident.
 NEEDS_GATE_BACK = pytest.mark.skip(
     reason=(
         "#589 PR-2: preview-ui refuses the loop fixture's contracts[] pins "
@@ -162,6 +163,20 @@ NEEDS_GATE_BACK = pytest.mark.skip(
         "be served until the R2 corpus motion lands (vendor pins move out "
         "of contracts[], main-side); the serve step's refusal itself is "
         "measured by test_the_serve_step_refuses_the_pinned_contracts"
+    )
+)
+#: The lifecycle sibling: same refusal, same carrier — but this arm parks
+#: the console script's startup banner and clean SIGINT stop, which need a
+#: RUNNING listener, not a served page.
+NEEDS_GATE_BACK_LIFECYCLE = pytest.mark.skip(
+    reason=(
+        "#589 PR-2: preview-ui refuses the loop fixture's contracts[] pins "
+        "at seam construction (profile_contract_invalid naming the pin) and "
+        "exits before binding, so the startup banner and clean SIGINT stop "
+        "this arm measures cannot run until the R2 corpus motion lands "
+        "(vendor pins move out of contracts[], main-side); the serve step's "
+        "refusal itself is measured by "
+        "test_the_serve_step_refuses_the_pinned_contracts"
     )
 )
 
@@ -647,7 +662,7 @@ def test_the_served_page_carries_every_mode_banner(loop_page: ServedPage) -> Non
         assert entry.wording not in loop_page.fragment, (entry.key, entry.wording)
 
 
-@NEEDS_GATE_BACK
+@NEEDS_GATE_BACK_LIFECYCLE
 @SPAWN_SKIPPED_ON_WINDOWS
 def test_the_console_script_announces_the_listener_and_stops_cleanly(
     loop_page: ServedPage,
@@ -720,8 +735,8 @@ def test_the_loop_loads_the_plugin_adapter_not_only_the_presentation(
     would raise ``standalone_connect_identity_mismatch`` by design. The
     loop never connects; its pages are the composed presentation.
 
-    #589 PR-2: the listener half is parked under NEEDS_GATE_BACK, the same
-    marker and the same R2 corpus motion carrier as the three served-page
+    #589 PR-2: the listener half is parked behind the same gate-back and
+    the same R2 corpus motion carrier as the three skipped listener
     arms above (vendor pins move out of contracts[], main-side) — the server
     refuses the pins before binding, so this arm asserts strictly less than
     it did until that motion lands. The probe half still runs, and measures

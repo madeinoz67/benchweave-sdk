@@ -341,13 +341,18 @@ def test_l11_l3_coverage_needs_the_gate_back_first(tmp_path: Path) -> None:
 
 
 def test_m5_coverage_emission_needs_the_gate_back_first(tmp_path: Path) -> None:
-    """M5's mutation-survival arm: an undeclared unreachable action fails
-    the gate with classref_gate_uncovered — deleting the uncovered
-    emission cannot survive this test. (#589 PR-2 inversion, module note
-    above: verify-ui refuses at seam construction before the coverage
-    findings mint; the deviation-drop mutation is kept for the
-    flip-back, and the emission's teeth return only with the R2 corpus
-    motion.)"""
+    """M5's mutation-survival arm, parked (#589 PR-2 inversion, module
+    note above). Its pre-PR-2 form proved an undeclared unreachable
+    action fails the gate with classref_gate_uncovered and that deleting
+    the uncovered emission cannot survive the test; on this tree the arm
+    pins the staging's typed pin-level refusal — verify-ui refuses at
+    seam construction before the coverage findings mint — and the
+    mutation-survival discrimination is parked with it: neutralizing
+    _coverage_findings leaves this arm green (the refute lane executed
+    that falsification), so this docstring claims no surviving power it
+    does not have. The deviation-drop mutation is kept for the
+    flip-back; the emission's teeth return only with the R2 corpus
+    motion."""
     import json as _json
 
     from helpers_classref import build_classref_project
