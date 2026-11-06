@@ -427,4 +427,5 @@ Playwright setup failure ("Executable doesn't exist at
 ~/Library/Caches/ms-playwright/chromium_headless_shell-1248/…"), i.e. a missing
 local browser binary, not a code defect. After `uv run playwright install
 chromium-headless-shell`, both affected files re-ran green (27 passed) and the
-whole suite was re-run clean; those counts are the release's evidence.
+whole suite was re-run clean — the release's evidence: 2864 collected, 2858
+passed, 6 skipped, 0 failures, 0 errors (junitxml counts, not a summary line).
