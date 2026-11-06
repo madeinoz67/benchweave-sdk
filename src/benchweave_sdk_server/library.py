@@ -19,6 +19,7 @@ probed, is refused conservatively — an unprovable lock is treated as live.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -61,6 +62,51 @@ CREATE TABLE IF NOT EXISTS captures (
     stop_reason TEXT
 )
 """
+
+#: The admitted-dataset family (issue #589 §4, design record §2a): a
+#: SIBLING table in the same index file with its own column set — a dataset
+#: manifest carries no primary artifact, so the capture row's
+#: ``format``/``byte_length`` fields would be lies in a closed row;
+#: ``sha256`` here is the CANONICAL manifest bytes' digest (the row's
+#: integrity pin). ``started_at``/``status``/``kind`` come from the
+#: manifest (``started_at`` is nullable in the corpus schema; the row
+#: stores the empty string for null), the provenance columns from the
+#: ``metadata.json`` sidecar (the annotation/pin authority).
+_DATASETS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS datasets (
+    dataset_id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    status TEXT NOT NULL,
+    action_id TEXT,
+    sha256 TEXT NOT NULL,
+    surface TEXT,
+    operator TEXT,
+    project TEXT,
+    pinned INTEGER NOT NULL DEFAULT 0,
+    tags TEXT NOT NULL DEFAULT '[]',
+    notes TEXT NOT NULL DEFAULT ''
+)
+"""
+
+_DATASET_COLUMNS: tuple[str, ...] = (
+    "dataset_id",
+    "kind",
+    "started_at",
+    "status",
+    "action_id",
+    "sha256",
+    "surface",
+    "operator",
+    "project",
+    "pinned",
+    "tags",
+    "notes",
+)
+
+#: The capture-root family directory the admitted manifests live under (one
+#: root, one lockfile: admission introduces no second writer).
+_DATASETS_FAMILY = "datasets"
 
 _INDEX_NAME = "library.sqlite3"
 _LOCK_NAME = "library.lock"
@@ -216,6 +262,33 @@ def _row_of(manifest: dict[str, Any], metadata: dict[str, Any]) -> dict[str, Any
     }
 
 
+def _dataset_row_of(
+    manifest: dict[str, Any], metadata: dict[str, Any]
+) -> dict[str, Any]:
+    """The index row for one admitted dataset: the manifest's own fields
+    plus the sidecar's provenance, with ``sha256`` computed over the
+    CANONICAL manifest bytes (sorted keys, tight separators — the same form
+    the admission core's idempotency compares)."""
+    tags = metadata.get("tags")
+    canonical = json.dumps(
+        manifest, sort_keys=True, separators=(",", ":"), allow_nan=False
+    )
+    return {
+        "dataset_id": str(manifest.get("dataset_id", "")),
+        "kind": str(manifest.get("kind", "")),
+        "started_at": str(manifest.get("started_at") or ""),
+        "status": str(manifest.get("status", "")),
+        "action_id": metadata.get("action_id"),
+        "sha256": hashlib.sha256(canonical.encode()).hexdigest(),
+        "surface": metadata.get("surface"),
+        "operator": metadata.get("operator"),
+        "project": metadata.get("project"),
+        "pinned": bool(metadata.get("pinned", False)),
+        "tags": list(tags) if isinstance(tags, list) else [],
+        "notes": str(metadata.get("notes", "")),
+    }
+
+
 class CaptureLibrary:
     """One host process's index over one capture root.
 
@@ -233,6 +306,7 @@ class CaptureLibrary:
         self._lock = self._acquire_lock()
         self._connection = sqlite3.connect(self._root / _INDEX_NAME)
         self._connection.execute(_SCHEMA)
+        self._connection.execute(_DATASETS_SCHEMA)
         self._connection.commit()
         self._released = False
         self.rebuild()
@@ -284,7 +358,15 @@ class CaptureLibrary:
     # --- the rebuild (AR-6) -------------------------------------------------
 
     def rebuild(self) -> None:
-        """Rebuild every row from the capture root; the root is the truth."""
+        """Rebuild every row from the capture root; the root is the truth.
+
+        Two families, two walks: the root's event directories (captures),
+        and the ``datasets/`` family (admitted measurement manifests). The
+        capture walk is naturally blind to the family — ``datasets/`` carries
+        no root-level ``manifest.json``, so it is skipped there and indexed
+        by its own walk, whose rows key on the manifest's TRUE ``dataset_id``
+        (never the directory name — a forged segment publishes no row under
+        the forged id)."""
         with self._connection:
             self._connection.execute("DELETE FROM captures")
             for entry in sorted(self._root.iterdir()):
@@ -319,6 +401,37 @@ class CaptureLibrary:
                     "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     _row_values(row),
                 )
+            self._connection.execute("DELETE FROM datasets")
+            family = self._root / _DATASETS_FAMILY
+            if family.is_dir():
+                for entry in sorted(family.iterdir()):
+                    if not entry.is_dir():
+                        continue
+                    manifest_path = entry / "manifest.json"
+                    if not manifest_path.is_file():
+                        continue
+                    try:
+                        manifest = json.loads(
+                            manifest_path.read_text(encoding="utf-8")
+                        )
+                    except ValueError:
+                        continue
+                    if not isinstance(manifest, dict):
+                        continue
+                    dataset_id = manifest.get("dataset_id")
+                    if not isinstance(dataset_id, str) or not dataset_id:
+                        # The same discipline as a capture's null id: the
+                        # row keys on the manifest's own true id.
+                        continue
+                    try:
+                        row = _dataset_row_of(manifest, _read_metadata(entry))
+                    except (TypeError, ValueError):
+                        continue
+                    self._connection.execute(
+                        "INSERT OR REPLACE INTO datasets VALUES "
+                        "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        _dataset_row_values(row),
+                    )
 
     # --- reads --------------------------------------------------------------
 
@@ -337,6 +450,43 @@ class CaptureLibrary:
         )
         row = cursor.fetchone()
         return self._row_dict(row) if row is not None else None
+
+    # --- the admitted-dataset family (issue #589 §4) ------------------------
+
+    def list_datasets(self) -> list[dict[str, Any]]:
+        """Every admitted dataset as a row dict, ordered by dataset_id."""
+        cursor = self._connection.execute(
+            f"SELECT {', '.join(_DATASET_COLUMNS)} FROM datasets "
+            "ORDER BY dataset_id"
+        )
+        return [self._dataset_row_dict(row) for row in cursor.fetchall()]
+
+    def get_dataset(self, dataset_id: str) -> dict[str, Any] | None:
+        """One admitted dataset's row, ``None`` when the index has no such
+        id. The row was keyed on the manifest's TRUE id by the rebuild, so
+        a caller-supplied ``ds-op-…`` forgery finds nothing here — the
+        id-verified read."""
+        cursor = self._connection.execute(
+            f"SELECT {', '.join(_DATASET_COLUMNS)} FROM datasets "
+            "WHERE dataset_id = ?",
+            (dataset_id,),
+        )
+        row = cursor.fetchone()
+        return self._dataset_row_dict(row) if row is not None else None
+
+    def record_dataset(
+        self, dataset_id: str, manifest: dict[str, Any], metadata: dict[str, Any]
+    ) -> None:
+        """Insert or refresh one admitted dataset's row (the admission
+        core's runtime path — the rebuild is the same row over the same
+        files)."""
+        row = _dataset_row_of({**manifest, "dataset_id": dataset_id}, metadata)
+        with self._connection:
+            self._connection.execute(
+                "INSERT OR REPLACE INTO datasets VALUES "
+                "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                _dataset_row_values(row),
+            )
 
     # --- runtime row maintenance (the lifecycle slice's interface) ----------
 
@@ -430,6 +580,18 @@ class CaptureLibrary:
                 decoded["tags"] = []
         return decoded
 
+    @staticmethod
+    def _dataset_row_dict(row: tuple[Any, ...]) -> dict[str, Any]:
+        decoded = dict(zip(_DATASET_COLUMNS, row, strict=True))
+        decoded["pinned"] = bool(decoded["pinned"])
+        tags = decoded["tags"]
+        if isinstance(tags, str):
+            try:
+                decoded["tags"] = json.loads(tags)
+            except ValueError:
+                decoded["tags"] = []
+        return decoded
+
     def close(self) -> None:
         """Release the root: close the index and remove the lockfile.
         Tolerates repeated calls (the lifespan close-down idempotency) — and
@@ -446,4 +608,11 @@ def _row_values(row: dict[str, Any]) -> tuple[Any, ...]:
     values = list(row[column] for column in _COLUMNS)
     values[_COLUMNS.index("pinned")] = int(bool(row["pinned"]))
     values[_COLUMNS.index("tags")] = json.dumps(list(row["tags"]))
+    return tuple(values)
+
+
+def _dataset_row_values(row: dict[str, Any]) -> tuple[Any, ...]:
+    values = list(row[column] for column in _DATASET_COLUMNS)
+    values[_DATASET_COLUMNS.index("pinned")] = int(bool(row["pinned"]))
+    values[_DATASET_COLUMNS.index("tags")] = json.dumps(list(row["tags"]))
     return tuple(values)

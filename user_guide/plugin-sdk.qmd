@@ -582,7 +582,7 @@ The standalone host serves the `invoke` operation. The operation runs one action
 
 The plugin must pin a profile catalog and a measurement schema in `descriptor.json` under `contracts[]`. The host reads the pinned bytes from the plugin package when the serve starts. A pin that does not name a package file, a pin whose bytes do not agree with its sha256 value, or a document that is not a valid catalog refuses the start of the serve. The refusal text starts with `profile_contract_missing:`, `profile_contract_hash_mismatch:` or `profile_contract_invalid:`. A pin that names a file that is not present does not refuse the start. Then the host cannot assemble the contract set, and `invoke` answers `unavailable` with the reason `contracts_unresolved`.
 
-The host checks each request before it sends data to the device. The action must be declared in the descriptor and it must be in the pinned catalog. The input must satisfy the input schema in the catalog and the `input_constraints` of the descriptor. The result must satisfy the output schema in the catalog. A result in the shape of a dataset does not serve. The host refuses it with `unavailable` because the dataset admission surface does not exist yet.
+The host checks each request before it sends data to the device. The action must be declared in the descriptor and it must be in the pinned catalog. The input must satisfy the input schema in the catalog and the `input_constraints` of the descriptor. The result must satisfy the output schema in the catalog. A result in the shape of a dataset goes to the dataset admission path. See the section "Dataset admission (standalone host)" below.
 
 The host honours the contract fields that the action row declares. The standalone host is stricter than the gateway here. The gateway reads none of these four fields:
 
@@ -594,6 +594,28 @@ The host honours the contract fields that the action row declares. The standalon
 The `device_reset` operation runs the reset verb of the adapter. The descriptor must declare a `reset` operation policy. The adapter must answer a receipt with `acknowledged: true`.
 
 The identify answer is also a contract. The fields `serial` and `firmware` are strings. Answer an empty string when the device has nothing to report. Do not answer `null` and do not omit the field. A `null` value refuses the connect. The refusal text starts with `standalone_connect_identity_invalid:`.
+
+## Dataset admission (standalone host)
+
+The host admits a dataset from the result of an invoke action. The adapter does not call a publish surface for this path. This is the standard: the plugin returns a dataset-shaped result, and the host admits it.
+
+A result is dataset-shaped when it carries every required key of the dataset definition in the pinned measurement schema. The host mints a dataset id for each invoke dispatch. The id is `ds:` plus the operation id. The adapter reads the id from `context.dataset_id` and writes it into the `dataset_id` field of the manifest. The manifest must carry this id. An operation that is not an invoke has a `null` dataset id.
+
+The host validates the manifest before it writes anything. The validation order is: the id, an earlier admission under the same id, the pinned measurement schema, the structural checks, the echo check, and the artifact check. The structural checks are the corpus checks M01 to M04. The channels of the manifest must be channels that the descriptor declares. The count of inline values must agree with the product of the axis lengths. The echo check is M10: the `configuration_id` and `acquisition_id` fields must echo the invoke input when the input schema of the action declares the field. The artifact check is M11: a variable with an artifact reference refuses, because no payload surface ships in this host. Use inline values.
+
+A refusal text starts with `standalone_dataset_invalid:` and names the first schema error at its JSON path. A refusal writes nothing to disk. The host writes one `manifest.json` file under `<capture-root>/datasets/` when the validation passes. The write is atomic. The `capture_list` operation serves the admitted datasets in the optional `datasets` array.
+
+The adapter can also call the `dataset_publish` and `dataset_lookup` services members. These two members are the base of the `DatasetServices` protocol. The host attaches them when the invoke lane is armed. A call to `dataset_publish` with a `null` dataset id refuses. The refusal text starts with `standalone_dataset_context_absent:`. A lookup of an id that this host process did not admit refuses. The refusal text starts with `standalone_dataset_unknown:`.
+
+::: {.callout-caution}
+The gateway still requires `dataset_publish` at dispatch time. The standalone host does not. This difference stays until task GW-1 closes it. The `host_info` operation carries this difference in the `dataset_admission` field. Every `standalone_dataset_invalid:` refusal text also names this difference.
+:::
+
+::: {.callout-note}
+The host keeps every admitted dataset. There is no retention rule for datasets today. Datasets are small inline JSON manifests in practice. A bench that outgrows this must tell the maintainers.
+:::
+
+A plugin that declares no `capture` operation gets a typed refusal from `capture_start`. The refusal text starts with `standalone_capture_verb_undeclared:` and names the data route: this plugin serves data through its actions.
 
 ## Capture without a gateway (standalone writer)
 

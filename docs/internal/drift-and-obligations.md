@@ -52,7 +52,10 @@ rubric's G5 gate is the obligation; this file is the detail behind it.
    `test_standards_sync`, `test_cli_frameworks`, `test_presentation_cli`,
    `test_preview_shim`, `test_preview_fixtures`, `test_sdk`,
    `test_getting_started` (the docs-as-tests lane over `user_guide/getting-started.qmd`,
-   issue #347 WS4), plus the regression modules beside them) and runs in this
+   issue #347 WS4), plus the regression modules beside them; the dataset
+   admission lane (#589 PR-3) lives in `tests/server/test_dataset_admission.py`
+   with its D6 arms in `tests/server/test_capture_lifecycle.py` and its
+   pin flip in `tests/test_dataset_services.py`) and runs in this
    repository's CI. A behavior change with
    no coverage here is a required change; name the module that should carry the test.
    Since 0.7.0 (#308, R-10) the SRF-2 agreement arms live here too — the both-directions

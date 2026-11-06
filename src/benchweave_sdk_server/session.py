@@ -955,13 +955,23 @@ class HostOperationContext:
     ``deadline_monotonic`` is ``time.monotonic() + timeout_ms / 1000`` where
     ``timeout_ms`` comes from the descriptor's own operation policy for the
     verb being executed (SW-13): the host mints no envelope of its own.
+
+    ``dataset_id`` is the host-minted dataset correlation id for data-
+    producing invoke dispatches (issue #589 §4: ``"ds:" + operation_id``,
+    minted per dispatch, passed at construction — an adapter reads it during
+    execute, so a post-construction assignment would be a race), or ``None``
+    when the operation is not part of a dataset. The shape mirrors the SDK's
+    reference ``OperationContext`` (``benchweave_sdk.testing.MockContext``)
+    — ``dataset_id`` is a defaulted keyword on both.
     """
 
-    def __init__(self, operation_id: str, *, timeout_ms: int) -> None:
+    def __init__(
+        self, operation_id: str, *, timeout_ms: int, dataset_id: str | None = None
+    ) -> None:
         if not operation_id or not math.isfinite(float(timeout_ms)) or timeout_ms <= 0:
             raise ValueError("A context needs an identity and a positive finite timeout")
         self.operation_id = operation_id
-        self.dataset_id: str | None = None
+        self.dataset_id = dataset_id
         self.deadline_monotonic = time.monotonic() + timeout_ms / 1000
         self.dispatched = False
         self._cancelled = False
@@ -1015,6 +1025,13 @@ class PluginSession:
         # object, so link events ride the seam bus. None = no publisher;
         # the services publish nothing.
         self.link_event_publisher: Callable[[dict[str, Any]], None] | None = None
+        # The services wrapper hook (issue #589 §4, PR-3): installed by the
+        # seam before any connection (beside the link-event precedent);
+        # ``connect`` applies it at the ONE services mint site, so every
+        # transport (mock, serial, replay, ftdi) composes through the same
+        # line and the connected adapter holds the wrapped object. None =
+        # no wrapper; the factory's services are handed over as minted.
+        self.services_wrapper: Callable[[HostServices], HostServices] | None = None
         # The rehearsal marker (issue #568, the acceptance review's A):
         # set by session factories whose transport supports driver
         # injection when an injected driver is in use — the session then
@@ -1043,8 +1060,12 @@ class PluginSession:
         (the capture terminal paths finalise/abort under one)."""
         return self._lifecycle_timeout_ms()
 
-    def _context(self, operation_id: str, timeout_ms: int) -> HostOperationContext:
-        return HostOperationContext(operation_id, timeout_ms=timeout_ms)
+    def _context(
+        self, operation_id: str, timeout_ms: int, dataset_id: str | None = None
+    ) -> HostOperationContext:
+        return HostOperationContext(
+            operation_id, timeout_ms=timeout_ms, dataset_id=dataset_id
+        )
 
     def verb_timeout_ms(self, verb: str) -> int:
         """The descriptor's declared timeout for ``verb`` (A02: its bound)."""
@@ -1090,6 +1111,12 @@ class PluginSession:
                 f"open-{uuid.uuid4().hex[:8]}", self._lifecycle_timeout_ms()
             )
             services = self._services_factory()
+            if self.services_wrapper is not None:
+                # The seam's composition point (issue #589 §4): the wrapper
+                # is applied at the ONE mint site, so the adapter holds the
+                # wrapped object from open onward — post-connect mutation of
+                # the adapter's held services would be a race.
+                services = self.services_wrapper(services)
             await adapter.open(self._plugin.descriptor, services, context)
         except RuntimeError:
             raise
@@ -1174,6 +1201,8 @@ class PluginSession:
         arguments: dict[str, Any],
         *,
         timeout_ms: int | None = None,
+        mint_dataset_id: bool = False,
+        observe_context: Callable[[HostOperationContext], None] | None = None,
     ) -> dict[str, Any]:
         """Run one operation envelope through the open adapter.
 
@@ -1181,12 +1210,30 @@ class PluginSession:
         declared deadline — the invoke dispatch's per-ACTION bound (issue
         #589 §3.2): the action row is the only place the deadline is read
         from, so the wrong-keyed lookup cannot happen by construction.
+
+        ``mint_dataset_id`` mints the context's dataset correlation id as
+        ``"ds:" + operation_id`` at CONSTRUCTION (issue #589 §4: the
+        gateway's per-dispatch mint; the adapter reads it during execute,
+        so the id exists before the dispatch and no later assignment
+        happens). Non-invoke verbs keep ``dataset_id = None`` — the callers
+        that pass no flag mint nothing.
+
+        ``observe_context`` receives the freshly-minted context immediately
+        before the adapter dispatch — the host's one hook to record the
+        dispatch (the operation id is minted here, and the caller that
+        needs it for correlation gets it atomically with the dispatch).
         """
         if self._adapter is None or not self.connected:
             raise RuntimeError("standalone_session_not_open")
         deadline = timeout_ms if timeout_ms is not None else self.verb_timeout_ms(verb)
         operation_id = f"op-{uuid.uuid4().hex[:8]}"
-        context = self._context(operation_id, deadline)
+        context = self._context(
+            operation_id,
+            deadline,
+            dataset_id=f"ds:{operation_id}" if mint_dataset_id else None,
+        )
+        if observe_context is not None:
+            observe_context(context)
         request = {"operation_id": operation_id, "verb": verb, "arguments": arguments}
         return await self._adapter.execute(request, context)
 

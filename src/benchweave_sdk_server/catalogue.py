@@ -106,6 +106,23 @@ _HOST_INFO_RESULT = _object(
         "rehearsal": {"type": "boolean"},
         "sdk_version": {"type": "string"},
         "link": _LINK_BLOCK,
+        # The D10 disclosure (issue #589 §5.2): a closed two-string object,
+        # required once present — a consumer cannot miss it.
+        "dataset_admission": {
+            "type": "object",
+            "properties": {
+                "standard": {
+                    "type": "string",
+                    "description": "The host's dataset admission standard",
+                },
+                "gateway_divergence": {
+                    "type": "string",
+                    "description": "How the gateway still differs, until GW-1",
+                },
+            },
+            "required": ["standard", "gateway_divergence"],
+            "additionalProperties": False,
+        },
         "presentation": {
             "type": "object",
             "properties": {
@@ -130,7 +147,8 @@ _HOST_INFO_RESULT = _object(
         },
     },
     ["mode", "absent_guarantees", "served_operations", "deferred_operations",
-     "plugin", "transport", "rehearsal", "sdk_version", "link", "presentation"],
+     "plugin", "transport", "rehearsal", "sdk_version", "link",
+     "dataset_admission", "presentation"],
 )
 
 _DEVICE_SUMMARY = {
@@ -408,8 +426,44 @@ _CAPTURE_ROW = _object(
     ],
 )
 
+#: The admitted-dataset row (issue #589 §4): a sibling of the capture row
+#: with its own closed column set — a dataset manifest carries no primary
+#: artifact, so the capture row's ``format``/``byte_length``/``sha256``
+#: fields would be lies in a closed row; ``action_id`` is the dispatch that
+#: produced the manifest (sidecar provenance).
+_DATASET_ROW = _object(
+    {
+        "dataset_id": {"type": "string", "minLength": 1},
+        "kind": {"type": "string"},
+        "started_at": {"type": "string"},
+        "status": {"type": "string"},
+        "action_id": {"type": ["string", "null"]},
+        "surface": {"type": ["string", "null"]},
+        "operator": {"type": ["string", "null"]},
+        "project": {"type": ["string", "null"]},
+        "tags": {"type": "array", "items": {"type": "string"}},
+        "notes": {"type": "string"},
+        "pinned": {"type": "boolean"},
+    },
+    [
+        "dataset_id", "kind", "started_at", "status", "action_id",
+        "surface", "operator", "project", "pinned", "tags", "notes",
+    ],
+)
+
+#: The optional ``datasets`` sibling (a DISCLOSED result-schema widening,
+#: issue #589 §4): existing consumers are unaffected — ``captures`` stays
+#: required, ``datasets`` stays optional, and the outer object stays closed.
 _CAPTURE_LIST_RESULT = _object(
-    {"captures": {"type": "array", "items": _CAPTURE_ROW}}, ["captures"]
+    {
+        "captures": {"type": "array", "items": _CAPTURE_ROW},
+        "datasets": {
+            "type": "array",
+            "items": _DATASET_ROW,
+            "description": "Admitted measurement datasets (issue #589 §4)",
+        },
+    },
+    ["captures"],
 )
 
 _CAPTURE_GET_RESULT = _object(

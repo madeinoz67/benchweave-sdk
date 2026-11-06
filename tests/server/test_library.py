@@ -347,3 +347,137 @@ def test_sqlite_file_is_not_an_event(root: Path) -> None:
         assert [row["capture_id"] for row in library.list_captures()] == ["cap-a"]
     finally:
         library.close()
+
+
+# --- the datasets family (issue #589 PR-3, §2a of the design record) ------------
+
+
+def write_dataset(
+    root: Path,
+    dataset_id: str,
+    *,
+    kind: str = "scalar_set",
+    status: str = "complete",
+    action_id: str | None = "demo.probe/1.0.0",
+    started_at: str | None = None,
+    surface: str | None = "rest",
+    operator: str = "benchop",
+    project: str | None = None,
+) -> Path:
+    """Publish one dataset event directory exactly as the admission core
+    does: ``datasets/<segment>/manifest.json`` (segment = the id with its
+    single ``:`` replaced by ``-``) plus the ``metadata.json`` sidecar that
+    carries the provenance and the action."""
+    segment = dataset_id.replace(":", "-", 1)
+    event = root / "datasets" / segment
+    event.mkdir(parents=True)
+    manifest = {
+        "dataset_id": dataset_id,
+        "kind": kind,
+        "configuration_id": None,
+        "acquisition_id": None,
+        "started_at": started_at,
+        "status": status,
+        "context": {},
+    }
+    (event / "manifest.json").write_text(json.dumps(manifest, sort_keys=True))
+    metadata = {
+        "dataset_id": dataset_id,
+        "action_id": action_id,
+        "surface": surface,
+        "operator": operator,
+        "project": project,
+        "pinned": False,
+        "tags": [],
+        "notes": "",
+    }
+    (event / "metadata.json").write_text(json.dumps(metadata, sort_keys=True))
+    return event
+
+
+def test_record_dataset_and_rebuild_agree(root: Path) -> None:
+    """AR-6 for the second family: the runtime insert and the rebuild walk
+    produce the same row from the same files — the index is query
+    acceleration, never the only copy. The row's sha256 is the canonical
+    manifest digest, recomputed by both paths."""
+    root.mkdir()
+    dataset_id = "ds:op-library01"
+    write_dataset(root, dataset_id)
+    manifest = json.loads(
+        (root / "datasets" / "ds-op-library01" / "manifest.json").read_text()
+    )
+    metadata = json.loads(
+        (root / "datasets" / "ds-op-library01" / "metadata.json").read_text()
+    )
+    library = CaptureLibrary(root)
+    try:
+        library.record_dataset(dataset_id, manifest, metadata)
+        assert len(library.list_datasets()) == 1
+        row = library.list_datasets()[0]
+    finally:
+        library.close()
+    # One library per root by design (the lockfile): the fresh library owns
+    # the root only after the first released it.
+    fresh = CaptureLibrary(root)
+    try:
+        rebuilt = fresh.list_datasets()[0]
+    finally:
+        fresh.close()
+    assert row == rebuilt
+    assert row["dataset_id"] == dataset_id
+    assert row["kind"] == "scalar_set"
+    assert row["status"] == "complete"
+    assert row["action_id"] == "demo.probe/1.0.0"
+    assert row["operator"] == "benchop"
+    assert len(row["sha256"]) == 64
+
+
+def test_get_dataset_serves_the_row_and_misses_unknown_ids(root: Path) -> None:
+    root.mkdir()
+    write_dataset(root, "ds:op-alpha0001")
+    library = CaptureLibrary(root)
+    try:
+        assert library.get_dataset("ds:op-alpha0001") is not None
+        assert library.get_dataset("ds:op-nothing01") is None
+    finally:
+        library.close()
+
+
+def test_the_capture_walk_is_blind_to_the_datasets_family(root: Path) -> None:
+    """The design record's §2a placement argument, pinned: a dataset
+    manifest under ``datasets/`` is NOT a capture row (a top-level manifest
+    would be indexed with format "" and byte_length 0 — a lie in a closed
+    row)."""
+    root.mkdir()
+    write_capture(root, "cap-a")
+    write_dataset(root, "ds:op-beside001")
+    library = CaptureLibrary(root)
+    try:
+        assert [row["capture_id"] for row in library.list_captures()] == ["cap-a"]
+        assert [row["dataset_id"] for row in library.list_datasets()] == [
+            "ds:op-beside001"
+        ]
+    finally:
+        library.close()
+
+
+def test_a_forged_segment_directory_publishes_no_row_under_the_forged_id(
+    root: Path,
+) -> None:
+    """The id-verified read: the row keys on the manifest's TRUE dataset_id,
+    never on the directory name — a caller-supplied ``ds-op-…`` forgery
+    finds the directory and refuses on the id check."""
+    root.mkdir()
+    # The directory claims one id; the manifest carries another.
+    event = root / "datasets" / "ds-op-forged0001"
+    event.mkdir(parents=True)
+    (event / "manifest.json").write_text(
+        json.dumps({"dataset_id": "ds:op-true0000001", "kind": "scalar_set",
+                    "status": "complete"})
+    )
+    library = CaptureLibrary(root)
+    try:
+        assert library.get_dataset("ds:op-forged0001") is None
+        assert library.get_dataset("ds:op-true0000001") is not None
+    finally:
+        library.close()

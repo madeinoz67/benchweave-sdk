@@ -178,19 +178,41 @@ def _start(count: int | None = None, **extra: Any) -> dict[str, Any]:
 # --- the transport gap and the guards --------------------------------------
 
 
-def test_capture_start_refuses_without_capture_services(seam) -> None:
+def test_capture_start_refuses_without_capture_services(seam_from, tmp_path) -> None:
     """The acceptance review's B: the duck-check refusal is TYPED — the
     machine-matchable prefix names the gap and the missing members, never
     an untyped string, and never the parenthetical that blamed the mock
     even on a provider transport. The seam code stays the standard's
     closed vocabulary (`unavailable` = the capability is unavailable);
     the typed surface is the prefix plus the `reason` detail (the
-    binding-refusal precedent)."""
+    binding-refusal precedent).
+
+    Since the D6 reorder (issue #589 §4) the verb check runs FIRST
+    (declaration precedes host capability), so this arm's plugin DECLARES
+    the capture verb — the services gap is then the honest cause. The
+    identity stays the scaffold's own (the mock transport's vectors answer
+    it; the wavegen patch would break establishment over this transport)."""
+    project = tmp_path / "declaring"
+    create_project(project, "example_plugin")
+    descriptor_path = project / "src" / "example_plugin" / "descriptor.json"
+    descriptor = json.loads(descriptor_path.read_text(encoding="utf-8"))
+    descriptor["capabilities"] = ["identify", "read", "capture"]
+    descriptor["operations"]["capture"] = {
+        "timeout_ms": 5000,
+        "side_effect": "state_change",
+        "retry": "never",
+        "cancellable": True,
+        "completion": "acknowledged",
+    }
+    descriptor["capture_formats"] = ["waveform_f64le", "raw_binary"]
+    descriptor["capture_limits"] = {"max_samples": 100_000, "max_bytes": 16 * 1024 * 1024}
+    descriptor_path.write_text(json.dumps(descriptor, indent=2), encoding="utf-8")
+    host = seam_from(project)
 
     async def scenario() -> None:
-        await _connected(seam)
+        await _connected(host)
         with pytest.raises(SeamError) as caught:
-            await seam.call("capture_start", _start(count=4))
+            await host.call("capture_start", _start(count=4))
         assert "unavailable" in str(caught.value.code)
         message = str(caught.value.message)
         assert message.startswith("capture_services_incomplete:"), message
@@ -207,6 +229,74 @@ def test_capture_start_refuses_without_capture_services(seam) -> None:
         ]
 
     asyncio.run(scenario())
+
+
+def test_a17_capture_start_names_the_undeclared_verb_before_the_services_check(
+    seam,
+) -> None:
+    """A17 (issue #589 §4, D6's reorder): a plugin that declares NO capture
+    operation gets the VERB refusal over the mock transport — never
+    ``capture_services_incomplete``, which blamed the host's capability for
+    a declaration the plugin never made. The no-dispatch proof is A16's
+    (the serial arm observes the port); this arm pins the refusal's CAUSE."""
+    async def scenario() -> None:
+        await _connected(seam)
+        with pytest.raises(SeamError) as caught:
+            await seam.call("capture_start", _start(count=4))
+        assert caught.value.code == "unavailable"
+        message = str(caught.value.message)
+        assert message.startswith("standalone_capture_verb_undeclared:"), message
+        assert "capture_services_incomplete" not in message
+
+    asyncio.run(scenario())
+
+
+def test_a16_capture_start_on_an_invoke_only_plugin_refuses_the_verb(
+    tmp_path: Path, invoke_project_builder
+) -> None:
+    """A16 (issue #589 §4, D6): the lying fallback is gone — a plugin whose
+    descriptor declares ``invoke`` but not ``capture`` refuses
+    ``capture_start`` with the honest direction (the dataset path IS the
+    data route), and NOTHING is dispatched. The old fallback passed
+    capture arguments verbatim to a verb whose adapter contract is
+    ``{action_id, input}`` — it could never produce a valid dispatch.
+
+    Placement note (a disclosed deviation from the design record §9, which
+    named this module): the record's arms live wherever their fixture
+    machinery does, and an invoke-only descriptor requires the invoke
+    conditional's full field set (channels, profiles, contracts, actions —
+    the descriptor schema's allOf[29]), which only the invoke project
+    builder carries; the verb resolution the arm exercises is
+    transport-independent (it reads the descriptor alone). This module
+    keeps the transport-adjacent D6 arms: the reorder pin (A17) and the
+    services-gap arm over a capture-declaring plugin."""
+    import sys
+
+    from benchweave_sdk_server.session import load_plugin_project, mock_plugin_session
+
+    plugin = load_plugin_project(invoke_project_builder(tmp_path / "invoke-only"))
+    adapter = sys.modules[f"{plugin.package}.adapter"]
+    seam = StandaloneSeam(
+        mock_plugin_session(plugin), transport_kind="mock", capture_root=tmp_path / "c"
+    )
+
+    def run(operation: str, arguments: dict[str, Any]) -> Any:
+        return asyncio.run(seam.call(operation, arguments))
+
+    run("device_connect", {"device_id": DEV})
+    calls_before = list(adapter.CALLS)
+    with pytest.raises(SeamError) as caught:
+        run("capture_start", {
+            "device_id": DEV,
+            "format": "waveform_f64le",
+            "count": 4,
+            "sample_interval_s": 0.001,
+            "unit": "V",
+        })
+    assert caught.value.code == "unavailable"
+    assert caught.value.message.startswith("standalone_capture_verb_undeclared:")
+    assert "invoke" in caught.value.message, "the refusal names the data route"
+    assert calls_before == adapter.CALLS, "the refusal precedes any adapter dispatch"
 
 
 def test_capture_start_refuses_while_a_reload_is_pending(seam) -> None:
