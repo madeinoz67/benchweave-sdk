@@ -50,6 +50,21 @@ canonical-path guard refuses a document reached through a symlink component,
 and ``find_reference`` treats that refusal as "no reference matches". Pytest's
 ``tmp_path``/``tmp_path_factory`` roots are already canonical on every OS the
 suite runs on; keep new scratch paths under them.
+
+**The #589 PR-2 inversion (2026-11-07):** this fixture pins its composed
+class AND its member declaration under ``contracts[]``, and since PR-2 both
+the SDK's verify-ui and its preview listener refuse those bytes at seam
+construction — the same bytes the gateway's loader refuses at activation.
+Measured on this tree: ``verify-ui`` exits 1 naming
+``urn:meridian:composed-burst:1.0.0``; ``preview-ui`` prints the same
+refusal and exits before binding. The clean-gate, REPORTED-deviation and
+served-page arms below are therefore parked (their skip reasons name the
+carrier): the loop's own measurements now pin the typed refusals — the
+verify step, the serve step, and the control arm's flip of WHICH pin the
+gate names. The scaffold, derive, ledger and loader-probe halves still run
+untouched. Everything parked here returns only with the R2 corpus motion
+(vendor pins move out of ``contracts[]``, main-side), at which point the
+skips come off and the arms flip back to their clean-gate shapes.
 """
 
 from __future__ import annotations
@@ -131,6 +146,33 @@ SPAWN_SKIPPED_ON_WINDOWS = pytest.mark.skipif(
         "(CI itself runs the `loop` module ubuntu-only — design record §13)"
     ),
 )
+
+#: The #589 PR-2 inversion: the served-page arms need a listener that no
+#: longer starts — preview-ui refuses the loop fixture's contracts[] pins at
+#: seam construction and exits before binding (module docstring). The serve
+#: step's own refusal is still measured, once, by
+#: ``test_the_serve_step_refuses_the_pinned_contracts``; everything below
+#: this marker returns only with the R2 corpus motion (vendor pins move out
+#: of contracts[], main-side).
+NEEDS_GATE_BACK = pytest.mark.skip(
+    reason=(
+        "#589 PR-2: preview-ui refuses the loop fixture's contracts[] pins "
+        "at seam construction (profile_contract_invalid naming the pin) and "
+        "exits before binding, so the served page this arm measures cannot "
+        "be served until the R2 corpus motion lands (vendor pins move out "
+        "of contracts[], main-side); the serve step's refusal itself is "
+        "measured by test_the_serve_step_refuses_the_pinned_contracts"
+    )
+)
+
+#: The typed refusal the loop project's gate names (measured; the composed
+#: class's pin is first in the descriptor's contracts[]).
+LOOP_REFUSAL = "profile_contract_invalid: urn:meridian:composed-burst:1.0.0"
+#: …and the pin the CONTROL project's gate names once the composed row is
+#: removed: the member declaration is next in line, so the pin the refusal
+#: names flips with the removed row — the discriminator the control arm
+#: keeps proving through the refusal itself.
+CONTROL_REFUSAL = "profile_contract_invalid: urn:meridian:member-declaration:1.0.0"
 
 
 @dataclass(frozen=True)
@@ -315,12 +357,19 @@ def _scaffold(
 
 @pytest.fixture(scope="session")
 def loop(installed: Installed, tmp_path_factory: pytest.TempPathFactory) -> LoopRun:
-    """The developer's project, taken through the loop once for the session."""
+    """The developer's project, taken through the loop once for the session.
+
+    The verify step is the #589 PR-2 inversion (module docstring): the
+    project's contracts[] pins refuse seam construction, so verify-ui exits
+    1 naming the composed-burst pin — asserted here, once, so every arm
+    consuming the loop knows its verify result is the refusal."""
     root = tmp_path_factory.mktemp("standalone-dev-loop")
     project, created = _scaffold(installed, root / "acme-widget")
     package = project / "src" / PACKAGE
     derive = _sdk_ok(installed, "derive-ui", str(project), cwd=root)
-    verify = _sdk_ok(installed, "verify-ui", str(project), cwd=root)
+    verify = _sdk(installed, "verify-ui", str(project), cwd=root)
+    assert verify.returncode != 0, verify.stdout
+    assert LOOP_REFUSAL in verify.stderr, verify.stderr
     return LoopRun(
         project=project, package=package, new=created, derive=derive, verify=verify
     )
@@ -352,7 +401,12 @@ def control(
     descriptor.write_bytes(_raw(stripped))
 
     derive = _sdk_ok(installed, "derive-ui", str(project), cwd=root)
-    verify = _sdk_ok(installed, "verify-ui", str(project), cwd=root)
+    # #589 PR-2 inversion (module docstring): with the composed pin gone the
+    # gate names the NEXT pinned row — the member declaration — so the
+    # control's verify is a refusal too, on a different pin than the loop's.
+    verify = _sdk(installed, "verify-ui", str(project), cwd=root)
+    assert verify.returncode != 0, verify.stdout
+    assert CONTROL_REFUSAL in verify.stderr, verify.stderr
     try:
         yield LoopRun(
             project=project,
@@ -541,14 +595,16 @@ def test_the_ledger_names_the_composed_mapping(loop: LoopRun) -> None:
     ), ledger["custom_actions"]
 
 
-def test_verify_ui_gates_clean_and_reports_the_residual_member(loop: LoopRun) -> None:
-    """``verify-ui`` exits 0 with the rendered gate clean and the residual
-    member disclosed on the REPORTED channel; the disclosure is a report, not
-    a finding, so its presence must not turn the gate red."""
-    assert "Rendered gate clean" in loop.verify.stdout, loop.verify.stdout
-    assert f"reported deviation: custom: {SELF_CAL_URN}" in loop.verify.stdout, (
-        loop.verify.stdout
-    )
+def test_verify_ui_refuses_the_pinned_contracts(loop: LoopRun) -> None:
+    """``verify-ui`` on the loop project (#589 PR-2 inversion, module
+    docstring): exits 1 naming the typed refusal and the composed-burst pin.
+    The pre-PR-2 form asserted "Rendered gate clean" with the residual
+    member disclosed on the REPORTED channel — a shippable claim that was
+    FALSE on both hosts (the gateway's loader refuses the same bytes at
+    activation). The clean gate and the REPORTED deviation return only with
+    the R2 corpus motion (vendor pins move out of contracts[], main-side)."""
+    assert loop.verify.returncode != 0
+    assert LOOP_REFUSAL in loop.verify.stderr, loop.verify.stderr
 
 
 # ---------------------------------------------------------------------------
@@ -556,6 +612,7 @@ def test_verify_ui_gates_clean_and_reports_the_residual_member(loop: LoopRun) ->
 # ---------------------------------------------------------------------------
 
 
+@NEEDS_GATE_BACK
 @SPAWN_SKIPPED_ON_WINDOWS
 def test_the_served_page_carries_the_composed_control(loop_page: ServedPage) -> None:
     """The composed action's control and button are on the served page.
@@ -570,6 +627,7 @@ def test_the_served_page_carries_the_composed_control(loop_page: ServedPage) -> 
     assert CUSTOM_SECTION_TITLE in loop_page.html
 
 
+@NEEDS_GATE_BACK
 @SPAWN_SKIPPED_ON_WINDOWS
 def test_the_served_page_carries_every_mode_banner(loop_page: ServedPage) -> None:
     """Every banner entry the host's own rule yields for the mock transport is
@@ -589,6 +647,7 @@ def test_the_served_page_carries_every_mode_banner(loop_page: ServedPage) -> Non
         assert entry.wording not in loop_page.fragment, (entry.key, entry.wording)
 
 
+@NEEDS_GATE_BACK
 @SPAWN_SKIPPED_ON_WINDOWS
 def test_the_console_script_announces_the_listener_and_stops_cleanly(
     loop_page: ServedPage,
@@ -605,8 +664,42 @@ def test_the_console_script_announces_the_listener_and_stops_cleanly(
 
 
 @SPAWN_SKIPPED_ON_WINDOWS
+def test_the_serve_step_refuses_the_pinned_contracts(
+    installed: Installed, loop: LoopRun
+) -> None:
+    """The serve step of the loop (#589 PR-2 inversion, module docstring):
+    preview-ui refuses the project's contracts[] pins at seam construction
+    and exits before binding — the same typed refusal verify-ui names, on
+    the same bytes the gateway's loader refuses at activation. The served
+    pages, the banner and the SIGINT-stop discipline return only with the
+    R2 corpus motion (vendor pins move out of contracts[], main-side); the
+    parked arms above carry them."""
+    port = _free_port()
+    log = installed.root / f"serve-refused-{port}.log"
+    with log.open("wb") as handle:
+        process = subprocess.Popen(
+            [
+                str(installed.sdk),
+                "preview-ui",
+                str(loop.project),
+                "--no-open",
+                "--port",
+                str(port),
+            ],
+            cwd=loop.project.parent,
+            stdout=handle,
+            stderr=subprocess.STDOUT,
+            env=_child_env(),
+        )
+        exit_code = process.wait(timeout=SERVE_TIMEOUT_S)
+    served = log.read_text(encoding="utf-8", errors="replace")
+    assert exit_code != 0, served
+    assert LOOP_REFUSAL in served, served
+
+
+@SPAWN_SKIPPED_ON_WINDOWS
 def test_the_loop_loads_the_plugin_adapter_not_only_the_presentation(
-    installed: Installed, loop: LoopRun, loop_page: ServedPage
+    installed: Installed, loop: LoopRun
 ) -> None:
     """The loop's green must not be a presentation-only green.
 
@@ -626,9 +719,12 @@ def test_the_loop_loads_the_plugin_adapter_not_only_the_presentation(
     scaffold adapter answers the SDK's synthetic identity, so a connect
     would raise ``standalone_connect_identity_mismatch`` by design. The
     loop never connects; its pages are the composed presentation.
-    """
-    assert "standalone_plugin_" not in loop_page.stdout, loop_page.stdout
 
+    #589 PR-2: the listener half is parked (the server refuses the pins
+    before binding — NEEDS_GATE_BACK above); the probe half still runs, and
+    measures what it always did: the loader resolves a real factory over
+    the pinned documents with no diagnostic.
+    """
     probe = _run(
         [str(installed.python), "-c", LOADER_PROBE, str(loop.project)],
         cwd=installed.root,
@@ -649,17 +745,23 @@ def test_the_loop_loads_the_plugin_adapter_not_only_the_presentation(
 
 @SPAWN_SKIPPED_ON_WINDOWS
 def test_the_composed_surface_disappears_without_the_pin(
-    control: LoopRun, control_page: ServedPage, loop_page: ServedPage
+    control: LoopRun, loop: LoopRun
 ) -> None:
     """Remove ONLY the composed pin row and the composed surface is gone.
 
-    Both commands still exit 0 (the residual path is a disclosure, not a
-    refusal), the ledger loses the composed mapping and inventories the action
-    as custom, ``verify-ui`` names it ``custom, renders nothing`` — and the
-    served page loses the control and the button while keeping the residual
-    member's own control and section. The authored documents are identical
-    apart from that one row (asserted from the fixture bytes below), so the
-    only cause of the disappearance is the pin.
+    #589 PR-2 inversion (module docstring): the pre-PR-2 form asserted both
+    projects' commands exit 0 — the control's verify naming the action
+    ``custom, renders nothing`` — and the served pages losing the composed
+    control while keeping the residual member's. All of that needed a
+    shippable run that was FALSE on both hosts: both verifies now refuse,
+    and the discriminator this arm still proves is the FLIP — the loop's
+    refusal names the composed-burst pin, the control's names the member
+    declaration next in line, so the pin the gate names is the removed
+    row's, never a blanket refusal. The ledger discriminator (the composed
+    mapping gone, the action inventoried custom) still derives. The
+    served-page comparison returns only with the R2 corpus motion (vendor
+    pins move out of contracts[], main-side); the parked serve arms above
+    carry it.
     """
     authored = json.loads((FIXTURES / "descriptor-m400.json").read_bytes())
     stripped = json.loads((control.package / "descriptor.json").read_bytes())
@@ -673,20 +775,10 @@ def test_the_composed_surface_disappears_without_the_pin(
     assert any(
         row.get("action") == BURST_URN for row in control.ledger["custom_actions"]
     ), control.ledger["custom_actions"]
-    assert "Rendered gate clean" in control.verify.stdout, control.verify.stdout
-    assert (
-        f"reported deviation: custom, renders nothing: {BURST_URN}"
-        in control.verify.stdout
-    ), control.verify.stdout
 
-    seen = census(control_page.html)
-    assert COMPOSED_CONTROL not in seen["staged_control_ids"], seen["staged_control_ids"]
-    assert "burst_mode" not in seen["buttons"], seen["buttons"]
-    # The residual member and the composed control's sibling surfaces stay:
-    # the arm removes the pin, not the derivation.
-    assert "action-self_cal-channel" in seen["staged_control_ids"]
-    assert CUSTOM_SECTION_TITLE in control_page.html
-    # The paired positive half, measured the same way on the OTHER listener:
-    # two spawned servers, one census function, and the pin row as the only
-    # difference between their projects.
-    assert COMPOSED_CONTROL in census(loop_page.html)["staged_control_ids"]
+    # The refusal flip: same fixture bytes, one pin row apart, and the pin
+    # each gate names follows that row.
+    assert control.verify.returncode != 0
+    assert CONTROL_REFUSAL in control.verify.stderr, control.verify.stderr
+    assert CONTROL_REFUSAL not in loop.verify.stderr, loop.verify.stderr
+    assert LOOP_REFUSAL in loop.verify.stderr, loop.verify.stderr
