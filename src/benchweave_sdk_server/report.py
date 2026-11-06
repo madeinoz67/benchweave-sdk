@@ -147,10 +147,14 @@ def build_report(
     """
     if not entries:
         raise ReportRefusal("standalone_report_sources_empty: nothing to report")
+    # The two-axis ceiling counts y LABELS (issue #589 PR-4): the unit for
+    # time formats, the spec's own label for index formats — a V + A +
+    # raw_binary export is three labels and refuses; V + raw_binary is
+    # two and renders.
     units: list[str] = []
     for entry in entries:
-        if entry.source.unit not in units:
-            units.append(entry.source.unit)
+        if entry.source.y_label not in units:
+            units.append(entry.source.y_label)
     if len(units) > 2:
         raise ReportRefusal(
             "standalone_report_units_unsupported: the report renders at most "
@@ -215,6 +219,27 @@ def build_report(
     )
     parts.append('<section class="bw-report-context">')
     parts.append("<h2>Context (full extent)</h2>")
+    # The x-axis label and the basis sentence derive from the sources' own
+    # axes (issue #589 PR-4): "t (s)" for an all-time set (the pinned
+    # waveform document is unchanged), the index label for an all-index
+    # set, and BOTH names when a mixed export renders — an index axis
+    # printed as seconds is the fabrication M12 exists to kill.
+    axes_kinds = {entry.source.spec.axis for entry in entries}
+    if axes_kinds == {"time"}:
+        x_axis_label = "t (s)"
+        basis = (
+            "Time basis: seconds from each capture's own start "
+            "(sample index × sample_interval_s)."
+        )
+    elif axes_kinds == {"index"}:
+        x_axis_label = "sample index"
+        basis = "X basis: each capture's 0-based sample index (one byte per sample)."
+    else:
+        x_axis_label = "t (s) / sample index"
+        basis = (
+            "X basis: seconds from the capture's own start for time-axis "
+            "sources, the 0-based sample index for index-axis sources."
+        )
     parts.append(
         _render_chart(
             _chart_series(entries, lambda entry: entry.context_points),
@@ -223,11 +248,11 @@ def build_report(
             shade=(lo, hi),
             markers=marker_rows,
             chart_kind="context",
+            x_axis_label=x_axis_label,
         )
     )
     parts.append(
-        "<p>Time basis: seconds from each capture's own start "
-        "(sample index × sample_interval_s). The context chart spans every "
+        f"<p>{basis} The context chart spans every "
         f"source's full extent, decimated to {REPORT_PLOT_COLUMNS} min/max "
         "columns by the streaming reducer (edge-preserving); the analysis "
         "window is shaded and in-extent markers are drawn.</p>"
@@ -256,6 +281,7 @@ def build_report(
                 markers=marker_rows,
                 chart_kind="zoom",
                 marker_span=(zoom_lo, zoom_hi),
+                x_axis_label=x_axis_label,
             )
         )
         parts.append(
@@ -317,7 +343,10 @@ def _chart_series(
     return [
         {
             "capture_id": entry.source.capture_id,
-            "unit": entry.source.unit,
+            # The chart's per-series y label (the unit for time formats,
+            # the spec's own for index formats) — grouping and the legend
+            # both read it.
+            "unit": entry.source.y_label,
             "points": list(points_of(entry)),
             "form": _LINE_FORMS[index % len(_LINE_FORMS)],
             "colour": _COLOUR_FALLBACKS[index % len(_COLOUR_FALLBACKS)],
@@ -351,11 +380,15 @@ def _windowed_series_checked(
 def _stats_table(entry: ReportEntry) -> str:
     """One series' statistics block: the values, their definition, and the
     denominators on the block itself (AR-4c — the label travels with the
-    numbers, not with the page)."""
+    numbers, not with the page). The caption carries the capture's FORMAT
+    and its own y label (issue #589 PR-4, SRF-4's denominators
+    discipline)."""
     stats = entry.stats
-    unit = _text(entry.source.unit)
+    unit = _text(entry.source.y_label)
+    fmt = _text(entry.source.spec.format)
     caption = (
-        f"{_text(entry.source.capture_id)} ({unit}) — host-computed · "
+        f"{_text(entry.source.capture_id)} ({unit}) · format {fmt} — "
+        f"host-computed · "
         f"definition {ANALYSIS_DEFINITION} · count {stats.count} · "
         f"null_count {stats.null_count} · "
         f"window [{format_number(stats.lo)}, {format_number(stats.hi)}]"
@@ -388,9 +421,24 @@ def _source_block(entry: ReportEntry) -> str:
     plugin = metadata.get("plugin") or {}
     rows = (
         ("capture", _text(source.capture_id)),
-        ("unit", _text(source.unit)),
-        ("sample_count", _text(manifest.get("sample_count"))),
-        ("sample_interval_s", format_number(source.sample_interval_s)),
+        ("format", _text(source.spec.format)),
+        # The labels the document's charts actually print (issue #589
+        # PR-4): the unit for time formats, the spec's own label for
+        # index formats.
+        ("y label", _text(source.y_label)),
+        ("x label", _text(source.x_label)),
+        # The grid count the loader validated (the manifest's own
+        # sample_count for waveform; byte_length for raw, one byte per
+        # sample).
+        ("sample_count", _text(source.sample_count)),
+        # The timing fields print only for time-axis sources — an index
+        # axis has no seconds claim to make (the honest absence).
+        (
+            "sample_interval_s",
+            format_number(source.sample_interval_s)
+            if source.spec.axis == "time"
+            else "—",
+        ),
         ("byte_length", _text(manifest.get("byte_length"))),
         ("started_at", _text(manifest.get("started_at"))),
         ("manifest sha256", _text(source.manifest_sha256)),
@@ -421,6 +469,7 @@ def _render_chart(
     shade: tuple[float | None, float | None] | None,
     markers: Mapping[str, Sequence[dict[str, Any]]],
     chart_kind: str,
+    x_axis_label: str = "t (s)",
     marker_span: tuple[float, float] | None = None,
     x_lo: float = 0.0,
 ) -> str:
@@ -566,7 +615,8 @@ def _render_chart(
         )
     parts.append(
         f'<text x="{(_PLOT_LEFT + _PLOT_RIGHT) / 2:.0f}" y="{_SVG_HEIGHT - 5}" '
-        f'text-anchor="middle" class="bw-axis-label">t (s)</text>'
+        f'text-anchor="middle" class="bw-axis-label">'
+        f"{_text(x_axis_label)}</text>"
     )
     # One labelled y axis per unit: the first on the left, the second on
     # the right.
@@ -914,7 +964,7 @@ def _markers_table(
                 "</tr>\n"
             )
     head = (
-        "<tr><th>label</th><th>capture</th><th>t (s)</th>"
+        "<tr><th>label</th><th>capture</th><th>t (capture x units)</th>"
         "<th>note</th><th>in window</th></tr>\n"
     )
     return (

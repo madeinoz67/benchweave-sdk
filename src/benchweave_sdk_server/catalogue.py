@@ -285,7 +285,43 @@ _PRESET_APPLY_RESULT = _object(
 
 # --- capture (I3b): the flipped rows and fork F-2's three new rows ---------
 
-_FORMATS = {"enum": ["waveform_f64le", "raw_binary"]}
+
+@dataclass(frozen=True)
+class FormatSpec:
+    """One admitted capture format: how its primary decodes and what its
+    x axis means (issue #589 PR-4, seam S5). The single source behind the
+    served enum, the write-side bound math and the display decoders — the
+    two format-keyed dicts the seam carried are deleted in its favour.
+
+    ``index_y_label`` is the honest y label for index-axis formats; time
+    axis formats leave it ``None`` (the capture's own unit is the label).
+    """
+
+    format: str
+    bytes_per_sample: int
+    struct_code: str  # the per-sample unpack code: "d" (f64), "B" (byte)
+    suffix: str  # the primary-artifact extension
+    axis: str  # "time" | "index" — what x means for this format
+    index_y_label: str | None
+
+
+#: The format registry (S5's single source). Insertion order is pinned
+#: (waveform first) so the derived served-schema bytes match the
+#: hand-authored enum they replace.
+_FORMAT_SPECS: dict[str, FormatSpec] = {
+    "waveform_f64le": FormatSpec(
+        "waveform_f64le", 8, "d", ".f64", "time", None
+    ),
+    "raw_binary": FormatSpec(
+        "raw_binary", 1, "B", ".bin", "index", "byte value"
+    ),
+}
+
+#: The served format vocabulary, DERIVED from the registry — never
+#: hand-maintained (a format the schema admits but the registry lacks is
+#: D5's exact resurrection; ``tests/server/test_format_path.py`` pins the
+#: derivation both ways).
+_FORMATS = {"enum": list(_FORMAT_SPECS)}
 
 #: SW-33's ceilings, with their denominators: 10M samples is the record's
 #: own 10-minute class at 8 B/sample against the fork's published 2 Mbaud
@@ -478,7 +514,16 @@ _CAPTURE_GET_RESULT = _object(
 _CAPTURE_SERIES_RESULT = _object(
     {
         "capture_id": {"type": "string", "minLength": 1},
-        "format": {"type": "string"},
+        "format": {
+            "type": "string",
+            # An SDK-side description amendment, not a shape change
+            # (issue #589 PR-4): the echoed format is what x means —
+            # seconds from the capture's start for waveform_f64le, the
+            # 0-based sample index for raw_binary.
+            "description": "The points' axis meaning: waveform_f64le x is "
+            "seconds from the capture's start; raw_binary x is the "
+            "0-based sample index (one byte per sample)",
+        },
         "decimated": {"type": "boolean"},
         "max_points": {"type": "integer"},
         "points": {

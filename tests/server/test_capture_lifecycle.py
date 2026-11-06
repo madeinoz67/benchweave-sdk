@@ -401,6 +401,39 @@ def test_count_bound_capture_publishes_with_sw54_metadata(tmp_path: Path) -> Non
     assert row["sha256"] == manifest["sha256"]
 
 
+def test_raw_binary_capture_publishes_without_timing_fields(tmp_path: Path) -> None:
+    """PR-4 (issue #589): the DEFAULT format runs the lifecycle too — and
+    its manifest carries NO timing fields, exactly the vendored
+    captureManifest's own shape (byte_length for every format; the timing
+    trio required only under waveform_f64le). The asymmetry is the
+    corpus's, pinned here so nobody 'fixes' the writer."""
+    host = _host(tmp_path, mode="ok")
+
+    async def scenario() -> dict[str, Any]:
+        await _connected(host)
+        started = await host.call(
+            "capture_start",
+            {"device_id": DEV, "count": 4, "format": "raw_binary"},
+            surface="rest",
+        )
+        assert started["format"] == "raw_binary"
+        assert started["bound"] == {"kind": "count", "count": 4, "bytes": 4}
+        return await host.await_capture()
+
+    outcome = asyncio.run(scenario())
+    assert outcome["state"] == "published"
+    capture_id = outcome["capture_id"]
+    # The adapter stages four 8-byte doubles: 32 bytes of byte-plane data.
+    assert outcome["byte_length"] == 32
+    event = tmp_path / "captures" / capture_id
+    manifest = json.loads((event / "manifest.json").read_text())
+    assert manifest["format"] == "raw_binary"
+    assert manifest["byte_length"] == 32
+    assert "sample_count" not in manifest
+    assert "sample_interval_s" not in manifest
+    assert "unit" not in manifest
+
+
 def test_capture_series_decimates_preserving_extrema(tmp_path: Path) -> None:
     """AR-5's decimation arm: 400 samples whose true min/max are -9.5/9.5;
     25 columns keep both extrema in at most 50 points; raw serves all."""

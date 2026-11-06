@@ -3,9 +3,11 @@
 {% block scripts %}<script src="/assets/analyse.js" defer></script>{% endblock %}
 {% block content %}
 <h1>Analyse</h1>
-<p class="hint">Select one or more published waveform captures and bound a time window.
+<p class="hint">Select one or more published captures and bound an analysis window.
 Statistics follow definition <code>benchweave-analysis/1</code>: host-computed, every
-block states its denominators. Drag a region on a plot to set the window; the numeric
+block states its denominators. A capture plots on its own x axis: seconds from its
+start for <code>waveform_f64le</code>, the 0-based sample index for
+<code>raw_binary</code>. Drag a region on a plot to set the window; the numeric
 fields are the no-script path.</p>
 {% if analyse_error %}
 <div class="notice notice-refused" role="alert">
@@ -26,11 +28,13 @@ fields are the no-script path.</p>
     </label>
     {% endfor %}
     {% else %}
-    <p>No published waveform captures under this host's root yet.</p>
+    <p>No published captures under this host's root yet.</p>
     {% endif %}
-    <label for="a-lo">Window start (s)</label>
+    <label for="a-lo">Window start (s; sample index for index-axis
+      captures)</label>
     <input id="a-lo" name="lo" value="{{ lo }}" inputmode="decimal">
-    <label for="a-hi">Window end (s)</label>
+    <label for="a-hi">Window end (s; sample index for index-axis
+      captures)</label>
     <input id="a-hi" name="hi" value="{{ hi }}" inputmode="decimal">
     <label for="a-power-mode">Power mode</label>
     <select id="a-power-mode" name="power_mode">
@@ -53,14 +57,16 @@ fields are the no-script path.</p>
               data-bw-marker-capture="{{ marker_capture }}">
       <legend>Markers — <code>{{ marker_capture }}</code></legend>
       <p class="hint">Labels are single letters A–Z, one marker per label; t is
-      seconds from the capture's own start. Click a plot to place the selected
+      {{ 'seconds from the capture\'s own start' if marker_axis == 's' else
+         'the 0-based sample index' }}. Click a plot to place the selected
       row's t. Saving rewrites the capture's analysis.json overlay.</p>
       {%- for row in marker_rows %}
       <div class="bw-marker-row">
         <input name="marker_label" maxlength="1" value="{{ row.label }}"
                aria-label="Marker label" size="1">
         <input name="marker_t" class="bw-marker-t" value="{{ row.t }}"
-               inputmode="decimal" aria-label="Marker t (s)" size="8">
+               inputmode="decimal" aria-label="Marker t ({{ marker_axis }})"
+               size="8">
         <input name="marker_note" value="{{ row.note }}"
                aria-label="Marker note">
       </div>

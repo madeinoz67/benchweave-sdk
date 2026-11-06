@@ -136,6 +136,18 @@ rubric's G5 gate is the obligation; this file is the detail behind it.
    iterates the catalogue); the HTML surface stays unchanged unless the plugin-ui
    corpus gains a control for it.
 
+13. **A new capture format** (issue #589 PR-4) → the format registry moves as ONE
+   motion, and the exhaustion gate is the pin: a `FormatSpec` entry in
+   `catalogue._FORMAT_SPECS` (the derived `_FORMATS` enum follows it — insertion
+   order is load-bearing for the served schema bytes), the raw-axis arms of
+   `tests/server/test_format_path.py` (the parametrized walk reads the derived
+   enum, so the new format joins it by construction — a registry entry with no
+   live path reddens at admission), and the guide's axis sentences
+   (`user_guide/plugin-sdk.qmd`, the capture section's x-axis paragraph and the
+   Analyse page's axis paragraph) together. The write-side manifest
+   asymmetry stays the corpus's own: a new format's `captureManifest` branch
+   arrives as a standards motion main-side, never an SDK-side manifest edit.
+
 ## CI map
 
 | Job | What it catches |

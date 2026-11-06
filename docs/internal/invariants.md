@@ -101,6 +101,19 @@ the invariants below anchor there.
   and moved the verb check BEFORE the capture-services duck-check:
   declaration precedes host capability) — anchors:
   `benchweave_sdk_server/dataset_admission.py`,
+  `benchweave_sdk_server/seam.py`. The format path (issue #589 PR-4)
+  adds one more, `standalone_capture_format_unknown:`
+  (`SeamError("invalid_request", …)` at `_op_capture_start`'s operation
+  boundary — a format outside `catalogue._FORMAT_SPECS` on a direct
+  handler call; the served schema's enum DERIVES from the same registry,
+  so schema-validated callers refuse earlier, and the mirror is the A-F8
+  settle_pct posture: the host does not publish a capture every display
+  surface refuses. The registry itself — `FormatSpec` plus
+  `_FORMAT_SPECS`, with `_FORMATS` derived — is the single source behind
+  the served enum, the write-side bound math and the display decoders;
+  the exhaustion walk in `tests/server/test_format_path.py` pins the
+  derivation both ways and drives every admitted format over every
+  display surface) — anchor: `benchweave_sdk_server/catalogue.py`,
   `benchweave_sdk_server/seam.py`.
   Known wound, disclosed: the provider
   pin's read inherits the SDK-wide bounded-file cap

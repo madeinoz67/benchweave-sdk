@@ -206,31 +206,53 @@ def test_tampered_source_refuses_conflict(
     assert report_files(capture_root) == []
 
 
-def test_non_waveform_source_refuses(
+def test_raw_source_exports(
     seam: StandaloneSeam, capture_root: Path
 ) -> None:
-    write_capture(capture_root, "fx-wave", values=(1.0,))
+    """PR-4 (issue #589) inverts this arm: a raw_binary source EXPORTS —
+    on the sample-index axis, with the honest absence for the timing
+    fields — instead of refusing standalone_report_format_unsupported."""
+    payload = b"\x01\x02\x7f"
     event = capture_root / "fx-raw"
-    event.mkdir()
-    (event / "fx-raw.bin").write_bytes(b"\x01\x02")
+    event.mkdir(parents=True)
+    (event / "fx-raw.bin").write_bytes(payload)
+    digest = hashlib.sha256(payload).hexdigest()
     (event / "manifest.json").write_text(
         json.dumps(
             {
                 "capture_id": "fx-raw",
                 "format": "raw_binary",
-                "artifact_id": "art-x",
-                "byte_length": 2,
-                "sha256": "x",
+                "artifact_id": "art-" + digest,
+                "byte_length": len(payload),
+                "sha256": digest,
                 "started_at": "2026-10-07T11:00:00+00:00",
             },
             sort_keys=True,
         )
     )
-    with pytest.raises(SeamError) as caught:
-        call(seam, "report_export", {"capture_ids": ["fx-raw"]})
-    assert caught.value.code == "invalid_request"
-    assert "standalone_report_format_unsupported" in caught.value.message
-    assert report_files(capture_root) == []
+    (event / "metadata.json").write_text(
+        json.dumps(
+            {
+                "capture_id": "fx-raw",
+                "device": {"id": "fx-device", "firmware": "1.0.0"},
+                "plugin": {"package": "fx-plugin", "version": "0.2.0",
+                           "descriptor_sha256": "b" * 64},
+                "surface": "rest",
+                "operator": "fx-op",
+                "tags": [],
+                "notes": "",
+            },
+            sort_keys=True,
+        )
+    )
+    result = call(seam, "report_export", {"capture_ids": ["fx-raw"]})
+    assert result["created"] is True
+    document = (
+        capture_root / "reports" / f"{result['report_id']}.html"
+    ).read_text()
+    assert "sample index" in document
+    assert "byte value" in document
+    assert ">t (s)<" not in document
 
 
 def test_export_is_served_over_rest(seam: StandaloneSeam) -> None:

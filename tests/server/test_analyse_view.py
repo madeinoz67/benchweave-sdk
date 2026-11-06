@@ -280,6 +280,8 @@ def test_the_figure_escapes_a_double_quoted_capture_id_at_render() -> None:
         {
             "capture_id": hostile,
             "unit": "V",
+            "x_label": "s",
+            "y_label": "V",
             "stats": stats,
             "points": [(0.0, 1.0), (0.001, 2.0)],
             "sha256": "a" * 64,
