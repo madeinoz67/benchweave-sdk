@@ -1065,3 +1065,53 @@ return-shape misuse and its venv-invisibility lesson (default-path code behind a
 injection seam is untested by construction — prove it with a fake-backend seam);
 (c) D3's withdrawal with its measurement (the fast-exit read path), so nobody re-files
 it from the class table's inherited premise.
+
+---
+
+## Appendix (2026-11-07, PR-2 build): §3.1 census claim (a) is FALSE at the call level
+
+**Correction by append, rev 7's frozen text unchanged above.** The seam census that
+made the hard arm look free — "(a) no classref test constructs a host seam
+(`StandaloneSeam`/`build_app`/`_build_seam` never appear in the classref modules; seam
+construction is confined to `tests/server/`)" — is lexically true and call-level
+FALSE: `verify_ui` → `benchweave_sdk.classref_gate_render.render_pages`
+(`classref_gate_render.py:41`) constructs a real `StandaloneSeam` over the project and
+drives its pages over in-process ASGI. The gate's own render half is a host.
+
+**Measured cost, full classification (the PR-2 build lane, every failure read):** 71
+main-lane failures + 9 loop-lane errors, ALL ONE CLASS (bucket (a) — the intended
+typed refusal; zero PR-2 defects, zero pre-existing), split by pin: 49
+`urn:veridian:vendor-catalog:1.0.0` (incl. 2 CLI-subprocess arms), 22
+`urn:meridian:composed-burst:1.0.0` (incl. 8 loop-lane verify-ui arms), 3
+`urn:meridian:member-declaration-smu:1.0.0`, 2
+`urn:veridian:vendor-catalog-pair:1.0.0`, and one each of
+`veridian:vendor-catalog-trio`, `veridian:refless-composed` and
+`veridian:member-declaration`. The census's "breaks nothing in this suite" was wrong by
+80 arms across 13 modules (`test_classref_acceptance/cli/composed/gate/
+member_channels/member_datasets/member_join_ceiling/member_ledger/render_arms/residual/
+trio/vendor_scale` + `test_standalone_dev_loop`).
+
+**What this changes and does not change.** The RULING stands — the resolver matches the
+gateway (its own loader refuses these pins at activation, `otdp_contracts.py:15,34`),
+so the fixtures' "shippable" claims were false on both hosts and parity IMPROVED. What
+the census understated is the cost: the vendor-catalog / composed-class /
+member-declaration feature is now refused at verify-ui and at serve on both hosts
+until the R2 corpus motion lands (vendor pinning moves out of `contracts[]`, main-side
+— a named carrier with a named blocker, recorded in the PR body beside GW-1).
+
+**The maintainer question, raised not decided:** `render_pages`' own comment says a
+degraded load "refuses honestly and the pages render their disclosures alone — exactly
+the unconnected face". A defensible alternative shape exists — a contract-invalid
+plugin renders its disclosure pages and the gate REPORTS the refusal rather than
+erroring — which would keep verify-ui useful for inspecting a broken plugin. Falsifier:
+if the maintainer rules the render half must agree with activation (SRF-2 read
+strictly), the current behavior is right and the fixtures invert; if the maintainer
+rules verify-ui an inspection surface, the render half needs the degraded-load
+treatment. NOT taken by the PR-2 build (it changes verify-ui's semantics; not a
+builder call).
+
+**Disposition executed:** the team-lead ruled option (1) — invert the bucket-(a)
+fixtures to assert the typed refusal, own commit, no deletion. `test_classref_vendor_scale.py`
+inverted as the pattern commit (renamed to its honest name, derivation half kept, gate
+half asserting `profile_contract_invalid:` naming the pin); the remaining 12 modules
+carry the same mechanical pattern with the per-module pin map above.
