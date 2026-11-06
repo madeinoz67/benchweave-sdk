@@ -1307,8 +1307,9 @@ class FtdiCaptureServices(SerialCaptureServices):
         # the ring is host-side receive state the driver's purge cannot
         # reach, and the still-running reader can be holding mode garbage
         # in it at purge time. The clear is atomic against the reader's
-        # appends; bytes arriving after the purge land as fresh traffic —
-        # a purge is not a fence against later wire bytes.
+        # appends and fences the reader's in-flight read (a straddled
+        # chunk is discarded), so nothing fetched before the purge
+        # surfaces after it; bytes read after it land as fresh traffic.
         if op == "purge" and transaction.get("queue") == "rx":
             self._link.purge_rx()
         # 6. Result validation: the live device is untrusted against its

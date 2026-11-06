@@ -35,6 +35,7 @@ import base64
 import dataclasses
 import hashlib
 import json
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -1701,4 +1702,105 @@ def test_a_purged_link_still_serves_real_replies(plugin) -> None:
             "stale frame"
         )
     finally:
+        services.link.close()
+
+
+class _HoldingTransport:
+    """A Transport whose first read parks on an arm-held gate and then
+    serves bytes queued while it was parked — the straddle shape: bytes on
+    the pipe BEFORE a purge, fetched by a read that began before it
+    (#589's in-flight-read fold). After the gate opens, reads serve
+    whatever is queued and pace themselves on empty."""
+
+
+    def __init__(self) -> None:
+        self._gate = threading.Event()
+        self.parked = threading.Event()
+        self._inbound = bytearray()
+
+    def queue(self, data: bytes) -> None:
+        self._inbound += data
+
+    def release(self) -> None:
+        self._gate.set()
+
+    def write(self, data: bytes) -> int | None:
+        return len(data)
+
+    def read(self, size: int = 1) -> bytes:
+        self.parked.set()
+        self._gate.wait()
+        out = bytes(self._inbound[:size])
+        del self._inbound[:size]
+        if not out:
+            time.sleep(0.001)
+        return out
+
+    def close(self) -> None:
+        self._gate.set()
+
+
+def test_a_read_in_flight_across_the_purge_never_surfaces(plugin) -> None:
+    """The in-flight-read fold (#589 review): the reader's transport read
+    runs OUTSIDE the ring's condition variable, so a chunk fetched before
+    an rx purge could append after it — pre-purge bytes surviving the
+    purge and surfacing on the next receive as non-deterministic filler.
+    The arm parks the reader's read on a gate, queues stale bytes while it
+    is parked, purges, and only then releases the read: the straddled
+    chunk must never reach the ring."""
+    stale = b"straddled-stale\n"
+    driver = ScriptedFtdiDriver(
+        [
+            {
+                "name": "purge-rx",
+                "transaction": {"kind": "ftdi_control", "op": "purge", "queue": "rx"},
+                "response": {},
+            }
+        ]
+    )
+    contract = verify_ftdi_plugin(plugin)
+    transport = _HoldingTransport()
+    services = FtdiCaptureServices(
+        SerialLink(transport),
+        driver,
+        contract.grammar,
+        provider=contract.provider,
+        max_frame_bytes=4096,
+        limits=contract.limits,
+    )
+    context = _context(services, "op-purge-straddle")
+    try:
+        deadline = time.monotonic() + 2.0
+        while not transport.parked.is_set() and time.monotonic() < deadline:
+            time.sleep(0.001)
+        assert transport.parked.is_set(), "the reader parked inside its read"
+        transport.queue(stale)  # on the pipe BEFORE the purge
+        asyncio.run(
+            services.transfer(
+                {"kind": "ftdi_control", "op": "purge", "queue": "rx"}, context
+            )
+        )
+        assert services.link.ring_length() == 0
+        transport.release()  # the straddled read returns the stale chunk now
+        time.sleep(0.25)  # several drain loops, to observe any append
+        assert services.link.ring_length() == 0, (
+            "a chunk fetched by a read that began before the purge never "
+            "reached the ring"
+        )
+        received = asyncio.run(
+            services.transfer(
+                {
+                    "kind": "stream_receive",
+                    "max_bytes": 64,
+                    "termination": "lf",
+                    "exact_bytes": None,
+                },
+                context,
+            )
+        )
+        assert received == {"data": b""}, (
+            "the straddled stale bytes never surfaced on a receive"
+        )
+    finally:
+        transport.release()
         services.link.close()

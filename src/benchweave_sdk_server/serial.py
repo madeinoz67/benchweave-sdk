@@ -218,6 +218,7 @@ class SerialLink:
         self._closed = False
         self._dropped_bytes = 0
         self._receive_depth = 0
+        self._purge_epoch = 0
         self._thread = threading.Thread(
             target=self._drain, name="benchweave-serial-reader", daemon=True
         )
@@ -276,12 +277,18 @@ class SerialLink:
 
         The clear runs under the ring's own condition variable, so it is
         atomic against the reader thread's appends — no byte can land
-        mid-clear. The reader itself keeps running and the ring can refill
-        with bytes that arrive after the purge: a purge clears what HAS
-        landed host-side (the one receive state a hardware buffer purge
-        cannot reach), never what lands next. Not counted as overflow — a
-        purge is a caller's deliberate action, not a defect signal."""
+        mid-clear. The reader's transport read runs OUTSIDE the condition
+        variable, so a chunk fetched before this call could append after
+        it; the purge epoch closes that window too: a read that began
+        before a purge has its whole chunk discarded (:meth:`_drain`). The
+        fence errs toward dropping — no byte fetched before a purge is
+        ever appended after it, at the cost that a chunk fetched in the
+        instant after one, from a read that began before it, is discarded
+        with its chunk. The reader keeps running and the ring refills with
+        bytes read AFTER the purge. Not counted as overflow — a purge is a
+        caller's deliberate action, not a defect signal."""
         with self._cond:
+            self._purge_epoch += 1
             del self._ring[:]
             self._cond.notify_all()
 
@@ -386,13 +393,20 @@ class SerialLink:
     def _drain(self) -> None:
         """The reader thread: drain the transport into the bounded ring.
         Transport errors fault the link and wake every waiter; a close
-        ends the loop after the in-flight read returns."""
+        ends the loop after the in-flight read returns. A chunk whose read
+        straddled a purge (:meth:`purge_rx` raised the epoch between this
+        loop's epoch capture and its append) is discarded: those bytes
+        were fetched against a line the purge has since declared clean."""
         try:
             while not self._closing:
+                with self._cond:
+                    epoch = self._purge_epoch
                 chunk = self._transport.read(_READ_CHUNK)
                 if not chunk:
                     continue
                 with self._cond:
+                    if epoch != self._purge_epoch:
+                        continue
                     self._ring += chunk
                     overflow = len(self._ring) - self._ring_capacity
                     if overflow > 0:
