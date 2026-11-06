@@ -69,6 +69,15 @@ _FIELDS = {
     "stream_exchange": {"kind", "data"} | _RECEIVE,
 }
 
+#: The reader thread's drain quantum (D3's constant review, kept at 4096
+#: with the reason): one ``read(_READ_CHUNK)`` per drain loop moves the
+#: ring forward, and the quantum only decides how much ONE bulk read asks
+#: for — a reply larger than the quantum splits across reads and the ring
+#: reassembles it, a reply smaller returns short (the #589 bench
+#: measurement: a bulk IN always answers inside the latency timer, so this
+#: is never a blocking wait). 4096 sits above the largest known single
+#: reply (2052 B on that bench), so the largest reply still lands in one
+#: read; nothing about a timeout lives here.
 _READ_CHUNK = 4096
 _JOIN_TIMEOUT_S = 5.0
 

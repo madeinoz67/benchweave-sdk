@@ -56,7 +56,20 @@ the invariants below anchor there.
   (issue #440) adds three, each naming its resolving action in the
   message: `standalone_supervision_unknown:`,
   `standalone_host_unproxyable:`,
-  `standalone_capture_root_held:` (`benchweave_sdk_server/shim.py`).
+  `standalone_capture_root_held:` (`benchweave_sdk_server/shim.py`). The
+  live FTDI transport's selector ladder (issue #589) adds three more —
+  `live_provider_device_ambiguous:`,
+  `live_provider_interface_out_of_range:` and
+  `live_provider_selector_malformed:` — and these three are pinned as
+  **`RuntimeError`, not `ValueError`**: they fire inside
+  `PluginSession.connect`'s services factory, where a `RuntimeError`
+  passes through unwrapped and maps `not_ready` with the message verbatim
+  while any other type arrives buried in a
+  `standalone_plugin_connect: ValueError:` wrapper (`session.py`'s
+  connect re-raise; the boundary arms in
+  `tests/server/test_ftdi_selector.py` pin all three). Construction- and
+  reload-time refusals stay `ValueError` — the type is part of each
+  prefix's contract at the seam where it fires.
   The invoke lane (issue #589 PR-2) adds four at seam construction and at
   reload, all `ValueError` (the CLI maps them to exit 2):
   `profile_contract_missing:`, `profile_contract_hash_mismatch:`,

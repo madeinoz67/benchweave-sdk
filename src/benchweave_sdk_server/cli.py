@@ -491,13 +491,20 @@ def cli() -> None:
     "--device",
     default=None,
     help=(
-        "The constant endpoint of a live transport: a serial port path on "
-        "--transport serial (the binding bypass; without it a serial host "
-        "serves binding-pending until an endpoint is picked in the UI, or a "
-        "stored binding resolves), or the FTDI device selector URL on "
-        "--transport ftdi (for example 'ftdi://::0x0403:0x6001/1' — without "
-        "it, an FTDI host also serves binding-pending, and a stored binding "
-        "resolves). Refused on non-live transports."
+        "The constant endpoint of a live transport. On --transport serial "
+        "it is a serial port path; without it a serial host serves "
+        "binding-pending until an endpoint is picked in the UI, or a stored "
+        "binding resolves. On --transport ftdi it is the device selector, "
+        "in either form: 'ftdi://0x0403:0x6001/1' or '0403:6001/1'. The "
+        "ids are hexadecimal, with an optional '0x'. A third part names "
+        "the device serial ('0403:6001:610042'), the part after '/' is "
+        "the interface index counted from 1, and a bare vendor id "
+        "('0403') admits any product under it. In the URL form, a third "
+        "part that is a bare number of value 255 or less is refused: "
+        "pyftdi reads such a part as a device index, not a serial — use "
+        "the colon form to name such a serial. Any device remains "
+        "openable by an operator-supplied selector; only auto-discovery "
+        "is family-scoped. Refused on non-live transports."
     ),
 )
 @click.option(

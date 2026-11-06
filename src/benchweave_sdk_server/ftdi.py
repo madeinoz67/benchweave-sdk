@@ -62,7 +62,7 @@ import logging
 import re
 import threading
 import uuid
-from collections import deque
+from collections import OrderedDict, deque
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -172,17 +172,298 @@ def _require_backend() -> Any:
     """Refuse a missing pyftdi with the prefixed install hint, never a bare
     ImportError (the ``open_serial_port`` precedent). Returns the imported
     class so :func:`open_ftdi` never re-imports (one import site)."""
+    return _backend()[0]
+
+
+#: The ONE import site for the whole pyftdi/pyusb backend, test-injectable:
+#: ``(Ftdi, UsbTools, usb.core, usb.util, UsbToolsError)`` — the two pyftdi
+#: classes the ladder drives, the two pyusb modules the family scan
+#: enumerates and reads serial strings through (pyftdi's product tables are
+#: never consulted — that is the point), and pyftdi's two resolution-class
+#: exceptions the ladder's fallback is gated on (``UsbToolsError``: table
+#: gate, no match, a refused serial; ``FtdiError``: pyftdi's own late
+#: guards, pre-claim — its ``No such FTDI port: N`` interface check. A
+#: claim/busy/permission failure arrives from pyusb as ``USBError`` instead
+#: and never wears either class). ``None`` means import the real backend.
+_BACKEND: Callable[[], tuple[Any, ...]] | None = None
+
+
+def _backend() -> tuple[Any, ...]:
+    if _BACKEND is not None:
+        return _BACKEND()
     try:
         # The availability probe EXECUTES the import (not find_spec): a
         # pyftdi present but broken — its pyusb dependency missing — is
         # this refusal's class too, and only the real import proves it.
-        from pyftdi.ftdi import Ftdi  # type: ignore[import-untyped]  # pyftdi, [server] extra
+        import usb.core  # type: ignore[import-untyped]  # pyusb, a pyftdi dependency
+        import usb.util  # type: ignore[import-untyped]  # pyusb, a pyftdi dependency
+        from pyftdi.ftdi import Ftdi, FtdiError  # type: ignore[import-untyped]  # pyftdi, [server] extra
+        from pyftdi.usbtools import (  # type: ignore[import-untyped]  # pyftdi
+            UsbTools,
+            UsbToolsError,
+        )
     except ImportError as exc:
         raise RuntimeError(
             "live_provider_backend_missing: install 'benchweave-sdk[server]' "
             "for ftdi transport support (pyftdi rides the server extra)"
         ) from exc
-    return Ftdi
+    return Ftdi, UsbTools, usb.core, usb.util, UsbToolsError, FtdiError
+
+
+#: One vid/pid-form component: 1-4 hexadecimal digits, ``0x`` optional.
+#: The base is EXPLICIT — hexadecimal always (pyftdi's own URL parse reads
+#: bare digits as decimal via ``to_int``, which is why the canonical
+#: emitted selector always carries the ``0x`` spelling: it reads the same
+#: under both parsers).
+_HEX_COMPONENT = re.compile(r"\A(?:0x)?[0-9a-fA-F]{1,4}\Z")
+
+#: The colon form's whole grammar (issue #589, rev 7 §2.2): the colon is
+#: the VID/PID separator, the serial is the third colon component (a
+#: bounded charset that carries no separator of its own), and ``/N`` is the
+#: ONLY interface spelling — one accepted string, one parse. A ``/``
+#: VID/PID separator made ``0403/dc48/2`` two-parse; ``@N`` was a second
+#: spelling of one concept; both are gone.
+_VID_PID_FORM = re.compile(
+    r"\A(?:0x)?[0-9a-fA-F]{1,4}:(?:0x)?[0-9a-fA-F]{1,4}"
+    r"(?::[A-Za-z0-9._-]{1,64})?(?:/[0-9]{1,2})?\Z"
+)
+#: A bare VID (any product under it, resolved through the registered
+#: vendor scan).
+_BARE_VID_FORM = re.compile(r"\A(?:0x)?[0-9a-fA-F]{1,4}\Z")
+#: The serial charset both forms share.
+_SERIAL_CHARS = re.compile(r"\A[A-Za-z0-9._-]{1,64}\Z")
+#: A URL-form serial pyftdi provably misreads as a device index: pyftdi's
+#: ``to_int`` parses bare decimal digits — or a lowercase-``0x`` hex
+#: literal — to a value <= 255, and ``usbtools.enumerate_candidates`` then
+#: uses that component as a 0-based candidate index, never a serial
+#: (``:1`` selects the first candidate, ``:2`` the second, ``:007`` the
+#: seventh). The parse-time refusal over this set is the PRIMARY defence:
+#: an explicit index also SKIPS pyftdi's own ">N USB devices match"
+#: ambiguity refusal, and on a twins bench where both units report the
+#: SAME serial even a post-open serial check is blind (both units carry
+#: it) — so without this refusal the wrong unit can be claimed with no
+#: ambiguity check anywhere in the path. Spellings ``to_int`` still
+#: misreads beyond this bare-number set (a unit suffix such as ``2B``)
+#: pass this check and meet ``open_ftdi``'s post-open verification —
+#: defence in depth, itself blind when candidates share one serial.
+_URL_SERIAL_INDEX_FORM = re.compile(r"\A(?:0x[0-9a-fA-F]+|[0-9]+)\Z")
+#: The interface path of the URL form (pyftdi's ``?`` listing form would
+#: SystemExit a host; this boundary refuses it typed instead).
+_INTERFACE_PATH = re.compile(r"\A[0-9]{1,2}\Z")
+
+
+@dataclass(frozen=True)
+class FtdiSelector:
+    """One parsed device selector — the operator's ``--device`` value or the
+    binding's stored endpoint, in either grammar form. ``port`` is the
+    1-BASED interface index (pyftdi's own interface argument is 1-based and
+    silently coerces 0 to 1; this boundary refuses 0 instead). ``vid``/
+    ``pid`` are ``None`` for an absent component — or, with ``url_form``
+    set, for a URL spelling this grammar cannot reduce to a numeric pair (a
+    named product, a bus/address form): those pass through to the incumbent
+    URL attempt unchanged and simply have no pair for the enumerated
+    fallback."""
+
+    raw: str
+    vid: int | None
+    pid: int | None
+    serial: str | None
+    port: int
+    url_form: bool
+
+
+def _selector_malformed(raw: str, detail: str) -> RuntimeError:
+    return RuntimeError(
+        f"live_provider_selector_malformed: {raw!r} is not an FTDI selector "
+        f"({detail}); accepted forms: ftdi://0x<vid>:0x<pid>[:<serial>]"
+        "[/<interface>], <vid>:<pid>[:<serial>][/<interface>] or a bare "
+        "<vid> — hexadecimal ids (0x optional), ':' the vid/pid/serial "
+        "separator, '/N' the 1-based interface index"
+    )
+
+
+def _interface_out_of_range(
+    raw: str, port: int, ifcount: int | None
+) -> RuntimeError:
+    bound = (
+        f"1..{ifcount} for this device"
+        if ifcount is not None
+        else "1-based, bounded by the device's interface count"
+    )
+    return RuntimeError(
+        f"live_provider_interface_out_of_range: the selector {raw!r} asks "
+        f"for interface {port}; FTDI interface indexes are 1-based ({bound})"
+    )
+
+
+#: One enumerated device row: (vid, pid, serial-or-None, interface_count).
+_DeviceRow = tuple[int, int, str | None, int]
+
+
+def _device_ambiguous(selector: FtdiSelector, rows: list[_DeviceRow]) -> RuntimeError:
+    candidates = ", ".join(
+        f"0x{vid:04x}:0x{pid:04x}:{serial or 'no-serial'}"
+        for vid, pid, serial, _ in rows
+    )
+    if len({serial for _, _, serial, _ in rows}) == len(rows):
+        advice = "add the device's serial to the selector to pick one"
+    else:
+        # Two clones reporting the SAME serial: the standard advice has
+        # nothing to buy (fold K-2). Name what does tell them apart — the
+        # bus/address URL form reaches the opaque passthrough arm verbatim.
+        advice = (
+            "the candidates report the same serial, so a serial cannot "
+            "tell them apart — unplug one, or address one directly with "
+            "pyftdi's bus/address URL form ftdi://::<bus>:<address>/"
+            "<interface>"
+        )
+    return RuntimeError(
+        f"live_provider_device_ambiguous: the selector {selector.raw!r} "
+        f"matches {len(rows)} attached devices ({candidates}); {advice}"
+    )
+
+
+def _device_unavailable(selector: FtdiSelector, detail: str, note: str = "") -> RuntimeError:
+    return RuntimeError(
+        f"live_provider_device_unavailable: the FTDI selector "
+        f"{selector.raw!r} did not open ({detail}){note}; check the "
+        "device's presence, scan again, or pass --device <selector>"
+    )
+
+
+def _hex_component(text: str) -> int:
+    """One vid/pid component as hexadecimal (``ValueError`` when the text
+    is not one — the caller decides what that means for its form)."""
+    if not _HEX_COMPONENT.match(text):
+        raise ValueError(f"{text!r} is not 1-4 hexadecimal digits")
+    return int(text, 16)
+
+
+def _pyftdi_url_serial_is_index(serial: str) -> bool:
+    """Whether pyftdi's URL grammar reads this serial component as a
+    device index rather than a serial (see ``_URL_SERIAL_INDEX_FORM``)."""
+    if not _URL_SERIAL_INDEX_FORM.match(serial):
+        return False
+    value = int(serial, 16) if serial.startswith("0x") else int(serial)
+    return value <= 255
+
+
+def _opened_device_serial(ftdi: Any) -> str | None:
+    """The serial of the device a successful pyftdi open holds — pyftdi's
+    ``Ftdi._usb_dev`` is the pyusb device, whose ``serial_number`` is the
+    descriptor-carried string. ``None`` when it cannot be read: an
+    unreadable serial cannot be verified, and the caller treats that as a
+    mismatch so the enumerated fallback resolves instead."""
+    with contextlib.suppress(Exception):
+        device = getattr(ftdi, "_usb_dev", None)
+        serial = getattr(device, "serial_number", None)
+        return serial if isinstance(serial, str) else None
+    return None
+
+
+def _parse_ftdi_selector(text: str) -> FtdiSelector:
+    """The one parser for both selector forms (issue #589, rev 7 §2.2):
+
+    - The colon form ``vid:pid[:serial][/interface]`` — colon the vid/pid/
+      serial separator, ``/N`` the sole interface spelling (1-2 digits,
+      1-based), the serial carried VERBATIM (numeric included) in the
+      charset ``[A-Za-z0-9._-]{1,64}``; a bare ``vid`` admits any product
+      under it. Every accepted string has exactly one parse.
+    - The URL form ``ftdi://[vid[:pid[:serial]]]/interface`` — passed
+      through to ``open_from_url`` FIRST (the incumbent path). This parser
+      reduces it to a numeric pair ONLY when every netloc component is
+      expressible in the colon grammar (1-3 non-empty components, the
+      first two hexadecimal, the third in the serial charset); a spelling
+      beyond that (a named vendor or product, a 4-component bus/address
+      form such as ``ftdi://::0x0403:0x6001/1``, a serial with separator
+      characters) yields an OPAQUE selector that passes through and simply
+      has no pair for the enumerated fallback. A non-index interface path
+      is refused here (pyftdi's ``?`` listing form would SystemExit a
+      host). A URL-form serial that is a bare number of value <= 255 is
+      refused here too: pyftdi's URL grammar reads such a component as a
+      device index, never a serial, so the URL form cannot name that
+      device — the colon form carries it (spellings pyftdi still misreads
+      past that set are caught by :func:`open_ftdi`'s post-open serial
+      verification).
+
+    Port 0 is refused at this boundary with the range named (pyftdi
+    silently coerces ``/0`` to 1); a port beyond the device's interface
+    count is refused by the ladder once ``ifcount`` is known.
+    """
+    raw = text.strip()
+    if not raw:
+        raise _selector_malformed(text, "the selector is empty")
+    if raw.lower().startswith("ftdi://"):
+        body = raw.split("://", 1)[1]
+        netloc, _, path = body.partition("/")
+        port = 1
+        if path:
+            if not _INTERFACE_PATH.match(path):
+                raise _selector_malformed(
+                    raw,
+                    f"the interface path {path!r} is not a 1-2 digit "
+                    "1-based index",
+                )
+            port = int(path)
+            if port < 1:
+                raise _interface_out_of_range(raw, port, None)
+        components = netloc.split(":")
+        if 1 <= len(components) <= 3 and all(components):
+            try:
+                vid = _hex_component(components[0])
+                pid = _hex_component(components[1]) if len(components) > 1 else None
+            except ValueError:
+                # A URL spelling beyond the colon grammar (a named vendor or
+                # product) is not an error here — it is the incumbent path's
+                # own vocabulary, passed through with no pair for the
+                # fallback.
+                return FtdiSelector(raw, None, None, None, port, True)
+            serial = components[2] if len(components) > 2 else None
+            if serial is None:
+                return FtdiSelector(raw, vid, pid, None, port, True)
+            if _SERIAL_CHARS.match(serial):
+                if _pyftdi_url_serial_is_index(serial):
+                    # pyftdi's URL grammar cannot carry this serial: it
+                    # reads a bare number of value <= 255 as a 0-based
+                    # device index, so the URL form would OPEN A DIFFERENT
+                    # DEVICE (or an arbitrary one) rather than refuse —
+                    # live-reproduced. A typed refusal naming the ambiguity
+                    # beats the silent fall-through.
+                    raise _selector_malformed(
+                        raw,
+                        f"the serial component {serial!r} is a bare number "
+                        "of value <= 255, which pyftdi's URL grammar reads "
+                        "as a device index, never a serial — this form "
+                        "cannot name that device; the colon form "
+                        "<vid>:<pid>:<serial> carries the serial verbatim",
+                    )
+                return FtdiSelector(raw, vid, pid, serial, port, True)
+        # An empty component, a 4-component bus/address form, or a serial
+        # the colon charset cannot express: opaque passthrough, exactly as
+        # pyftdi's own grammar reads the form.
+        return FtdiSelector(raw, None, None, None, port, True)
+    if _BARE_VID_FORM.match(raw):
+        return FtdiSelector(raw, _hex_component(raw), None, None, 1, False)
+    if not _VID_PID_FORM.match(raw):
+        raise _selector_malformed(
+            raw,
+            "expected <vid>:<pid>[:<serial>][/<interface>] or a bare <vid> "
+            "with hexadecimal ids, ':' the separator and '/N' the 1-based "
+            "interface",
+        )
+    pair_part, _, suffix = raw.partition("/")
+    port = int(suffix) if suffix else 1
+    if port < 1:
+        raise _interface_out_of_range(raw, port, None)
+    components = pair_part.split(":")
+    return FtdiSelector(
+        raw,
+        _hex_component(components[0]),
+        _hex_component(components[1]),
+        components[2] if len(components) > 2 else None,
+        port,
+        False,
+    )
 
 
 class _PyftdiDriver:
@@ -241,29 +522,235 @@ class _PyftdiDriver:
         self._ftdi.close()
 
 
+def _registered_vendor_ids() -> frozenset[int]:
+    """The vendor ids every registered provider family scans — the
+    auto-discovery scope (a vendor no executor registers stays out of the
+    pick flow until an operator names a device by selector; that is the
+    family-registry model, not a per-device special case)."""
+    return frozenset(
+        vid for executor in PROVIDER_EXECUTORS.values() for vid in executor.vendor_ids
+    )
+
+
+def _scan_vendor_rows(
+    usb_core: Any, usb_util: Any, vendor: int
+) -> list[tuple[int, int, str | None, int]]:
+    """One vendor's devices at the pyusb level — ``(vid, pid, serial,
+    ifcount)`` rows; pyftdi's product tables are never consulted (that is
+    the point: the table gate that broke every OEM URL form cannot break a
+    scan that never reads the table)."""
+    rows: list[tuple[int, int, str | None, int]] = []
+    for dev in usb_core.find(find_all=True, idVendor=vendor):
+        ifcount = max(
+            (int(getattr(cfg, "bNumInterfaces", 0) or 0) for cfg in dev), default=0
+        )
+        serial: str | None = None
+        string_index = int(getattr(dev, "iSerialNumber", 0) or 0)
+        if string_index:
+            reported = usb_util.get_string(dev, string_index)
+            if isinstance(reported, str) and reported:
+                serial = reported
+        rows.append(
+            (int(dev.idVendor), int(dev.idProduct), serial, max(ifcount, 1))
+        )
+    return rows
+
+
+def _pid_unregistered(ftdi_cls: Any, vid: int, pid: int) -> bool:
+    table = ftdi_cls.PRODUCT_IDS.get(vid)
+    return table is None or pid not in table.values()
+
+
 def open_ftdi(url: str) -> FtdiDriver:
-    """Open one FTDI-class device through pyftdi by its URL selector (the
-    ``--device`` spelling, e.g. ``ftdi://::0x0403:0x6001/1``).
+    """Open one FTDI-class device by its selector (the ``--device``
+    spelling, e.g. ``ftdi://0x0403:0x6001/1`` or ``0403:6001/1`` — the
+    grammar and the 1-based interface index are :func:`_parse_ftdi_selector`'s).
+
+    The resolution ladder (issue #589): the URL form is tried through
+    pyftdi's ``open_from_url`` first — the incumbent path, with the
+    selector's OWN vid/pid pair registered for the attempt (an OEM pair
+    absent from pyftdi's static product table is the table gate that made
+    every URL form fail) and the class table RESTORED after it in a
+    ``finally``, because pyftdi 0.57.2 has no removal API and a leaked row
+    makes a later joker-URL enumeration see the pair. A resolution-class
+    failure (``UsbToolsError`` — table gate, no match, a refused serial —
+    or ``FtdiError``, pyftdi's own pre-claim guards, its late interface
+    check among them) falls through to an enumerated fallback:
+    ``UsbTools.find_all`` over the
+    parsed pair with ``nocache=True`` (the bus as it is now), the selector's
+    serial honoured always, twins refused with every candidate named, the
+    interface validated against the device's own interface count before the
+    one direct ``open``. A bare-VID selector enumerates the registered
+    vendor scan instead (``find_all``'s None-pid search is structurally
+    empty). A claim-time failure (busy, permission — any non-resolution
+    exception) refuses immediately: still ONE bounded open attempt, zero
+    retries of a failed OPEN (A06); selector RESOLUTION may enumerate once.
 
     A missing pyftdi refuses ``live_provider_backend_missing:``; every open
-    failure — an absent device, a busy device, a permission refusal, a host
-    with no libusb backend — refuses ``live_provider_device_unavailable:``
-    naming the exception class, one bounded attempt with no scan and no
-    retry (A06). The refusal is a ``RuntimeError`` so the session's connect
-    path passes it through unwrapped for the seam to map ``not_ready``.
+    failure refuses ``live_provider_device_unavailable:`` naming the
+    selector, the failing class and the enumeration result. The refusals
+    are ``RuntimeError`` so the session's connect path passes them through
+    unwrapped for the seam to map ``not_ready``.
     """
-    _require_backend()
-    ftdi = _require_backend()()
+    ftdi_cls, usbtools, usb_core, usb_util, usbtools_error, ftdi_error = _backend()
+    selector = _parse_ftdi_selector(url)
+    ftdi = ftdi_cls()
+    url_failure: BaseException | None = None
+    url_mismatch = ""
+    registered_note = ""
+    if selector.url_form:
+        vid, pid = selector.vid, selector.pid
+        pair_known = vid is not None and pid is not None
+        # The URL handed to pyftdi is BUILT from the parsed ints with
+        # explicit 0x spellings (fold D): pyftdi's to_int reads BARE digits
+        # as decimal, so the raw operator string — ftdi://123:456/1, which
+        # this grammar parsed as 0x123/0x456 — would hand pyftdi a
+        # different vendor and product than the selector named. A spelling
+        # this parser cannot reduce (named vendor, bus/address) passes
+        # through unchanged: the incumbent path's own vocabulary.
+        if vid is not None:
+            parts = [f"0x{vid:04x}"]
+            if pid is not None:
+                parts.append(f"0x{pid:04x}")
+            if selector.serial is not None:
+                parts.append(selector.serial)
+            attempt_url = "ftdi://" + ":".join(parts) + f"/{selector.port}"
+        else:
+            attempt_url = url
+        saved = (
+            OrderedDict(ftdi_cls.PRODUCT_IDS[vid])
+            if pair_known and vid in ftdi_cls.PRODUCT_IDS
+            else None
+        )
+        transient = False
+        if (
+            pair_known
+            and vid is not None
+            and pid is not None
+            and _pid_unregistered(ftdi_cls, vid, pid)
+        ):
+            ftdi_cls.add_custom_product(vid, pid)
+            transient = True
+        try:
+            ftdi.open_from_url(attempt_url)
+        except Exception as exc:
+            with contextlib.suppress(Exception):
+                ftdi.close()
+            if transient and selector.vid is not None and selector.pid is not None:
+                registered_note = (
+                    f"; the selector's own pair 0x{selector.vid:04x}:"
+                    f"0x{selector.pid:04x} was registered for the URL "
+                    "attempt and removed again"
+                )
+            if not isinstance(exc, (usbtools_error, ftdi_error)):
+                raise _device_unavailable(
+                    selector, f"URL attempt: {type(exc).__name__}", registered_note
+                ) from exc
+            # Resolution-class (fold C): UsbToolsError OR pyftdi's own
+            # FtdiError — its late interface guard ("No such FTDI port: N")
+            # fires after resolution, so the enumerated path re-types the
+            # failure (the same bad port refuses identically from both
+            # selector forms). A claim/busy/permission failure is a pyusb
+            # USBError, wears neither class, and refuses immediately above.
+            url_failure = exc
+        else:
+            if selector.serial is None:
+                return _PyftdiDriver(ftdi)
+            # The serial the selector names is verified against the device
+            # pyftdi actually opened (fold A, defence in depth — the
+            # parse-time refusal is the primary layer): a serial spelling
+            # pyftdi misreads — a third component it treats as a device
+            # index — opens a DIFFERENT device here. Close it and fall
+            # through to the enumerated fallback, whose serial filter
+            # resolves what the selector names; a driver for a device the
+            # selector did not name is never returned. Named blind spot:
+            # when candidates share ONE serial this check cannot tell them
+            # apart — which is exactly why the parse refusal leads.
+            opened = _opened_device_serial(ftdi)
+            if opened == selector.serial:
+                return _PyftdiDriver(ftdi)
+            with contextlib.suppress(Exception):
+                ftdi.close()
+            if transient and selector.vid is not None and selector.pid is not None:
+                registered_note = (
+                    f"; the selector's own pair 0x{selector.vid:04x}:"
+                    f"0x{selector.pid:04x} was registered for the URL "
+                    "attempt and removed again"
+                )
+            url_mismatch = (
+                f"; the URL attempt opened a device reporting serial "
+                f"{opened!r}, the selector names {selector.serial!r}"
+            )
+        finally:
+            # Restore, not merge: the per-vid row is mutated in place, so
+            # the save above COPIED it — restoring the live object would
+            # restore the post-registration state and prove nothing.
+            if pair_known:
+                if saved is None:
+                    ftdi_cls.PRODUCT_IDS.pop(selector.vid, None)
+                else:
+                    ftdi_cls.PRODUCT_IDS[selector.vid] = saved
+    # The enumerated fallback (resolution-class URL failures and the colon
+    # form). One open attempt at the end of it, zero retries.
     try:
-        ftdi.open_from_url(url)
+        if selector.vid is None:
+            # An opaque URL spelling (named vendor, bus/address form) has no
+            # pair to enumerate: the incumbent attempt above was the open.
+            detail = (
+                f"URL attempt: {type(url_failure).__name__}"
+                if url_failure is not None
+                else "the URL form did not open"
+            )
+            raise _device_unavailable(selector, detail, registered_note)
+        if selector.pid is None:
+            if selector.vid in _registered_vendor_ids():
+                rows = _scan_vendor_rows(usb_core, usb_util, selector.vid)
+            else:
+                rows = []
+        else:
+            rows = [
+                (int(d.vid), int(d.pid), (str(d.sn) if d.sn else None), int(ifcount))
+                for d, ifcount in usbtools.find_all(
+                    [(selector.vid, selector.pid)], nocache=True
+                )
+            ]
+    except RuntimeError:
+        raise
+    except Exception as exc:
+        raise _device_unavailable(
+            selector, f"enumeration: {type(exc).__name__}", registered_note
+        ) from exc
+    if selector.serial is not None:
+        rows = [row for row in rows if row[2] == selector.serial]
+    if not rows:
+        hint = ""
+        if selector.pid is None and selector.vid not in _registered_vendor_ids():
+            hint = (
+                f" — the bare-VID scan covers registered provider families "
+                f"only; qualify vendor 0x{selector.vid:04x} with a pid"
+            )
+        detail = "enumeration found 0 matching device(s)" + hint
+        if url_failure is not None:
+            detail = (
+                f"URL attempt: {type(url_failure).__name__}; " + detail
+            )
+        raise _device_unavailable(
+            selector, detail + url_mismatch, registered_note
+        )
+    if len(rows) > 1:
+        raise _device_ambiguous(selector, rows)
+    device_vid, device_pid, _, ifcount = rows[0]
+    if not 1 <= selector.port <= ifcount:
+        raise _interface_out_of_range(selector.raw, selector.port, ifcount)
+    try:
+        ftdi.open(
+            device_vid, device_pid, serial=selector.serial, interface=selector.port
+        )
     except Exception as exc:
         with contextlib.suppress(Exception):
             ftdi.close()
-        raise RuntimeError(
-            f"live_provider_device_unavailable: {type(exc).__name__}: the FTDI "
-            f"device at this URL did not open (absent, busy, permission "
-            f"refused, or no USB backend); check the device URL and the "
-            "device's presence, then connect again"
+        raise _device_unavailable(
+            selector, f"open: {type(exc).__name__}", registered_note
         ) from exc
     return _PyftdiDriver(ftdi)
 
@@ -498,10 +985,15 @@ class FtdiStreamAdapter:
     close) are reused verbatim — no new ring, no new ladder.
 
     ``write`` returns the sent count: a short count propagates and the
-    backend's own short-count refusal judges it. ``read`` returns what is
-    buffered and sleeps the idle quantum when the pipe is empty, so the
-    reader thread paces like a pyserial port with ``timeout=0.05`` instead
-    of hot-spinning. ``close`` closes the driver — the one device handle.
+    backend's own short-count refusal judges it. ``read`` asks the driver
+    for what is ALREADY buffered — pyftdi's ``read_data`` returns at once,
+    empty when nothing has arrived (the #589 bench measurement: an empty
+    ``read_data(4096)`` answers ``b''`` in under a millisecond; the chip
+    always answers bulk IN with modem-status bytes inside the latency
+    timer, so the driver never blocks the way a pyserial ``timeout=0.05``
+    read would) — and the ADAPTER's idle sleep is the whole pacing, so the
+    reader thread never hot-spins. ``close`` closes the driver — the one
+    device handle.
     """
 
     def __init__(self, driver: FtdiDriver) -> None:
@@ -891,6 +1383,13 @@ class ProviderExecutor:
     #: default; a test-only family points its own banked copy (the
     #: registry's honesty constraint — exactly one real family exists).
     banked_resolver: Callable[[str], Path | None] | None = None
+    #: The vendor ids this family's AUTO-DISCOVERY scans (pyusb-level; the
+    #: registry is the anti-laundering gate — a vendor no executor
+    #: registers stays out of the pick flow until an operator names a
+    #: device by selector). The one sanctioned home of a family's device
+    #: identity: the generality gate counts these literals where they
+    #: live, inside the PROVIDER_EXECUTORS registration block.
+    vendor_ids: tuple[int, ...] = ()
 
     def banked_path(self, tail: str) -> Path | None:
         """The banked contract instance for one feature version tail."""
@@ -917,6 +1416,10 @@ PROVIDER_EXECUTORS: dict[str, ProviderExecutor] = {
         transport_kind="ftdi",
         probe_payloads=_PROBE_PAYLOADS,
         ops=_OPS,
+        # FTDI's own vendor id — the family's, printed in the user guide's
+        # example selectors; never any device's product id or serial (the
+        # generality gate counts this block's literals).
+        vendor_ids=(0x0403,),
     ),
 }
 
@@ -1348,27 +1851,54 @@ class FtdiDeviceHooks:
     open_url: Callable[[str], FtdiDriver]
 
 
-def _pyftdi_enumerate_urls() -> list[str]:
-    """Enumerate the FTDI-class URLs a live pyftdi backend lists."""
-    _require_backend()
-    from pyftdi.usbtools import UsbTools  # type: ignore[import-untyped]  # pyftdi
+def _ftdi_scan_selectors() -> list[str]:
+    """Enumerate every attached FTDI-class device the registered families
+    cover, as canonical selectors (issue #589's enumeration replacement).
 
+    pyftdi's product tables are never consulted — the scan is pyusb-level
+    over the vendor ids the ``PROVIDER_EXECUTORS`` registry declares, so an
+    OEM-rebranded pair lists exactly like an official one. ONE SELECTOR PER
+    INTERFACE, ``1..ifcount``: a multi-port part (FT2232H, FT4232H) lists
+    every port as an independently pickable selector and ``/1`` always
+    means the first interface, which is the control port. The serial rides
+    before the interface when the device reports one the selector charset
+    can carry (a serial it cannot express is omitted, never mangled);
+    rows sort for determinism. Every emitted selector is openable by the
+    ladder (``open_ftdi``).
+    """
+    _ftdi_cls, _usbtools, usb_core, usb_util, _usbtools_error, _ftdi_error = _backend()
     try:
-        found: list[tuple[Any, Any]] = list(UsbTools.find_all([(0x0403, None)])[0])
-        return [str(url) for url, _ in found]
+        rows: list[tuple[int, int, str | None, int]] = []
+        for vendor in sorted(_registered_vendor_ids()):
+            rows.extend(_scan_vendor_rows(usb_core, usb_util, vendor))
+        # None-safe key INSIDE the guarded block: twins under one vid/pid
+        # where one device reports no serial tuple-compare None against
+        # str and would raise a bare TypeError past every typed refusal
+        # (fold B) — an unsorted escape that made both devices invisible.
+        rows.sort(key=lambda row: (row[0], row[1], row[2] or "", row[3]))
     except Exception as exc:
         raise RuntimeError(
             f"live_provider_enumeration_failed: {type(exc).__name__}: the "
-            "FTDI enumeration did not complete (no USB backend, or a busy "
-            "bus); scan again or pass --device <ftdi-url>"
+            "FTDI family scan did not complete; scan again or pass "
+            "--device <selector>"
         ) from exc
+    selectors: list[str] = []
+    for vid, pid, serial, ifcount in rows:
+        serial_part = (
+            f":{serial}"
+            if serial is not None and _SERIAL_CHARS.match(serial)
+            else ""
+        )
+        for port in range(1, ifcount + 1):
+            selectors.append(
+                f"ftdi://0x{vid:04x}:0x{pid:04x}{serial_part}/{port}"
+            )
+    return selectors
 
 
 def default_ftdi_hooks() -> FtdiDeviceHooks:
-    """The production hooks: pyftdi enumeration and the real open."""
-    return FtdiDeviceHooks(
-        enumerate_urls=_pyftdi_enumerate_urls, open_url=open_ftdi
-    )
+    """The production hooks: the family vendor scan and the real open."""
+    return FtdiDeviceHooks(enumerate_urls=_ftdi_scan_selectors, open_url=open_ftdi)
 
 
 def _ftdi_device_row(

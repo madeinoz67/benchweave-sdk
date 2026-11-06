@@ -100,7 +100,7 @@ rubric's G5 gate is the obligation; this file is the detail behind it.
    gateway's obligation-18 amendment and obligation-22 annotation land with the gateway
    docs PR after this repository's PR merges (the design's ordering, risk R5).
 
-11. **A new catalogue operation** (issue #589 PR-2) → five surfaces move together, and
+12. **A new catalogue operation** (issue #589 PR-2) → five surfaces move together, and
    four of them are pinned by tests that redden on a missed one: the
    `catalogue.CATALOGUE` row itself, the seam's `_op_<name>` handler (the MCP
    `_tool_handlers` equality assertion enforces handler↔catalogue by construction, but
@@ -111,12 +111,33 @@ rubric's G5 gate is the obligation; this file is the detail behind it.
    event (`_STATE_EVENT_OPS` + `_event_data`). REST routes are automatic (web.py
    iterates the catalogue); the HTML surface stays unchanged unless the plugin-ui
    corpus gains a control for it.
+11. **The generality gate's pins move with the source** (issue #589 PR-1) →
+   `tests/test_generality_gate.py` is the standing property that no device
+   identity or plugin action name lives in `src/`. Its scan denominators
+   (`files_scanned`, `literals_examined`) are pinned AS FLOORS — they
+   redden only when the sweep NARROWS (a file or literal class leaving the
+   tree), never when unrelated work grows the source; its exemption counts
+   (`block_exemptions`, `allowlisted_entries`) are pinned EXACTLY, so a
+   growing exemption is a red test, never a quieter one, and the correct
+   motion is to move the pin IN THE SAME COMMIT, naming why (a new
+   allowlist entry states its reason beside the table). What count pins
+   cannot see, stated (fold G): RELOCATING a constant and COUNT-NEUTRAL
+   substitution are both silent — the pins count literals, they do not
+   track positions; the find-a-leak rules (denylist, substrings, action
+   names) are the layer that cares about content, and the archetype
+   matrix is the behavioural backstop. The lock exclusion
+   is the deliberate exception: `lock_excluded_files` is asserted against
+   the lock's own recorded count, never a hardcoded literal, so a corpus
+   sync moves it without a gate edit (the sync, not this repository, owns
+   that number). Adding a provider family means the family's vendor ids
+   land INSIDE the `PROVIDER_EXECUTORS` registration block (the one
+   sanctioned home) and `block_exemptions` moves with them.
 
 ## CI map
 
 | Job | What it catches |
 |---|---|
-| `sdk` | ubuntu, macOS and Windows; deliberately NO submodules (the self-containment proof); `uv sync --locked --extra test --extra server --extra scaffold` (the copier template lane, WS2; the folded server host, #309); `ruff check .`; `mypy src`; `pytest -q` (the behavioral suite, marker-partitioned: `browser` runs in its own job, `timing` runs serially after the `-n auto` leg, and the `loop` module — the standalone dev loop, #556 — runs serially on ubuntu only, design record §13; including the R-2 byte-parity arms, the R-4/R-5d update lane in `tests/test_scaffold_update.py` — full checkout history via fetch-depth 0, offline against a throwaway tagged template repo — and the R-5b/R-5c agent-asset drift module `tests/test_agent_assets.py`); `sync-standards --check` (lock ↔ tree ↔ stamps on the committed state); `benchweave-sdk --version` entry-point smoke; a scaffold-and-check run; the publish workflow's installed-wheel smoke (installs `[scaffold]`) |
+| `sdk` | ubuntu, macOS and Windows; deliberately NO submodules (the self-containment proof); `uv sync --locked --extra test --extra server --extra scaffold` (the copier template lane, WS2; the folded server host, #309); `ruff check .`; `mypy src`; `pytest -q` (the behavioral suite, marker-partitioned: `browser` runs in its own job, `timing` runs serially after the `-n auto` leg, the `loop` module — the standalone dev loop, #556 — runs serially on ubuntu only, design record §13, and `live_ftdi` — arms that open a real FTDI-class device, #589 — is deselected in CI and runs only on a live bench via `-m live_ftdi`; including the R-2 byte-parity arms, the R-4/R-5d update lane in `tests/test_scaffold_update.py` — full checkout history via fetch-depth 0, offline against a throwaway tagged template repo — and the R-5b/R-5c agent-asset drift module `tests/test_agent_assets.py`); `sync-standards --check` (lock ↔ tree ↔ stamps on the committed state); `benchweave-sdk --version` entry-point smoke; a scaffold-and-check run; the publish workflow's installed-wheel smoke (installs `[scaffold]`) |
 | `docs` | this repository's `docs.yml`: the docs site builds from this repository's content |
 | `publish` | release integrity — tag, wheel, stamp verification |
 
