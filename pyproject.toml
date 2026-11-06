@@ -150,6 +150,7 @@ markers = [
   "timing: wall-clock/bound-sensitive tests that must run serially and unloaded (the AR-2 soak asserts structural bounds over a real 10-second window); the xdist lane deselects them and a serial invocation runs them after — load-induced flakes under -n auto are the failure this partition prevents (issue #402)",
   "loop: the standalone development loop from the installed wheel (issue #556) — its fixtures build this repository's wheel and a fresh venv, so under -n auto every xdist worker that holds one of its tests repeats that build; the parallel lane deselects it and a serial ubuntu-only CI step runs it (the `timing` partition's shape). A plain `uv run pytest tests/test_standalone_dev_loop.py` still runs it — markers filter only when -m is passed",
   "claim_probe: claim-lane probe cells — they pin documented behavior as ordinary suite tests and emit a trace artifact when CLAIM_LANE_ARTIFACT_ROOT is wired (the shadow runner in scripts/claim_lane.py selects them with -m claim_probe)",
+  "live_ftdi: arms that open a REAL FTDI-class device on a live bench (issue #589) — CI deselects the marker, and the arms skip themselves when no device answers, so the suite never requires hardware to go green; run them deliberately with -m live_ftdi",
 ]
 # Generated scaffold output under byte-parity test (R-2): its tests/ tree is
 # plugin content, not this suite's — collecting it imports example_plugin.
