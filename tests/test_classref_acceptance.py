@@ -44,7 +44,7 @@ import pytest
 from click.testing import CliRunner
 
 from benchweave_sdk.classref import ResidualMember, derive_ui, find_reference
-from benchweave_sdk.classref_gate import census, verify_ui
+from benchweave_sdk.classref_gate import verify_ui
 from benchweave_sdk.classref_gate_render import render_pages
 from benchweave_sdk.cli import cli
 from benchweave_sdk.served import active_version
@@ -90,6 +90,22 @@ DERIVED_DOCUMENTS = (
 #: (#556 B5) The dataset member's capture verb — the V4 composing surface
 #: the wheel arm below carries end to end.
 SEGMENT_CAPTURE_URN = "com.meridian.m400.segment_capture/1.0.0"
+
+# The #589 PR-2 inversion, module-wide: the m400 fixture pins its
+# composed-burst catalog (and its member declaration) under contracts[], so
+# every verify-ui and render_pages call over these stagings — the CLI
+# verify in A1, the renders behind A2/B4/A3 and the scope arms' gates —
+# refuses at seam construction BEFORE the census, REPORTED channel or
+# finding machinery the arms asserted could run; the f1-da staging in the
+# computed-id arm pins the vendor catalog the same way. Those claims were
+# false on both hosts (the gateway's loader refuses the same bytes at
+# activation). derive-ui, the derivation asserts and the production
+# check_ui (the offline validator) are unaffected and keep running; the
+# gate/render coverage returns only with the R2 corpus motion (vendor pins
+# move out of contracts[], main-side), at which point these arms flip back
+# to their census/REPORTED shapes.
+_REFUSAL_CB = r"profile_contract_invalid: urn:meridian:composed-burst:1.0.0"
+_REFUSAL_VC = r"profile_contract_invalid: urn:veridian:vendor-catalog:1.0.0"
 
 
 def _raw(document: dict[str, Any]) -> bytes:
@@ -158,14 +174,16 @@ def _m400_project(destination: Path, *, with_ui: bool = True) -> Path:
 # ---------------------------------------------------------------------------
 
 
-def test_a1_the_workflow_runs_clean(tmp_path: Path) -> None:
+def test_a1_the_workflow_runs_clean_until_the_gate_refuses(tmp_path: Path) -> None:
     """The acceptance scenario's workflow, in order: ``new --with-ui``, the
-    descriptor filled, ``derive-ui``, ``verify-ui`` — each command exits 0
-    with zero refusals, and the pages that come out render as-is.
-
-    The render half drives the real standalone host (``render_pages``, the
-    same server ``preview-ui`` and ``serve`` use), never a reimplementation.
-    """
+    descriptor filled, ``derive-ui``, ``verify-ui``. (#589 PR-2 inversion,
+    module note above: the m400 staging pins its composed-burst catalog
+    under contracts[], so verify-ui exits 1 with the typed refusal naming
+    the pin and the render refuses at seam construction — the pre-PR-2
+    form asserted "Rendered gate clean" plus host-styled pages, a
+    shippable claim that was FALSE on both hosts. derive-ui still exits 0
+    with none of the derivation refusal codes; the clean gate and the
+    rendered pages return only with the R2 corpus motion.)"""
     project = _m400_project(tmp_path / "m400")
     runner = CliRunner()
     derive = runner.invoke(cli, ["derive-ui", str(project)])
@@ -178,21 +196,15 @@ def test_a1_the_workflow_runs_clean(tmp_path: Path) -> None:
     ):
         assert code not in derive.output, derive.output
     verify = runner.invoke(cli, ["verify-ui", str(project)])
-    assert verify.exit_code == 0, verify.output
-    assert "Rendered gate clean" in verify.output, verify.output
-
+    assert verify.exit_code != 0
+    assert "profile_contract_invalid: urn:meridian:composed-burst:1.0.0" in (
+        verify.output
+    ), verify.output
     package = project / "src" / PACKAGE
     manifest = json.loads((package / "ui" / "manifest.json").read_bytes())
     pages = [str(row["id"]) for row in manifest["pages"]]
-    rendered = render_pages(project, pages)
-    assert set(rendered) == set(pages)
-    for page_id, html in rendered.items():
-        assert html.strip(), f"page {page_id} rendered empty"
-        # No hand correction: the host's own styling renders, and the
-        # plugin authored no stylesheet (A4 asserts the authored set).
-        assert "<style" in html or 'rel="stylesheet"' in html or "stylesheet" in html, (
-            f"page {page_id} carries no host styling"
-        )
+    with pytest.raises(ValueError, match=_REFUSAL_CB):
+        render_pages(project, pages)
 
 
 # ---------------------------------------------------------------------------
@@ -250,27 +262,17 @@ def test_a2_every_declared_action_resolves(tmp_path: Path) -> None:
     assert resolutions[SELF_CAL_URN] == "custom"
 
 
-def test_a2_class_surfaces_come_from_the_corpus(tmp_path: Path) -> None:
+def test_a2_class_surfaces_come_from_the_corpus_derived(tmp_path: Path) -> None:
     """Layer 1: the DAQ class's own surfaces — the capture plot with one
     trace per declared measurement, the run buttons and the arm staging
-    control, and the configuration data-table — all render from the corpus
-    reference, with nothing authored by the fixture."""
+    control, and the configuration data-table — all derive from the corpus
+    reference, with nothing authored by the fixture. (#589 PR-2 inversion,
+    module note above: the render census — one plot, the four buttons, the
+    two data-tables — needs the gate back first; it returns only with the
+    R2 corpus motion. The wire-shape derivation half still proves one
+    trace per declared channel and quantity, the strain gauge among
+    them.)"""
     project, derived = _derived(tmp_path)
-    pages = [str(row["id"]) for row in derived.manifest["pages"]]
-    rendered = render_pages(project, pages)
-    capture = census(rendered["capture"])
-    assert capture["plots"] == 1
-    # MOVED DELIBERATELY 2026-10-25 (#556 B4): the sweep procedure member's
-    # button welds onto the authored capture page through the existing
-    # completion arm, and the vendor-configure member's data-table joins
-    # the class's on the configuration page.
-    assert capture["buttons"] == ["arm", "abort", "trigger", "sweep"]
-    assert "action-arm-max_duration_ms" in capture["staged_control_ids"]
-    configuration = census(rendered["configuration"])
-    assert configuration["data_tables"] == 2
-    assert configuration["numerics"] >= 3
-    # The measurement members the class covers: one trace per declared
-    # channel and quantity, the strain gauge among them.
     dataset = next(
         row for row in derived.catalogue["targets"] if row.get("kind") == "dataset"
     )
@@ -280,13 +282,21 @@ def test_a2_class_surfaces_come_from_the_corpus(tmp_path: Path) -> None:
         "ch2-voltage",
         "ch3-strain",
     ]
+    pages = [str(row["id"]) for row in derived.manifest["pages"]]
+    with pytest.raises(ValueError, match=_REFUSAL_CB):
+        render_pages(project, pages)
 
 
-def test_a2_composed_action_surfaces_from_the_plugin_class(tmp_path: Path) -> None:
+def test_a2_composed_action_surfaces_from_the_plugin_class(
+    tmp_path: Path,
+) -> None:
     """Layer 2: the vendor action resolves through the plugin-local composed
     class (shipped in the package, pinned via ``descriptor.contracts[]``),
     and its control derives from the class's ``input_schema`` — the plan row
-    names the class, and the rendered control carries the class's field."""
+    names the class, and the rendered control carries the class's field.
+    (#589 PR-2 inversion, module note above: the rendered control census
+    needs the gate back first; the plan-row and ledger derivation half
+    below still proves the resolution and its inventory.)"""
     project, derived = _derived(tmp_path)
     row = derived.control_plan[BURST_URN]
     assert row["resolution"] == "composed"
@@ -304,16 +314,20 @@ def test_a2_composed_action_surfaces_from_the_plugin_class(tmp_path: Path) -> No
         {"action": BURST_URN, "resolution": "composed", "class": CLASS_URN}
     ]
     pages = _page_ids(derived)
-    device_features = census(render_pages(project, pages)["device-features"])
-    assert "burst_mode" in device_features["buttons"]
-    assert "action-burst_mode-burst_count" in device_features["staged_control_ids"]
+    with pytest.raises(ValueError, match=_REFUSAL_CB):
+        render_pages(project, pages)
 
 
-def test_a2_residual_action_is_generic_and_labelled_custom(tmp_path: Path) -> None:
+def test_a2_residual_action_is_generic_and_labelled_custom(
+    tmp_path: Path,
+) -> None:
     """Layer 3: the residual member derives from its own ``input_constraints``
     and is labelled ``custom`` on every surface the record names — the
     section title the expander mints, the gate's REPORTED row, and the
-    declaration's custom inventory."""
+    declaration's custom inventory. (#589 PR-2 inversion, module note
+    above: the rendered section title and the gate's REPORTED row need the
+    gate back first; the plan-row and custom-inventory derivation half
+    below still proves the labelling.)"""
     project, derived = _derived(tmp_path)
     row = derived.control_plan[SELF_CAL_URN]
     assert row["resolution"] == "custom"
@@ -329,15 +343,8 @@ def test_a2_residual_action_is_generic_and_labelled_custom(tmp_path: Path) -> No
             ),
         }
     ]
-    rendered = render_pages(project, _page_ids(derived))
-    html = rendered["device-features"]
-    assert "Custom device actions" in html
-    assert "action-self_cal-channel" in census(html)["staged_control_ids"]
-    report = verify_ui(project)
-    assert f"custom: {SELF_CAL_URN}" in report.reported_deviations, (
-        report.reported_deviations
-    )
-    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
+    with pytest.raises(ValueError, match=_REFUSAL_CB):
+        verify_ui(project)
 
 
 # ---------------------------------------------------------------------------
@@ -354,12 +361,18 @@ PROFILE_MODE_URN = "com.meridian.m400.profile_mode/1.0.0"
 VENDOR_PROFILE_ID = "com.meridian.m400/1.0.0"
 
 
-def test_b4_the_sweep_procedure_member_surfaces_end_to_end(tmp_path: Path) -> None:
+def test_b4_the_sweep_procedure_member_surfaces_end_to_end(
+    tmp_path: Path,
+) -> None:
     """V1 (#556 §4 V1 layer 2) on the acceptance fixture: the sweep member's
     target composes with the vendor profile id, the plan row places its
     control on the authored capture page, the real host renders its button
     there, the ledger records the applied member, and the production
-    check-ui resolves the vendor target — the seam wired in B4 motion 1."""
+    check-ui resolves the vendor target — the seam wired in B4 motion 1.
+    (#589 PR-2 inversion, module note above: the rendered button census
+    needs the gate back first — the render refuses at seam construction
+    and returns only with the R2 corpus motion; the target/plan/ledger
+    derivation half and the production check-ui below still run.)"""
     project, derived = _derived(tmp_path)
     target = next(
         row
@@ -383,8 +396,8 @@ def test_b4_the_sweep_procedure_member_surfaces_end_to_end(tmp_path: Path) -> No
     assert derived.composed_members["procedures"] == (
         {"slot": "sweep", "action": SWEEP_URN, "page": "capture"},
     )
-    capture = census(render_pages(project, _page_ids(derived))["capture"])
-    assert "sweep" in capture["buttons"], capture["buttons"]
+    with pytest.raises(ValueError, match=_REFUSAL_CB):
+        render_pages(project, _page_ids(derived))
     # The production check (the seam's payoff): the vendor procedure target
     # resolves over the merged pinned documents — zero findings.
     from benchweave_sdk.presentation import check_ui
@@ -409,7 +422,9 @@ def test_b4_the_vendor_settings_member_surfaces_end_to_end(tmp_path: Path) -> No
     on the ledger, the data-table rendered by the real host on the
     configuration page — and the production check-ui resolves the vendor
     configuration target, schema asset and preset surface with zero
-    findings."""
+    findings. (#589 PR-2 inversion, module note above: the rendered
+    data-table census needs the gate back first; the target/asset/ledger
+    derivation half and the production check-ui below still run.)"""
     project, derived = _derived(tmp_path)
     package = project / "src" / PACKAGE
     target = next(
@@ -445,8 +460,9 @@ def test_b4_the_vendor_settings_member_surfaces_end_to_end(tmp_path: Path) -> No
         "preset surface derived with no commissioned presets at birth; "
         "author ui/presets/ and validate via check-preset"
     )
-    configuration = census(render_pages(project, _page_ids(derived))["configuration"])
-    assert configuration["data_tables"] == 2
+    # The rendered data-table census returns with the R2 corpus motion.
+    with pytest.raises(ValueError, match=_REFUSAL_CB):
+        render_pages(project, _page_ids(derived))
     assert derived.composed_members["settings"] == (
         {"slot": "vendor-configure", "action": PROFILE_MODE_URN,
          "page": "configuration"},
@@ -522,7 +538,12 @@ def test_a3_the_composed_dataset_survives_the_wheel_install(
     and verify-ui is clean over the installed tree with the no-binding row
     on the REPORTED channel — the neighbour-plot disclosure, never a
     failure. The L4 row claims no rendered_by (the plot binds the class
-    capture slot, not the member's)."""
+    capture slot, not the member's). (#589 PR-2 inversion, module note
+    above: the installed tree's pins ride the wheel, so its verify-ui and
+    render refuse at seam construction — the clean gate, the REPORTED
+    no-binding row and the rendered plot need the gate back first, and
+    return only with the R2 corpus motion. The packaging, install and
+    derivation halves below still run.)"""
     _project, wheel = m400_wheel
     members = set(zipfile.ZipFile(wheel).namelist())
     prefix = f"{PACKAGE}/"
@@ -575,17 +596,8 @@ def test_a3_the_composed_dataset_survives_the_wheel_install(
     assert (row["level"], row["page"]) == ("L4", "capture"), row
     assert "rendered_by" not in row, row
     # Preview standalone from the installed tree, through the real host.
-    report = verify_ui(stage)
-    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
-    assert (
-        "composed dataset segment-capture: no plot carries its binding "
-        "(the plot on page capture binds capture)"
-        in report.reported_deviations
-    ), report.reported_deviations
-    pages = [str(page["id"]) for page in derived.manifest["pages"]]
-    rendered = render_pages(stage, pages)
-    assert set(rendered) == set(pages)
-    assert census(rendered["capture"])["plots"] == 1
+    with pytest.raises(ValueError, match=_REFUSAL_CB):
+        verify_ui(stage)
 
 
 def test_a3_the_composed_class_resolves_after_install(
@@ -598,6 +610,11 @@ def test_a3_the_composed_class_resolves_after_install(
 
     The install is a real wheel install into an empty target (the same
     layout a site-packages install produces: package tree + dist-info).
+    (#589 PR-2 inversion, module note above: the installed tree's pins
+    ride the wheel, so its verify-ui and render refuse at seam
+    construction — the clean gate and the rendered staged control need
+    the gate back first; the install, the descriptor-relative pin walk
+    and the resolution asserts below still run.)
     """
     _project, wheel = m400_wheel
     stage = tmp_path / "installed"
@@ -637,13 +654,8 @@ def test_a3_the_composed_class_resolves_after_install(
         }
     ]
     # Preview standalone from the installed tree, through the real host.
-    report = verify_ui(stage)
-    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
-    pages = [str(row["id"]) for row in derived.manifest["pages"]]
-    rendered = render_pages(stage, pages)
-    assert set(rendered) == set(pages)
-    device_features = census(rendered["device-features"])
-    assert "action-burst_mode-burst_count" in device_features["staged_control_ids"]
+    with pytest.raises(ValueError, match=_REFUSAL_CB):
+        verify_ui(stage)
 
 
 def test_a3_a_clean_environment_install_carries_the_declaration(
@@ -987,6 +999,14 @@ def test_scope_b1_a_computed_id_colliding_with_a_dataset_variable_is_dropped_and
     derivation, never a literal); the computed id is the fixture's own first
     lane id (asserted against ``descriptor.channels``), so the collision is
     measured against a base id the wire actually carries.
+
+    (#589 PR-2 inversion: the f1-da staging pins its vendor catalog under
+    contracts[], so verify-ui refuses at seam construction — the clean gate
+    and the REPORTED collision row need the gate back first and return
+    only with the R2 corpus motion. The derivation half below still proves
+    the drop: the variable set carries the id exactly once, as the base
+    lane, and the collision row is pinned on the derivation's residual
+    members.)
     """
     from helpers_classref import build_classref_project, raw
 
@@ -1005,17 +1025,11 @@ def test_scope_b1_a_computed_id_colliding_with_a_dataset_variable_is_dropped_and
     derived = derive_ui(
         raw_descriptor, reference, descriptor_path=FIXTURES / "descriptor-f1-da.json"
     )
-    # Persist and verify FIRST: on the pre-fold code the emitted duplicate id
-    # is refused by the canonical validator and the host load escapes here as
-    # an unhandled ``PluginLoadError`` — the failure this arm pins.
+    # Persist, then the gate — which refuses on the staging's pin (#589
+    # PR-2): the duplicate-id drop itself is proven on the derivation below.
     _write_derived(package, derived)
-    report = verify_ui(project)
-    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
-    assert (
-        f"observation variable {lane_id}: id collides with a dataset variable "
-        "on capture, decode; no tile (no parameter to read)"
-        in report.reported_deviations
-    ), report.reported_deviations
+    with pytest.raises(ValueError, match=_REFUSAL_VC):
+        verify_ui(project)
     targets = _dataset_targets(derived)
     assert len(targets) == 2, [row["id"] for row in targets]
     for target in targets:
@@ -1096,18 +1110,22 @@ def test_scope_b1_the_series_ceiling_drops_only_composed_series(
     dropped and no cap row appears; one composed series past it, the tail
     row is dropped and named. Denominators come from the derivation — the
     no-computed derivation measures the class's own trace count.
+
+    (#589 PR-2 inversion, module note above: verify-ui refuses at seam
+    construction, so the clean gate and the cv14 REPORTED row need the
+    gate back first; the derivation half below still proves the drop, the
+    wire keeping cv14, and the ceiling row's exact wording.)
     """
     _, _, bare = _computed_waveform_project(tmp_path, 0)
     base_y = _waveform_plot(bare)["y"]
     assert len(base_y) == 3, base_y
 
     project, package, over = _computed_waveform_project(tmp_path, 14)
-    # Persist and verify FIRST: on the pre-fold code the 17-entry ``y`` is
-    # refused by the manifest schema and the host load escapes here as an
-    # unhandled ``PluginLoadError`` — the failure this arm pins.
+    # Persist, then the gate — which refuses on the staging's pin (#589
+    # PR-2); the ceiling behavior itself is proven on the derivation below.
     _write_derived(package, over)
-    report = verify_ui(project)
-    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
+    with pytest.raises(ValueError, match=_REFUSAL_CB):
+        verify_ui(project)
     from benchweave_sdk.classref import _PLOT_SERIES_CEILING
 
     _, _, at_ceiling = _computed_waveform_project(tmp_path, 13)
@@ -1170,9 +1188,6 @@ def test_scope_b1_the_series_ceiling_drops_only_composed_series(
     assert [member for member, row_detail in rows.items() if "no plot series" in row_detail] == [
         "cv14"
     ], rows
-    assert f"observation variable cv14: {detail}" in report.reported_deviations, (
-        report.reported_deviations
-    )
 
 
 def test_scope_b1_the_series_ceiling_matches_the_manifest_schema() -> None:
@@ -1258,7 +1273,10 @@ def test_scope_custom_decoder_declares_without_refusal_but_no_lane(
     (R9): the row stops advertising a rendering that does not occur, and the
     gate stays green — the capture page renders a plot, which covers the L4
     dataset surface the row points at. Named here and in the report (deferral
-    D1, "channels and decoders"): NOT proved.
+    D1, "channels and decoders"): NOT proved. (#589 PR-2 inversion, module
+    note above: the gate and render refuse at seam construction; the green
+    gate and the empty-lanes census need the gate back first. The R9 row and
+    the no-decoder-lanes derivation half below still run.)
     """
     project, package, derived = _decoded_daq(tmp_path)
     row = derived.control_plan["com.meridian.m400.decode_annotated/1.0.0"]
@@ -1274,14 +1292,8 @@ def test_scope_custom_decoder_declares_without_refusal_but_no_lane(
     assert not any(plot_lanes), plot_lanes
 
     _write_derived(package, derived)
-    report = verify_ui(project)
-    # The gate stays green: the capture page renders a plot, which covers the
-    # L4 dataset surface the row points at — the lane claim is never checked.
-    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
-    pages = _page_ids(derived)
-    capture = census(render_pages(project, pages)["capture"])
-    assert capture["lanes_figures"] == 0
-    assert capture["lane_labels"] == []
+    with pytest.raises(ValueError, match=_REFUSAL_CB):
+        verify_ui(project)
 
 
 def test_scope_the_daq_class_covers_no_decoder_member() -> None:
@@ -1325,7 +1337,7 @@ def test_scope_r9_the_claim_stands_when_the_lanes_land() -> None:
     assert lanes, "the lanes the claim names actually derived"
 
 
-def test_scope_b1_residual_members_are_reported(
+def test_scope_b1_residual_members_need_the_gate_back_first(
     tmp_path: Path,
 ) -> None:
     """Layer 3's promise is two-sided — never refuses AND never silent. The
@@ -1334,7 +1346,10 @@ def test_scope_b1_residual_members_are_reported(
     composed-state row: the computed measurement DOES derive into dataset
     variables and never a tile, so its row states that instead of naming a
     deferral. Silence here is indistinguishable from "we rendered it and it
-    looked fine"."""
+    looked fine". (#589 PR-2 inversion, module note above: verify-ui
+    refuses at seam construction before the REPORTED channel runs; the
+    derive-ui half still proves the derivation is clean, and the rows
+    return only with the R2 corpus motion.)"""
     project = _m400_project(tmp_path / "m400", with_ui=False)
     package = project / "src" / PACKAGE
     decoder_raw = (FIXTURES / "decoder-uart.json").read_bytes()
@@ -1351,17 +1366,8 @@ def test_scope_b1_residual_members_are_reported(
     runner = CliRunner()
     derive = runner.invoke(cli, ["derive-ui", str(project)])
     assert derive.exit_code == 0, derive.output
-    report = verify_ui(project)
-    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
-    joined = " | ".join(report.reported_deviations)
-    # #556 B1: V2's row flips from "derivation deferred" to the composed-state
-    # disclosure — the computed variable DOES derive, into dataset variables,
-    # and never a tile (no parameter to read).
-    assert (
-        "observation variable rms_v: computed variable derives into dataset "
-        "variables (no tile; no parameter to read)" in joined
-    ), report.reported_deviations
-    assert "custom decoder uart" in joined, report.reported_deviations
+    with pytest.raises(ValueError, match=_REFUSAL_CB):
+        verify_ui(project)
 
 
 def test_scope_b1_the_reference_less_arm_reports_them_too(tmp_path: Path) -> None:
@@ -1423,7 +1429,10 @@ def test_scope_b1_v3_a_channel_matching_no_resolved_slot_is_reported(
     fixture, never a literal); the numerator is channels with a derived lanes
     surface plus channels carrying a row naming the vocabulary. The fixture
     declares four channels and one channels slot (role ``analogue_input``), so
-    three resolve and one reports.
+    three resolve and one reports. (#589 PR-2 inversion, module note above:
+    verify-ui refuses at seam construction before the REPORTED channel runs;
+    the derivation half below still pins the channel's residual row, and the
+    REPORTED row returns only with the R2 corpus motion.)
     """
     project = _m400_project(tmp_path / "m400", with_ui=False)
     package = project / "src" / PACKAGE
@@ -1451,12 +1460,8 @@ def test_scope_b1_v3_a_channel_matching_no_resolved_slot_is_reported(
     assert [row.member for row in reported] == ["clk (role digital_input)"]
     assert declared - {"clk"} == {"ch1", "ch2", "ch3"}
     _write_derived(package, derived)
-    report = verify_ui(project)
-    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
-    assert (
-        "channel clk (role digital_input): resolves to no lanes surface"
-        in report.reported_deviations
-    ), report.reported_deviations
+    with pytest.raises(ValueError, match=_REFUSAL_CB):
+        verify_ui(project)
 
 
 def test_scope_b1_v3_the_reference_less_arm_reports_every_channel(
@@ -1499,7 +1504,11 @@ def test_scope_b1_v3_a_decoder_with_no_lane_host_reports_its_reason(
     waveform, and lanes host in digital_lanes plots alone. The decoder
     document and its annotation action ARE present — the lanes are built and
     then hosted nowhere — so the row is the only surface that can tell the
-    author the decoder has no lane host."""
+    author the decoder has no lane host. (#589 PR-2 inversion, module note
+    above: verify-ui refuses at seam construction before the REPORTED
+    channel runs; the derivation half below still pins the decoder's
+    residual row with its reason, and the REPORTED row returns only with
+    the R2 corpus motion.)"""
     project, package, derived = _decoded_daq(tmp_path)
     # MOVED DELIBERATELY 2026-10-25 (#556 B4, V6 layer 3) and 2026-10-26
     # (#556 B5, §4 V4 layer 3): the fixture's two unclaimed staged actions
@@ -1538,12 +1547,8 @@ def test_scope_b1_v3_a_decoder_with_no_lane_host_reports_its_reason(
         ),
     ), derived.residual_members
     _write_derived(package, derived)
-    report = verify_ui(project)
-    assert (
-        "custom decoder uart: no lane host (this class's plot is waveform; "
-        "lanes host in digital_lanes plots alone)"
-        in report.reported_deviations
-    ), report.reported_deviations
+    with pytest.raises(ValueError, match=_REFUSAL_CB):
+        verify_ui(project)
 
 
 def test_scope_r10_a_decoder_that_renders_is_not_disclosed() -> None:
