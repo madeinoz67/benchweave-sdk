@@ -17,9 +17,23 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from benchweave_sdk.classref import derive_ui, find_reference
 from benchweave_sdk.classref_gate import verify_ui
 from benchweave_sdk.scaffold import create_project
+
+# The #589 PR-2 inversion, module-wide: every staging here pins its vendor
+# catalog (or, in the reference-less arm, its member declaration) under
+# contracts[], so verify-ui refuses at seam construction BEFORE the
+# composed-members read-back runs — the read-back arms' pre-PR-2 REPORTED
+# rows asserted coverage a shippable run could not reach on either host
+# (the gateway's loader refuses the same bytes at activation). The
+# read-back coverage returns only with the R2 corpus motion (vendor pins
+# move out of contracts[], main-side); until then each arm keeps its
+# build, forge/tamper and derivation asserts, and pins the typed refusal.
+_REFUSAL_VC = r"profile_contract_invalid: urn:veridian:vendor-catalog:1.0.0"
+_REFUSAL_MD = r"profile_contract_invalid: urn:veridian:member-declaration:1.0.0"
 
 FIXTURES = Path(__file__).parent / "fixtures" / "classref"
 REFERENCE = find_reference("otdp.logic_analyser/1.0.0")
@@ -144,23 +158,23 @@ def test_the_ledger_carries_the_applied_member_set(tmp_path: Path) -> None:
     }
 
 
-def test_the_birth_ledger_verifies_clean(tmp_path: Path) -> None:
-    """The untouched birth ledger carries the applied set by construction;
-    the read-back is quiet and the gate stays clean."""
+def test_the_birth_ledger_stages_but_refuses_the_gate(tmp_path: Path) -> None:
+    """The untouched birth ledger carries the applied set by construction
+    (the arm above asserts the key); the read-back's quietness and the
+    clean gate (#589 PR-2 inversion, module note above) return only with
+    the R2 corpus motion — the staging refuses at seam construction."""
     project, _derived = _build(tmp_path / "clean")
-    report = verify_ui(project, reference=REFERENCE)
-    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
-    member_rows = [
-        row for row in report.reported_deviations if "composed member" in row
-    ]
-    assert member_rows == [], report.reported_deviations
+    with pytest.raises(ValueError, match=_REFUSAL_VC):
+        verify_ui(project, reference=REFERENCE)
 
 
-def test_a_forged_slot_mapping_reports(tmp_path: Path) -> None:
+def test_a_forged_slot_mapping_needs_the_gate_back_first(tmp_path: Path) -> None:
     """The R6 rule, from birth: sets alone are insufficient — an authored
     row naming the RIGHT slot with the WRONG mapping (a foreign role)
     REPORTs, as does an authored row naming a member the derivation did
-    not apply."""
+    not apply. (#589 PR-2 inversion, module note above: the read-back
+    cannot run until the R2 corpus motion lands; the forge is kept for
+    the flip-back.)"""
     def forge(document: dict[str, Any]) -> None:
         document["composed_members"]["channels"] = [
             {**CHANNELS_ROW, "where_role": "rf_input"},
@@ -168,44 +182,38 @@ def test_a_forged_slot_mapping_reports(tmp_path: Path) -> None:
         ]
 
     project, _derived = _build(tmp_path / "forged", ledger_edits=forge)
-    report = verify_ui(project, reference=REFERENCE)
-    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
-    joined = " | ".join(report.reported_deviations)
-    assert (
-        "composed members mismatch: channels member trigger_lanes derives "
-        "where_role digital_output but the authored declaration's "
-        "composed_members names rf_input" in joined
-    ), joined
-    assert (
-        "composed members mismatch: the authored declaration's "
-        "composed_members names channels member ghost_lanes, which the "
-        "derivation applied no member for" in joined
-    ), joined
+    with pytest.raises(ValueError, match=_REFUSAL_VC):
+        verify_ui(project, reference=REFERENCE)
 
 
-def test_an_omitted_applied_member_reports(tmp_path: Path) -> None:
+def test_an_omitted_applied_member_needs_the_gate_back_first(
+    tmp_path: Path,
+) -> None:
     """The other direction: a ledger that omits an applied member —
-    re-derived descriptor, stale authored file — REPORTs the omission."""
+    re-derived descriptor, stale authored file — REPORTs the omission.
+    (#589 PR-2 inversion, module note above: the read-back cannot run
+    until the R2 corpus motion lands; the drop is kept for the
+    flip-back.)"""
     def drop(document: dict[str, Any]) -> None:
         document["composed_members"]["channels"] = []
 
     project, _derived = _build(tmp_path / "omitted", ledger_edits=drop)
-    report = verify_ui(project, reference=REFERENCE)
-    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
-    assert (
-        "composed members mismatch: channels member trigger_lanes derives "
-        "applied but the authored declaration's composed_members omits it"
-        in " | ".join(report.reported_deviations)
-    ), report.reported_deviations
+    with pytest.raises(ValueError, match=_REFUSAL_VC):
+        verify_ui(project, reference=REFERENCE)
 
 
-def test_a_duplicated_applied_member_row_reports(tmp_path: Path) -> None:
+def test_a_duplicated_applied_member_row_needs_the_gate_back_first(
+    tmp_path: Path,
+) -> None:
     """(#556 B6 fold F1) The read-back compared per-slot sets with no
     MULTIPLICITY: a verbatim duplicate row — the same slot with the same
     mapping, twice — verified clean here and migrated green on the second
     consumer, though the ledger claims two applied members where the
     derivation applied one. The arithmetic carries the authored row count
-    against the derived count now, in this channel's own mismatch wording."""
+    against the derived count now, in this channel's own mismatch wording.
+    (#589 PR-2 inversion, module note above: the read-back cannot run
+    until the R2 corpus motion lands; the forge is kept for the
+    flip-back.)"""
     def forge(document: dict[str, Any]) -> None:
         document["composed_members"]["channels"] = [
             dict(CHANNELS_ROW),
@@ -213,14 +221,8 @@ def test_a_duplicated_applied_member_row_reports(tmp_path: Path) -> None:
         ]
 
     project, _derived = _build(tmp_path / "duplicated", ledger_edits=forge)
-    report = verify_ui(project, reference=REFERENCE)
-    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
-    assert (
-        "composed members mismatch: the authored declaration's "
-        "composed_members.channels carries 2 channels rows, but the "
-        "derivation applied 1"
-        in " | ".join(report.reported_deviations)
-    ), report.reported_deviations
+    with pytest.raises(ValueError, match=_REFUSAL_VC):
+        verify_ui(project, reference=REFERENCE)
 
 
 def test_a_dead_member_beside_an_applying_one_reports_per_member(
@@ -231,7 +233,9 @@ def test_a_dead_member_beside_an_applying_one_reports_per_member(
     applied (so the pin-level row stays quiet BY DESIGN) — the dead MEMBER
     reports anyway, naming its slot and the reason. The refute's shape: a
     channels member that applies beside a procedure member claiming an
-    undeclared URN."""
+    undeclared URN. The derivation half below still proves the per-member
+    disclosure; the gate REPORTED rows need the gate back first (#589
+    PR-2 inversion, module note above)."""
     declaration = {
         "contract_version": "0.1.0",
         "members": [
@@ -268,25 +272,17 @@ def test_a_dead_member_beside_an_applying_one_reports_per_member(
             "its claims name no action this descriptor declares",
         ),
     ), derived.unapplied_members
-    report = verify_ui(project, reference=REFERENCE)
-    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
-    assert (
-        f"composed member declaration {MEMBER_PIN} member ghost_sweep "
-        "applied nowhere (its claims name no action this descriptor declares)"
-        in report.reported_deviations
-    ), report.reported_deviations
-    # The pin-level row stays quiet exactly when the pin applied.
-    assert not any(
-        row == f"composed member declaration {MEMBER_PIN} applied nowhere"
-        for row in report.reported_deviations
-    ), report.reported_deviations
+    with pytest.raises(ValueError, match=_REFUSAL_VC):
+        verify_ui(project, reference=REFERENCE)
 
 
 def test_a_dead_channels_member_names_its_role(
     tmp_path: Path,
 ) -> None:
     """The channels kind's per-member reason names the role (the R1 rule's
-    other half): no declared channel carries it."""
+    other half): no declared channel carries it. The derivation half below
+    still proves the reason's wording; the gate REPORTED row needs the
+    gate back first (#589 PR-2 inversion, module note above)."""
     declaration = {
         "contract_version": "0.1.0",
         "members": [
@@ -314,40 +310,36 @@ def test_a_dead_channels_member_names_its_role(
     assert derived.unapplied_members == (
         (MEMBER_PIN, "empty_lanes", "no declared channel carries role rf_input"),
     ), derived.unapplied_members
-    report = verify_ui(project, reference=REFERENCE)
-    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
-    assert (
-        f"composed member declaration {MEMBER_PIN} member empty_lanes "
-        "applied nowhere (no declared channel carries role rf_input)"
-        in report.reported_deviations
-    ), report.reported_deviations
+    with pytest.raises(ValueError, match=_REFUSAL_VC):
+        verify_ui(project, reference=REFERENCE)
 
 
-def test_an_unknown_ledger_key_under_composed_members_reports(
+def test_an_unknown_ledger_key_needs_the_gate_back_first(
     tmp_path: Path,
 ) -> None:
     """(#556 B3 fold F4) The read-back iterated the four vocabularies
     alone, so authored junk under any other key was ignored silently — an
     unknown key REPORTs in the read-back's own mismatch wording, never a
-    findings failure (the no-schema-yet posture, D8)."""
+    findings failure (the no-schema-yet posture, D8). (#589 PR-2
+    inversion, module note above: the read-back cannot run until the R2
+    corpus motion lands; the forge is kept for the flip-back.)"""
     def forge(document: dict[str, Any]) -> None:
         document["composed_members"]["observations"] = [{"slot": "cv1"}]
 
     project, _derived = _build(tmp_path / "unknown-key", ledger_edits=forge)
-    report = verify_ui(project, reference=REFERENCE)
-    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
-    assert (
-        "composed members mismatch: the authored declaration's "
-        "composed_members carries key 'observations', which is no composed "
-        "vocabulary (procedures, settings, datasets, channels)"
-        in " | ".join(report.reported_deviations)
-    ), report.reported_deviations
+    with pytest.raises(ValueError, match=_REFUSAL_VC):
+        verify_ui(project, reference=REFERENCE)
 
 
-def test_an_applied_nowhere_pin_reports_through_the_gate(tmp_path: Path) -> None:
+def test_an_applied_nowhere_pin_needs_the_gate_back_first(
+    tmp_path: Path,
+) -> None:
     """The applied-nowhere row (§3 rule 1): a pin whose members match
     nothing — no channel carries its role — reports every run, never
-    drift and never a refusal, on both gate arms."""
+    drift and never a refusal, on both gate arms. (#589 PR-2 inversion,
+    module note above: the staging refuses at seam construction before
+    the disclosure walk runs; the row returns with the R2 corpus
+    motion.)"""
     declaration = {
         "contract_version": "0.1.0",
         "members": [
@@ -373,19 +365,19 @@ def test_an_applied_nowhere_pin_reports_through_the_gate(tmp_path: Path) -> None
         declaration=declaration,
         pin_name=NOWHERE_PIN,
     )
-    report = verify_ui(project, reference=REFERENCE)
-    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
-    assert (
-        f"composed member declaration {NOWHERE_PIN} applied nowhere"
-        in report.reported_deviations
-    ), report.reported_deviations
+    with pytest.raises(ValueError, match=_REFUSAL_VC):
+        verify_ui(project, reference=REFERENCE)
 
 
-def test_the_reference_less_arm_reads_the_ledger_too(tmp_path: Path) -> None:
+def test_the_reference_less_arm_needs_the_gate_back_first(tmp_path: Path) -> None:
     """Both arms read the same authored file (the W10 discipline): a
     project whose profile matches no vendored class derives no composed
     member, so every authored composed_members row REPORTs as unapplied —
-    never silently green."""
+    never silently green. (#589 PR-2 inversion: this staging pins its
+    member declaration under contracts[] — the only pin it carries — so
+    verify-ui refuses at seam construction before the read-back runs; the
+    unapplied-row coverage returns with the R2 corpus motion, vendor pins
+    move out of contracts[], main-side.)"""
     from benchweave_sdk.presentation import create_ui_resources
 
     project = tmp_path / "refless"
@@ -424,11 +416,5 @@ def test_the_reference_less_arm_reads_the_ledger_too(tmp_path: Path) -> None:
             }
         )
     )
-    report = verify_ui(project, reference=None)
-    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
-    assert (
-        "composed members mismatch: the authored declaration's "
-        "composed_members names channels member trigger_lanes, which the "
-        "derivation applied no member for"
-        in " | ".join(report.reported_deviations)
-    ), report.reported_deviations
+    with pytest.raises(ValueError, match=_REFUSAL_MD):
+        verify_ui(project, reference=None)

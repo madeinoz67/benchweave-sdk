@@ -228,6 +228,198 @@ def lanes_project_builder():
 
 
 @pytest.fixture(scope="module")
+def invoke_project_builder():
+    """The PR-2 invoke project builder (issue #589 §3): a scaffolded plugin
+    whose descriptor pins a SYNTHETIC profile catalog (invented names only)
+    beside the vendored measurement schema, and whose adapter (the
+    ``scripted_invoke_adapter`` fixture file) answers identify/invoke/reset
+    from a module-level SCRIPT the test rewrites per arm (fished from
+    ``sys.modules`` immediately after the load — the loader evicts and
+    re-imports per project, so the fishing always names the project just
+    loaded)."""
+
+    import hashlib
+    import json
+
+    REPO = Path(__file__).resolve().parents[2]
+    VENDORED = REPO / "src/benchweave_sdk/standards/otdp/0.2.4"
+    ADAPTER = (REPO / "tests/server/fixtures/scripted_invoke_adapter.py").read_bytes()
+
+    def _catalog(*, with_measurement_ref: bool = False) -> dict[str, Any]:
+        """The synthetic profile catalog: valid against the vendored catalog
+        schema, invented action names, one action per gate the arms need.
+        The measurement-referencing action is OPT-IN — a catalog that
+        references the measurement urn by definition refuses when the
+        measurement is not pinned (the gateway's own closed-set rule), so
+        the half-pair soft arms must use the ref-free default."""
+
+        def closed(properties: dict[str, Any], required: list[str]) -> dict[str, Any]:
+            return {"type": "object", "properties": properties,
+                    "required": required, "additionalProperties": False}
+
+        actions: dict[str, Any] = {
+            "demo.probe/1.0.0": {
+                "description": "Open synthetic action: any object in, any object out.",
+                "input_schema": {"type": "object"},
+                "output_schema": {"type": "object"},
+                "side_effect": "state_change",
+                "lifecycle": "direct",
+            },
+            "demo.typed_echo/1.0.0": {
+                "description": "Typed synthetic action: closed input and output.",
+                "input_schema": closed(
+                    {"mode": {"type": "string", "minLength": 1}}, ["mode"]
+                ),
+                "output_schema": closed({"value": {"type": "number"}}, ["value"]),
+                "side_effect": "none",
+                "lifecycle": "direct",
+            },
+        }
+        if with_measurement_ref:
+            actions["demo.measurement_ref/1.0.0"] = {
+                "description": (
+                    "Synthetic action whose input references the measurement "
+                    "schema by urn (the closed-registry probe arms)."
+                ),
+                "input_schema": {"$ref": "urn:otdp:measurement:0.2.4"},
+                "output_schema": {"type": "object"},
+                "side_effect": "none",
+                "lifecycle": "direct",
+            }
+        return {
+            "catalog_version": "0.2.4",
+            "otdp_version": "0.2.4",
+            "profiles": [
+                {
+                    "id": "example.probe/1.0.0",
+                    "title": "Synthetic probe profile",
+                    "channel_roles": ["control"],
+                    "required_actions": ["demo.probe/1.0.0"],
+                    "optional_actions": [],
+                }
+            ],
+            "actions": actions,
+        }
+
+    def _pin(package: Path, name: str, payload: bytes) -> dict[str, Any]:
+        (package / name).write_bytes(payload)
+        return {
+            "id": f"urn:example:{name.rsplit('.', 1)[0]}:1",
+            "path": name,
+            "sha256": hashlib.sha256(payload).hexdigest(),
+        }
+
+    def _action(
+        key: str,
+        *,
+        timeout_ms: int = 30000,
+        side_effect: str = "none",
+        cancellable: bool = True,
+        retry: str = "never",
+        constraints: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "binding": {"kind": "adapter", "key": key},
+            "input_constraints": constraints if constraints is not None else {},
+            "timeout_ms": timeout_ms,
+            "side_effect": side_effect,
+            "cancellable": cancellable,
+            "retry": retry,
+        }
+
+    def _build(
+        destination: Path,
+        *,
+        actions: dict[str, Any] | None = None,
+        invoke_policy: dict[str, Any] | None = None,
+        declare_invoke: bool = True,
+        declare_reset: bool = False,
+        pin_catalog: bool = True,
+        catalog_with_measurement_ref: bool = False,
+        pin_measurement: bool = True,
+        extra_pins: list[dict[str, Any]] | None = None,
+    ) -> Path:
+        """Scaffold, rewire the descriptor for invoke, pin the pair, and
+        replace the adapter with the scripted one."""
+        create_project(destination, "example_plugin")
+        package = destination / "src" / "example_plugin"
+        pins: list[dict[str, Any]] = list(extra_pins or [])
+        if pin_measurement:
+            # The vendored measurement bytes, copied verbatim: the
+            # measurement-by-shape arm resolves a real dataset definition.
+            # The pin's id names the document's own $id (the detection is
+            # by shape; the agreement is hygiene).
+            measurement = _pin(
+                package,
+                "measurement.json",
+                (VENDORED / "otdp-measurement.schema.json").read_bytes(),
+            )
+            measurement["id"] = "urn:otdp:measurement:0.2.4"
+            pins.append(measurement)
+        if pin_catalog:
+            document = _catalog(
+                with_measurement_ref=catalog_with_measurement_ref
+            )
+            payload = (json.dumps(document, indent=2) + "\n").encode()
+            pins.append(_pin(package, "profile-catalog.json", payload))
+        descriptor = json.loads((package / "descriptor.json").read_text())
+        # The descriptor schema's bi-conditionals govern: every capability
+        # names its operation policy and only a declared capability may
+        # carry one (the starter declares identify+read; the scripted
+        # adapter serves neither read nor write, so the read policy goes).
+        descriptor["capabilities"] = ["identify"]
+        descriptor["operations"].pop("read", None)
+        if declare_invoke:
+            # allOf[29]: an invoke capability REQUIRES channels, profiles,
+            # contracts, actions, the invoke policy and the two feature rows.
+            descriptor["capabilities"].append("invoke")
+            descriptor["operations"]["invoke"] = invoke_policy or {
+                "timeout_ms": 30000,
+                "side_effect": "none",
+                "retry": "never",
+                "cancellable": True,
+                "completion": "acknowledged",
+            }
+            descriptor["required_features"] = sorted(
+                set(descriptor.get("required_features", []))
+                | {"otdp.profile_actions/0.1.0", "otdp.measurement/0.1.0"}
+            )
+            descriptor["profiles"] = ["example.probe/1.0.0"]
+            descriptor["channels"] = [{
+                "id": "control",
+                "label": "Control channel",
+                "role": "configuration",
+                "quantities": ["digital"],
+                "parameter_names": [],
+            }]
+        if declare_reset:
+            descriptor["capabilities"].append("reset")
+            descriptor["operations"]["reset"] = {
+                "timeout_ms": 5000,
+                "side_effect": "state_change",
+                "retry": "never",
+                "cancellable": False,
+                "completion": "acknowledged",
+            }
+        descriptor["actions"] = actions or {
+            "demo.probe/1.0.0": _action(
+                "demo.probe/1.0.0", side_effect="state_change"
+            ),
+            "demo.typed_echo/1.0.0": _action(
+                "demo.typed_echo/1.0.0", side_effect="none", cancellable=False
+            ),
+        }
+        if pins:
+            descriptor["contracts"] = pins
+        raw = (json.dumps(descriptor, indent=2) + "\n").encode()
+        (package / "descriptor.json").write_bytes(raw)
+        (package / "adapter.py").write_bytes(ADAPTER)
+        return destination
+
+    return _build
+
+
+@pytest.fixture(scope="module")
 def app_client_factory():
     """A host TestClient over any project root (the fidelity suite's
     ``_app_client`` shape, shared): the complete guard policy, the real

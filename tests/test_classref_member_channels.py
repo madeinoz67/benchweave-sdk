@@ -20,6 +20,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from benchweave_sdk.classref import ResidualMember, derive_ui, find_reference
 
 FIXTURES = Path(__file__).parent / "fixtures" / "classref"
@@ -135,7 +137,16 @@ def test_composed_channels_lanes_land_on_the_named_pages_plot(
     class's digital-lanes plot — the plot's y, its lane groups, its
     channel hints and the capture dataset's wire shape all carry the
     composed lanes, and no channel reports (every declared channel
-    resolves AND renders)."""
+    resolves AND renders). The gate half is the #589 PR-2 inversion: the
+    staged project's f1 fixture pins its vendor catalog under
+    contracts[], so verify-ui REFUSES at seam construction — the arm's
+    pre-PR-2 form (a clean gate, zero REPORTED rows, composed lanes not
+    a deviation) asserted a shippable claim that was FALSE on both hosts
+    (the gateway's loader refuses the same bytes at activation). The
+    gate's census and REPORTED-row coverage for composed lanes returns
+    only with the R2 corpus motion (vendor pins move out of contracts[],
+    main-side); the arm still proves the derivation: lanes, groups,
+    hints, wire shape and the empty channel residual."""
     descriptor = _channels_descriptor()
     path = _scratch(tmp_path / "composing", descriptor)
     derived = derive_ui(_raw(descriptor), REFERENCE, descriptor_path=path)
@@ -155,9 +166,8 @@ def test_composed_channels_lanes_land_on_the_named_pages_plot(
         {"slot": "trigger_lanes", "where_role": COMPOSED_ROLE, "page": "capture"},
     )
     assert [row for row in derived.residual_members if row.kind == "channel"] == []
-    # The real gate renders it: the census counts the composed lanes on the
-    # capture page (four), the derived expectation names four, and the run
-    # is clean with zero REPORTED rows — composed lanes are first-class.
+    # The staged gate project: same derivation, persisted, and the real
+    # gate over it — which refuses (the #589 PR-2 inversion, above).
     from benchweave_sdk.classref_gate import verify_ui
     from benchweave_sdk.scaffold import create_project
 
@@ -180,21 +190,11 @@ def test_composed_channels_lanes_land_on_the_named_pages_plot(
     for slug, scaffold in derived.preset_scaffolds.items():
         (presets / f"{slug}.json").write_bytes(_raw(scaffold))
     (ui / "class-reference.json").write_bytes(_raw(derived.declaration))
-    report = verify_ui(project, reference=REFERENCE)
-    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
-    # The REPORTED channel carries only the fixture's standing birth
-    # deviations (the preset surface's A02 row and the decode deviation
-    # control) — no channel row, no composed-member row, no applied-
-    # nowhere row: composed lanes are not a deviation.
-    assert [row for row in report.reported_deviations if "channel" in row] == [], (
-        report.reported_deviations
-    )
-    # MOVED DELIBERATELY 2026-10-25 (#556 B4, V6 layer 3): the f1 fixture's
-    # unclaimed staged vendor action gains its settings residual row beside
-    # the two standing birth deviations.
-    assert (
-        len(report.reported_deviations) == 3
-    ), report.reported_deviations
+    with pytest.raises(
+        ValueError,
+        match=r"profile_contract_invalid: urn:veridian:vendor-catalog:1.0.0",
+    ):
+        verify_ui(project, reference=REFERENCE)
 
 
 def test_a_composed_member_on_a_plotless_page_renders_no_lanes(

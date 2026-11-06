@@ -89,6 +89,16 @@ def _tool_handlers(seam: StandaloneSeam) -> dict[str, Callable[..., Any]]:
             seam, "preset_apply", {"device_id": device_id, "preset_id": preset_id}
         )
 
+    async def invoke(device_id: str, action_id: str, input: dict[str, Any]) -> Any:
+        return await _dispatch(
+            seam,
+            "invoke",
+            {"device_id": device_id, "action_id": action_id, "input": input},
+        )
+
+    async def device_reset(device_id: str) -> Any:
+        return await _dispatch(seam, "device_reset", {"device_id": device_id})
+
     async def events_get(after_id: int) -> Any:
         return await _dispatch(seam, "events_get", {"after_id": after_id})
 
@@ -212,6 +222,8 @@ def _tool_handlers(seam: StandaloneSeam) -> dict[str, Callable[..., Any]]:
         "parameter_apply": parameter_apply,
         "preset_list": preset_list,
         "preset_apply": preset_apply,
+        "invoke": invoke,
+        "device_reset": device_reset,
         "events_get": events_get,
         "capture_start": capture_start,
         "capture_stop": capture_stop,

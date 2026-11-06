@@ -576,6 +576,25 @@ Pass `--record <path>` with `--transport ftdi` to record the live session as a r
 
 The SDK test suite drives its scripted driver double from the synthetic bring-up journal, and the replay transport validates the same journal. Rehearse a control plugin against its journal with `--transport replay`. Use `--transport ftdi` on a real bench to prove the device itself. The live-device acceptance is not complete.
 
+## Invoke device actions (standalone host)
+
+The standalone host serves the `invoke` operation. The operation runs one action that the descriptor declares. The request carries the device id, the action id and an input object. The result carries the action id and the result of the action. The action id in the result must agree with the action id of the request.
+
+The plugin must pin a profile catalog and a measurement schema in `descriptor.json` under `contracts[]`. The host reads the pinned bytes from the plugin package when the serve starts. A pin that does not name a package file, a pin whose bytes do not agree with its sha256 value, or a document that is not a valid catalog refuses the start of the serve. The refusal text starts with `profile_contract_missing:`, `profile_contract_hash_mismatch:` or `profile_contract_invalid:`. A pin that names a file that is not present does not refuse the start. Then the host cannot assemble the contract set, and `invoke` answers `unavailable` with the reason `contracts_unresolved`.
+
+The host checks each request before it sends data to the device. The action must be declared in the descriptor and it must be in the pinned catalog. The input must satisfy the input schema in the catalog and the `input_constraints` of the descriptor. The result must satisfy the output schema in the catalog. A result in the shape of a dataset does not serve. The host refuses it with `unavailable` because the dataset admission surface does not exist yet.
+
+The host honours the contract fields that the action row declares. The standalone host is stricter than the gateway here. The gateway reads none of these four fields:
+
+1. The host runs each action under the `timeout_ms` value of the action row. The gateway uses only the `timeout_ms` value of the invoke operation.
+2. The host does not send an action again. When the adapter answers with the status `unknown`, the host tells the caller the unknown outcome. The host never sends the action a second time.
+3. The host states the `side_effect` value and the `cancellable` value of the action row on the invoke event. A watcher sees which actions change the device and which actions cannot be stopped. The host adds no other meaning to these two values.
+4. The host refuses the start of the serve when the `timeout_ms` value of an action is longer than the `timeout_ms` value of the invoke operation. The refusal text starts with `standalone_action_budget_infeasible:`. This check does not prove that an action can complete inside its timeout. The time that one attempt needs is not in the descriptor. An action that needs more time than its timeout gives a timeout error that the caller sees. It does not give a silent overrun.
+
+The `device_reset` operation runs the reset verb of the adapter. The descriptor must declare a `reset` operation policy. The adapter must answer a receipt with `acknowledged: true`.
+
+The identify answer is also a contract. The fields `serial` and `firmware` are strings. Answer an empty string when the device has nothing to report. Do not answer `null` and do not omit the field. A `null` value refuses the connect. The refusal text starts with `standalone_connect_identity_invalid:`.
+
 ## Capture without a gateway (standalone writer)
 
 Plugin and bench development happens on machines that never run the gateway. `benchweave_sdk.capture.StandaloneCaptureWriter` implements the three capture methods that an adapter calls in gateway mode: `artifact_append`, `artifact_finalise` and `artifact_abort`. The writer works over one directory per capture on a local filesystem. It is three of the ten `CaptureServices` members. The host also demands two host-lifecycle members at capture start: `configure_capture` and `capture_progress`. The `CaptureServices` protocol in `benchweave_sdk.interfaces` declares both beside the artifact methods. Device I/O still comes from a transport that a composing runtime supplies.

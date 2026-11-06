@@ -30,6 +30,19 @@ from benchweave_sdk.classref import (
 FIXTURES = Path(__file__).parent / "fixtures" / "classref"
 REFERENCE = find_reference("otdp.logic_analyser/1.0.0")
 
+# The #589 PR-2 inversion, module-wide: every staging here pins its vendor
+# catalog (or, in the reference-less composed arm, its composed-class pin)
+# under contracts[], so verify-ui and render_pages refuse at seam
+# construction BEFORE the finding, reporting or census machinery the gate
+# arms asserted could run — those claims were false on both hosts (the
+# gateway's loader refuses the same bytes at activation). The coverage
+# returns only with the R2 corpus motion (vendor pins move out of
+# contracts[], main-side); until then each arm keeps its staging and
+# forge/tamper (falsifier inputs survive for the flip-back) and pins the
+# typed refusal.
+_REFUSAL_VC = r"profile_contract_invalid: urn:veridian:vendor-catalog:1.0.0"
+_REFUSAL_REFLESS = r"profile_contract_invalid: urn:veridian:refless-composed:1.0.0"
+
 #: A residual action: declared by the descriptor, described by no served
 #: OTDP row and no pinned vendor catalog. Invented identity throughout.
 GHOST_URN = "com.veridian-labs.ghost/1.0.0"
@@ -506,23 +519,22 @@ def _scaffold_residual_project(
     return destination
 
 
-def test_m2_gate_reports_custom_members_labelled(tmp_path: Path) -> None:
+def test_m2_gate_reports_custom_members_needs_the_gate_back_first(
+    tmp_path: Path,
+) -> None:
     """Through the real gate (render, census, assert): every custom member
     lands in reported_deviations labelled "custom" — never silent, and
     never a findings failure. The custom controls render on the custom
     section (KILL d: the rendered surface matches the declared
-    constraints), which keeps the gate clean."""
+    constraints), which keeps the gate clean. (#589 PR-2 inversion, module
+    note above: verify-ui refuses at seam construction before the custom
+    walk runs; the labelled REPORTED row returns only with the R2 corpus
+    motion.)"""
     from benchweave_sdk.classref_gate import verify_ui
 
     project = _scaffold_residual_project(tmp_path / "residual")
-    report = verify_ui(project)
-    assert f"custom: {GHOST_URN}" in report.reported_deviations, (
-        report.reported_deviations
-    )
-    assert not any(GHOST_URN in finding.detail for finding in report.findings), [
-        f"{f.code}: {f.detail}" for f in report.findings
-    ]
-    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
+    with pytest.raises(ValueError, match=_REFUSAL_VC):
+        verify_ui(project)
 
 
 # ---------------------------------------------------------------------------
@@ -556,7 +568,7 @@ def _refuse_ghost(constraints: dict[str, Any], pattern: str) -> None:
 # --- W1: the completion pass, its target, and its ordering -----------------
 
 
-def test_w1_authored_page_passes_the_real_gate(tmp_path: Path) -> None:
+def test_w1_authored_page_needs_the_gate_back_first(tmp_path: Path) -> None:
     """W1's ordering defect, proven with a real gate run (refute-b's P14
     control): on an authored device-features page the catalogued vendor
     action's button arrives only through the completion pass, and it used
@@ -564,9 +576,12 @@ def test_w1_authored_page_passes_the_real_gate(tmp_path: Path) -> None:
     action reds classref_gate_uncovered. Completion now runs first (the
     staging pair order is restored), the residual member is skipped
     (never welded into authored sections), and the gate is clean with the
-    member disclosed as rendering nothing."""
-    from benchweave_sdk.classref_gate import census, verify_ui
-    from benchweave_sdk.classref_gate_render import render_pages
+    member disclosed as rendering nothing. (#589 PR-2 inversion, module
+    note above: the staging refuses at seam construction before either
+    the completion-ordering coverage or the census can run; the authored
+    layout is still staged and both return only with the R2 corpus
+    motion.)"""
+    from benchweave_sdk.classref_gate import verify_ui
 
     authored = {
         "page_id": "device-features",
@@ -584,17 +599,8 @@ def test_w1_authored_page_passes_the_real_gate(tmp_path: Path) -> None:
     }
     reference = {**REFERENCE, "layouts": [*REFERENCE["layouts"], authored]}
     project = _scaffold_residual_project(tmp_path / "authored", reference=reference)
-    report = verify_ui(project, reference=reference)
-    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
-    assert f"custom, renders nothing: {GHOST_URN}" in report.reported_deviations, (
-        report.reported_deviations
-    )
-    html = render_pages(project, ["device-features"])["device-features"]
-    seen = census(html)
-    assert "ghost" not in seen["buttons"], seen["buttons"]
-    assert "action-auto-threshold-margin_ppm" in seen["staged_control_ids"], (
-        seen["staged_control_ids"]
-    )
+    with pytest.raises(ValueError, match=_REFUSAL_VC):
+        verify_ui(project, reference=reference)
 
 
 def test_w1_button_completion_targets_the_main_derived_section() -> None:
@@ -811,14 +817,17 @@ def test_w6_custom_reason_is_level_aware() -> None:
     )
 
 
-def test_w6_custom_divergence_reds_the_gate(tmp_path: Path) -> None:
+def test_w6_custom_divergence_needs_the_gate_back_first(tmp_path: Path) -> None:
     """W6 face 2: the gate's custom branch used to `continue` ahead of
     the divergence and coverage checks, so a residual member could never
     fail for anything while a catalogued action with the same divergence
     reds classref_gate_undeclared. An intended control the derivation
     does not reach is an undeclared divergence and fails the gate —
     custom exempts the member from needing a catalogue, never from
-    conformance."""
+    conformance. (#589 PR-2 inversion, module note above: the staging
+    refuses at seam construction before the divergence check runs; the
+    reference forgery and deviation-drop are kept for the flip-back, and
+    the undeclared red returns only with the R2 corpus motion.)"""
     from benchweave_sdk.classref_gate import verify_ui
 
     reference = {
@@ -846,13 +855,8 @@ def test_w6_custom_divergence_reds_the_gate(tmp_path: Path) -> None:
     (package / "ui" / "class-reference.json").write_bytes(
         (json.dumps(declaration, indent=2) + "\n").encode()
     )
-    report = verify_ui(project, reference=reference)
-    undeclared = [
-        finding
-        for finding in report.findings
-        if finding.code == "classref_gate_undeclared" and GHOST_URN in finding.detail
-    ]
-    assert undeclared, [f"{f.code}: {f.detail}" for f in report.findings]
+    with pytest.raises(ValueError, match=_REFUSAL_VC):
+        verify_ui(project, reference=reference)
 
 
 # --- W7: "declares nothing" vs "declares no inputs" ------------------------
@@ -962,14 +966,17 @@ def _tamper_declaration(package: Path, mutate: Any) -> None:
     )
 
 
-def test_w10_ledger_that_omits_a_residual_member_is_reported(
+def test_w10_ledger_that_omits_a_residual_member_needs_the_gate_back_first(
     tmp_path: Path,
 ) -> None:
     """W10: the declaration's custom inventory was write-only — an
     authored ledger could omit every uncatalogued member and pass. The
     read-back compares the authored custom_actions against the derived
     custom set and REPORTS the mismatch (the REPORTED channel, never a
-    refusal)."""
+    refusal). (#589 PR-2 inversion, module note above: verify-ui refuses
+    at seam construction before the read-back runs; the omission tamper
+    is kept for the flip-back, and the mismatch row returns only with
+    the R2 corpus motion.)"""
     from benchweave_sdk.classref_gate import verify_ui
 
     project = _scaffold_residual_project(tmp_path / "omit")
@@ -979,18 +986,19 @@ def test_w10_ledger_that_omits_a_residual_member_is_reported(
         declaration["custom_actions"] = []
 
     _tamper_declaration(package, mutate)
-    report = verify_ui(project)
-    assert any(
-        row.startswith("custom mismatch: ") and GHOST_URN in row
-        for row in report.reported_deviations
-    ), report.reported_deviations
-    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
+    with pytest.raises(ValueError, match=_REFUSAL_VC):
+        verify_ui(project)
 
 
-def test_w10_ledger_forged_custom_row_is_reported(tmp_path: Path) -> None:
+def test_w10_ledger_forged_custom_row_needs_the_gate_back_first(
+    tmp_path: Path,
+) -> None:
     """W10's other direction: a forged row naming an URN no plan carries
     as residual is reported too — the read-back runs both ways (the
-    forged row and the omitted member both surface)."""
+    forged row and the omitted member both surface). (#589 PR-2
+    inversion, module note above: verify-ui refuses at seam construction
+    before the read-back runs; the forge is kept for the flip-back, and
+    both rows return only with the R2 corpus motion.)"""
     from benchweave_sdk.classref_gate import verify_ui
 
     project = _scaffold_residual_project(tmp_path / "forged")
@@ -1006,15 +1014,8 @@ def test_w10_ledger_forged_custom_row_is_reported(tmp_path: Path) -> None:
         ]
 
     _tamper_declaration(package, mutate)
-    report = verify_ui(project)
-    assert any(
-        row.startswith("custom mismatch: ") and "nope" in row
-        for row in report.reported_deviations
-    ), report.reported_deviations
-    assert any(
-        row.startswith("custom mismatch: ") and GHOST_URN in row
-        for row in report.reported_deviations
-    ), report.reported_deviations
+    with pytest.raises(ValueError, match=_REFUSAL_VC):
+        verify_ui(project)
 
 
 def test_w10_reference_less_arm_reads_the_ledger_too(tmp_path: Path) -> None:
@@ -1107,7 +1108,11 @@ def test_g1_l0_residual_siblings_on_a_custom_page_stay_disclosures(
     disclosure (the two-channels-two-stories state W6 exists to remove).
     A member whose MINTED controls are missing keeps its report row (M2:
     never silent) and gains the finding — the channels agree there; the
-    eliminated state is the by-design member failing."""
+    eliminated state is the by-design member failing. (#589 PR-2
+    inversion, module note above: verify-ui refuses at seam construction
+    before the discriminator runs; the mixed-level staging is kept for
+    the flip-back, and the per-action coverage returns only with the R2
+    corpus motion.)"""
     from benchweave_sdk.classref_gate import verify_ui
 
     project = _scaffold_residual_project(
@@ -1117,21 +1122,8 @@ def test_g1_l0_residual_siblings_on_a_custom_page_stay_disclosures(
             WRAITH_URN: _wraith_action(),
         },
     )
-    report = verify_ui(project)
-    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
-    # The L2 member rendered its controls: covered, labelled plain custom.
-    assert f"custom: {GHOST_URN}" in report.reported_deviations, (
-        report.reported_deviations
-    )
-    # Both L0 siblings rendered nothing BY DESIGN: disclosures only —
-    # never findings, on the same page that mints the custom section.
-    for urn in (SPECTRE_URN, WRAITH_URN):
-        assert (
-            f"custom, renders nothing: {urn}" in report.reported_deviations
-        ), report.reported_deviations
-        assert not any(urn in finding.detail for finding in report.findings), [
-            f"{f.code}: {f.detail}" for f in report.findings
-        ]
+    with pytest.raises(ValueError, match=_REFUSAL_VC):
+        verify_ui(project)
 
 
 def _drop_custom_section(project: Path) -> None:
@@ -1174,7 +1166,11 @@ def test_g1_an_authored_deviation_is_the_sanctioned_pass_for_a_red_shape(
     a member whose MINTED controls the render lacks — needs an authored
     pass. It has one: a hand-authored deviation row naming the URN (plan
     URNs are inside the declaration vocabulary) downgrades the failure
-    to REPORTED. No ledger restoration is needed for any shape."""
+    to REPORTED. No ledger restoration is needed for any shape. (#589
+    PR-2 inversion, module note above: the staging refuses at seam
+    construction before the downgrade can run; the overlay drop and the
+    authored deviation row are kept for the flip-back, and the
+    sanctioned-pass coverage returns only with the R2 corpus motion.)"""
     from benchweave_sdk.classref_gate import verify_ui
 
     project = _scaffold_residual_project(tmp_path / "sanctioned")
@@ -1193,26 +1189,26 @@ def test_g1_an_authored_deviation_is_the_sanctioned_pass_for_a_red_shape(
         )
 
     _tamper_declaration(package, mutate)
-    report = verify_ui(project)
-    assert not any(
-        finding.code == "classref_gate_uncovered" and GHOST_URN in finding.detail
-        for finding in report.findings
-    ), [f"{f.code}: {f.detail}" for f in report.findings]
-    # The member stays on the report — M2's never-silent rule holds
-    # through the downgrade (the deviation row names it).
-    assert GHOST_URN in report.reported_deviations, report.reported_deviations
+    with pytest.raises(ValueError, match=_REFUSAL_VC):
+        verify_ui(project)
 
 
 # --- G2: the red criterion is the DERIVED block, never the served manifest --
 
 
-def test_g2_overlay_dropping_the_custom_section_reds(tmp_path: Path) -> None:
+def test_g2_overlay_dropping_the_custom_section_needs_the_gate_back_first(
+    tmp_path: Path,
+) -> None:
     """G2 (MEDIUM, false-green direction): the discriminator read the
     SERVED manifest's section ids, so a compose_manifest extensions
     overlay that drops the custom section left the gate clean over a real
     render miss. The derivation's own layout block is the statement of
     what should have rendered: the minted controls are owed wherever the
-    served manifest drops them."""
+    served manifest drops them. (#589 PR-2 inversion, module note above:
+    the staging refuses at seam construction before the discriminator
+    runs; the overlay drop and envelope re-pin are kept for the
+    flip-back, and the uncovered red returns only with the R2 corpus
+    motion.)"""
     from benchweave_sdk.classref import LAYOUT_EXTENSION_KEY, compose_manifest
     from benchweave_sdk.classref_gate import verify_ui
 
@@ -1242,23 +1238,22 @@ def test_g2_overlay_dropping_the_custom_section_reds(tmp_path: Path) -> None:
     (package / "presentation.json").write_bytes(
         (json.dumps(envelope, indent=2) + "\n").encode()
     )
-    report = verify_ui(project)
-    uncovered = [
-        finding
-        for finding in report.findings
-        if finding.code == "classref_gate_uncovered" and GHOST_URN in finding.detail
-    ]
-    assert uncovered, [f"{f.code}: {f.detail}" for f in report.findings]
+    with pytest.raises(ValueError, match=_REFUSAL_VC):
+        verify_ui(project)
 
 
-def test_g2_authored_section_carrying_the_custom_id_is_no_red(
+def test_g2_authored_section_carrying_the_custom_id_needs_the_gate_back_first(
     tmp_path: Path,
 ) -> None:
     """G2 (MEDIUM, false-red direction): an authored section merely
     CARRYING the `-custom` id with no controls reded the member — the
     served manifest's id spelled like the minted section was enough. An
     authored page stands as authored (record §11 risk 4): the member
-    renders nothing there by design and stays a disclosure."""
+    renders nothing there by design and stays a disclosure. (#589 PR-2
+    inversion, module note above: the staging refuses at seam
+    construction before the discriminator runs; the authored layout is
+    kept for the flip-back, and the disclosure-only state returns only
+    with the R2 corpus motion.)"""
     from benchweave_sdk.classref_gate import verify_ui
 
     authored = {
@@ -1279,11 +1274,8 @@ def test_g2_authored_section_carrying_the_custom_id_is_no_red(
     project = _scaffold_residual_project(
         tmp_path / "authored-custom-id", reference=reference
     )
-    report = verify_ui(project, reference=reference)
-    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
-    assert (
-        f"custom, renders nothing: {GHOST_URN}" in report.reported_deviations
-    ), report.reported_deviations
+    with pytest.raises(ValueError, match=_REFUSAL_VC):
+        verify_ui(project, reference=reference)
 
 
 # --- G3: declared values intersect their bounds on BOTH paths ---------------
@@ -1503,7 +1495,12 @@ def test_r3_reference_less_composed_member_reports_inventory_unavailable(
     derives a control the legacy manifest does not render, and no
     declaration exists to declare the deviation) — that is D14's
     by-design behavior, not this row's concern; this arm asserts the
-    REPORTED channel only."""
+    REPORTED channel only. (#589 PR-2 inversion: this staging's only pin
+    is its composed-class document under contracts[], so verify-ui
+    refuses at seam construction before the REPORTED channel can run;
+    the unavailable-inventory disclosure returns only with the R2 corpus
+    motion — vendor pins move out of contracts[], main-side — and the
+    D2 no-declaration pin below still proves the natural state.)"""
     import hashlib
 
     from benchweave_sdk.classref_gate import verify_ui
@@ -1561,14 +1558,5 @@ def test_r3_reference_less_composed_member_reports_inventory_unavailable(
     create_ui_resources(project, "veridian_refless_plugin")
     # D2, pinned: no tool writes the declaration on the reference-less path.
     assert not (package / "ui" / "class-reference.json").exists()
-    report = verify_ui(project, reference=None)
-    assert any(
-        row.startswith("composed inventory unavailable")
-        for row in report.reported_deviations
-    ), report.reported_deviations
-    # The honest state is UNAVAILABLE, never a mismatch blaming a ledger
-    # that does not exist.
-    assert not any(
-        row.startswith("composed mismatch: ")
-        for row in report.reported_deviations
-    ), report.reported_deviations
+    with pytest.raises(ValueError, match=_REFUSAL_REFLESS):
+        verify_ui(project, reference=None)

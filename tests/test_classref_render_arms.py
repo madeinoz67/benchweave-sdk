@@ -31,6 +31,20 @@ from benchweave_sdk.served import active_version
 
 FIXTURES = Path(__file__).parent / "fixtures" / "classref"
 
+# The #589 PR-2 inversion: the logic_analyser staging (the f1 fixture
+# pair) pins its vendor catalog under contracts[], so verify-ui and
+# render_pages refuse at seam construction before the census-vs-expect
+# machinery these arms assert could run — those claims were false on both
+# hosts (the gateway's loader refuses the same bytes at activation). The
+# other seven family stagings carry no such pin and keep their full
+# assertions; the LA instances pin the typed refusal until the R2 corpus
+# motion (vendor pins move out of contracts[], main-side) brings the
+# clean/strip/red-sanity coverage back. The m400 arms (composed-burst)
+# invert the same way.
+_REFUSAL_VC = r"profile_contract_invalid: urn:veridian:vendor-catalog:1.0.0"
+_REFUSAL_CB = r"profile_contract_invalid: urn:meridian:composed-burst:1.0.0"
+_LA_PROFILE = "otdp.logic_analyser/1.0.0"
+
 #: The family the render arms cover, DISCOVERED from the vendored corpus
 #: (the composition gate's rotation rule): profile id -> (slug, document).
 #: The count is pinned so a ninth class widens the sample by redding here
@@ -253,13 +267,21 @@ def test_the_expect_grammar_stays_closed(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("profile_id", sorted(FAMILY))
-def test_clean_arm_renders_green(profile_id: str, tmp_path: Path) -> None:
+def test_clean_arm_renders_green_or_refuses_typed(profile_id: str, tmp_path: Path) -> None:
     """The clean arm: scaffold, swap the class example descriptor, derive,
     write, verify — zero findings through the real host, the reported
-    deviations exactly the birth ledger's."""
+    deviations exactly the birth ledger's. For the logic_analyser staging
+    only, the #589 PR-2 inversion applies (module note above): the f1
+    fixture's contracts[] pin refuses seam construction, the clean-gate
+    claim was FALSE on both hosts, and the instance pins the typed
+    refusal until the R2 corpus motion lands."""
     project, derived = _build(profile_id, tmp_path / "clean")
     reference = find_reference(profile_id)
     assert reference is not None
+    if profile_id == _LA_PROFILE:
+        with pytest.raises(ValueError, match=_REFUSAL_VC):
+            verify_ui(project, reference=reference)
+        return
     report = verify_ui(project, reference=reference)
     assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
     birth_ids = {
@@ -280,17 +302,26 @@ def test_clean_arm_renders_green(profile_id: str, tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("profile_id", sorted(FAMILY))
-def test_strip_falsifier_reds_typed(profile_id: str, tmp_path: Path) -> None:
+def test_strip_falsifier_reds_typed_or_refuses(profile_id: str, tmp_path: Path) -> None:
     """The strip falsifier: a layout-placed or page-declared surface
     removed from the DERIVED manifest stays schema-valid and check-ui
     clean, renders an incomplete page, and REDS the gate with the typed
-    finding — component, page, expected count, censused count."""
+    finding — component, page, expected count, censused count. The
+    logic_analyser instance is the #589 PR-2 inversion (module note
+    above): its staging refuses at seam construction before the strip's
+    finding can mint — the mutant is still written and still check-ui
+    clean (both kept for the flip-back), and the typed red returns only
+    with the R2 corpus motion."""
     surface, page_id, mutate = _strip_spec(profile_id)
     project, derived = _build(profile_id, tmp_path / "strip")
     _rewrite_manifest(project, mutate)
     _check_ui_clean(project, derived)
     reference = find_reference(profile_id)
     assert reference is not None
+    if profile_id == _LA_PROFILE:
+        with pytest.raises(ValueError, match=_REFUSAL_VC):
+            verify_ui(project, reference=reference)
+        return
     report = verify_ui(project, reference=reference)
     typed = [
         f for f in report.findings
@@ -302,12 +333,22 @@ def test_strip_falsifier_reds_typed(profile_id: str, tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("profile_id", sorted(FAMILY))
-def test_reference_side_count_flip_kills(profile_id: str, tmp_path: Path) -> None:
+def test_reference_side_count_flip_kills_or_refuses(
+    profile_id: str, tmp_path: Path
+) -> None:
     """The rubber-stamp direction: one expect count flipped upward in a
     copy of the reference REDS the clean project — the gate compares the
-    render against the reference, never the other way round."""
+    render against the reference, never the other way round. The
+    logic_analyser instance is the #589 PR-2 inversion (module note
+    above): its staging refuses at seam construction before the flipped
+    expect can be compared, so the instance pins the typed refusal until
+    the R2 corpus motion lands."""
     project, _derived = _build(profile_id, tmp_path / "flip")
     _slug, reference = FAMILY[profile_id]
+    if profile_id == _LA_PROFILE:
+        with pytest.raises(ValueError, match=_REFUSAL_VC):
+            verify_ui(project, reference=_flip_count(reference))
+        return
     report = verify_ui(project, reference=_flip_count(reference))
     assert not report.clean, [
         f"{f.code}: {f.detail}" for f in report.findings
@@ -338,7 +379,12 @@ def test_red_sanity_neutralized_detector(
     comparison — which reds the dmm/dc_psu strips (their target surface is
     a readings page's tile set) independently of the other two; all three
     neutralize together, and the tile detector's own red-sanity runs in
-    test_classref_member_datasets beside the fold's F1 arms."""
+    test_classref_member_datasets beside the fold's F1 arms. The
+    logic_analyser instance is the #589 PR-2 inversion (module note
+    above): its staging refuses at seam construction before any detector
+    runs — the mutant and the neutralizations are kept for the
+    flip-back, and the instance pins the typed refusal until the R2
+    corpus motion lands."""
     _surface, _page_id, mutate = _strip_spec(profile_id)
     project, _derived = _build(profile_id, tmp_path / "sanity")
     _rewrite_manifest(project, mutate)
@@ -353,6 +399,10 @@ def test_red_sanity_neutralized_detector(
     )
     reference = find_reference(profile_id)
     assert reference is not None
+    if profile_id == _LA_PROFILE:
+        with pytest.raises(ValueError, match=_REFUSAL_VC):
+            verify_ui(project, reference=reference)
+        return
     report = verify_ui(project, reference=reference)
     component = [
         f for f in report.findings if f.code in (
@@ -459,7 +509,7 @@ def _m400_project(destination: Path) -> tuple[Path, Any]:
     return project, derived
 
 
-def test_strip_and_pad_no_longer_launder_the_pooled_count(
+def test_strip_and_pad_needs_the_gate_back_first(
     tmp_path: Path,
 ) -> None:
     """Refute shape (a): the member's data-table stripped from the
@@ -467,7 +517,14 @@ def test_strip_and_pad_no_longer_launder_the_pooled_count(
     keeps every pooled count the gate read — the expect row still says 2,
     check-ui stays clean — yet the render is missing the member's surface
     and carrying one the derivation never minted. The per-surface
-    comparison reds BOTH directions, naming the binding and the page."""
+    comparison reds BOTH directions, naming the binding and the page —
+    a coverage the staging can no longer reach (#589 PR-2 inversion: the
+    m400 staging pins its composed-burst catalog under contracts[], so
+    verify-ui refuses at seam construction before the comparison runs).
+    The derivation half (both minted data-table surfaces) and the
+    strip-and-pad mutant with its check-ui-clean proof are kept for the
+    flip-back; the two-directional red returns only with the R2 corpus
+    motion."""
     project, derived = _m400_project(tmp_path / "m400")
     assert [
         (p["page_id"], n["binding_id"])
@@ -495,26 +552,23 @@ def test_strip_and_pad_no_longer_launder_the_pooled_count(
 
     _rewrite_manifest(project, strip_and_pad)
     _check_ui_clean(project, derived)
-    report = verify_ui(project, reference=find_reference("otdp.daq/1.0.0"))
-    details = [f.detail for f in report.findings]
-    assert (
-        "data-table vendor-configure on configuration: the derivation mints "
-        "this surface, the render serves no table for it"
-    ) in details, details
-    assert (
-        "data-table vendor-configure on capture: the render serves a table "
-        "the derivation does not mint"
-    ) in details, details
+    with pytest.raises(ValueError, match=_REFUSAL_CB):
+        verify_ui(project, reference=find_reference("otdp.daq/1.0.0"))
 
 
-def test_the_logic_analyser_table_strip_reds_without_an_expect_row(
+def test_the_logic_analyser_table_strip_needs_the_gate_back_first(
     tmp_path: Path,
 ) -> None:
     """Refute shape (b): the logic_analyser class carries no data-table
     expect row at all, and its L3 coverage rows ride the A02 birth
     deviation — so stripping every configuration table left the gate clean.
     The minted-surface comparison owes nothing to either: the derivation
-    minted the surface, the render dropped it, the gate reds."""
+    minted the surface, the render dropped it, the gate reds — a coverage
+    the staging can no longer reach (#589 PR-2 inversion, module note
+    above: verify-ui refuses at seam construction before the comparison
+    runs). The minted-surface derivation half, the strip mutant and its
+    check-ui-clean proof are kept for the flip-back; the per-surface red
+    returns only with the R2 corpus motion."""
     project, derived = _build(
         "otdp.logic_analyser/1.0.0", tmp_path / "strip-tables"
     )
@@ -540,24 +594,21 @@ def test_the_logic_analyser_table_strip_reds_without_an_expect_row(
 
     _rewrite_manifest(project, strip_tables)
     _check_ui_clean(project, derived)
-    report = verify_ui(
-        project, reference=find_reference("otdp.logic_analyser/1.0.0")
-    )
-    details = [f.detail for f in report.findings]
-    for page_id, binding in minted:
-        assert (
-            f"data-table {binding} on {page_id}: the derivation mints this "
-            "surface, the render serves no table for it"
-        ) in details, details
+    with pytest.raises(ValueError, match=_REFUSAL_VC):
+        verify_ui(project, reference=find_reference("otdp.logic_analyser/1.0.0"))
 
 
-def test_table_surface_red_sanity_neutralized_detector(
+def test_table_surface_red_sanity_needs_the_gate_back_first(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """RED-sanity for the per-surface arm: with the surface detector
     neutralized (findings forced empty), the logic_analyser strip mutant's
     per-surface findings VANISH — the red rode the minted-vs-served set
-    comparison, not incidental breakage."""
+    comparison, not incidental breakage. (#589 PR-2 inversion, module
+    note above: the staging refuses at seam construction before the
+    detector runs; the mutant and the neutralization are kept for the
+    flip-back, and the sanity comparison returns only with the R2 corpus
+    motion.)"""
     project, _derived = _build(
         "otdp.logic_analyser/1.0.0", tmp_path / "sanity-tables"
     )
@@ -581,13 +632,8 @@ def test_table_surface_red_sanity_neutralized_detector(
     )
     reference = find_reference("otdp.logic_analyser/1.0.0")
     assert reference is not None
-    report = verify_ui(project, reference=reference)
-    surface = [
-        f
-        for f in report.findings
-        if "the derivation mints this surface" in f.detail
-    ]
-    assert not surface, [f"{f.code}: {f.detail}" for f in surface]
+    with pytest.raises(ValueError, match=_REFUSAL_VC):
+        verify_ui(project, reference=reference)
 
 
 # ---------------------------------------------------------------------------

@@ -164,32 +164,31 @@ def test_f5_layout_emits_exactly_three_trio_nodes() -> None:
 # --- B2/B7: the gate passes F5 with the trio censused 1/1/1 -----------------
 
 
-def test_f5_gate_passes_with_trio_census(tmp_path: Path) -> None:
+def test_f5_gate_refuses_with_the_trio_pin(tmp_path: Path) -> None:
+    """The staged-gate arm (#589 PR-2 inversion): the f5-trio fixture's
+    vendor catalog is pinned under contracts[], so verify-ui REFUSES at
+    seam construction — the arm's pre-PR-2 form ("gate passes with trio
+    census 1/1/1", zero findings, absent bound attributes in the served
+    HTML) asserted a shippable claim that was FALSE on both hosts (the
+    gateway's loader refuses the same bytes at activation). The gate's
+    census coverage for the trio returns only with the R2 corpus motion
+    (vendor pins move out of contracts[], main-side); the arm still
+    proves the staged project builds and derives (the helper), and that
+    the gate's refusal is the typed one naming the pinned catalog. The
+    trio's DERIVATION coverage (nodes, ladder, layout) stays green in
+    this module's other arms."""
     from helpers_classref import build_classref_project
 
-    from benchweave_sdk.classref_gate import census, verify_ui
+    from benchweave_sdk.classref_gate import verify_ui
 
-    project, derived = build_classref_project(
+    project, _derived = build_classref_project(
         tmp_path / "f5", descriptor_fixture="descriptor-f5-trio.json"
     )
-    report = verify_ui(project)
-    assert report.findings == (), [
-        (f.code, f.detail) for f in report.findings
-    ]
-    from benchweave_sdk.classref_gate_render import render_pages
-
-    pages = [str(p["id"]) for p in derived.manifest["pages"]]
-    rendered = render_pages(project, pages)
-    seen = census(rendered["device-features"])
-    assert seen["text"] == 1
-    assert seen["select"] == 1
-    assert seen["boolean"] == 1
-    assert seen["numerics"] == 0
-    # A02 bound honesty (design R6): the free string carries no declared
-    # bound, so the served text field renders the ABSENT attributes.
-    html = rendered["device-features"]
-    assert "minlength=" not in html
-    assert "maxlength=" not in html
+    with pytest.raises(
+        ValueError,
+        match=r"profile_contract_invalid: urn:veridian:vendor-catalog-trio:1.0.0",
+    ):
+        verify_ui(project)
 
 
 def test_gate_census_map_carries_the_trio() -> None:
@@ -360,11 +359,17 @@ def test_derive_refuses_the_flattening_field_collision(tmp_path: Path) -> None:
         )
 
 
-def test_boolean_enum_options_render_their_json_form(tmp_path: Path) -> None:
-    """L5 fold row 4 (derivation lane F4, LOW): a non-string enum renders its
-    JSON form — ``true``/``false`` for a boolean-typed option set — so the
-    rendered option equals the admitted value in the declared type, not the
-    Python ``str()`` spelling (``True``/``False``)."""
+def test_boolean_enum_options_arm_refuses_the_pinned_pair(tmp_path: Path) -> None:
+    """L5 fold row 4 (#589 PR-2 inversion): the f6-pair fixture's vendor
+    catalog is pinned under contracts[], so the render — whose seam
+    construction PR-2 made refuse the same bytes the gateway's loader
+    refuses at activation — REFUSES typed before any page renders. The
+    arm's pre-PR-2 form (the boolean options' JSON form ``true``/
+    ``false`` in the served HTML) asserted a servable claim that was
+    FALSE on both hosts; the rendered-form check returns only with the
+    R2 corpus motion (vendor pins move out of contracts[], main-side).
+    The arm still proves the staged project builds and derives, and that
+    the refusal names the pinned pair catalog."""
     from helpers_classref import build_classref_project
 
     from benchweave_sdk.classref_gate_render import render_pages
@@ -372,8 +377,8 @@ def test_boolean_enum_options_render_their_json_form(tmp_path: Path) -> None:
     project, _derived = build_classref_project(
         tmp_path / "f6opt", descriptor_fixture="descriptor-f6-pair.json"
     )
-    html = render_pages(project, ["device-features"])["device-features"]
-    assert 'value="true"' in html
-    assert 'value="false"' in html
-    assert 'value="True"' not in html
-    assert 'value="False"' not in html
+    with pytest.raises(
+        ValueError,
+        match=r"profile_contract_invalid: urn:veridian:vendor-catalog-pair:1.0.0",
+    ):
+        render_pages(project, ["device-features"])

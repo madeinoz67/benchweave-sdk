@@ -23,6 +23,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from benchweave_sdk.classref import ResidualMember, derive_ui, find_reference
 
 FIXTURES = Path(__file__).parent / "fixtures" / "classref"
@@ -84,12 +86,11 @@ def _join_descriptor(composed_count: int) -> dict[str, Any]:
 
 def _persist(
     tmp_path: Path, name: str, descriptor: dict[str, Any]
-) -> tuple[Any, Any]:
-    """Derive over a scratch project and run the REAL gate on the persisted
-    documents: on the pre-fold code the 72-entry ``y`` is refused by the
-    manifest schema inside the host load and escapes as an unhandled
-    ``PluginLoadError`` — the failure this fold pins."""
-    from benchweave_sdk.classref_gate import verify_ui
+) -> tuple[Any, Path]:
+    """Derive over a scratch project and stage the REAL gate project with
+    the persisted documents (the gate call itself is the arm's business —
+    since #589 PR-2 it refuses on the fixture's contracts[] pin, so the
+    arm asserts the typed refusal on what this returns)."""
     from benchweave_sdk.scaffold import create_project
 
     project = tmp_path / name
@@ -116,7 +117,7 @@ def _persist(
     for slug, scaffold in derived.preset_scaffolds.items():
         (presets / f"{slug}.json").write_bytes(_raw(scaffold))
     (ui / "class-reference.json").write_bytes(_raw(derived.declaration))
-    return derived, verify_ui(project, reference=REFERENCE)
+    return derived, project
 
 
 def _capture_plot(derived: Any) -> dict[str, Any]:
@@ -144,11 +145,24 @@ def test_a_page_join_past_the_lane_ceiling_drops_and_discloses(
     the residual channel. The wire shape keeps every joined lane — dropped
     from the plot alone, the B1 discipline — and no resolves-to-no-lanes
     row fires (every declared channel's role resolved): the dropped lane's
-    own row is the disclosure."""
+    own row is the disclosure.
+
+    The gate half is the #589 PR-2 inversion: every staged project pins
+    its vendor catalog under contracts[] (the same bytes in all three),
+    so verify-ui REFUSES at seam construction where the arm's pre-PR-2
+    form asserted a clean gate with the dropped lanes' REPORTED rows — a
+    shippable claim that was FALSE on both hosts (the gateway's loader
+    refuses the same bytes at activation). The refusal is asserted once
+    (the pinned bytes are identical across the three stagings); the
+    gate-side REPORTED wording coverage returns only with the R2 corpus
+    motion (vendor pins move out of contracts[], main-side). The arm
+    still proves the whole derivation half: the drop at the ceiling, one
+    row per dropped lane, and the untouched wire shape."""
     from benchweave_sdk.classref import _LANE_CEILING
+    from benchweave_sdk.classref_gate import verify_ui
 
     # Exactly at the ceiling: 32 reference lanes + 32 composed lanes = 64.
-    at_ceiling, at_report = _persist(
+    at_ceiling, at_project = _persist(
         tmp_path / "at" / "inner", "gate", _join_descriptor(32)
     )
     plot = _capture_plot(at_ceiling)
@@ -159,16 +173,17 @@ def test_a_page_join_past_the_lane_ceiling_drops_and_discloses(
     assert not any(
         row.kind == "composed lane" for row in at_ceiling.residual_members
     ), at_ceiling.residual_members
-    assert at_report.clean, [f"{f.code}: {f.detail}" for f in at_report.findings]
+    with pytest.raises(
+        ValueError,
+        match=r"profile_contract_invalid: urn:veridian:vendor-catalog:1.0.0",
+    ):
+        verify_ui(at_project, reference=REFERENCE)
 
     # One lane past it, exactly: 32 + 33 = 65 joined, the 65th drops and
     # reports alone.
-    one_past, one_past_report = _persist(
+    one_past, _one_past_project = _persist(
         tmp_path / "one-past" / "inner", "gate", _join_descriptor(33)
     )
-    assert one_past_report.clean, [
-        f"{f.code}: {f.detail}" for f in one_past_report.findings
-    ]
     assert _capture_plot(one_past)["y"] == [f"d{i}" for i in range(32)] + [
         f"q{i}" for i in range(32)
     ], _capture_plot(one_past)["y"]
@@ -178,10 +193,9 @@ def test_a_page_join_past_the_lane_ceiling_drops_and_discloses(
     ] == ["q32 (role digital_output)"], one_past.residual_members
 
     # Further past it: 32 + 40 = 72 joined, 8 dropped.
-    over, report = _persist(
+    over, _over_project = _persist(
         tmp_path / "over" / "inner", "gate", _join_descriptor(40)
     )
-    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
     plot = _capture_plot(over)
     assert len(plot["y"]) == _LANE_CEILING, plot["y"]
     assert plot["y"] == [f"d{i}" for i in range(32)] + [
@@ -203,12 +217,6 @@ def test_a_page_join_past_the_lane_ceiling_drops_and_discloses(
         )
         for lane in dropped
     ], rows
-    assert {
-        f"composed lane {lane} (role {COMPOSED_ROLE}): no lane surface on "
-        "page capture (the page's channels slots join to 72 lanes; the "
-        f"plot's y admits {_LANE_CEILING})"
-        for lane in dropped
-    } <= set(report.reported_deviations), report.reported_deviations
     # Dropped from the PLOT alone: the capture dataset's wire shape still
     # carries every joined lane — the axis plus all 72.
     capture = _capture_dataset(over)
@@ -218,6 +226,3 @@ def test_a_page_join_past_the_lane_ceiling_drops_and_discloses(
     # The roles resolved, so the B1 channel closure stays quiet — the
     # dropped lane's own row is the disclosure, not a second one.
     assert [row for row in over.residual_members if row.kind == "channel"] == []
-    assert not any(
-        "resolves to no lanes" in row for row in report.reported_deviations
-    ), report.reported_deviations

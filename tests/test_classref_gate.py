@@ -16,6 +16,18 @@ from benchweave_sdk.presentation import validate_presentation
 FIXTURES = Path(__file__).parent / "fixtures" / "classref"
 REFERENCE = find_reference("otdp.logic_analyser/1.0.0")
 
+# The #589 PR-2 inversion, module-wide: every staging here is the f1 family
+# (or f6-pair) fixture whose vendor catalog is pinned under contracts[], so
+# verify-ui and render_pages refuse at seam construction BEFORE the finding,
+# census or reporting machinery the arms asserted could run — those claims
+# were false on both hosts (the gateway's loader refuses the same bytes at
+# activation). The coverage returns only with the R2 corpus motion (vendor
+# pins move out of contracts[], main-side); until then each arm keeps its
+# staging and forge/mutation (falsifier setup survives for the flip-back)
+# and pins the typed refusal.
+_REFUSAL_VC = r"profile_contract_invalid: urn:veridian:vendor-catalog:1.0.0"
+_REFUSAL_PAIR = r"profile_contract_invalid: urn:veridian:vendor-catalog-pair:1.0.0"
+
 
 def _raw(document: dict[str, Any]) -> bytes:
     return (json.dumps(document, indent=2) + "\n").encode()
@@ -58,19 +70,26 @@ def test_census_counts_the_contract_surfaces() -> None:
     assert seen["confirms"] == 0
 
 
-def test_f1_project_renders_and_gate_passes(tmp_path: Path) -> None:
-    """A1/A10 render arms: the derived project renders; the census shows
-    the run buttons in declaration order; the gate passes clean."""
+def test_f1_project_stages_but_refuses_the_gate(tmp_path: Path) -> None:
+    """A1/A10 render arms (#589 PR-2 inversion, module note above): the
+    derived project still builds and derives (the helper); the gate
+    refuses at seam construction — the pre-PR-2 form ("renders and the
+    gate passes clean", configure birth + decode divergence REPORTED)
+    asserted a shippable claim that was FALSE on both hosts."""
     from helpers_classref import build_classref_project
 
-    project, derived = build_classref_project(tmp_path / "f1")
-    report = verify_ui(project, reference=REFERENCE)
-    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
-    assert report.reported_deviations  # configure birth + decode divergence
+    project, _derived = build_classref_project(tmp_path / "f1")
+    with pytest.raises(ValueError, match=_REFUSAL_VC):
+        verify_ui(project, reference=REFERENCE)
 
 
-def test_banked_baseline_fails_loudly_a4(tmp_path: Path) -> None:
-    """A4: the gate FAILS the hand-minimal baseline with >=6 findings."""
+def test_banked_baseline_needs_the_gate_back_first_a4(tmp_path: Path) -> None:
+    """A4: the gate FAILS the hand-minimal baseline with >=6 findings —
+    a coverage the staging can no longer reach (#589 PR-2 inversion,
+    module note above): verify-ui refuses at seam construction before
+    the baseline's findings can mint. The banked baseline is still
+    written (the falsifier input survives for the flip-back); the >=6
+    findings return only with the R2 corpus motion."""
 
     from helpers_classref import build_classref_project
 
@@ -106,11 +125,8 @@ def test_banked_baseline_fails_loudly_a4(tmp_path: Path) -> None:
         "targets": [],
     }
     (package / "binding-catalogue.json").write_bytes(_raw(minimal_catalogue))
-    report = verify_ui(project, reference=REFERENCE)
-    codes = [finding.code for finding in report.findings]
-    assert not report.clean
-    assert len(report.findings) >= 6, codes
-    assert "classref_gate_missing" in codes
+    with pytest.raises(ValueError, match=_REFUSAL_VC):
+        verify_ui(project, reference=REFERENCE)
 
 
 def test_scalar_scaffold_coverage_passes_vacuously_a10(tmp_path: Path) -> None:
@@ -308,32 +324,35 @@ def test_m9_known_binding_overlay_applies_content(tmp_path: Path) -> None:
         )
 
 
-def test_l11_l3_coverage_needs_its_named_controls(tmp_path: Path) -> None:
+def test_l11_l3_coverage_needs_the_gate_back_first(tmp_path: Path) -> None:
     """L11/F9: L3 is covered by its plan-named controls (the effective
     settings surface on the configuration page), not by any button. The
-    auto-deviant arm: with the ledger declaring the preset birth, the row
-    REPORTS; the failable arm for the whole coverage emission is the
-    baseline (undeclared rows fail classref_gate_uncovered)."""
+    auto-deviant arm (the ledger declaring the preset birth, the row
+    REPORTS, the configuration page rendering the L3 surface) needs the
+    gate back first (#589 PR-2 inversion, module note above): verify-ui
+    and render_pages both refuse at seam construction. The declared-row
+    REPORTED coverage and the census counts return only with the R2
+    corpus motion."""
     from helpers_classref import build_classref_project
 
-    project, derived = build_classref_project(tmp_path / "l11")
-    report = verify_ui(project, reference=REFERENCE)
-    assert report.clean
-    assert "otdp.logic_analyser.configure/1.0.0" in report.reported_deviations
-    # The configuration page renders the L3 surface (data table + numerics).
-    from benchweave_sdk.classref_gate import census
-    from benchweave_sdk.classref_gate_render import render_pages
-
-    html = render_pages(project, ["configuration"])["configuration"]
-    seen = census(html)
-    assert seen["data_tables"] == 1
-    assert seen["numerics"] >= 1
+    project, _derived = build_classref_project(tmp_path / "l11")
+    with pytest.raises(ValueError, match=_REFUSAL_VC):
+        verify_ui(project, reference=REFERENCE)
 
 
-def test_m5_coverage_emission_is_load_bearing(tmp_path: Path) -> None:
-    """M5's mutation-survival arm: an undeclared unreachable action fails
-    the gate with classref_gate_uncovered — deleting the uncovered
-    emission cannot survive this test."""
+def test_m5_coverage_emission_needs_the_gate_back_first(tmp_path: Path) -> None:
+    """M5's mutation-survival arm, parked (#589 PR-2 inversion, module
+    note above). Its pre-PR-2 form proved an undeclared unreachable
+    action fails the gate with classref_gate_uncovered and that deleting
+    the uncovered emission cannot survive the test; on this tree the arm
+    pins the staging's typed pin-level refusal — verify-ui refuses at
+    seam construction before the coverage findings mint — and the
+    mutation-survival discrimination is parked with it: neutralizing
+    _coverage_findings leaves this arm green (the refute lane executed
+    that falsification), so this docstring claims no surviving power it
+    does not have. The deviation-drop mutation is kept for the
+    flip-back; the emission's teeth return only with the R2 corpus
+    motion."""
     import json as _json
 
     from helpers_classref import build_classref_project
@@ -348,10 +367,8 @@ def test_m5_coverage_emission_is_load_bearing(tmp_path: Path) -> None:
     (package / "ui" / "class-reference.json").write_bytes(
         (json.dumps(declaration, indent=2) + "\n").encode()
     )
-    report = verify_ui(project, reference=REFERENCE)
-    codes = [finding.code for finding in report.findings]
-    assert not report.clean
-    assert "classref_gate_uncovered" in codes or "classref_gate_undeclared" in codes, codes
+    with pytest.raises(ValueError, match=_REFUSAL_VC):
+        verify_ui(project, reference=REFERENCE)
 
 
 def test_f4_color_role_hint_on_lanes_forbidden(tmp_path: Path) -> None:
@@ -407,9 +424,16 @@ def test_f4_intermediated_energy_removing_action(tmp_path: Path) -> None:
         verify_ui(project, reference=REFERENCE)
 
 
-def test_f4_untraceable_lane_label(tmp_path: Path) -> None:
+def test_f4_untraceable_lane_label_needs_the_gate_back_first(
+    tmp_path: Path,
+) -> None:
     """F4: a lane label not traceable to the descriptor's channel
-    identity or the group pattern is forbidden."""
+    identity or the group pattern is forbidden — a coverage the staging
+    can no longer reach (#589 PR-2 inversion, module note above):
+    verify-ui refuses at seam construction before the forbidden-walk
+    runs. The ghost-lane forge is kept for the flip-back; the typed
+    classref_gate_forbidden row returns only with the R2 corpus
+    motion."""
     import hashlib
 
     from helpers_classref import build_classref_project
@@ -436,9 +460,8 @@ def test_f4_untraceable_lane_label(tmp_path: Path) -> None:
     (package / "presentation.json").write_bytes(
         (json.dumps(envelope, indent=2) + "\n").encode()
     )
-    report = verify_ui(project, reference=REFERENCE)
-    forbidden = [f for f in report.findings if f.code == "classref_gate_forbidden"]
-    assert forbidden, [f"{f.code}: {f.detail}" for f in report.findings]
+    with pytest.raises(ValueError, match=_REFUSAL_VC):
+        verify_ui(project, reference=REFERENCE)
 
 
 def test_m5_uncovered_alone_is_pinned() -> None:
@@ -464,24 +487,32 @@ def test_m5_uncovered_alone_is_pinned() -> None:
     assert reported == []
 
 
-def test_l8_absent_bounds_render_without_fabricated_values(tmp_path: Path) -> None:
+def test_l8_absent_bounds_need_the_gate_back_first(tmp_path: Path) -> None:
     """L8: the F1 arm's max_duration_ms has no catalogue maximum; the
-    render must not fabricate max=\"0\" (or min/step zeros)."""
+    render must not fabricate max="0" (or min/step zeros). (#589 PR-2
+    inversion, module note above: render_pages refuses at seam
+    construction before any page renders, so the fabricated-bounds check
+    needs the gate back first — it returns only with the R2 corpus
+    motion.)"""
     from helpers_classref import build_classref_project
 
     from benchweave_sdk.classref_gate_render import render_pages
 
     project, _derived = build_classref_project(tmp_path / "l8")
-    html = render_pages(project, ["capture"])["capture"]
-    assert 'max="0"' not in html, "a fabricated ceiling escaped the render"
-    assert 'min="0"' not in html, "a fabricated floor escaped the render"
-    assert "action-arm-max_duration_ms" in html  # the control still renders
+    with pytest.raises(ValueError, match=_REFUSAL_VC):
+        render_pages(project, ["capture"])
 
 
-def test_f5_component_id_downgrades_missing(tmp_path: Path) -> None:
+def test_f5_component_id_downgrade_needs_the_gate_back_first(
+    tmp_path: Path,
+) -> None:
     """F5-component (record §4's letter): a declared deviation downgrades
     exactly that expectation — a component id is in the vocabulary and
-    the missing count becomes REPORTED."""
+    the missing count becomes REPORTED. (#589 PR-2 inversion, module
+    note above: verify-ui refuses at seam construction before the
+    downgrade can run; the deviation-declaration and numeric-strip
+    forges are kept for the flip-back, and the REPORTED row returns only
+    with the R2 corpus motion.)"""
     import hashlib
 
     from helpers_classref import build_classref_project
@@ -513,18 +544,17 @@ def test_f5_component_id_downgrades_missing(tmp_path: Path) -> None:
     (package / "presentation.json").write_bytes(
         (json.dumps(envelope, indent=2) + "\n").encode()
     )
-    report = verify_ui(project, reference=REFERENCE)
-    numeric_missing = [
-        f for f in report.findings if f.code == "classref_gate_missing"
-        and "numeric-input" in f.detail
-    ]
-    assert not numeric_missing, [f.detail for f in numeric_missing]
-    assert "numeric-input" in report.reported_deviations
+    with pytest.raises(ValueError, match=_REFUSAL_VC):
+        verify_ui(project, reference=REFERENCE)
 
 
-def test_l11_l3_needs_the_named_surface_not_any_button(tmp_path: Path) -> None:
+def test_l11_l3_named_surface_needs_the_gate_back_first(tmp_path: Path) -> None:
     """L11: an L3 row is covered by its plan-named surface (the settings
-    data-table), not by any button that happens to render on the page."""
+    data-table), not by any button that happens to render on the page.
+    (#589 PR-2 inversion, module note above: verify-ui refuses at seam
+    construction before the coverage findings mint; the table-strip and
+    deviation-drop forges are kept for the flip-back, and the uncovered
+    row returns only with the R2 corpus motion.)"""
     import hashlib
 
     from helpers_classref import build_classref_project
@@ -556,45 +586,45 @@ def test_l11_l3_needs_the_named_surface_not_any_button(tmp_path: Path) -> None:
     (package / "ui" / "class-reference.json").write_bytes(
         (json.dumps(declaration, indent=2) + "\n").encode()
     )
-    report = verify_ui(project, reference=REFERENCE)
-    uncovered = [f for f in report.findings
-                 if f.code == "classref_gate_uncovered"
-                 and "configure" in f.detail]
-    assert uncovered, [f"{f.code}: {f.detail}" for f in report.findings]
+    with pytest.raises(ValueError, match=_REFUSAL_VC):
+        verify_ui(project, reference=REFERENCE)
 
 
-def test_f4c_decoder_pinned_project_passes_the_gate_e2e(tmp_path: Path) -> None:
+def test_f4c_decoder_pinned_project_stages_but_refuses_e2e(
+    tmp_path: Path,
+) -> None:
     """F4c: the traceable set includes the pinned decoder names — the
     decoder-labeled lanes of a decoder-pinned project trace (this e2e arm
-    is the suite gap that hid the omission)."""
+    is the suite gap that hid the omission). (#589 PR-2 inversion, module
+    note above: the f1-da staging still pins its vendor catalog under
+    contracts[], so the clean-gate claim was FALSE on both hosts; the
+    traceability coverage returns only with the R2 corpus motion.)"""
     from helpers_classref import build_classref_project
 
     project, _derived = build_classref_project(
         tmp_path / "f1da",
         descriptor_fixture="descriptor-f1-da.json",
     )
-    report = verify_ui(project, reference=REFERENCE)
-    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
+    with pytest.raises(ValueError, match=_REFUSAL_VC):
+        verify_ui(project, reference=REFERENCE)
 
 
-def test_f3b_gate_passes_end_to_end_a9(tmp_path: Path) -> None:
-    """A9's F3b acceptance, end to end: the gate passes with trigger and
-    the partial group rendered (the arm that never ran)."""
+def test_f3b_gate_refuses_end_to_end_a9(tmp_path: Path) -> None:
+    """A9's F3b acceptance, end to end (#589 PR-2 inversion): the f3b
+    staging pins its vendor catalog under contracts[], so the gate
+    refuses at seam construction — the pre-PR-2 form ("the gate passes
+    with trigger and the partial group rendered", the arm that never
+    ran) asserted a shippable claim that was FALSE on both hosts. The
+    trigger/partial-group census coverage returns only with the R2
+    corpus motion."""
     from helpers_classref import build_classref_project
 
-    from benchweave_sdk.classref_gate import census
-    from benchweave_sdk.classref_gate_render import render_pages
-
-    project, derived = build_classref_project(
+    project, _derived = build_classref_project(
         tmp_path / "f3b",
         descriptor_fixture="descriptor-f3b.json",
     )
-    report = verify_ui(project, reference=REFERENCE)
-    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
-    html = render_pages(project, ["capture"])["capture"]
-    seen = census(html)
-    assert "trigger" in seen["buttons"], seen["buttons"]
-    assert seen["numerics"] >= 1
+    with pytest.raises(ValueError, match=_REFUSAL_VC):
+        verify_ui(project, reference=REFERENCE)
 
 
 def test_f8b_reference_less_unknown_action_derives_residual(tmp_path: Path) -> None:
@@ -629,13 +659,19 @@ def test_f8b_reference_less_unknown_action_derives_residual(tmp_path: Path) -> N
     assert ghost["resolution"] == "custom"
 
 
-def test_l2_coverage_is_per_action_not_per_page(tmp_path: Path) -> None:
+def test_l2_coverage_per_action_needs_the_gate_back_first(tmp_path: Path) -> None:
     """L5 fold row 2 (derivation lane F1, MEDIUM): the D14 L2 arm covers an
     action by ITS OWN rendered inputs, never by the page's summed input
     count. Two L2 vendor actions share device-features; stripping ONE
     action's inputs (keeping its button) leaves the other action's inputs
     standing — the stripped action must be named classref_gate_uncovered,
-    while a page-summed arm would launder it with the sibling's controls."""
+    while a page-summed arm would launder it with the sibling's controls.
+    (#589 PR-2 inversion: the f6-pair staging pins its vendor catalog
+    under contracts[], so verify-ui refuses at seam construction before
+    either the clean baseline or the stripped run's findings mint — both
+    halves asserted shippable-run coverage that was FALSE on both hosts.
+    The strip is kept for the flip-back; the per-action teeth return only
+    with the R2 corpus motion.)"""
     import hashlib
 
     from helpers_classref import build_classref_project
@@ -644,9 +680,6 @@ def test_l2_coverage_is_per_action_not_per_page(tmp_path: Path) -> None:
         tmp_path / "f6cov", descriptor_fixture="descriptor-f6-pair.json"
     )
     package = next((project / "src").iterdir())
-    # Baseline: both L2 vendor actions render their own inputs — clean.
-    baseline = verify_ui(project, reference=REFERENCE)
-    assert baseline.clean, [f"{f.code}: {f.detail}" for f in baseline.findings]
     manifest = json.loads((package / "ui" / "manifest.json").read_bytes())
     block = manifest["extensions"]["plugin-ui-class-reference:layout"]
     page = next(p for p in block["pages"] if p["page_id"] == "device-features")
@@ -667,8 +700,5 @@ def test_l2_coverage_is_per_action_not_per_page(tmp_path: Path) -> None:
     (package / "presentation.json").write_bytes(
         (json.dumps(envelope, indent=2) + "\n").encode()
     )
-    report = verify_ui(project, reference=REFERENCE)
-    uncovered = [f for f in report.findings if f.code == "classref_gate_uncovered"]
-    assert any(
-        "com.veridian-labs.auto-band/1.0.0" in f.detail for f in uncovered
-    ), [(f.code, f.detail) for f in report.findings]
+    with pytest.raises(ValueError, match=_REFUSAL_PAIR):
+        verify_ui(project, reference=REFERENCE)

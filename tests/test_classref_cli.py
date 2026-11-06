@@ -10,12 +10,33 @@ from helpers_classref import build_classref_project
 from benchweave_sdk.cli import cli
 
 
-def test_derive_then_verify_clean_roundtrip(tmp_path: Path) -> None:
+def test_derive_then_verify_roundtrip_refuses_the_pinned_catalog(
+    tmp_path: Path,
+) -> None:
+    """The CLI roundtrip (#589 PR-2 inversion): the helper derives and
+    persists the derived set, and verify-ui REFUSES it — the f1 fixture
+    pins its vendor catalog under contracts[], and since #589 PR-2 a
+    pinned entry that is neither measurement-shaped nor catalog-schema-
+    valid refuses seam construction, so the command exits 1 naming the
+    typed refusal and the pin. The arm's pre-PR-2 form ("clean
+    roundtrip", exit 0) asserted a shippable claim that was FALSE on
+    both hosts — the gateway's loader refuses the same bytes at
+    activation; the clean gate returns only with the R2 corpus motion
+    (vendor pins move out of contracts[], main-side). The derive-ui
+    dirty-tree half below is untouched and still passes: derive refuses
+    author drift without --force and re-derives with it."""
     project, _derived = build_classref_project(tmp_path / "proj")
     # verify-ui first: the helper already wrote the derived set.
     runner = CliRunner()
     result = runner.invoke(cli, ["verify-ui", str(project)])
-    assert result.exit_code == 0, result.output
+    # Exit 1 exactly: _domain_errors converts the refusal to a ClickException,
+    # whose exit_code is 1 by click's contract — a coded guarantee, so the
+    # docstring's "exits 1" and this assertion agree at the stronger truth.
+    assert result.exit_code == 1
+    assert (
+        "profile_contract_invalid: urn:veridian:vendor-catalog:1.0.0"
+        in result.output
+    ), result.output
     # A dirty manifest refuses without --force.
     manifest = next((project / "src").iterdir()) / "ui" / "manifest.json"
     manifest.write_bytes(manifest.read_bytes().replace(b"capture", b"renamed"))
@@ -32,8 +53,9 @@ def test_derive_then_verify_clean_roundtrip(tmp_path: Path) -> None:
 # The discriminator is the descriptor digest the manifest records. A manifest
 # generated for a DIFFERENT descriptor is stale and is overwritten; a manifest
 # for the SAME descriptor that differs from the derivation is author drift and
-# still refuses. `test_derive_then_verify_clean_roundtrip` above is that
-# same-descriptor pin and is deliberately untouched.
+# still refuses. `test_derive_then_verify_roundtrip_refuses_the_pinned_catalog`
+# above is that same-descriptor pin and is deliberately untouched (its verify-ui
+# half is the #589 PR-2 inversion; the derive-ui discipline is the pin).
 #
 # Arm 1 of the four the fold asks for is the acceptance module's
 # `test_a1_the_workflow_runs_clean` (the `new --with-ui` path, which must flip

@@ -637,14 +637,22 @@ def test_energy_removing_intermediated_control_reds(tmp_path: Path) -> None:
     ), [f"{f.code}: {f.detail}" for f in findings]
 
 
-def test_energy_removing_class_passes_the_real_gate(tmp_path: Path) -> None:
-    """The widened D7 set does not break the happy path: a real project
-    whose composed class declares energy_removing derives, renders and
-    passes the gate clean — with the HONEST energy-removing shape, a bare
-    button (L1). A class declaring energy_removing WITH required numeric
-    inputs derives the staging the forbid arm reds; that conservative
-    cost is the S20 direction taken deliberately (standards record §13
-    risk 2), never a silent derivation."""
+def test_energy_removing_class_derives_but_refuses_the_real_gate(
+    tmp_path: Path,
+) -> None:
+    """The widened D7 set does not break the derivation: a real project
+    whose composed class declares energy_removing derives — with the
+    HONEST energy-removing shape, a bare button (L1). A class declaring
+    energy_removing WITH required numeric inputs derives the staging the
+    forbid arm reds; that conservative cost is the S20 direction taken
+    deliberately (standards record §13 risk 2), never a silent
+    derivation. The gate half is the #589 PR-2 inversion: the staging
+    pins its vendor catalog under contracts[], so verify-ui refuses at
+    seam construction — the pre-PR-2 form ("passes the real gate" clean)
+    asserted a shippable claim that was FALSE on both hosts (the
+    gateway's loader refuses the same bytes at activation); the clean
+    gate returns only with the R2 corpus motion (vendor pins move out of
+    contracts[], main-side)."""
     from benchweave_sdk.classref import declaration_scaffold
     from benchweave_sdk.classref_gate import verify_ui
     from benchweave_sdk.scaffold import create_project
@@ -683,8 +691,11 @@ def test_energy_removing_class_passes_the_real_gate(tmp_path: Path) -> None:
     for slug, scaffold_row in derived.preset_scaffolds.items():
         (presets / f"{slug}.json").write_bytes(_raw(scaffold_row))
     (ui / "class-reference.json").write_bytes(_raw(declaration_scaffold(derived)))
-    report = verify_ui(project)
-    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
+    with pytest.raises(
+        ValueError,
+        match=r"profile_contract_invalid: urn:veridian:vendor-catalog:1.0.0",
+    ):
+        verify_ui(project)
 
 
 # ---------------------------------------------------------------------------
@@ -1029,10 +1040,17 @@ def test_ignored_pin_is_disclosed_and_the_reason_names_it(
     assert "pinned document composed-staging.json contributed nothing" in reason
 
 
-def test_ignored_pin_reports_through_the_gate(tmp_path: Path) -> None:
-    """B7's gate surface: the ignored pin's disclosure reaches
-    ``GateReport.reported_deviations`` every run — REPORTED, never a
-    findings failure and never silent."""
+def test_ignored_pin_needs_the_gate_back_first(tmp_path: Path) -> None:
+    """B7's gate surface (#589 PR-2 inversion): the ignored pin's
+    disclosure reached ``GateReport.reported_deviations`` every run —
+    REPORTED, never a findings failure and never silent. The staging
+    pins its vendor catalog under contracts[], so verify-ui now refuses
+    at seam construction BEFORE the ignored-pin walk runs — the arm's
+    pre-PR-2 form asserted a report a shippable run could not reach on
+    either host (the gateway's loader refuses the same bytes at
+    activation). The staging still derives (the ignored pin is disclosed
+    on the derivation elsewhere); the REPORTED row returns only with the
+    R2 corpus motion (vendor pins move out of contracts[], main-side)."""
     from benchweave_sdk.classref import declaration_scaffold
     from benchweave_sdk.classref_gate import verify_ui
     from benchweave_sdk.scaffold import create_project
@@ -1067,12 +1085,11 @@ def test_ignored_pin_reports_through_the_gate(tmp_path: Path) -> None:
     for slug, scaffold_row in derived.preset_scaffolds.items():
         (presets / f"{slug}.json").write_bytes(_raw(scaffold_row))
     (ui / "class-reference.json").write_bytes(_raw(declaration_scaffold(derived)))
-    report = verify_ui(project)
-    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
-    assert any(
-        row == "pinned document composed-staging.json contributed nothing"
-        for row in report.reported_deviations
-    ), report.reported_deviations
+    with pytest.raises(
+        ValueError,
+        match=r"profile_contract_invalid: urn:veridian:vendor-catalog:1.0.0",
+    ):
+        verify_ui(project)
 
 
 def test_non_object_pin_refuses_typed(tmp_path: Path) -> None:
@@ -1141,7 +1158,7 @@ def _tamper_ledger(package: Path, mutate: Any) -> None:
     ledger_path.write_bytes(_raw(ledger))
 
 
-def test_b6_ledger_that_omits_composed_classes_is_reported(
+def test_b6_ledger_that_omits_composed_classes_needs_the_gate_back_first(
     tmp_path: Path,
 ) -> None:
     """B6 (the s2 fold, lane B F2): the ledger's composed inventory was
@@ -1149,7 +1166,13 @@ def test_b6_ledger_that_omits_composed_classes_is_reported(
     rows left verify-ui green. The read-back mirrors slice 1's
     ``_custom_inventory_findings``: the authored class rows compare
     against the derived class set, both directions, REPORTED and never a
-    findings failure."""
+    findings failure. (#589 PR-2 inversion: the staging pins its vendor
+    catalog under contracts[], so verify-ui refuses at seam construction
+    BEFORE the read-back runs — the pre-PR-2 REPORTED row asserted a
+    claim a shippable run could not reach on either host; the tamper is
+    kept for the flip-back, and the read-back coverage returns only with
+    the R2 corpus motion — vendor pins move out of contracts[],
+    main-side.)"""
     from benchweave_sdk.classref_gate import verify_ui
 
     project, package = _composed_gate_project(tmp_path / "omit-classes")
@@ -1158,19 +1181,23 @@ def test_b6_ledger_that_omits_composed_classes_is_reported(
         ledger["composed_classes"] = []
 
     _tamper_ledger(package, mutate)
-    report = verify_ui(project)
-    assert any(
-        row.startswith("composed mismatch: ") and CLASS_URN in row
-        for row in report.reported_deviations
-    ), report.reported_deviations
-    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
+    with pytest.raises(
+        ValueError,
+        match=r"profile_contract_invalid: urn:veridian:vendor-catalog:1.0.0",
+    ):
+        verify_ui(project)
 
 
-def test_b6_ledger_with_forged_composed_class_is_reported(
+def test_b6_ledger_with_forged_composed_class_needs_the_gate_back_first(
     tmp_path: Path,
 ) -> None:
-    """B6's other direction: a forged ``composed_classes`` row naming a
-    class no pin declares is reported too."""
+    """B6's other direction (#589 PR-2 inversion): a forged
+    ``composed_classes`` row naming a class no pin declares was reported
+    — the staging pins its vendor catalog under contracts[], verify-ui
+    refuses at seam construction before the read-back runs, and the
+    forged-row coverage returns only with the R2 corpus motion (vendor
+    pins move out of contracts[], main-side). The tamper is kept for the
+    flip-back."""
     from benchweave_sdk.classref_gate import verify_ui
 
     project, package = _composed_gate_project(tmp_path / "forged-class")
@@ -1184,21 +1211,23 @@ def test_b6_ledger_with_forged_composed_class_is_reported(
         )
 
     _tamper_ledger(package, mutate)
-    report = verify_ui(project)
-    assert any(
-        row.startswith("composed mismatch: ")
-        and "otdp.action.veridian_ghost/1.0.0" in row
-        for row in report.reported_deviations
-    ), report.reported_deviations
-    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
+    with pytest.raises(
+        ValueError,
+        match=r"profile_contract_invalid: urn:veridian:vendor-catalog:1.0.0",
+    ):
+        verify_ui(project)
 
 
-def test_b6_ledger_that_omits_composed_actions_is_reported(
+def test_b6_ledger_that_omits_composed_actions_needs_the_gate_back_first(
     tmp_path: Path,
 ) -> None:
-    """B6, the actions set: an authored ledger that drops a derived
-    composed member from ``composed_actions`` gets the mismatch reported
-    — the same write-only hole, one key over."""
+    """B6, the actions set (#589 PR-2 inversion): an authored ledger that
+    drops a derived composed member from ``composed_actions`` got the
+    mismatch reported — the same write-only hole, one key over. The
+    staging pins its vendor catalog under contracts[], verify-ui refuses
+    at seam construction before the read-back runs, and the coverage
+    returns only with the R2 corpus motion (vendor pins move out of
+    contracts[], main-side). The tamper is kept for the flip-back."""
     from benchweave_sdk.classref_gate import verify_ui
 
     project, package = _composed_gate_project(tmp_path / "omit-actions")
@@ -1207,19 +1236,23 @@ def test_b6_ledger_that_omits_composed_actions_is_reported(
         ledger["composed_actions"] = []
 
     _tamper_ledger(package, mutate)
-    report = verify_ui(project)
-    assert any(
-        row.startswith("composed mismatch: ") and STAGE_URN in row
-        for row in report.reported_deviations
-    ), report.reported_deviations
-    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
+    with pytest.raises(
+        ValueError,
+        match=r"profile_contract_invalid: urn:veridian:vendor-catalog:1.0.0",
+    ):
+        verify_ui(project)
 
 
-def test_b6_ledger_with_forged_composed_action_is_reported(
+def test_b6_ledger_with_forged_composed_action_needs_the_gate_back_first(
     tmp_path: Path,
 ) -> None:
-    """B6's forged direction for the actions set: a row naming an URN no
-    plan derives composed is reported."""
+    """B6's forged direction for the actions set (#589 PR-2 inversion):
+    a row naming an URN no plan derives composed was reported (with the
+    omitted direction reporting too). The staging pins its vendor
+    catalog under contracts[], verify-ui refuses at seam construction
+    before the read-back runs, and the coverage returns only with the R2
+    corpus motion (vendor pins move out of contracts[], main-side). The
+    tamper is kept for the flip-back."""
     from benchweave_sdk.classref_gate import verify_ui
 
     project, package = _composed_gate_project(tmp_path / "forged-action")
@@ -1234,18 +1267,11 @@ def test_b6_ledger_with_forged_composed_action_is_reported(
         ]
 
     _tamper_ledger(package, mutate)
-    report = verify_ui(project)
-    assert any(
-        row.startswith("composed mismatch: ")
-        and "otdp.veridian_staging.unclaimed/1.0.0" in row
-        for row in report.reported_deviations
-    ), report.reported_deviations
-    # The omitted direction reports too (the derived member is missing).
-    assert any(
-        row.startswith("composed mismatch: ") and STAGE_URN in row
-        for row in report.reported_deviations
-    ), report.reported_deviations
-    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
+    with pytest.raises(
+        ValueError,
+        match=r"profile_contract_invalid: urn:veridian:vendor-catalog:1.0.0",
+    ):
+        verify_ui(project)
 
 
 # ---------------------------------------------------------------------------
@@ -1317,10 +1343,16 @@ def test_r1_unapplied_class_is_disclosed_on_the_derivation(
     assert derived.ignored_pins == ()  # a different disclosure, not B7's
 
 
-def test_r1_unapplied_class_reports_through_the_gate(tmp_path: Path) -> None:
-    """R1's REPORTED channel: the unapplied class names the class URN and
-    states that its claims name no action this descriptor declares —
-    every run, never silent, never a findings failure."""
+def test_r1_unapplied_class_needs_the_gate_back_first(tmp_path: Path) -> None:
+    """R1's REPORTED channel (#589 PR-2 inversion): the unapplied class
+    named the class URN and stated that its claims name no action this
+    descriptor declares — every run, never silent, never a findings
+    failure. The staging pins its vendor catalog under contracts[], so
+    verify-ui refuses at seam construction BEFORE the disclosure walk
+    runs; the REPORTED row returns only with the R2 corpus motion
+    (vendor pins move out of contracts[], main-side). The DERIVATION
+    half of R1 (the unapplied_classes disclosure) stays green in the
+    arm above."""
     from benchweave_sdk.classref_gate import verify_ui
 
     document = _composed_document(
@@ -1335,13 +1367,11 @@ def test_r1_unapplied_class_reports_through_the_gate(tmp_path: Path) -> None:
         documents={"composed-staging.json": document},
         descriptor=descriptor,
     )
-    report = verify_ui(project)
-    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
-    assert any(
-        row.startswith(f"composed class {CLASS_URN}")
-        and "claims name no action this descriptor declares" in row
-        for row in report.reported_deviations
-    ), report.reported_deviations
+    with pytest.raises(
+        ValueError,
+        match=r"profile_contract_invalid: urn:veridian:vendor-catalog:1.0.0",
+    ):
+        verify_ui(project)
 
 
 def test_r2_actions_and_claims_pin_refuses(tmp_path: Path) -> None:
@@ -1439,10 +1469,15 @@ def test_r5_empty_actions_pin_is_disclosed(tmp_path: Path) -> None:
     assert derived.ignored_pins == ()  # shape-recognized: not B7's channel
 
 
-def test_r5_empty_catalog_pin_reports_through_the_gate(tmp_path: Path) -> None:
-    """R5's REPORTED channel: the empty-actions pin's row names the pin and
-    says its vendor-catalog actions map is empty — every run, never
-    silent."""
+def test_r5_empty_catalog_pin_needs_the_gate_back_first(tmp_path: Path) -> None:
+    """R5's REPORTED channel (#589 PR-2 inversion): the empty-actions
+    pin's row named the pin and said its vendor-catalog actions map is
+    empty — every run, never silent. The staging pins its vendor catalog
+    under contracts[], so verify-ui refuses at seam construction BEFORE
+    the disclosure walk runs; the REPORTED row returns only with the R2
+    corpus motion (vendor pins move out of contracts[], main-side). The
+    DERIVATION half of R5 (empty_action_pins) stays green in the arm
+    above."""
     from benchweave_sdk.classref_gate import verify_ui
 
     document = {"actions": {}}
@@ -1460,23 +1495,27 @@ def test_r5_empty_catalog_pin_reports_through_the_gate(tmp_path: Path) -> None:
         documents={"empty-catalog.json": document},
         descriptor=descriptor,
     )
-    report = verify_ui(project)
-    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
-    assert any(
-        row.startswith("pinned document empty-catalog.json")
-        and "actions map is empty" in row
-        for row in report.reported_deviations
-    ), report.reported_deviations
+    with pytest.raises(
+        ValueError,
+        match=r"profile_contract_invalid: urn:veridian:vendor-catalog:1.0.0",
+    ):
+        verify_ui(project)
 
 
-def test_r6_read_back_compares_the_action_class_mapping(
+def test_r6_read_back_needs_the_gate_back_first(
     tmp_path: Path,
 ) -> None:
-    """R6 (LOW): the composed read-back compared two SETS — a ledger whose
-    ``composed_actions`` row names the WRONG class for an action
-    (internally inconsistent with its own ``composed_classes``, which
-    carries the right one) verified clean and migrated with "nothing to
-    do". The read-back compares the action -> class MAPPING."""
+    """R6 (LOW, #589 PR-2 inversion): the composed read-back compared two
+    SETS — a ledger whose ``composed_actions`` row names the WRONG class
+    for an action (internally inconsistent with its own
+    ``composed_classes``, which carries the right one) verified clean
+    and migrated with "nothing to do". The read-back compares the
+    action -> class MAPPING — a coverage the staging can no longer
+    reach: it pins its vendor catalog under contracts[], so verify-ui
+    refuses at seam construction before the read-back runs (a shippable
+    run was FALSE on both hosts). The tamper is kept for the flip-back;
+    the mapping comparison returns only with the R2 corpus motion
+    (vendor pins move out of contracts[], main-side)."""
     from benchweave_sdk.classref_gate import verify_ui
 
     project, package = _composed_gate_project(tmp_path / "wrong-class")
@@ -1487,11 +1526,8 @@ def test_r6_read_back_compares_the_action_class_mapping(
         )
 
     _tamper_ledger(package, mutate)
-    report = verify_ui(project)
-    assert any(
-        row.startswith("composed mismatch: ")
-        and STAGE_URN in row
-        and "otdp.action.veridian_staging_alt/1.0.0" in row
-        for row in report.reported_deviations
-    ), report.reported_deviations
-    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
+    with pytest.raises(
+        ValueError,
+        match=r"profile_contract_invalid: urn:veridian:vendor-catalog:1.0.0",
+    ):
+        verify_ui(project)

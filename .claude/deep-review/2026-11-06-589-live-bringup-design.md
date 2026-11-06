@@ -1065,3 +1065,177 @@ return-shape misuse and its venv-invisibility lesson (default-path code behind a
 injection seam is untested by construction — prove it with a fake-backend seam);
 (c) D3's withdrawal with its measurement (the fast-exit read path), so nobody re-files
 it from the class table's inherited premise.
+
+---
+
+## Appendix (2026-11-07, PR-2 build): §3.1 census claim (a) is FALSE at the call level
+
+**Correction by append, rev 7's frozen text unchanged above.** The seam census that
+made the hard arm look free — "(a) no classref test constructs a host seam
+(`StandaloneSeam`/`build_app`/`_build_seam` never appear in the classref modules; seam
+construction is confined to `tests/server/`)" — is lexically true and call-level
+FALSE: `verify_ui` → `benchweave_sdk.classref_gate_render.render_pages`
+(`classref_gate_render.py:41`) constructs a real `StandaloneSeam` over the project and
+drives its pages over in-process ASGI. The gate's own render half is a host.
+
+**Measured cost, full classification (the PR-2 build lane, every failure read):** 71
+main-lane failures + 9 loop-lane errors, ALL ONE CLASS (bucket (a) — the intended
+typed refusal; zero PR-2 defects, zero pre-existing), split by pin: 49
+`urn:veridian:vendor-catalog:1.0.0` (incl. 2 CLI-subprocess arms), 22
+`urn:meridian:composed-burst:1.0.0` (incl. 8 loop-lane verify-ui arms), 3
+`urn:meridian:member-declaration-smu:1.0.0`, 2
+`urn:veridian:vendor-catalog-pair:1.0.0`, and one each of
+`veridian:vendor-catalog-trio`, `veridian:refless-composed` and
+`veridian:member-declaration`. The census's "breaks nothing in this suite" was wrong by
+80 arms across 13 modules (`test_classref_acceptance/cli/composed/gate/
+member_channels/member_datasets/member_join_ceiling/member_ledger/render_arms/residual/
+trio/vendor_scale` + `test_standalone_dev_loop`).
+
+**What this changes and does not change.** The RULING stands — the resolver matches the
+gateway (its own loader refuses these pins at activation, `otdp_contracts.py:15,34`),
+so the fixtures' "shippable" claims were false on both hosts and parity IMPROVED. What
+the census understated is the cost: the vendor-catalog / composed-class /
+member-declaration feature is now refused at verify-ui and at serve on both hosts
+until the R2 corpus motion lands (vendor pinning moves out of `contracts[]`, main-side
+— a named carrier with a named blocker, recorded in the PR body beside GW-1).
+
+**The maintainer question, raised not decided:** `render_pages`' own comment says a
+degraded load "refuses honestly and the pages render their disclosures alone — exactly
+the unconnected face". A defensible alternative shape exists — a contract-invalid
+plugin renders its disclosure pages and the gate REPORTS the refusal rather than
+erroring — which would keep verify-ui useful for inspecting a broken plugin. Falsifier:
+if the maintainer rules the render half must agree with activation (SRF-2 read
+strictly), the current behavior is right and the fixtures invert; if the maintainer
+rules verify-ui an inspection surface, the render half needs the degraded-load
+treatment. NOT taken by the PR-2 build (it changes verify-ui's semantics; not a
+builder call).
+
+**Disposition executed:** the team-lead ruled option (1) — invert the bucket-(a)
+fixtures to assert the typed refusal, own commit, no deletion. `test_classref_vendor_scale.py`
+inverted as the pattern commit (renamed to its honest name, derivation half kept, gate
+half asserting `profile_contract_invalid:` naming the pin); the remaining 12 modules
+carry the same mechanical pattern with the per-module pin map above.
+
+---
+
+## 11. Ledger addendum — D12 to D18 (appended 2026-11-07, post-freeze)
+
+Rows raised **after** rev 7 froze, and therefore absent from the §1 table above, which ends
+at D11. They are recorded here so the ledger is resolvable from a committed file: until this
+append they existed only in the session's untracked scratch, which is not a home for a
+pre-committed acceptance rule (and which a build agent correctly reported as unresolvable —
+that report is why this section exists). Rows are append-only; none of D1–D11 is altered.
+
+| Row | Defect | Status | Mechanism, as verified | Carrier |
+|---|---|---|---|---|
+| D12 | The preset home disagrees three ways | **Real, three-way** | The host reads `config/presets` (`seam.py:1217`); `derive-ui` writes `ui/presets`; the presets pin per-slot settings schemas that ARE the configure action's input schema with its corpus `$id` (`classref.py:3142-3147`). Copying one into `config/presets` still refuses, because its settings are action envelopes and `_stageable` (`seam.py:1423`) finds no writable parameter. Worse: the scaffold's own `AI-GUIDE.md.jinja:45-47` tells UI authors to keep ONE authoritative copy under `ui/`, so **a guide-following plugin never populates `config/presets` and the preset surface is silently empty**. No gateway parity constraint: `otdp_bridge.py` has zero preset surfaces (grep-verified) | PR-6 |
+| D13 | The rate payload slot is not served | **Resolved — PR-2's, not PR-6's** | The rate slot EXISTS in the vendored catalog: `otdp.logic_analyser.configure/1.0.0`'s input requires `sample_rate_hz` and `channels[].threshold_v`. The generic route that reaches it is invoke; `src/` greps clean of the name. The "rate payload not decoded" half is plugin-side and unverified here — the host's write path is verbatim `{parameter, value}` | PR-2 |
+| D14 | `parameter_read` filters out `threshold_v` | **WITHDRAWN with evidence** | The filter is descriptor-driven (`session.py:141-147`, access ro/rw) and `threshold_v` appears nowhere in `src/` — every threshold hit is power-analysis vocabulary. It is a per-channel INPUT of the configure action whose read-back home is that action's `effective_configuration` OUTPUT, which invoke surfaces. Not a defect | none (PR-6 keeps a guide row naming the two read surfaces, plus a `wo-parameter` disclosure) |
+| D15 | The host does not run the decoder | **BOUNDARY, not a gap — DON'T-BUILD the runner** | The vendored schema says "Structure only… the consuming action is side_effect none over a completed retained acquisition" (`otdp-decoder.schema.json:5`); the decode ACTION is the runner and both decode actions are in the vendored catalog with full schemas. The host renders | none |
+| D16 | `purge("rx")` does not clear the SerialLink ring | **Mechanism verified; magnitude measured in the arm** | `ftdi.py`'s purge control reached only `purge_tx_buffer()`/`purge_rx_buffer()` — the FTDI **hardware** buffers — and touched no ring, while `serial.py` runs a dedicated reader thread draining the transport into a bounded ring. So after a flush every `stream_receive` popped whatever the ring still held. Reported from the bench with the right experiment behind it: `pyftdi` alone replicating the vendor's loader answers the command dialect eight of eight, while the same device through the SDK transport returns filler — the wrapper is the variable, and the ring is the only wrapper-owned state a hardware purge leaves behind. **Sole-source is claimed by neither the reporting session nor this record:** that is an argument, and the fix is the experiment — the reporting session re-runs its recorder against the change and that re-run is the measurement | PR-7 |
+| D17 | The receive ladder is left parked after establish, blocking control sends with `live_provider_line_busy` until a reconnect | **UNVERIFIED** | Reported plugin-side; it names the host's establish/connect path, so it is SDK-side if it reproduces. Not dropped — the mechanism is read before the carrier is assigned | TBD (PR-2 or PR-6, whichever owns the connect path) |
+| D18 | The SDK's check lanes carry zero decoder validation, and `classref` silently skips unloadable decoder documents | **Real, same silent-empty class as D12** | `classref.py:2950-2953` skips a decoder document that fails to load and produces no finding anywhere, so a decoder that cannot load is invisible to every lane | a sibling check-lane PR |
+
+**The pattern worth naming, because it recurred three times in this run:** the preset list, the
+decoder validation, and the generality gate's own coverage claims were each **silently empty
+rather than loudly refusing**. That is one shape, not three coincidences, and it is why this
+ledger prefers a refusal that names itself.
+
+---
+
+## Appendix (2026-11-07, PR-2 continuation): the 80-vs-79 gap resolved — the total is 80, the per-pin map was wrong twice
+
+**Correction by append; the appendix above and rev 7's frozen text are unchanged.** The
+per-pin map above sums to 79 while its own headline says 80 arms (71 main + 9 loop).
+Re-measured on the tree at `04fdb72` (post-`14d34ee`, so vendor_scale's 2 arms already
+inverted): **69 main-lane failures across the 11 remaining classref modules + 9 loop-lane
+errors + the 2 inverted arms = 80.** The headline was right; the split carried two errors:
+
+1. **"49 vendor-catalog (incl. 2 CLI-subprocess arms)" is wrong on the subprocess note.**
+   The two CLI-subprocess arms are ONE vendor-catalog
+   (`test_classref_cli.py::test_derive_then_verify_clean_roundtrip`) and ONE
+   composed-burst (`test_classref_acceptance.py::test_a1_the_workflow_runs_clean`,
+   whose staging is the m400 fixture). Vendor-catalog is **48**, not 49.
+2. **"incl. 8 loop-lane verify-ui arms" undercounts by one.** The loop lane's 9 errors
+   are ALL composed-burst: one session fixture runs `verify-ui` as a subprocess, it exits
+   1 naming `urn:meridian:composed-burst:1.0.0`, and all nine dependent arms error at
+   setup — including `test_the_scaffold_renders_from_the_packaged_template`, whose name
+   does not say verify-ui. Composed-burst is **24**, not 22.
+
+Corrected split: **48** vendor-catalog + **24** composed-burst + **3**
+member-declaration-smu + **2** vendor-catalog-pair + one each vendor-catalog-trio,
+refless-composed, member-declaration = **80**.
+
+**Per-module reconciliation (failing arms at `04fdb72`, pin named per arm):**
+
+| Module | Arms | Pins |
+|---|---|---|
+| test_classref_acceptance.py | 14 | 13 composed-burst + 1 vendor-catalog |
+| test_classref_cli.py | 1 | vendor-catalog |
+| test_classref_composed.py | 9 | vendor-catalog |
+| test_classref_gate.py | 11 | 10 vendor-catalog + 1 vendor-catalog-pair |
+| test_classref_member_channels.py | 1 | vendor-catalog |
+| test_classref_member_datasets.py | 4 | 3 member-declaration-smu + 1 composed-burst |
+| test_classref_member_join_ceiling.py | 1 | vendor-catalog |
+| test_classref_member_ledger.py | 9 | 8 vendor-catalog + 1 member-declaration |
+| test_classref_render_arms.py | 7 | 6 vendor-catalog + 1 composed-burst |
+| test_classref_residual.py | 10 | 9 vendor-catalog + 1 refless-composed |
+| test_classref_trio.py | 2 | vendor-catalog-trio + vendor-catalog-pair |
+| test_classref_vendor_scale.py | 2 | vendor-catalog (inverted by `14d34ee`) |
+| test_standalone_dev_loop.py | 9 | composed-burst (one fixture cascade) |
+| **Total** | **80** | |
+
+**Bucket check, every failure read:** all 78 re-measured failures are the
+`profile_contract_invalid` refusal naming a `contracts[]` pin — zero exceptions, so no
+arm was folded into the R2 story wearing a different cause.
+
+**Disposition executed (branch `pr2-589-cont`, one commit per module, `0060f09..5f05b3e`):**
+all 12 remaining modules inverted to the typed refusal, no arm deleted, every derivation
+half kept, every docstring naming the pre-PR-2 claim and the R2 corpus motion as the
+carrier. Two shape notes: the parametrized render-arm families branch per profile (only
+the logic_analyser instance stages the pinned f1 fixture; the other seven profiles keep
+their full assertions), and the dev-loop's three SERVED-PAGE arms are parked under a
+skip marker (the module's own convention) because preview-ui exits before binding — a
+new serve arm pins that startup refusal once for all of them, the fixture asserts the
+verify refusal, and the control arm proves the pin the gate names flips with the removed
+row (composed-burst → member-declaration, measured). Those three arms flip back to their
+clean-gate shapes with the R2 corpus motion; the skips name that carrier.
+
+---
+
+## Appendix (2026-11-07, PR-2 continuation 2): the continuation's own correction corrected — CB is 23, and meridian:member-declaration is real
+
+**Correction by append; everything above, including continuation 1, is unchanged.** The
+team-lead re-measured the classification on `pr2-589-builder` (`69 failed, 249 passed, 9
+errors in 163.70s`) and continuation 1's loop-lane claim does not survive it. Re-measured
+on a detached worktree at `04fdb72`:
+
+- **The loop lane is 8 composed-burst + 1 `urn:meridian:member-declaration:1.0.0`, not
+  nine composed-burst.** Raw count over the nine ERROR bodies:
+  `8 Error: profile_contract_invalid: urn:meridian:composed-burst:1.0.0`,
+  `1 Error: profile_contract_invalid: urn:meridian:member-declaration:1.0.0`. The eighth
+  and ninth belong to DIFFERENT fixtures: the `loop` cascade carries the eight
+  composed-burst errors; the ninth is `test_the_composed_surface_disappears_without_the_pin`'s
+  setup in the `control` fixture — its project strips the composed pin, so the gate names
+  the next row (meridian:member-declaration). Continuation 1 read the first several error
+  bodies, saw composed-burst, and extrapolated to all nine.
+- **The two failures that print no `E ValueError:` line are the two main-lane
+  CLI-subprocess arms**, both measured and both bucket (a) — the refusal rides inside the
+  captured CLI output of an exit-code AssertionError, so a traceback-line classification
+  misses it: `test_classref_cli.py::test_derive_then_verify_clean_roundtrip`
+  (`AssertionError: Error: profile_contract_invalid: urn:veridian:vendor-catalog:1.0.0
+  …`, CliRunner in-process) and `test_classref_acceptance.py::test_a1_the_workflow_runs_clean`
+  (`AssertionError: Error: profile_contract_invalid: urn:meridian:composed-burst:1.0.0 …`).
+  67 E-lines + these 2 = pytest's 69 failures; no failure lacks a pin-naming cause.
+
+**Final split (the third and reconciled one): 48 vendor-catalog + 23 composed-burst +
+3 member-declaration-smu + 2 vendor-catalog-pair + 1 each vendor-catalog-trio,
+refless-composed, veridian:member-declaration AND meridian:member-declaration = 80.**
+Continuation 1's "48 + 24 … = 80" double-counted: it already carried the acceptance a1
+arm under composed-burst's main lane AND counted nine loop errors as composed-burst where
+only eight are. The per-module table above stands except its dev_loop row: **8
+composed-burst (loop cascade) + 1 meridian:member-declaration (control cascade)**, two
+cascades, not one. The disposition is unchanged — the dev-loop module's committed form
+already asserts the control fixture's meridian:member-declaration refusal (its
+`CONTROL_REFUSAL` constant), which is the measurement that first contradicted
+continuation 1.

@@ -137,6 +137,18 @@ def _retention_for(retention_rules: Path | None) -> Any:
         raise SystemExit(2) from exc
 
 
+def _seam(session: Any, **kwargs: Any) -> StandaloneSeam:
+    """Construct the seam, mapping a construction-time contract refusal
+    (the ``profile_contract_*:`` family and the action-budget check —
+    issue #589 §3.1/§3.2) to this module's message-and-exit-2 load-check
+    shape, never a traceback."""
+    try:
+        return StandaloneSeam(session, **kwargs)
+    except ValueError as exc:
+        click.echo(str(exc), err=True)
+        raise SystemExit(2) from exc
+
+
 def _build_seam(
     project: Path,
     *,
@@ -199,7 +211,7 @@ def _build_seam(
             raise SystemExit(2)
         selection = ScenarioSelection(scenario)
         return (
-            StandaloneSeam(
+            _seam(
                 scenario_session(plugin, selection),
                 transport_kind="mock",
                 unattended=unattended,
@@ -301,7 +313,7 @@ def _build_seam(
                 )
             )
         return (
-            StandaloneSeam(
+            _seam(
                 serial_plugin_session(
                     plugin,
                     endpoint,
@@ -340,7 +352,7 @@ def _build_seam(
             click.echo(str(exc), err=True)
             raise SystemExit(2) from exc
         return (
-            StandaloneSeam(
+            _seam(
                 session,
                 transport_kind="replay",
                 unattended=unattended,
@@ -407,7 +419,7 @@ def _build_seam(
                 )
             )
         return (
-            StandaloneSeam(
+            _seam(
                 ftdi_plugin_session(
                     plugin,
                     endpoint_any,
@@ -426,7 +438,7 @@ def _build_seam(
             None,
         )
     return (
-        StandaloneSeam(
+        _seam(
             mock_plugin_session(plugin, capture_root=capture_root),
             transport_kind=transport,
             unattended=unattended,

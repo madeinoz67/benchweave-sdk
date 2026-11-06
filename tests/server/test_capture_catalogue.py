@@ -32,7 +32,10 @@ NEW_ROWS = ["capture_delete", "capture_pin", "capture_unpin"]
 #: I4a's disclosed delta (adopted fork F-C): row 22.
 REPORT_ROWS = ["report_export"]
 #: I4b.1's disclosed delta (F-C's adopted posture): row 23.
+# Issue #589 PR-2 rows 24-25 (the pinned profile contract's operation
+# and the reset verb under its declared policy).
 ANALYSIS_ROWS = ["capture_analysis"]
+INVOKE_ROWS = ["invoke", "device_reset"]
 
 
 def call(seam: StandaloneSeam, operation: str, arguments: dict | None = None) -> dict:
@@ -47,7 +50,7 @@ def validate(instance: object, schema: dict) -> list[str]:
 
 
 def test_capture_rows_are_served() -> None:
-    for name in FLIPPED + NEW_ROWS + REPORT_ROWS + ANALYSIS_ROWS:
+    for name in FLIPPED + NEW_ROWS + REPORT_ROWS + ANALYSIS_ROWS + INVOKE_ROWS:
         row = catalogue.spec(name)
         assert row is not None, name
         assert row.implemented, name
@@ -60,8 +63,8 @@ def test_new_rows_sit_after_sw10s_closed_18() -> None:
     report_export (adopted fork F-C) is row 22; I4b.1's capture_analysis
     (F-C's adopted posture) is row 23."""
     names = [row.name for row in catalogue.CATALOGUE]
-    assert names[18:] == NEW_ROWS + REPORT_ROWS + ANALYSIS_ROWS
-    assert len(names) == 23
+    assert names[18:] == NEW_ROWS + REPORT_ROWS + ANALYSIS_ROWS + INVOKE_ROWS
+    assert len(names) == 25
 
 
 def test_capture_start_requires_exactly_one_bound() -> None:
