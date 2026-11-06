@@ -271,6 +271,20 @@ class SerialLink:
         with self._cond:
             return len(self._ring)
 
+    def purge_rx(self) -> None:
+        """Drop every byte currently buffered in the receive ring (#589).
+
+        The clear runs under the ring's own condition variable, so it is
+        atomic against the reader thread's appends — no byte can land
+        mid-clear. The reader itself keeps running and the ring can refill
+        with bytes that arrive after the purge: a purge clears what HAS
+        landed host-side (the one receive state a hardware buffer purge
+        cannot reach), never what lands next. Not counted as overflow — a
+        purge is a caller's deliberate action, not a defect signal."""
+        with self._cond:
+            del self._ring[:]
+            self._cond.notify_all()
+
     def reader_alive(self) -> bool:
         """Whether the reader thread is running."""
         return self._thread.is_alive()

@@ -1551,3 +1551,154 @@ def test_the_stream_reply_wakes_the_reader_not_the_sleep_quantum(
     asyncio.run(session.connect())
     read = asyncio.run(session.execute("read", {"parameter": "line_status"}))
     assert read["status"] == "ok", read
+
+
+# --------------------------------------------------------------------------
+# The receive ring under an rx purge (#589): the purge control op reaches
+# the hardware buffers only, and the SerialLink ring is host-side receive
+# state a hardware purge cannot reach. The arms measure the ring DEPTH at
+# purge time (the reporting session measured a backlog; the depth at purge
+# is this arm's measurement), and keep the purge honest: hardware still
+# purges, real replies still arrive, and a post-purge refill of the ring is
+# visible, never hidden. Whether the ring was the sole source of the bench's
+# filler bytes is not claimed here — the reporting session re-runs its
+# recorder against this change, and that re-run is the measurement.
+# --------------------------------------------------------------------------
+
+
+def _wait_for_ring_depth(link: SerialLink, want: int, timeout_s: float = 2.0) -> int:
+    """Poll the ring's own instrumentation until it holds ``want`` bytes.
+    The reader drains the pipe asynchronously, so the depth at purge time
+    is measured through the link, never inferred from call order."""
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        depth = link.ring_length()
+        if depth >= want:
+            return depth
+        time.sleep(0.001)
+    return link.ring_length()
+
+
+def test_an_rx_purge_clears_the_ring_depth(plugin) -> None:
+    """Arm 1, before and after: mode garbage the reader collected while
+    nobody was receiving sits in the ring at purge time (measured); an rx
+    purge drops that depth to zero and a subsequent receive answers the
+    quiet line, not the stale bytes."""
+    stale = b"mode-bitstream-residue\n"
+    rows = [
+        {
+            # A device-initiated frame: on the pipe from construction, the
+            # recorded shape of the bytes a bitstream leaves behind.
+            "name": "mode-garbage",
+            "transaction": {"kind": "stream_receive"},
+            "response": {"data": stale.hex()},
+        },
+        {
+            "name": "purge-rx",
+            "transaction": {"kind": "ftdi_control", "op": "purge", "queue": "rx"},
+            "response": {},
+        },
+    ]
+    driver = ScriptedFtdiDriver(rows)
+    services = _services(plugin, driver)
+    context = _context(services, "op-purge-depth")
+    try:
+        assert _wait_for_ring_depth(services.link, len(stale)) == len(stale), (
+            "the stale mode bytes reached the ring before the purge (measured)"
+        )
+        assert asyncio.run(
+            services.transfer(
+                {"kind": "ftdi_control", "op": "purge", "queue": "rx"}, context
+            )
+        ) == {}
+        assert ("purge", {"queue": "rx"}) in driver.calls, (
+            "the hardware purge still ran — the ring clear is additive"
+        )
+        assert services.link.ring_length() == 0, (
+            "an rx purge cleared the ring beside the hardware buffers"
+        )
+        received = asyncio.run(
+            services.transfer(
+                {
+                    "kind": "stream_receive",
+                    "max_bytes": 64,
+                    "termination": "lf",
+                    "exact_bytes": None,
+                },
+                context,
+            )
+        )
+        assert received == {"data": b""}, (
+            "a receive after the purge answered the quiet line, not the "
+            "stale bytes"
+        )
+    finally:
+        services.link.close()
+
+
+def test_a_purged_link_still_serves_real_replies(plugin) -> None:
+    """Arm 2, the honest other half: the purge still reaches the hardware
+    buffers, and a receive after a legitimate exchange returns the REAL
+    reply — the ring clear is not satisfiable by making receives quiet.
+    The refill is visible: post-purge wire traffic lands in the ring
+    through the still-running reader, so what comes back after the purge
+    is post-purge traffic, never pre-purge residue."""
+    stale = b"stale-frame\n"
+    reply = b"real-reply\n"
+    rows = [
+        {
+            "name": "mode-garbage",
+            "transaction": {"kind": "stream_receive"},
+            "response": {"data": stale.hex()},
+        },
+        {
+            "name": "purge-rx",
+            "transaction": {"kind": "ftdi_control", "op": "purge", "queue": "rx"},
+            "response": {},
+        },
+        {
+            "name": "legit-exchange",
+            "transaction": {
+                "kind": "stream_exchange",
+                "data": "55a1",
+                "max_bytes": 64,
+                "termination": "lf",
+                "exact_bytes": None,
+            },
+            "response": {"data": reply.hex()},
+        },
+    ]
+    driver = ScriptedFtdiDriver(rows)
+    services = _services(plugin, driver)
+    context = _context(services, "op-purge-honest")
+    try:
+        assert _wait_for_ring_depth(services.link, len(stale)) == len(stale)
+        asyncio.run(
+            services.transfer(
+                {"kind": "ftdi_control", "op": "purge", "queue": "rx"}, context
+            )
+        )
+        assert ("purge", {"queue": "rx"}) in driver.calls, (
+            "the hardware purge still ran"
+        )
+        assert services.link.reader_alive(), (
+            "the purge stopped no reader — the link keeps draining the pipe"
+        )
+        received = asyncio.run(
+            services.transfer(
+                {
+                    "kind": "stream_exchange",
+                    "data": bytes.fromhex("55a1"),
+                    "max_bytes": 64,
+                    "termination": "lf",
+                    "exact_bytes": None,
+                },
+                context,
+            )
+        )
+        assert received == {"data": reply}, (
+            "the receive after the purge returned the real reply, not the "
+            "stale frame"
+        )
+    finally:
+        services.link.close()
