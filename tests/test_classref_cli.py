@@ -29,7 +29,10 @@ def test_derive_then_verify_roundtrip_refuses_the_pinned_catalog(
     # verify-ui first: the helper already wrote the derived set.
     runner = CliRunner()
     result = runner.invoke(cli, ["verify-ui", str(project)])
-    assert result.exit_code != 0
+    # Exit 1 exactly: _domain_errors converts the refusal to a ClickException,
+    # whose exit_code is 1 by click's contract — a coded guarantee, so the
+    # docstring's "exits 1" and this assertion agree at the stronger truth.
+    assert result.exit_code == 1
     assert (
         "profile_contract_invalid: urn:veridian:vendor-catalog:1.0.0"
         in result.output

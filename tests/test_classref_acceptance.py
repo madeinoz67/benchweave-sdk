@@ -196,7 +196,9 @@ def test_a1_the_workflow_runs_clean_until_the_gate_refuses(tmp_path: Path) -> No
     ):
         assert code not in derive.output, derive.output
     verify = runner.invoke(cli, ["verify-ui", str(project)])
-    assert verify.exit_code != 0
+    # Exit 1 exactly, not merely non-zero: _domain_errors converts the refusal
+    # to a ClickException, whose exit_code is 1 by click's contract.
+    assert verify.exit_code == 1
     assert "profile_contract_invalid: urn:meridian:composed-burst:1.0.0" in (
         verify.output
     ), verify.output

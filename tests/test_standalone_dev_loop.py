@@ -720,10 +720,13 @@ def test_the_loop_loads_the_plugin_adapter_not_only_the_presentation(
     would raise ``standalone_connect_identity_mismatch`` by design. The
     loop never connects; its pages are the composed presentation.
 
-    #589 PR-2: the listener half is parked (the server refuses the pins
-    before binding — NEEDS_GATE_BACK above); the probe half still runs, and
-    measures what it always did: the loader resolves a real factory over
-    the pinned documents with no diagnostic.
+    #589 PR-2: the listener half is parked under NEEDS_GATE_BACK, the same
+    marker and the same R2 corpus motion carrier as the three served-page
+    arms above (vendor pins move out of contracts[], main-side) — the server
+    refuses the pins before binding, so this arm asserts strictly less than
+    it did until that motion lands. The probe half still runs, and measures
+    what it always did: the loader resolves a real factory over the pinned
+    documents with no diagnostic.
     """
     probe = _run(
         [str(installed.python), "-c", LOADER_PROBE, str(loop.project)],
