@@ -15,8 +15,10 @@ from benchweave_sdk_server.errors import ERROR_CODES, ERROR_HTTP_STATUS
 #: SW-56/SW-59 name the capabilities, SW-10's list omits them — the owner
 #: fork is recorded in the I3b design record §7) — I4a's row 22
 #: (report_export, the adopted fork F-C: SW-53/SW-56 name the capability),
-#: and I4b.1's row 23 (capture_analysis, F-C's adopted posture again:
-#: SW-50 names the capability, the closed list omits it).
+#: I4b.1's row 23 (capture_analysis, F-C's adopted posture again: SW-50
+#: names the capability, the closed list omits it), and issue #589's
+#: rows 24-25 (invoke and device_reset: the pinned profile contract's
+#: operation and the reset verb under its declared policy).
 SW10_NAMES = [
     "host_info", "device_discover", "device_connect", "device_disconnect",
     "device_get", "parameter_read", "parameter_stage", "parameter_apply",
@@ -26,6 +28,7 @@ SW10_NAMES = [
     "capture_delete", "capture_pin", "capture_unpin",
     "report_export",
     "capture_analysis",
+    "invoke", "device_reset",
 ]
 
 #: I3b's flip: every row is implemented — the capture family serves and

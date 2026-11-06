@@ -13,6 +13,7 @@ unwatched).
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,19 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[1]
 VENDORED_TREE = REPO / "src/benchweave_sdk/standards"
+
+# Editable-install resilience (local macOS, observed 2026-11-06): a
+# file-provider daemon can set the macOS hidden flag on the worktree venv's
+# editable .pth, and CPython's site.addpackage silently skips hidden .pth
+# files — the src path never joins sys.path and benchweave_sdk resolves to
+# the namespace-package data portion in site-packages (no submodules).
+# Having src on sys.path at all restores resolution — the regular package
+# at src wins over any namespace portion regardless of position — and this
+# is exactly what the editable .pth does, so on a healthy venv it is a
+# no-op duplicate.
+_SRC = REPO / "src"
+if _SRC.is_dir() and str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
 
 
 def _writes(mode: str) -> bool:

@@ -100,6 +100,18 @@ rubric's G5 gate is the obligation; this file is the detail behind it.
    gateway's obligation-18 amendment and obligation-22 annotation land with the gateway
    docs PR after this repository's PR merges (the design's ordering, risk R5).
 
+11. **A new catalogue operation** (issue #589 PR-2) → five surfaces move together, and
+   four of them are pinned by tests that redden on a missed one: the
+   `catalogue.CATALOGUE` row itself, the seam's `_op_<name>` handler (the MCP
+   `_tool_handlers` equality assertion enforces handler↔catalogue by construction, but
+   the seam method is only pinned by construction-time use), the MCP handler dict, the
+   `host_info` served-operations list (`tests/server/test_seam.py`), the
+   `test_catalogue.py` closed-set pin, the `test_capture_catalogue.py` row-order pin,
+   and the `events_get` catalogue description when the operation publishes a state
+   event (`_STATE_EVENT_OPS` + `_event_data`). REST routes are automatic (web.py
+   iterates the catalogue); the HTML surface stays unchanged unless the plugin-ui
+   corpus gains a control for it.
+
 ## CI map
 
 | Job | What it catches |

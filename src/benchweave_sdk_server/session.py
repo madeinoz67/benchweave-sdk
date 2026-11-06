@@ -1111,6 +1111,34 @@ class PluginSession:
                         f"{(envelope.get('error') or {}).get('code', 'unknown')}"
                     )
                 data = envelope.get("data")
+                # D9's identify honesty row (issue #589 §3.3): the receipt
+                # is a contract (the #567 read-receipt precedent) — a
+                # ``None`` serial rendering later as a missing wire key is
+                # worse than a typed refusal at connect. Every identity
+                # field the receipt CARRIES must be the string the served
+                # identity schema types it as; plugins with nothing to
+                # report answer EMPTY STRINGS (the guide row). Boundary,
+                # disclosed: absent keys pass — the SDK's own scaffolded
+                # provider adapter omits ``serial`` today, so the schema's
+                # required-key half cannot run at establishment until the
+                # scaffold answers empty strings (an SRF-1 interface
+                # change) or the corpus admits a nullable serial.
+                if not isinstance(data, dict):
+                    raise RuntimeError(
+                        "standalone_connect_identity_invalid: the identify "
+                        "receipt is not an object; the served identity "
+                        "schema requires one"
+                    )
+                for field in ("manufacturer", "model", "serial", "firmware",
+                              "source"):
+                    if field in data and not isinstance(data[field], str):
+                        raise RuntimeError(
+                            f"standalone_connect_identity_invalid: the "
+                            f"identify receipt's {field} is "
+                            f"{type(data[field]).__name__}, not the string "
+                            "the served identity schema requires; plugins "
+                            "with nothing to report answer empty strings"
+                        )
                 if isinstance(data, dict):
                     # trust-5 (probe 4c): the establishment answer is
                     # compared against the descriptor's DECLARED identity —
@@ -1140,13 +1168,25 @@ class PluginSession:
             await self.close()
             raise
 
-    async def execute(self, verb: str, arguments: dict[str, Any]) -> dict[str, Any]:
-        """Run one operation envelope through the open adapter."""
+    async def execute(
+        self,
+        verb: str,
+        arguments: dict[str, Any],
+        *,
+        timeout_ms: int | None = None,
+    ) -> dict[str, Any]:
+        """Run one operation envelope through the open adapter.
+
+        ``timeout_ms`` overrides the verb policy with the caller's own
+        declared deadline — the invoke dispatch's per-ACTION bound (issue
+        #589 §3.2): the action row is the only place the deadline is read
+        from, so the wrong-keyed lookup cannot happen by construction.
+        """
         if self._adapter is None or not self.connected:
             raise RuntimeError("standalone_session_not_open")
-        timeout_ms = self.verb_timeout_ms(verb)
+        deadline = timeout_ms if timeout_ms is not None else self.verb_timeout_ms(verb)
         operation_id = f"op-{uuid.uuid4().hex[:8]}"
-        context = self._context(operation_id, timeout_ms)
+        context = self._context(operation_id, deadline)
         request = {"operation_id": operation_id, "verb": verb, "arguments": arguments}
         return await self._adapter.execute(request, context)
 

@@ -57,6 +57,19 @@ the invariants below anchor there.
   message: `standalone_supervision_unknown:`,
   `standalone_host_unproxyable:`,
   `standalone_capture_root_held:` (`benchweave_sdk_server/shim.py`).
+  The invoke lane (issue #589 PR-2) adds four at seam construction and at
+  reload, all `ValueError` (the CLI maps them to exit 2):
+  `profile_contract_missing:`, `profile_contract_hash_mismatch:`,
+  `profile_contract_invalid:` (the pinned-contract family — a pinned entry
+  that is neither measurement-shaped nor catalog-schema-valid refuses
+  whatever its URN; the resolver matches the gateway's, whose loader
+  raises for the same bytes) and `standalone_action_budget_infeasible:`
+  (an action row's `timeout_ms` above the serving invoke verb's budget — a
+  bound-coherence guard, not a completion guarantee: the per-attempt cost
+  is nowhere in the descriptor) — anchors:
+  `benchweave_sdk_server/invoke_contracts.py`,
+  `benchweave_sdk_server/seam.py` (construction and the pre-swap reload
+  resolution).
   Known wound, disclosed: the provider
   pin's read inherits the SDK-wide bounded-file cap
   (`presentation.INPUT_BYTE_LIMIT`), so a corpus-valid contract above the cap

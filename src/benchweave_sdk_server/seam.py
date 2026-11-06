@@ -53,6 +53,11 @@ from . import catalogue
 from .binding import BindingAbsent, BindingStale
 from .errors import SeamError
 from .events import EventBus
+from .invoke_contracts import (
+    ResolvedContracts,
+    check_action_budget_feasibility,
+    resolve_invoke_contracts,
+)
 from .library import CaptureLibrary
 from .retention import (
     QuotaLatch,
@@ -131,6 +136,11 @@ _STATE_EVENT_OPS: frozenset[str] = frozenset(
         "parameter_stage",
         "parameter_apply",
         "preset_apply",
+        # Issue #589 §3.1/§3.4: an invoked action may mutate (its declared
+        # side_effect rides the event row) and a reset is a state change by
+        # its own verb.
+        "invoke",
+        "device_reset",
     }
 )
 
@@ -319,6 +329,19 @@ class StandaloneSeam:
         # serializes async interleavings, which is exactly the class the
         # lanes reproduced.
         self._op_mutex = asyncio.Lock()
+        # The pinned contract resolution (issue #589 §3.1): construction
+        # REFUSES on a lying pin (the profile_contract_*: family — the CLI
+        # maps it to exit 2) and stores the resolved action registry the
+        # invoke gates read. None is the soft unresolved arm (absent path
+        # or half pair): invoke then answers unavailable, it never crashes.
+        # The budget feasibility check (§3.2) rides the same boundary.
+        self._invoke_contracts: ResolvedContracts | None = (
+            resolve_invoke_contracts(session.plugin)
+        )
+        check_action_budget_feasibility(session.plugin)
+        # I5's per-action constraints validators, compiled once per action
+        # on first use (the gateway's _invoke_constraints cache shape).
+        self._invoke_constraints: dict[str, Any] = {}
 
     @property
     def session(self) -> PluginSession:
@@ -468,6 +491,21 @@ class StandaloneSeam:
         elif operation == "preset_apply":
             data["preset_id"] = result.get("preset_id")
             data["applied_count"] = len(result.get("applied", []))
+        elif operation == "invoke":
+            # STATED verbatim from the descriptor's action row (issue #589
+            # §3.2, the revised ruling): a watcher sees WHICH actions
+            # mutate and which cannot be torn down; the host attaches no
+            # semantics of its own — the gateway attaches none either. The
+            # invoke result is the closed {action_id, result} envelope, so
+            # the device id comes from the session, not the result.
+            data["device_id"] = self._session.device_id
+            data["action_id"] = result.get("action_id")
+            row = self._session.plugin.descriptor.get("actions", {}).get(
+                str(result.get("action_id"))
+            )
+            if isinstance(row, dict):
+                data["side_effect"] = row.get("side_effect")
+                data["cancellable"] = row.get("cancellable")
         return data
 
     def _validate(self, name: str, arguments: dict[str, Any], correlation: str) -> None:
@@ -739,6 +777,195 @@ class StandaloneSeam:
             name, time.monotonic() * 1000.0, data.get("value")
         )
         return data
+
+    # --- the invoke operation (issue #589 §3.1, D2) --------------------------
+
+    def _invoke_constraints_validator(
+        self, action_id: str, declaration: Any
+    ) -> Any | None:
+        """The descriptor action's ``input_constraints`` validator (I5),
+        compiled once per action and cached — the gateway's own cache
+        shape. Malformed shapes skip (no narrowing without a schema
+        object)."""
+        from jsonschema import Draft202012Validator
+
+        if not isinstance(declaration, dict):
+            return None
+        constraints = declaration.get("input_constraints")
+        if not isinstance(constraints, dict):
+            return None
+        validator = self._invoke_constraints.get(action_id)
+        if validator is None:
+            validator = Draft202012Validator(constraints)
+            self._invoke_constraints[action_id] = validator
+        return validator
+
+    async def _op_invoke(
+        self, arguments: dict[str, Any], correlation: str
+    ) -> dict[str, Any]:
+        """Invoke one declared action under the pinned profile contract.
+
+        The pre-dispatch gates mirror the gateway's ``_invoke_gate`` I1–I5
+        in order, with ZERO adapter calls: a refusal is a clean typed
+        rejection before the device is touched. The post-dispatch result
+        gates mirror the gateway's post-dispatch checks: the closed
+        ``{action_id, result}`` envelope, the echo, the pinned catalog's
+        per-action output schema, and the dataset-shape refusal that keeps
+        a dataset-shaped result from laundering as a plain one until the
+        admission surface (PR-3) exists.
+        """
+        if arguments["device_id"] != self._session.device_id:
+            raise self._fail(
+                "not_found", f"no such device: {arguments['device_id']}", correlation
+            )
+        self._refuse_degraded(correlation)
+        if not self._session.connected:
+            raise self._fail("not_ready", "device is not connected", correlation)
+        # Under the op mutex for the whole span (R6): gates, dispatch and
+        # result checks read one plugin's contracts — a reload swapping the
+        # plugin mid-invoke is the chimera the mutex exists to prevent.
+        async with self._op_mutex:
+            contracts = self._invoke_contracts
+            operations = self._session.plugin.descriptor.get("operations", {})
+            # I1 capability: the descriptor's declared invoke operation AND
+            # the resolved contract pair — the gateway's controller-existence
+            # rule, in substance.
+            if (
+                contracts is None
+                or not isinstance(operations, dict)
+                or "invoke" not in operations
+            ):
+                raise self._fail(
+                    "unavailable",
+                    "invoke requires the pinned contract set (catalog and "
+                    "measurement schema) resolved at load",
+                    correlation,
+                    reason="contracts_unresolved",
+                )
+            action_id = arguments["action_id"]
+            # I2 declared action (defense in depth: the descriptor's own
+            # actions map).
+            declared = self._session.plugin.descriptor.get("actions")
+            if not isinstance(declared, dict) or action_id not in declared:
+                raise self._fail(
+                    "invalid_request",
+                    f"action {action_id!r} is not declared by the descriptor "
+                    "actions map",
+                    correlation,
+                )
+            # I3 catalog resolution (M14: an unknown contract is never
+            # opaque success).
+            action = contracts.actions.get(action_id)
+            if action is None:
+                raise self._fail(
+                    "invalid_request",
+                    f"action {action_id!r} does not resolve in the pinned "
+                    "profile catalog (M14)",
+                    correlation,
+                )
+            # I4 the pinned catalog's per-action input schema.
+            value = arguments["input"]
+            error = next(iter(action.input_validator.iter_errors(value)), None)
+            if error is not None:
+                raise self._fail(
+                    "invalid_request",
+                    f"input violates the action's catalog input schema at "
+                    f"{error.json_path}: {error.message}",
+                    correlation,
+                )
+            # I5 the descriptor action's input_constraints narrowing.
+            constraints = self._invoke_constraints_validator(
+                action_id, declared[action_id]
+            )
+            if constraints is not None:
+                error = next(iter(constraints.iter_errors(value)), None)
+                if error is not None:
+                    raise self._fail(
+                        "invalid_request",
+                        f"input violates the descriptor action's "
+                        f"input_constraints at {error.json_path}: "
+                        f"{error.message}",
+                        correlation,
+                    )
+            row = declared[action_id]
+            timeout_ms = (
+                int(row["timeout_ms"]) if isinstance(row, dict) else 0
+            )
+            data = await self._execute(
+                "invoke",
+                {"action_id": action_id, "input": value},
+                correlation,
+                timeout_ms=timeout_ms or None,
+            )
+            # The RESULT gates, in the gateway's order.
+            if set(data) != {"action_id", "result"}:
+                raise self._fail(
+                    "unavailable",
+                    f"invoke result refused: the data must be exactly "
+                    f"{{action_id, result}} (got {sorted(data)})",
+                    correlation,
+                )
+            if data.get("action_id") != action_id:
+                raise self._fail(
+                    "unavailable",
+                    f"invoke result refused: uncorrelated action_id "
+                    f"{data.get('action_id')!r}",
+                    correlation,
+                )
+            payload = data["result"]
+            result_error = next(
+                iter(action.output_validator.iter_errors(payload)), None
+            )
+            if result_error is not None:
+                raise self._fail(
+                    "unavailable",
+                    f"invoke result refused: the result violates the "
+                    f"action's catalog output schema at "
+                    f"{result_error.json_path}: {result_error.message}",
+                    correlation,
+                )
+            if contracts.is_dataset_shaped(payload):
+                raise self._fail(
+                    "unavailable",
+                    "invoke returned a dataset-shaped result; this host "
+                    "does not yet admit datasets on the invoke path (the "
+                    "admission surface is a named seam of issue #589)",
+                    correlation,
+                    reason="dataset_admission_absent",
+                )
+            return {"action_id": action_id, "result": payload}
+
+    async def _op_device_reset(
+        self, arguments: dict[str, Any], correlation: str
+    ) -> dict[str, Any]:
+        """The reset verb under its declared policy (issue #589 §3.4): a
+        thin handler — no device knowledge, only the descriptor's own
+        declaration."""
+        if arguments["device_id"] != self._session.device_id:
+            raise self._fail(
+                "not_found", f"no such device: {arguments['device_id']}", correlation
+            )
+        self._refuse_degraded(correlation)
+        if not self._session.connected:
+            raise self._fail("not_ready", "device is not connected", correlation)
+        async with self._op_mutex:
+            try:
+                self._session.verb_timeout_ms("reset")
+            except KeyError as exc:
+                raise self._fail(
+                    "unavailable",
+                    f"{exc}: the descriptor declares no reset operation policy",
+                    correlation,
+                ) from exc
+            data = await self._execute("reset", {}, correlation)
+            if not isinstance(data, dict) or data.get("acknowledged") is not True:
+                raise self._fail(
+                    "unavailable",
+                    f"reset receipt refused: the adapter must answer "
+                    f"acknowledged: true (got {data!r})",
+                    correlation,
+                )
+            return {"device_id": self._session.device_id, "acknowledged": True}
 
     # --- the endpoint binding (issue #385 §1.5) ------------------------------
 
@@ -1612,6 +1839,21 @@ class StandaloneSeam:
         correlation = self._correlation(None)
         self._reload_guards(correlation)
         effective = self._reload_wrapper(loaded) if self._reload_wrapper else loaded
+        # The incoming plugin's contracts resolve BEFORE the session swap
+        # (issue #589 §3.1, fold-wave item 8): a hard refusal keeps the
+        # PREVIOUS session loaded and answers typed — never an untyped
+        # mid-request 500 with the session already on the new plugin and
+        # stale contracts (lane 2's F3 escape shape).
+        try:
+            incoming_contracts = resolve_invoke_contracts(effective)
+            check_action_budget_feasibility(effective)
+        except ValueError as exc:
+            raise self._fail(
+                "invalid_request",
+                f"reload refused, the previous version stays loaded: {exc}",
+                correlation,
+                diagnostic=str(exc),
+            ) from exc
         was_connected = self._session.connected
         # Quiet/disconnect, then the atomic swap: everything after this
         # point serves the new plugin.
@@ -1620,6 +1862,10 @@ class StandaloneSeam:
             package_dir=self._session.plugin.package_dir,
             has_presentation=self._session.plugin.has_presentation,
         )
+        # The pre-swap resolution becomes the served one only at the swap:
+        # the incoming registry, and a fresh I5 constraints cache.
+        self._invoke_contracts = incoming_contracts
+        self._invoke_constraints = {}
         self._preset_digests = self._pin_presets()
         # The observation ring belongs to the PREVIOUS plugin version:
         # samples from the old code would launder into the new version's
@@ -3404,11 +3650,24 @@ class StandaloneSeam:
     # --- adapter envelope handling -----------------------------------------
 
     async def _execute(
-        self, verb: str, arguments: dict[str, Any], correlation: str
+        self,
+        verb: str,
+        arguments: dict[str, Any],
+        correlation: str,
+        *,
+        timeout_ms: int | None = None,
     ) -> dict[str, Any]:
-        """Run one adapter envelope and map its outcome honestly."""
+        """Run one adapter envelope and map its outcome honestly.
+
+        ``timeout_ms`` overrides the verb's own declared policy with the
+        ACTION row's deadline — the invoke dispatch only (issue #589 §3.2:
+        the per-action contract is honoured from the descriptor, never
+        assumed); every other caller keeps the verb policy.
+        """
         try:
-            envelope = await self._session.execute(verb, arguments)
+            envelope = await self._session.execute(
+                verb, arguments, timeout_ms=timeout_ms
+            )
         except ConformanceError as exc:
             raise self._fail(
                 "unavailable",

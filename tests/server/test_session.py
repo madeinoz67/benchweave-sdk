@@ -141,3 +141,72 @@ def test_descriptor_layer_refuses_without_presentation_to_absorb(tmp_path: Path)
     descriptor.write_text(json.dumps(document))
     with pytest.raises(PluginLoadError, match="standalone_plugin_invalid:"):
         load_plugin_project(project)
+
+
+# --- D9's identify honesty row (issue #589 §3.3) --------------------------------
+
+
+def _scripted_identify_seam(tmp_path: Path, invoke_project_builder, receipt: dict):
+    """A connected-pending seam over an invoke project whose scripted
+    adapter answers identify with ``receipt``."""
+    import asyncio
+    import sys
+
+    from benchweave_sdk_server.seam import StandaloneSeam
+    from benchweave_sdk_server.session import mock_plugin_session
+
+    project = invoke_project_builder(tmp_path / "identify")
+    plugin = load_plugin_project(project)
+    sys.modules[f"{plugin.package}.adapter"].SCRIPT["identify"] = receipt
+    seam = StandaloneSeam(mock_plugin_session(plugin), transport_kind="mock")
+    return asyncio, seam
+
+
+def test_a_null_serial_refuses_connect_naming_the_field(
+    tmp_path: Path, invoke_project_builder
+) -> None:
+    """The establishment receipt is a contract: ``serial``/``firmware`` are
+    STRINGS on the served identity schema, and a ``None`` serial rendered
+    as a missing wire key is worse than a typed refusal at connect."""
+    from benchweave_sdk_server.errors import SeamError
+
+    asyncio, seam = _scripted_identify_seam(
+        tmp_path,
+        invoke_project_builder,
+        {
+            "manufacturer": "SDK Example",
+            "model": "demo",
+            "serial": None,
+            "firmware": None,
+            "source": "descriptor",
+        },
+    )
+    with pytest.raises(SeamError) as caught:
+        asyncio.run(seam.call("device_connect", {"device_id": "example_device"}))
+    assert caught.value.code == "not_ready"
+    assert "standalone_connect_identity_invalid:" in caught.value.message
+    assert "serial" in caught.value.message
+
+
+def test_an_empty_string_serial_connects_and_serves(
+    tmp_path: Path, invoke_project_builder
+) -> None:
+    """Plugins with nothing to report answer EMPTY STRINGS (the guide row):
+    the key is present on the wire, never missing."""
+    asyncio, seam = _scripted_identify_seam(
+        tmp_path,
+        invoke_project_builder,
+        {
+            "manufacturer": "SDK Example",
+            "model": "demo",
+            "serial": "",
+            "firmware": "",
+            "source": "descriptor",
+        },
+    )
+    asyncio.run(seam.call("device_connect", {"device_id": "example_device"}))
+    identity = asyncio.run(
+        seam.call("device_get", {"device_id": "example_device"})
+    )
+    assert identity["serial"] == ""
+    assert identity["firmware"] == ""

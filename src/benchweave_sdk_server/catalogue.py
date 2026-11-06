@@ -719,6 +719,47 @@ _CAPTURE_ANALYSIS_RESULT = _object(
 )
 
 
+# --- the invoke operation and the reset row (issue #589 §3.1/§3.4) -------------
+
+#: The invoke input is the vendored runtime schema's own invoke branch
+#: (``otdp-runtime.schema.json`` ``$defs/operationRequest``: ``action_id``
+#: and ``input`` both required, closed) plus ``device_id`` — the adapter
+#: contract is the served contract, never a re-typed copy.
+_INVOKE_INPUT = _object(
+    {
+        "device_id": _IDENT,
+        "action_id": {"type": "string", "minLength": 1},
+        "input": {"type": "object"},
+    },
+    ["device_id", "action_id", "input"],
+)
+
+#: The CLOSED invoke envelope: the vendored ``operationResult`` invoke
+#: branch made the served shape — ``data`` is exactly ``{action_id,
+#: result}``, both required, no extension keys. An open pass-through here
+#: would let any adapter shape onto the wire (issue #589 §3.1's fold-wave
+#: item 2 — the earlier open shape's "the pass-through rule governs" claim
+#: was measured false).
+_INVOKE_RESULT = _object(
+    {
+        "action_id": {"type": "string", "minLength": 1},
+        "result": {"type": "object"},
+    },
+    ["action_id", "result"],
+)
+
+#: The reset receipt (the vendored runtime schema's reset result branch:
+#: ``acknowledged`` const true), with the device id the closed catalogue
+#: shape serves.
+_DEVICE_RESET_RESULT = _object(
+    {
+        "device_id": _IDENT,
+        "acknowledged": {"const": True},
+    },
+    ["device_id", "acknowledged"],
+)
+
+
 def _spec(
     name: str,
     description: str,
@@ -936,12 +977,13 @@ CATALOGUE: tuple[OperationSpec, ...] = (
         (
             "Fetch the seam's events after a cursor: the state changes "
             "(connect, disconnect, stage, apply, preset, reload, "
-            "endpoint bind/unbind), the capture lifecycle (started, "
-            "progress, stopped), the link family (the serial link state "
-            "machine: applied, refused and failed switches) and every "
-            "refused seam operation — unknown, deferred, invalid-argument "
-            "and adapter-reported alike — in one monotonic gap-free order, "
-            "the same sequence the /events stream carries."
+            "endpoint bind/unbind, invoke, device reset), the capture "
+            "lifecycle (started, progress, stopped), the link family (the "
+            "serial link state machine: applied, refused and failed "
+            "switches) and every refused seam operation — unknown, "
+            "deferred, invalid-argument and adapter-reported alike — in "
+            "one monotonic gap-free order, the same sequence the /events "
+            "stream carries."
         ),
         _object(
             {
@@ -1031,6 +1073,36 @@ CATALOGUE: tuple[OperationSpec, ...] = (
         ),
         _CAPTURE_ANALYSIS_INPUT,
         _CAPTURE_ANALYSIS_RESULT,
+    ),
+    # The #589 disclosed delta (issue #589 §3.1/§3.4): rows 24-25, beyond
+    # SW-10's closed 18 and rows 19-23 — the invoke operation the pinned
+    # profile contract serves, and the reset verb under its declared policy.
+    # Neither name is in the gateway's REST catalog (they are bridge verbs);
+    # the vendored-set intersection pin holds unchanged.
+    _spec(
+        "invoke",
+        (
+            "Invoke one declared device action under the pinned profile "
+            "contract: the host gates the request against the descriptor's "
+            "actions map, the pinned catalog's per-action input schema and "
+            "the action's own input constraints before any dispatch, runs "
+            "the action under ITS declared deadline, and checks the answer "
+            "against the closed invoke envelope and the pinned catalog's "
+            "output schema (the action id must echo; a dataset-shaped "
+            "result refuses until the dataset admission surface exists)."
+        ),
+        _INVOKE_INPUT,
+        _INVOKE_RESULT,
+    ),
+    _spec(
+        "device_reset",
+        (
+            "Reset the device through the adapter's reset verb under the "
+            "descriptor's declared reset operation policy; the adapter must "
+            "answer an acknowledged receipt."
+        ),
+        _object({"device_id": _IDENT}, ["device_id"]),
+        _DEVICE_RESET_RESULT,
     ),
 )
 
