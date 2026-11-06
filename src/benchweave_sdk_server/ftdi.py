@@ -820,9 +820,14 @@ class ScriptedFtdiDriver:
             self._script.append(self._parse_row(row, index))
             # A response-only stream row is a device-initiated frame: it is
             # on the pipe from the start, exactly as a device that speaks
-            # first would be.
+            # first would be. The row is identified by SHAPE (no op, no
+            # request), never by a non-empty response: a quiet receive is
+            # the documented parked-read outcome and the recorder journals
+            # it as an empty response, so gating on content would leave the
+            # row at the script head and wedge every later call. Releasing
+            # an empty frame is a no-op append that still consumes the row.
             entry = self._script[-1]
-            if entry.op is None and entry.request is None and entry.response:
+            if entry.op is None and entry.request is None:
                 self._inbound += self._script.pop().response
 
     def _parse_row(self, row: Mapping[str, Any], index: int) -> _ScriptEntry:
@@ -870,10 +875,22 @@ class ScriptedFtdiDriver:
                 f"kind {kind!r} is neither a control row (an 'op') nor a "
                 "section 8.1 stream kind"
             )
+        reply = response.get("data", "")
+        if not isinstance(reply, (str, bytes)):
+            raise malformed("a stream row's response data is a hex byte string")
+        try:
+            response_bytes = reply if isinstance(reply, bytes) else bytes.fromhex(reply)
+        except ValueError as exc:
+            raise malformed(
+                f"the stream response {reply!r} is not a hex byte string"
+            ) from exc
         if kind == "stream_receive":
             if "data" in transaction:
                 raise malformed("a receive row carries no outgoing data")
-            return _ScriptEntry(name)
+            # A receive row's response is a device-initiated frame: the
+            # __init__ release branch puts it on the pipe at construction,
+            # the recorded shape a device that speaks first produces.
+            return _ScriptEntry(name, response=response_bytes)
         data = transaction.get("data")
         if isinstance(data, bytes):
             # The ABI spelling (a builder's own transaction dict) is
@@ -890,15 +907,6 @@ class ScriptedFtdiDriver:
             raise malformed(
                 "a stream row's data is a hex byte string or bytes"
             )
-        reply = response.get("data", "")
-        if not isinstance(reply, (str, bytes)):
-            raise malformed("a stream row's response data is a hex byte string")
-        try:
-            response_bytes = reply if isinstance(reply, bytes) else bytes.fromhex(reply)
-        except ValueError as exc:
-            raise malformed(
-                f"the stream response {reply!r} is not a hex byte string"
-            ) from exc
         return _ScriptEntry(name, request=request, response=response_bytes)
 
     # -- the exact-match core --------------------------------------------------
@@ -936,6 +944,17 @@ class ScriptedFtdiDriver:
 
     def purge(self, queue: str) -> None:
         self._control("purge", {"queue": queue})
+        if queue == "rx":
+            # pyftdi's purge_rx_buffer clears the chip's buffer AND its own
+            # internal read buffer (pyftdi 0.57.2 source); the pipe drops
+            # undrained bytes exactly as the real one does.
+            self._inbound.clear()
+
+    @property
+    def pending(self) -> int:
+        """Bytes currently on the scripted pipe, not yet drained by a read
+        (test instrumentation — the rx-purge parity arm's witness)."""
+        return len(self._inbound)
 
     def set_bitmode(self, mask: int, mode: int) -> None:
         self._control("set_bitmode", {"mask": mask, "mode": mode})
@@ -1295,6 +1314,16 @@ class FtdiCaptureServices(SerialCaptureServices):
             raise ConnectionError(
                 f"ftdi driver call failed: {type(exc).__name__}: {exc}"
             ) from exc
+        # An rx purge clears the ring beside the hardware buffers (#589):
+        # the ring is host-side receive state the driver's purge cannot
+        # reach, and the still-running reader can be holding mode garbage
+        # in it at purge time. The clear is atomic against the reader's
+        # appends and fences the reader's in-flight read (a straddled
+        # chunk is discarded), so nothing fetched before the purge
+        # surfaces after it; bytes fetched by a read that begins after it
+        # land as fresh traffic.
+        if op == "purge" and transaction.get("queue") == "rx":
+            self._link.purge_rx()
         # 6. Result validation: the live device is untrusted against its
         #    own pinned contract. read_pins wraps its byte in the base64
         #    document form and validates; actuation ops answer {} —

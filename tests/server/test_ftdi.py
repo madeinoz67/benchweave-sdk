@@ -35,6 +35,7 @@ import base64
 import dataclasses
 import hashlib
 import json
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -1551,3 +1552,619 @@ def test_the_stream_reply_wakes_the_reader_not_the_sleep_quantum(
     asyncio.run(session.connect())
     read = asyncio.run(session.execute("read", {"parameter": "line_status"}))
     assert read["status"] == "ok", read
+
+
+# --------------------------------------------------------------------------
+# The receive ring under an rx purge (#589): the purge control op reaches
+# the hardware buffers only, and the SerialLink ring is host-side receive
+# state a hardware purge cannot reach. The arms measure the ring DEPTH at
+# purge time (the reporting session measured a backlog; the depth at purge
+# is this arm's measurement), and keep the purge honest: hardware still
+# purges, real replies still arrive, and a post-purge refill of the ring is
+# visible, never hidden. Whether the ring was the sole source of the bench's
+# filler bytes is not claimed here — the reporting session re-runs its
+# recorder against this change, and that re-run is the measurement.
+# --------------------------------------------------------------------------
+
+
+def _wait_for_ring_depth(link: SerialLink, want: int, timeout_s: float = 2.0) -> int:
+    """Poll the ring's own instrumentation until it holds ``want`` bytes.
+    The reader drains the pipe asynchronously, so the depth at purge time
+    is measured through the link, never inferred from call order."""
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        depth = link.ring_length()
+        if depth >= want:
+            return depth
+        time.sleep(0.001)
+    return link.ring_length()
+
+
+def test_an_rx_purge_clears_the_ring_depth(plugin) -> None:
+    """Arm 1, before and after: mode garbage the reader collected while
+    nobody was receiving sits in the ring at purge time (measured); an rx
+    purge drops that depth to zero and a subsequent receive answers the
+    quiet line, not the stale bytes."""
+    stale = b"mode-bitstream-residue\n"
+    rows = [
+        {
+            # A device-initiated frame: on the pipe from construction, the
+            # recorded shape of the bytes a bitstream leaves behind.
+            "name": "mode-garbage",
+            "transaction": {"kind": "stream_receive"},
+            "response": {"data": stale.hex()},
+        },
+        {
+            "name": "purge-rx",
+            "transaction": {"kind": "ftdi_control", "op": "purge", "queue": "rx"},
+            "response": {},
+        },
+    ]
+    driver = ScriptedFtdiDriver(rows)
+    services = _services(plugin, driver)
+    context = _context(services, "op-purge-depth")
+    try:
+        assert _wait_for_ring_depth(services.link, len(stale)) == len(stale), (
+            "the stale mode bytes reached the ring before the purge (measured)"
+        )
+        assert asyncio.run(
+            services.transfer(
+                {"kind": "ftdi_control", "op": "purge", "queue": "rx"}, context
+            )
+        ) == {}
+        assert ("purge", {"queue": "rx"}) in driver.calls, (
+            "the hardware purge still ran — the ring clear is additive"
+        )
+        assert services.link.ring_length() == 0, (
+            "an rx purge cleared the ring beside the hardware buffers"
+        )
+        received = asyncio.run(
+            services.transfer(
+                {
+                    "kind": "stream_receive",
+                    "max_bytes": 64,
+                    "termination": "lf",
+                    "exact_bytes": None,
+                },
+                context,
+            )
+        )
+        assert received == {"data": b""}, (
+            "a receive after the purge answered the quiet line, not the "
+            "stale bytes"
+        )
+    finally:
+        services.link.close()
+
+
+def test_a_purged_link_still_serves_real_replies(plugin) -> None:
+    """Arm 2, the honest other half: the purge still reaches the hardware
+    buffers, and a receive after a legitimate exchange returns the REAL
+    reply — the ring clear is not satisfiable by making receives quiet.
+    The refill is visible: post-purge wire traffic lands in the ring
+    through the still-running reader, so what comes back after the purge
+    is post-purge traffic, never pre-purge residue."""
+    stale = b"stale-frame\n"
+    reply = b"real-reply\n"
+    rows = [
+        {
+            "name": "mode-garbage",
+            "transaction": {"kind": "stream_receive"},
+            "response": {"data": stale.hex()},
+        },
+        {
+            "name": "purge-rx",
+            "transaction": {"kind": "ftdi_control", "op": "purge", "queue": "rx"},
+            "response": {},
+        },
+        {
+            "name": "legit-exchange",
+            "transaction": {
+                "kind": "stream_exchange",
+                "data": "55a1",
+                "max_bytes": 64,
+                "termination": "lf",
+                "exact_bytes": None,
+            },
+            "response": {"data": reply.hex()},
+        },
+    ]
+    driver = ScriptedFtdiDriver(rows)
+    services = _services(plugin, driver)
+    context = _context(services, "op-purge-honest")
+    try:
+        assert _wait_for_ring_depth(services.link, len(stale)) == len(stale)
+        asyncio.run(
+            services.transfer(
+                {"kind": "ftdi_control", "op": "purge", "queue": "rx"}, context
+            )
+        )
+        assert ("purge", {"queue": "rx"}) in driver.calls, (
+            "the hardware purge still ran"
+        )
+        assert services.link.reader_alive(), (
+            "the purge stopped no reader — the link keeps draining the pipe"
+        )
+        received = asyncio.run(
+            services.transfer(
+                {
+                    "kind": "stream_exchange",
+                    "data": bytes.fromhex("55a1"),
+                    "max_bytes": 64,
+                    "termination": "lf",
+                    "exact_bytes": None,
+                },
+                context,
+            )
+        )
+        assert received == {"data": reply}, (
+            "the receive after the purge returned the real reply, not the "
+            "stale frame"
+        )
+    finally:
+        services.link.close()
+
+
+class _HoldingTransport:
+    """A Transport whose first read parks on an arm-held gate and then
+    serves bytes queued while it was parked — the straddle shape: bytes on
+    the pipe BEFORE a purge, fetched by a read that began before it
+    (#589's in-flight-read fold). After the gate opens, reads serve
+    whatever is queued and pace themselves on empty."""
+
+
+    def __init__(self) -> None:
+        self._gate = threading.Event()
+        self.parked = threading.Event()
+        self.served = 0
+        self._inbound = bytearray()
+
+    def queue(self, data: bytes) -> None:
+        self._inbound += data
+
+    def release(self) -> None:
+        self._gate.set()
+
+    def write(self, data: bytes) -> int | None:
+        return len(data)
+
+    def read(self, size: int = 1) -> bytes:
+        self.parked.set()
+        self._gate.wait()
+        out = bytes(self._inbound[:size])
+        del self._inbound[:size]
+        self.served += 1
+        if not out:
+            time.sleep(0.001)
+        return out
+
+    def close(self) -> None:
+        self._gate.set()
+
+
+def test_a_read_in_flight_across_the_purge_never_surfaces(plugin) -> None:
+    """The in-flight-read fold (#589 review): the reader's transport read
+    runs OUTSIDE the ring's condition variable, so a chunk fetched before
+    an rx purge could append after it — pre-purge bytes surviving the
+    purge and surfacing on the next receive as non-deterministic filler.
+    The arm parks the reader's read on a gate, queues stale bytes while it
+    is parked, purges, and only then releases the read: the straddled
+    chunk must never reach the ring."""
+    stale = b"straddled-stale\n"
+    driver = ScriptedFtdiDriver(
+        [
+            {
+                "name": "purge-rx",
+                "transaction": {"kind": "ftdi_control", "op": "purge", "queue": "rx"},
+                "response": {},
+            }
+        ]
+    )
+    contract = verify_ftdi_plugin(plugin)
+    transport = _HoldingTransport()
+    services = FtdiCaptureServices(
+        SerialLink(transport),
+        driver,
+        contract.grammar,
+        provider=contract.provider,
+        max_frame_bytes=4096,
+        limits=contract.limits,
+    )
+    context = _context(services, "op-purge-straddle")
+    try:
+        deadline = time.monotonic() + 2.0
+        while not transport.parked.is_set() and time.monotonic() < deadline:
+            time.sleep(0.001)
+        assert transport.parked.is_set(), "the reader parked inside its read"
+        transport.queue(stale)  # on the pipe BEFORE the purge
+        asyncio.run(
+            services.transfer(
+                {"kind": "ftdi_control", "op": "purge", "queue": "rx"}, context
+            )
+        )
+        assert services.link.ring_length() == 0
+        transport.release()  # the straddled read returns the stale chunk now
+        time.sleep(0.25)  # several drain loops, to observe any append
+        assert services.link.ring_length() == 0, (
+            "a chunk fetched by a read that began before the purge never "
+            "reached the ring"
+        )
+        received = asyncio.run(
+            services.transfer(
+                {
+                    "kind": "stream_receive",
+                    "max_bytes": 64,
+                    "termination": "lf",
+                    "exact_bytes": None,
+                },
+                context,
+            )
+        )
+        assert received == {"data": b""}, (
+            "the straddled stale bytes never surfaced on a receive"
+        )
+    finally:
+        transport.release()
+        services.link.close()
+
+
+def test_a_fresh_reply_straddling_the_purge_is_discarded_and_the_link_recovers(
+    plugin,
+) -> None:
+    """The mirror of the straddle arm (#589 review, wave 2): whether a
+    straddled chunk's bytes are stale or fresh is genuinely undecidable —
+    the read began before the purge and the transport cannot prove when
+    its bytes arrived — so the fence's drop is a CHOSEN CONTRACT, and this
+    arm pins which way it goes. Park the reader's read, purge on an EMPTY
+    pipe, then queue the FRESH post-purge reply and release: the straddled
+    read fetches it and the fence discards it — a command issued in the
+    same breath as a purge can lose its first reply, and the caller
+    retries rather than waits. The second half pins the bound: reads that
+    BEGIN after the purge deliver normally, so the loss is exactly the
+    one straddling chunk and the next frame arrives whole."""
+    straddled_reply = b"first-reply-lost\n"
+    next_frame = b"next-frame-delivered\n"
+    driver = ScriptedFtdiDriver(
+        [
+            {
+                "name": "purge-rx",
+                "transaction": {"kind": "ftdi_control", "op": "purge", "queue": "rx"},
+                "response": {},
+            }
+        ]
+    )
+    contract = verify_ftdi_plugin(plugin)
+    transport = _HoldingTransport()
+    services = FtdiCaptureServices(
+        SerialLink(transport),
+        driver,
+        contract.grammar,
+        provider=contract.provider,
+        max_frame_bytes=4096,
+        limits=contract.limits,
+    )
+    context = _context(services, "op-purge-mirror")
+    try:
+        deadline = time.monotonic() + 2.0
+        while not transport.parked.is_set() and time.monotonic() < deadline:
+            time.sleep(0.001)
+        assert transport.parked.is_set(), "the reader parked inside its read"
+        # The purge runs on an EMPTY pipe: nothing queued is pre-purge.
+        asyncio.run(
+            services.transfer(
+                {"kind": "ftdi_control", "op": "purge", "queue": "rx"}, context
+            )
+        )
+        # The fresh reply — the device's answer to a command issued right
+        # after the purge — is fetched by the read that began before it.
+        transport.queue(straddled_reply)
+        transport.release()
+        while transport.served < 1 and time.monotonic() < deadline:
+            time.sleep(0.001)
+        assert transport.served >= 1, "the straddled read completed"
+        assert services.link.ring_length() == 0, (
+            "the straddled read's chunk was discarded even though its "
+            "bytes were fresh post-purge traffic — the fence errs toward "
+            "dropping, and this is the chosen contract"
+        )
+        # The bound: a read that BEGAN after the purge delivers normally.
+        transport.queue(next_frame)
+        assert _wait_for_ring_depth(services.link, len(next_frame)) == len(next_frame)
+        received = asyncio.run(
+            services.transfer(
+                {
+                    "kind": "stream_receive",
+                    "max_bytes": 64,
+                    "termination": "lf",
+                    "exact_bytes": None,
+                },
+                context,
+            )
+        )
+        assert received == {"data": next_frame}, (
+            "the frame after the straddled one arrived whole"
+        )
+    finally:
+        transport.release()
+        services.link.close()
+
+
+class _HoldingDriver(ScriptedFtdiDriver):
+    """The shipped double with a gate on its first ``read_data``: the
+    reader thread parks with the double's OWN pipe still holding undrained
+    bytes, so an rx purge runs while that pipe is non-empty — the case the
+    double's ``_inbound`` clear exists for (refute lane 2, F2)."""
+
+    def __init__(self, rows: list[dict[str, Any]]) -> None:
+        super().__init__(rows)
+        self.parked = threading.Event()
+        self._gate = threading.Event()
+
+    def release(self) -> None:
+        self._gate.set()
+
+    def read_data(self, size: int) -> bytes:
+        self.parked.set()
+        self._gate.wait()
+        return super().read_data(size)
+
+
+def test_the_doubles_rx_purge_clears_undrained_pipe_bytes(plugin) -> None:
+    """Refute lane 2, F2: the double's rx-purge pipe clear claimed parity
+    with pyftdi (which clears the chip buffer AND its own read buffer) and
+    nothing witnessed it — arms 1-2 drain the pipe before purging, arms
+    3-4 use another transport. This arm parks the reader with the double's
+    pipe NON-empty, purges, and asserts the pipe serves empty afterwards:
+    the parity claim, witnessed. Removing the clear reddens here."""
+    stale = b"undrained-pipe-garbage\n"
+    rows = [
+        {
+            "name": "mode-garbage",
+            "transaction": {"kind": "stream_receive"},
+            "response": {"data": stale.hex()},
+        },
+        {
+            "name": "purge-rx",
+            "transaction": {"kind": "ftdi_control", "op": "purge", "queue": "rx"},
+            "response": {},
+        },
+    ]
+    driver = _HoldingDriver(rows)
+    services = _services(plugin, driver)
+    context = _context(services, "op-purge-pipe")
+    try:
+        deadline = time.monotonic() + 2.0
+        while not driver.parked.is_set() and time.monotonic() < deadline:
+            time.sleep(0.001)
+        assert driver.parked.is_set(), "the reader parked inside its read"
+        assert driver.pending == len(stale), (
+            "the double's pipe held undrained bytes at purge time"
+        )
+        asyncio.run(
+            services.transfer(
+                {"kind": "ftdi_control", "op": "purge", "queue": "rx"}, context
+            )
+        )
+        assert driver.pending == 0, (
+            "the rx purge cleared the double's pipe, as pyftdi's "
+            "purge_rx_buffer clears its own read buffer"
+        )
+        driver.release()
+        time.sleep(0.25)  # several drain loops, to observe any delivery
+        assert services.link.ring_length() == 0, (
+            "the undrained pipe bytes never reached the ring"
+        )
+        received = asyncio.run(
+            services.transfer(
+                {
+                    "kind": "stream_receive",
+                    "max_bytes": 64,
+                    "termination": "lf",
+                    "exact_bytes": None,
+                },
+                context,
+            )
+        )
+        assert received == {"data": b""}
+    finally:
+        driver.release()
+        services.link.close()
+
+
+def test_a_split_reply_delivers_its_tail_as_a_complete_frame_after_a_purge(
+    plugin,
+) -> None:
+    """Refute lane 2, F5: the truncated-frame disclosure, armed. A reply
+    split across two reads loses its head to the fence when the head's
+    read straddles the purge; the tail is read after the purge, appended,
+    and DELIVERED as a frame that reads as complete — nothing downstream
+    can detect the missing head. The arm pins that behaviour exactly (the
+    delivered frame IS the tail); without the fence the head survives and
+    the receive delivers head+tail as one frame, which reddens here. The
+    split point is where the reads split, not a read-quantum boundary —
+    the mechanism is the same at any split."""
+    head = b"head-half"
+    tail = b"tail-half\n"
+    driver = ScriptedFtdiDriver(
+        [
+            {
+                "name": "purge-rx",
+                "transaction": {"kind": "ftdi_control", "op": "purge", "queue": "rx"},
+                "response": {},
+            }
+        ]
+    )
+    contract = verify_ftdi_plugin(plugin)
+    transport = _HoldingTransport()
+    services = FtdiCaptureServices(
+        SerialLink(transport),
+        driver,
+        contract.grammar,
+        provider=contract.provider,
+        max_frame_bytes=4096,
+        limits=contract.limits,
+    )
+    context = _context(services, "op-purge-split")
+    try:
+        deadline = time.monotonic() + 2.0
+        while not transport.parked.is_set() and time.monotonic() < deadline:
+            time.sleep(0.001)
+        assert transport.parked.is_set(), "the reader parked inside its read"
+        transport.queue(head)  # the reply's head, on the pipe pre-purge
+        asyncio.run(
+            services.transfer(
+                {"kind": "ftdi_control", "op": "purge", "queue": "rx"}, context
+            )
+        )
+        transport.release()  # the straddled read returns the head; the fence drops it
+        while transport.served < 1 and time.monotonic() < deadline:
+            time.sleep(0.001)
+        transport.queue(tail)  # the reply's tail, read AFTER the purge
+        assert _wait_for_ring_depth(services.link, len(tail)) == len(tail)
+        received = asyncio.run(
+            services.transfer(
+                {
+                    "kind": "stream_receive",
+                    "max_bytes": 64,
+                    "termination": "lf",
+                    "exact_bytes": None,
+                },
+                context,
+            )
+        )
+        assert received == {"data": tail}, (
+            "the terminator-bearing tail was delivered as a frame that "
+            "reads as complete, with its head gone — the armed disclosure"
+        )
+    finally:
+        transport.release()
+        services.link.close()
+
+
+def test_a_purge_between_a_frames_head_and_tail_delivers_the_tail_alone(
+    plugin,
+) -> None:
+    """Refute lane 2's second corruption path, armed: the ring clear ALONE
+    is enough. The head is fetched by a read that completes BEFORE the
+    purge and is appended to the ring; the purge's clear removes it; the
+    tail is read after the purge and delivered as a frame that reads as
+    complete. No read straddles the purge, so the fence is never involved —
+    this arm stays green under fence removal, correctly, which is why its
+    discriminating mutation is the RING CLEAR: with the clear gone the head
+    survives, the receive returns head and tail together, and the
+    tail-alone assertion reddens. This is the path that makes the hazard
+    independent of read timing, and it is why the caller contract attributes
+    truncation to any purge landing mid-frame rather than to the fence."""
+    head = b"head-half"
+    tail = b"tail-half\n"
+    driver = ScriptedFtdiDriver(
+        [
+            {
+                "name": "purge-rx",
+                "transaction": {"kind": "ftdi_control", "op": "purge", "queue": "rx"},
+                "response": {},
+            }
+        ]
+    )
+    contract = verify_ftdi_plugin(plugin)
+    transport = _HoldingTransport()
+    services = FtdiCaptureServices(
+        SerialLink(transport),
+        driver,
+        contract.grammar,
+        provider=contract.provider,
+        max_frame_bytes=4096,
+        limits=contract.limits,
+    )
+    context = _context(services, "op-purge-ring-clear-truncation")
+    try:
+        deadline = time.monotonic() + 2.0
+        while not transport.parked.is_set() and time.monotonic() < deadline:
+            time.sleep(0.001)
+        assert transport.parked.is_set(), "the reader parked inside its read"
+        transport.queue(head)
+        transport.release()  # this read completes BEFORE the purge: no straddle
+        assert _wait_for_ring_depth(services.link, len(head)) == len(head)
+        asyncio.run(
+            services.transfer(
+                {"kind": "ftdi_control", "op": "purge", "queue": "rx"}, context
+            )
+        )
+        assert services.link.ring_length() == 0, (
+            "the ring clear removed the head that the reader had already "
+            "appended before the purge"
+        )
+        transport.queue(tail)  # the tail arrives AFTER the purge
+        assert _wait_for_ring_depth(services.link, len(tail)) == len(tail)
+        received = asyncio.run(
+            services.transfer(
+                {
+                    "kind": "stream_receive",
+                    "max_bytes": 64,
+                    "termination": "lf",
+                    "exact_bytes": None,
+                },
+                context,
+            )
+        )
+        assert received == {"data": tail}, (
+            "the terminator-bearing tail was delivered as a frame that reads "
+            "as complete with its head gone, reached with no straddling read"
+        )
+    finally:
+        transport.release()
+        services.link.close()
+
+
+def test_a_quiet_receive_row_is_consumed_so_it_cannot_wedge_the_double(
+    plugin,
+) -> None:
+    """Refute lane 1, F-B. A quiet receive is the documented parked-read
+    outcome on this transport, and the recorder journals one as an empty
+    response (`_stream_row` writes no data key when the read is empty), so
+    a real recorded journal containing one is a legitimate shape. The
+    construction release branch identifies a device-initiated frame by row
+    SHAPE; keying it on a non-empty response left the quiet row at the
+    script head, and the next control call refused with "row
+    'quiet-receive' expects None None, got purge". This arm pins the
+    consumption: a purge queued behind a quiet receive must match."""
+    driver = ScriptedFtdiDriver(
+        [
+            {
+                # A quiet receive: no bytes, the shape the recorder writes.
+                "name": "quiet-receive",
+                "transaction": {"kind": "stream_receive"},
+                "response": {},
+            },
+            {
+                "name": "purge-rx",
+                "transaction": {"kind": "ftdi_control", "op": "purge", "queue": "rx"},
+                "response": {},
+            },
+        ]
+    )
+    contract = verify_ftdi_plugin(plugin)
+    transport = _HoldingTransport()
+    services = FtdiCaptureServices(
+        SerialLink(transport),
+        driver,
+        contract.grammar,
+        provider=contract.provider,
+        max_frame_bytes=4096,
+        limits=contract.limits,
+    )
+    context = _context(services, "op-quiet-receive-row")
+    try:
+        asyncio.run(
+            services.transfer(
+                {"kind": "ftdi_control", "op": "purge", "queue": "rx"}, context
+            )
+        )
+        assert driver.pending == 0, (
+            "the quiet receive released no bytes, and the purge behind it "
+            "matched — so the row was consumed at construction rather than "
+            "left at the script head to wedge every later call"
+        )
+    finally:
+        transport.release()
+        services.link.close()

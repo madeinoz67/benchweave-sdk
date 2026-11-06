@@ -218,6 +218,7 @@ class SerialLink:
         self._closed = False
         self._dropped_bytes = 0
         self._receive_depth = 0
+        self._purge_epoch = 0
         self._thread = threading.Thread(
             target=self._drain, name="benchweave-serial-reader", daemon=True
         )
@@ -270,6 +271,55 @@ class SerialLink:
         """The ring's current length (test and soak instrumentation)."""
         with self._cond:
             return len(self._ring)
+
+    def purge_rx(self) -> None:
+        """Drop every byte currently buffered in the receive ring (#589).
+
+        The clear runs under the ring's own condition variable, so it is
+        atomic against the reader thread's appends — no byte can land
+        mid-clear. The reader's transport read runs OUTSIDE the condition
+        variable, so a chunk fetched before this call could append after
+        it; the purge epoch closes that window too: a read that began
+        before a purge has its whole chunk discarded (:meth:`_drain`). The
+        fence errs toward dropping — no byte fetched before a purge is
+        ever appended after it, at the cost that a chunk fetched in the
+        instant after one, from a read that began before it, is discarded
+        with its chunk. The reader keeps running and the ring refills with
+        bytes read AFTER the purge. Not counted as overflow — a purge is a
+        caller's deliberate action, not a defect signal.
+
+        Caller-visible consequence, stated plainly: a purge may discard
+        the chunk the reader is fetching at that moment, STALE OR FRESH —
+        a command issued in the same breath as a purge can lose its first
+        reply, and that reply is not recoverable from the link. The loss
+        is bounded to the one straddling chunk (reads that begin after
+        the purge deliver normally), so the caller retries the command
+        rather than waiting out a reply that will never arrive.
+
+        A purge landing mid-frame can corrupt a frame rather than lose
+        it, and two mechanisms reach that same outcome. The fence drops
+        the whole chunk holding a frame's head when the reader fetched
+        that chunk across the purge; and this clear removes a head the
+        reader had already appended, where the tail then arrives after
+        the purge. Neither mechanism drops part of a chunk, so the
+        terminator-bearing tail can be delivered as a frame that reads as
+        complete. That is corruption and not a retry. Note that it needs
+        no straddling read: any purge landing between a frame's head and
+        its tail can produce it, by either mechanism. A caller that must
+        not accept partial frames resynchronises after purging.
+
+        The obligation above stands in for machinery this contract does
+        not build, and the trigger that would force that machinery is: a
+        caller that CANNOT resynchronise. At that point the fence needs to
+        carry a resynchronise-required state and ``stream_receive`` must
+        refuse a headless frame rather than deliver it, since a caller
+        cannot tell such a frame from a real one. Until such a caller
+        exists, a caller-initiated purge with a stated resync obligation
+        is the smaller and honest shape."""
+        with self._cond:
+            self._purge_epoch += 1
+            del self._ring[:]
+            self._cond.notify_all()
 
     def reader_alive(self) -> bool:
         """Whether the reader thread is running."""
@@ -372,13 +422,20 @@ class SerialLink:
     def _drain(self) -> None:
         """The reader thread: drain the transport into the bounded ring.
         Transport errors fault the link and wake every waiter; a close
-        ends the loop after the in-flight read returns."""
+        ends the loop after the in-flight read returns. A chunk whose read
+        straddled a purge (:meth:`purge_rx` raised the epoch between this
+        loop's epoch capture and its append) is discarded: those bytes
+        were fetched against a line the purge has since declared clean."""
         try:
             while not self._closing:
+                with self._cond:
+                    epoch = self._purge_epoch
                 chunk = self._transport.read(_READ_CHUNK)
                 if not chunk:
                     continue
                 with self._cond:
+                    if epoch != self._purge_epoch:
+                        continue
                     self._ring += chunk
                     overflow = len(self._ring) - self._ring_capacity
                     if overflow > 0:
