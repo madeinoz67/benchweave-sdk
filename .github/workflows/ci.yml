@@ -73,7 +73,7 @@ jobs:
         # every xdist worker holding one of its tests repeated the build. It
         # runs in the ubuntu-only serial step below (design record §13).
         run: |
-          uv run pytest -q -m "not browser and not timing and not loop" -n auto
+          uv run pytest -q -m "not browser and not timing and not loop and not live_ftdi" -n auto
           uv run pytest -q -m "timing"
 
       - name: "Standalone dev loop — serial, ubuntu-only (issue #556)"
