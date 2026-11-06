@@ -339,6 +339,57 @@ def test_a7_walk_every_admitted_format_over_every_surface(
         assert ">t (s)<" not in document
 
 
+def test_a7_dataset_half_a_dataset_id_refuses_honestly_on_every_surface(
+    tmp_path: Path, invoke_project_builder
+) -> None:
+    """The walk's dataset half (R5, armed by the fold: PR-3 landed at this
+    branch's own base): a REAL admitted dataset — manifest-only, inline
+    values, no primary, no format — answers ``not_found`` on every display
+    surface. A dataset has no series to render and none is invented: a
+    second decoder that serves a dataset id on any surface reddens here
+    (the record's R-C falsifier, finally armable)."""
+    import sys
+
+    from test_dataset_admission import _manifest as dataset_manifest
+
+    from benchweave_sdk_server.session import (
+        load_plugin_project,
+        mock_plugin_session,
+    )
+
+    plugin = load_plugin_project(invoke_project_builder(tmp_path / "proj"))
+    adapter = sys.modules[f"{plugin.package}.adapter"]
+    host = StandaloneSeam(
+        mock_plugin_session(plugin),
+        transport_kind="mock",
+        capture_root=tmp_path / "captures",
+    )
+    call(host, "device_connect", {"device_id": DEV})
+    adapter.SCRIPT["invoke"] = "__dataset__"
+    adapter.DATASET.clear()
+    adapter.DATASET.update(dataset_manifest())
+    dataset_id = call(host, "invoke", {
+        "device_id": DEV, "action_id": "demo.probe/1.0.0", "input": {}
+    })["result"]["dataset_id"]
+    # The dataset is really there: the inventory's sibling row carries no
+    # capture fields — the two source kinds stay distinguishable.
+    rows = call(host, "capture_list")["datasets"]
+    assert [row["dataset_id"] for row in rows] == [dataset_id]
+    assert "format" not in rows[0]
+    with pytest.raises(SeamError) as series:
+        call(host, "capture_series", {"capture_id": dataset_id})
+    assert series.value.code == "not_found"
+    assert "no published capture" in series.value.message
+    with pytest.raises(SeamError) as view:
+        host.analysis_view([dataset_id], None, None)
+    assert view.value.code == "not_found"
+    assert "no published capture" in view.value.message
+    with pytest.raises(SeamError) as exported:
+        call(host, "report_export", {"capture_ids": [dataset_id]})
+    assert exported.value.code == "not_found"
+    assert "no published capture" in exported.value.message
+
+
 # --- A1/A2: the series grid, per format --------------------------------------
 
 
@@ -430,6 +481,9 @@ def test_a5_the_units_ceiling_counts_labels(seam, capture_root) -> None:
         })
     assert caught.value.code == "invalid_request"
     assert "standalone_report_units_unsupported" in caught.value.message
+    assert "two distinct y labels" in caught.value.message, (
+        "the refusal names LABELS — 'byte value' is a label, not a unit"
+    )
     assert "byte value" in caught.value.message
     mixed = call(
         seam, "report_export", {"capture_ids": ["fx-ceiling-v", "fx-ceiling-raw"]}
@@ -498,8 +552,10 @@ def test_a8_markers_on_raw_validate_in_index_units(seam, capture_root) -> None:
 
 def test_a9_unknown_format_refuses_on_both_gates(seam, capture_root) -> None:
     """A9: a hand-written manifest with format 'csv' — capture_series
-    refuses with the artifact_read guidance; the loader refuses
-    standalone_report_format_unsupported naming the ADMITTED set."""
+    refuses standalone_capture_format_unknown (the fold adjudication: the
+    READ door joins the START door's prefix — same trigger class, a format
+    outside the registry) with the artifact_read guidance; the loader
+    refuses standalone_report_format_unsupported naming the ADMITTED set."""
     write_event(
         capture_root,
         "fx-csv-event",
@@ -510,6 +566,7 @@ def test_a9_unknown_format_refuses_on_both_gates(seam, capture_root) -> None:
     with pytest.raises(SeamError) as caught:
         call(seam, "capture_series", {"capture_id": "fx-csv-event"})
     assert caught.value.code == "invalid_request"
+    assert caught.value.message.startswith("standalone_capture_format_unknown:")
     assert "artifact_read" in caught.value.message
     with pytest.raises(SeamError) as loader:
         seam.analysis_view(["fx-csv-event"], None, None)

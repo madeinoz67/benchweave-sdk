@@ -2725,9 +2725,12 @@ class StandaloneSeam:
         fmt = str(manifest.get("format", ""))
         spec = catalogue._FORMAT_SPECS.get(fmt)
         if spec is None:
+            # The read door joins capture_start's prefix (STD-4, the fold
+            # adjudication): same trigger class — a format outside the
+            # registry — one name for both doors of the operation family.
             raise self._fail(
                 "invalid_request",
-                f"capture_series serves "
+                f"standalone_capture_format_unknown: capture_series serves "
                 f"{', '.join(catalogue._FORMAT_SPECS)} primaries; use "
                 f"artifact_read for a {fmt or 'unknown'} capture",
                 correlation,

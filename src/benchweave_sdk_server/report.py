@@ -142,7 +142,7 @@ def build_report(
     renders one chart, never two identical charts.
 
     Refuses (``standalone_report_*``) when the set carries more than two
-    distinct units (the SVG has a left and a right axis and no third) or
+    distinct y labels (the SVG has a left and a right axis and no third) or
     when a window's plot points exceed the presentation ceiling.
     """
     if not entries:
@@ -158,7 +158,7 @@ def build_report(
     if len(units) > 2:
         raise ReportRefusal(
             "standalone_report_units_unsupported: the report renders at most "
-            f"two distinct units ({', '.join(units)}); split the export"
+            f"two distinct y labels ({', '.join(units)}); split the export"
         )
     simulated = any(
         entry.source.metadata.get("transport") == "mock" for entry in entries
