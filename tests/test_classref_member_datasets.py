@@ -588,12 +588,19 @@ def test_a_digital_lanes_plot_choice_derives_on_a_plotless_page(
     ), target
 
 
-def test_the_plot_choice_survives_the_real_gate(tmp_path: Path) -> None:
-    """The composed plot through the real gate: the project derives, the
-    host renders, the census counts the member's plot on the capture page
-    (the reference's own engineering-plot expectation, still one — the
-    member's plot replaced the stripped template), and the run is clean
-    with the L4 dataset surface covered by the member's own plot."""
+def test_the_plot_choice_refuses_the_real_gate(tmp_path: Path) -> None:
+    """The composed plot's staged gate (#589 PR-2 inversion): the project
+    derives (below), the host REFUSES it — the fixture pins its vendor
+    catalog under contracts[], and since #589 PR-2 the pinned entry is
+    neither measurement-shaped nor catalog-schema-valid, so verify-ui's
+    render half refuses seam construction exactly where the gateway's
+    loader refuses the same bytes at activation. The arm's pre-PR-2 form
+    ("survives the real gate", clean run, the member's plot covering the
+    L4 dataset surface) asserted a shippable claim that was FALSE on
+    both hosts; the clean gate returns only with the R2 corpus motion
+    (vendor pins move out of contracts[], main-side). The arm still
+    proves the derivation: the composed waveform plot derives onto the
+    plotless page and the staged project carries it."""
     from benchweave_sdk.classref_gate import verify_ui
     from benchweave_sdk.scaffold import create_project
 
@@ -636,13 +643,19 @@ def test_the_plot_choice_survives_the_real_gate(tmp_path: Path) -> None:
     for slug, scaffold in derived.preset_scaffolds.items():
         (presets / f"{slug}.json").write_bytes(_raw(scaffold))
     (ui / "class-reference.json").write_bytes(_raw(derived.declaration))
-    report = verify_ui(project, reference=_plotless_reference())
-    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
-    # The dataset member's surface is not a deviation: no composed-plot row,
-    # no composed-dataset row, no applied-nowhere row rides the channel.
-    assert [
-        row for row in report.reported_deviations if "composed" in row
-    ] == [], report.reported_deviations
+    # The staged manifest carries the member's composed plot (the derivation
+    # half — the sibling plotless arms assert its full shape).
+    (staged_plot,) = [
+        plot
+        for page in derived.manifest["pages"]
+        for plot in (page.get("plots") or [])
+    ]
+    assert staged_plot["kind"] == "waveform", staged_plot
+    with pytest.raises(
+        ValueError,
+        match=r"profile_contract_invalid: urn:meridian:composed-burst:1.0.0",
+    ):
+        verify_ui(project, reference=_plotless_reference())
 
 
 # ---------------------------------------------------------------------------
@@ -1011,7 +1024,7 @@ def _smu_reference_without_output_plot() -> dict[str, Any]:
     return reference
 
 
-def test_a_dataset_member_on_a_readings_page_survives_the_real_gate(
+def test_a_dataset_member_on_a_readings_page_derives_but_refuses_the_gate(
     tmp_path: Path,
 ) -> None:
     """(B5 refute fold F1) A clean declaration that reds the real gate is
@@ -1022,10 +1035,13 @@ def test_a_dataset_member_on_a_readings_page_survives_the_real_gate(
     and the render serves twelve tiles where the class's authored
     ``{n_reading_tiles}`` template said six. The tile expectation is per
     page and per surface (the B4 data-table precedent): the template
-    resolves to the derivation's own minted count for the row's page, and
-    the gate's per-surface comparison (armed below) attributes every
-    served tile to its binding — a composed member's tiles are EXPECTED,
-    never excess."""
+    resolves to the derivation's own minted count for the row's page.
+    The gate half is the #589 PR-2 inversion — the SMU staging pins its
+    member declaration under contracts[], so verify-ui refuses at seam
+    construction (a shippable run was FALSE on both hosts; the gateway's
+    loader refuses the same bytes at activation) and the gate's
+    per-surface tile attribution returns only with the R2 corpus motion
+    (vendor pins move out of contracts[], main-side)."""
     from benchweave_sdk.classref_gate import verify_ui
 
     derived, project = _smu_project(
@@ -1044,20 +1060,37 @@ def test_a_dataset_member_on_a_readings_page_survives_the_real_gate(
         if binding.startswith(("measure-", "segment-capture-"))
     ]
     assert len(observation_ids) == 12, page["bindings"]
-    report = verify_ui(project, reference=SMU_REFERENCE)
-    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
+    # The gate half (#589 PR-2 inversion): the SMU staging pins its member
+    # declaration under contracts[], so verify-ui REFUSES at seam construction
+    # — the arm's pre-PR-2 form ("survives the real gate", a clean run whose
+    # per-surface comparison attributes every served tile to its binding)
+    # asserted a shippable claim that was FALSE on both hosts (the gateway's
+    # loader refuses the same bytes at activation). The gate-side tile
+    # attribution returns only with the R2 corpus motion (vendor pins move out
+    # of contracts[], main-side); the derivation half above — twelve minted
+    # tiles against the authored six — still proves the escalation shape.
+    with pytest.raises(
+        ValueError,
+        match=r"profile_contract_invalid: urn:meridian:member-declaration-smu:1.0.0",
+    ):
+        verify_ui(project, reference=SMU_REFERENCE)
 
 
-def test_a_stripped_member_tile_reds_the_per_surface_comparison(
+def test_a_stripped_member_tile_needs_the_gate_back_first(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """(B5 refute fold F1, the teeth) The per-surface reading-tile
-    comparison is load-bearing: with the count detector neutralized
-    (``_assert_expect`` forced empty — the composition gate's own
-    red-sanity idiom), a member tile stripped from the SERVED manifest's
-    page still reds typed, naming the binding — the count row alone
-    laundered strip-and-pad across bindings exactly the way the pooled
-    data-table count did (B4 fold F2)."""
+    """(B5 refute fold F1, the teeth — #589 PR-2 inversion) The per-surface
+    reading-tile comparison's teeth are parked: the SMU staging pins its
+    member declaration under contracts[], so verify-ui refuses at seam
+    construction BEFORE the strip-and-pad falsifier below can run — the
+    arm's pre-PR-2 form (a member tile stripped from the SERVED
+    manifest's page reding typed, naming the binding) asserted a claim
+    that was FALSE on both hosts to reach (the gateway's loader refuses
+    the same bytes at activation). The strip is still performed and
+    re-pinned (the falsifier's setup survives), and the typed
+    per-surface red returns only with the R2 corpus motion (vendor pins
+    move out of contracts[], main-side) — at which point this arm flips
+    back to its teeth shape."""
     import benchweave_sdk.classref_gate as gate_module
     from benchweave_sdk.classref_gate import verify_ui
 
@@ -1074,20 +1107,11 @@ def test_a_stripped_member_tile_reds_the_per_surface_comparison(
     envelope["manifest"]["sha256"] = hashlib.sha256(raw_manifest).hexdigest()
     (package / "presentation.json").write_bytes(_raw(envelope))
     monkeypatch.setattr(gate_module, "_assert_expect", lambda *a, **k: ([], []))
-    report = verify_ui(project, reference=SMU_REFERENCE)
-    surface = [
-        f
-        for f in report.findings
-        if f.code == "classref_gate_missing"
-        and f.detail.startswith("reading tile segment-capture-ch2-current")
-    ]
-    assert surface == [
-        gate_module.GateFinding(
-            "classref_gate_missing",
-            "reading tile segment-capture-ch2-current on output: the "
-            "derivation mints this surface, the render serves no tile for it",
-        )
-    ], [f"{f.code}: {f.detail}" for f in report.findings]
+    with pytest.raises(
+        ValueError,
+        match=r"profile_contract_invalid: urn:meridian:member-declaration-smu:1.0.0",
+    ):
+        verify_ui(project, reference=SMU_REFERENCE)
 
 
 def test_the_no_binding_row_reason_names_the_emitted_plot_binding(
@@ -1215,7 +1239,17 @@ def test_a_composed_settings_member_on_the_smu_keeps_the_class_row_honest(
     now (the F1 rule, the data-table surface comparison's arithmetic
     sibling): a per-page row counts only member tables minted ON that
     page, a pooled row counts them all — and the member's own surface is
-    the per-surface comparison's business, already armed in B4."""
+    the per-surface comparison's business, already armed in B4.
+
+    The gate half is the #589 PR-2 inversion: the SMU staging pins its
+    member declaration under contracts[], so verify-ui AND the render
+    both refuse at seam construction — the arm's pre-PR-2 form (a clean
+    gate, the member's table censused beside the class's on its own
+    page) asserted a shippable claim that was FALSE on both hosts (the
+    gateway's loader refuses the same bytes at activation). The
+    derivation half — the per-scope data-table expectation — still
+    proves the arithmetic; the gate census returns with the R2 corpus
+    motion (vendor pins move out of contracts[], main-side)."""
     from benchweave_sdk.classref_gate import verify_ui
 
     derived, project = _smu_project(
@@ -1234,15 +1268,8 @@ def test_a_composed_settings_member_on_the_smu_keeps_the_class_row_honest(
         "count": 1,
         "per_page": "output",
     }, derived.expectation["components"]["data-table"]
-    report = verify_ui(project, reference=SMU_REFERENCE)
-    assert report.clean, [f"{f.code}: {f.detail}" for f in report.findings]
-    # The member's table mints and renders on its own page — the surface
-    # the per-surface comparison (B4 fold F2) attributes to its binding.
-    from benchweave_sdk.classref_gate import census
-    from benchweave_sdk.classref_gate_render import render_pages
-
-    censused = census(render_pages(project, ["configuration"])["configuration"])
-    assert censused["data_table_bindings"] == [
-        "configure",
-        "vendor-configure",
-    ], censused["data_table_bindings"]
+    with pytest.raises(
+        ValueError,
+        match=r"profile_contract_invalid: urn:meridian:member-declaration-smu:1.0.0",
+    ):
+        verify_ui(project, reference=SMU_REFERENCE)
