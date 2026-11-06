@@ -1140,3 +1140,63 @@ that report is why this section exists). Rows are append-only; none of D1–D11 
 decoder validation, and the generality gate's own coverage claims were each **silently empty
 rather than loudly refusing**. That is one shape, not three coincidences, and it is why this
 ledger prefers a refusal that names itself.
+
+---
+
+## Appendix (2026-11-07, PR-2 continuation): the 80-vs-79 gap resolved — the total is 80, the per-pin map was wrong twice
+
+**Correction by append; the appendix above and rev 7's frozen text are unchanged.** The
+per-pin map above sums to 79 while its own headline says 80 arms (71 main + 9 loop).
+Re-measured on the tree at `04fdb72` (post-`14d34ee`, so vendor_scale's 2 arms already
+inverted): **69 main-lane failures across the 11 remaining classref modules + 9 loop-lane
+errors + the 2 inverted arms = 80.** The headline was right; the split carried two errors:
+
+1. **"49 vendor-catalog (incl. 2 CLI-subprocess arms)" is wrong on the subprocess note.**
+   The two CLI-subprocess arms are ONE vendor-catalog
+   (`test_classref_cli.py::test_derive_then_verify_clean_roundtrip`) and ONE
+   composed-burst (`test_classref_acceptance.py::test_a1_the_workflow_runs_clean`,
+   whose staging is the m400 fixture). Vendor-catalog is **48**, not 49.
+2. **"incl. 8 loop-lane verify-ui arms" undercounts by one.** The loop lane's 9 errors
+   are ALL composed-burst: one session fixture runs `verify-ui` as a subprocess, it exits
+   1 naming `urn:meridian:composed-burst:1.0.0`, and all nine dependent arms error at
+   setup — including `test_the_scaffold_renders_from_the_packaged_template`, whose name
+   does not say verify-ui. Composed-burst is **24**, not 22.
+
+Corrected split: **48** vendor-catalog + **24** composed-burst + **3**
+member-declaration-smu + **2** vendor-catalog-pair + one each vendor-catalog-trio,
+refless-composed, member-declaration = **80**.
+
+**Per-module reconciliation (failing arms at `04fdb72`, pin named per arm):**
+
+| Module | Arms | Pins |
+|---|---|---|
+| test_classref_acceptance.py | 14 | 13 composed-burst + 1 vendor-catalog |
+| test_classref_cli.py | 1 | vendor-catalog |
+| test_classref_composed.py | 9 | vendor-catalog |
+| test_classref_gate.py | 11 | 10 vendor-catalog + 1 vendor-catalog-pair |
+| test_classref_member_channels.py | 1 | vendor-catalog |
+| test_classref_member_datasets.py | 4 | 3 member-declaration-smu + 1 composed-burst |
+| test_classref_member_join_ceiling.py | 1 | vendor-catalog |
+| test_classref_member_ledger.py | 9 | 8 vendor-catalog + 1 member-declaration |
+| test_classref_render_arms.py | 7 | 6 vendor-catalog + 1 composed-burst |
+| test_classref_residual.py | 10 | 9 vendor-catalog + 1 refless-composed |
+| test_classref_trio.py | 2 | vendor-catalog-trio + vendor-catalog-pair |
+| test_classref_vendor_scale.py | 2 | vendor-catalog (inverted by `14d34ee`) |
+| test_standalone_dev_loop.py | 9 | composed-burst (one fixture cascade) |
+| **Total** | **80** | |
+
+**Bucket check, every failure read:** all 78 re-measured failures are the
+`profile_contract_invalid` refusal naming a `contracts[]` pin — zero exceptions, so no
+arm was folded into the R2 story wearing a different cause.
+
+**Disposition executed (branch `pr2-589-cont`, one commit per module, `0060f09..5f05b3e`):**
+all 12 remaining modules inverted to the typed refusal, no arm deleted, every derivation
+half kept, every docstring naming the pre-PR-2 claim and the R2 corpus motion as the
+carrier. Two shape notes: the parametrized render-arm families branch per profile (only
+the logic_analyser instance stages the pinned f1 fixture; the other seven profiles keep
+their full assertions), and the dev-loop's three SERVED-PAGE arms are parked under a
+skip marker (the module's own convention) because preview-ui exits before binding — a
+new serve arm pins that startup refusal once for all of them, the fixture asserts the
+verify refusal, and the control arm proves the pin the gate names flips with the removed
+row (composed-burst → member-declaration, measured). Those three arms flip back to their
+clean-gate shapes with the R2 corpus motion; the skips name that carrier.
