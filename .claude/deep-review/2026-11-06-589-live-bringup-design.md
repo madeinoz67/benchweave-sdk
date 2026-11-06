@@ -168,6 +168,40 @@ The principal's directive, made a structural property rather than a comment:
      above, with the archetype matrix as the behavioural backstop; the named-literal
      denylist still covers our own device's serial.
 
+**FOLD-WAVE CORRECTIONS TO THIS SECTION (2026-11-06, post-rev-7), appended not
+rewritten:**
+
+- **The denominator sentence above ("asserts each against its committed value") is
+  amended by fold F.** `files_scanned` and `literals_examined` assert FLOORS now, not
+  equality: equality reddened every later PR by existing — the PR-1 fold wave's own
+  source edits moved `literals_examined` 17487 → 17533 with zero findings, the live
+  demonstration — and a gate that reddens on unrelated work earns exemptions and then
+  gets weakened. `allowlisted_entries` and `block_exemptions` remain EXACT (a growing
+  exemption is the thing to fight; a floor could never catch one). A floor still reddens
+  on a narrowed scan, which is the pin's stated purpose.
+- **Fold E amends the class rule's detector.** The `0x[0-9a-fA-F]{1,8}` spelling above
+  was one spelling of one value: `0XDC49` (uppercase prefix), `0x000000dc49` (padding
+  past the digit cap) and `0xdc_49` (PEP-515 underscore) are legal literals the regex
+  passed, planted with `findings=0` by refute lane 2. Detection is now spelling-agnostic
+  from the tokenize stream — a hex NUMBER token by what it IS, not by one spelling.
+- **Fold I amends the regression layer.** The OEM pid is substring-banned as bare
+  `dc48` (pair, prefixed and padded spellings all contain it), and the family vendor id
+  is denied as a string by EXACT value only: `'0403'` and `'0x0403'` passed as bare
+  string constants while the int values were denied, but the `--device` help and the
+  guide legally print the vendor id inside example sentences that name the FAMILY every
+  FTDI device shares — a substring rule would redden documentation.
+- **A third residual, named (fold H): NON-`.py` DATA FILES under `src/` are invisible
+  to the gate.** A `src/**/devices.json` carrying a full identity (vid/pid/serial as
+  text) is caught by nothing and moves no denominator — the scope bullet above says
+  `.py` and names the banked `providers/*.json` exclusion, but not this. Deliberately
+  not scanned in the fold wave: a text-substring sweep over data formats needs its own
+  false-positive discipline per format (JSON keys, YAML tags, encodings), the banked
+  contract documents are digest-pinned where they live, and the selector never reads a
+  device identity from a data file — the operator, the binding store or the pinned
+  contract supply it, so a planted data-file identity has no consumer (the same
+  structural defense the computed-constant residual names). If a future family ever
+  loads identity defaults from a data file, this residual is the row to close first.
+
 ---
 
 ## 1. Defect ledger — nine red-team defects, two found by other means, one withdrawn, every row carried by a named carrier

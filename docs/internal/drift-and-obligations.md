@@ -102,12 +102,19 @@ rubric's G5 gate is the obligation; this file is the detail behind it.
 
 11. **The generality gate's pins move with the source** (issue #589 PR-1) →
    `tests/test_generality_gate.py` is the standing property that no device
-   identity or plugin action name lives in `src/` — its denominators
-   (`files_scanned`, `literals_examined`, `block_exemptions`,
-   `allowlisted_entries`) are PINNED, so any edit that adds, removes or
-   moves a constant under `src/` reddens the gate with the delta; the
-   correct motion is to move the pin IN THE SAME COMMIT, naming why (a new
-   allowlist entry states its reason beside the table). The lock exclusion
+   identity or plugin action name lives in `src/`. Its scan denominators
+   (`files_scanned`, `literals_examined`) are pinned AS FLOORS — they
+   redden only when the sweep NARROWS (a file or literal class leaving the
+   tree), never when unrelated work grows the source; its exemption counts
+   (`block_exemptions`, `allowlisted_entries`) are pinned EXACTLY, so a
+   growing exemption is a red test, never a quieter one, and the correct
+   motion is to move the pin IN THE SAME COMMIT, naming why (a new
+   allowlist entry states its reason beside the table). What count pins
+   cannot see, stated (fold G): RELOCATING a constant and COUNT-NEUTRAL
+   substitution are both silent — the pins count literals, they do not
+   track positions; the find-a-leak rules (denylist, substrings, action
+   names) are the layer that cares about content, and the archetype
+   matrix is the behavioural backstop. The lock exclusion
    is the deliberate exception: `lock_excluded_files` is asserted against
    the lock's own recorded count, never a hardcoded literal, so a corpus
    sync moves it without a gate edit (the sync, not this repository, owns
