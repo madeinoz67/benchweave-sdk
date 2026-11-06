@@ -522,6 +522,101 @@ def test_a20_the_protocol_composes_twelve_and_the_wrapper_carries_the_pair(
     assert asyncio.iscoroutinefunction(services.dataset_lookup)
 
 
+# --- the refute-lane folds (2026-11-07): prefixed refusals, no ghosts ----------
+
+
+def test_a_nan_outside_the_m04_lanes_refuses_prefixed_and_leaves_no_directory(
+    tmp_path: Path, invoke_project_builder
+) -> None:
+    """The fold (two refute lanes, maintainer-verified): the pinned schema
+    types ``trigger.time_relative_s`` ``number|null`` and jsonschema accepts
+    a bare NaN for ``number``, while M04 reads only axis coordinates and
+    variable values — so a NaN there passed every check, died at the row
+    digest's ``allow_nan=False`` serialization as a bare ValueError the
+    OSError cleanup cannot catch, and left one ghost directory per invoke
+    that the rebuild silently skips. The canonicalization is validation now:
+    prefixed, before any filesystem call."""
+    root = tmp_path / "captures"
+    seam, adapter = _seam(invoke_project_builder(tmp_path / "proj"), root)
+    manifest = _manifest(
+        trigger={"source": "immediate", "time_relative_s": float("nan")}
+    )
+    error = _refused(seam, adapter, manifest)
+    assert error.code == "invalid_request"
+    assert error.message.startswith("standalone_dataset_invalid:"), error.message
+    assert "M04" in error.message, "the backstop refuses in M04's name"
+    assert not _datasets_dir(root).exists() or not any(_datasets_dir(root).iterdir())
+
+
+def test_a_divergent_republish_with_nan_refuses_prefixed(
+    tmp_path: Path, invoke_project_builder
+) -> None:
+    """The fold: the idempotency branch serializes the incoming manifest
+    BEFORE the schema and the M-checks run, so a NaN-bearing manifest under
+    a used id surfaced the serializer's bare ValueError with no prefix. The
+    second publish's refusal must carry the prefix like every other."""
+    root = tmp_path / "captures"
+    seam, adapter = _seam(invoke_project_builder(tmp_path / "proj"), root)
+    adapter.SCRIPT["invoke"] = "__publish__"
+    adapter.PUBLISH_QUEUE.clear()
+    adapter.PUBLISH_QUEUE.extend([
+        _manifest(),
+        _manifest(trigger={"source": "immediate", "time_relative_s": float("nan")}),
+    ])
+    result = call(seam, "invoke", invoke_args("demo.probe/1.0.0"))["result"]
+    assert result["publishes"][0] == "admitted", result
+    assert result["publishes"][1].startswith(
+        "refused: standalone_dataset_invalid:"
+    ), result
+    assert "M04" in result["publishes"][1]
+
+
+def test_a_mint_collision_refuses_and_preserves_the_prior_dataset(
+    tmp_path: Path, invoke_project_builder
+) -> None:
+    """The fold: the mint is ``op-{uuid4().hex[:8]}`` — 32 bits, so a
+    collision is an event, not an impossibility — and the persist path's
+    OSError cleanup used to fire on the mkdir collision itself, DELETING the
+    prior admitted dataset's manifest and sidecar while its library row went
+    stale. A fresh admission core (empty registry — the new-host-process
+    shape) must refuse on the existing segment and touch nothing."""
+    from benchweave_sdk_server.dataset_admission import DatasetAdmission
+    from benchweave_sdk_server.invoke_contracts import resolve_invoke_contracts
+
+    root = tmp_path / "captures"
+    seam, adapter = _seam(invoke_project_builder(tmp_path / "proj"), root)
+    adapter.SCRIPT["invoke"] = "__dataset__"
+    adapter.DATASET.clear()
+    adapter.DATASET.update(_manifest())
+    dataset_id = call(seam, "invoke", invoke_args("demo.probe/1.0.0"))["result"][
+        "dataset_id"
+    ]
+    segment = _datasets_dir(root) / dataset_id.replace(":", "-", 1)
+    prior_manifest = (segment / "manifest.json").read_bytes()
+    prior_metadata = (segment / "metadata.json").read_bytes()
+    plugin = seam.session.plugin
+    fresh = DatasetAdmission(
+        contracts=resolve_invoke_contracts(plugin),
+        channels=tuple(
+            str(channel.get("id"))
+            for channel in plugin.descriptor.get("channels", [])
+            if isinstance(channel, dict)
+        ),
+        library=lambda: seam._capture_library,
+        surface=lambda: None,
+    )
+    with pytest.raises(ValueError, match=r"^standalone_dataset_invalid:"):
+        fresh.admit(
+            _manifest(dataset_id=dataset_id),
+            dataset_id=dataset_id,
+            action_id="demo.probe/1.0.0",
+            invoke_input={},
+            surface=None,
+        )
+    assert (segment / "manifest.json").read_bytes() == prior_manifest
+    assert (segment / "metadata.json").read_bytes() == prior_metadata
+
+
 # --- the parity arm: the two context shapes cannot drift -----------------------
 
 

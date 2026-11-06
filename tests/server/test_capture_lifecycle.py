@@ -238,7 +238,8 @@ def test_a17_capture_start_names_the_undeclared_verb_before_the_services_check(
     operation gets the VERB refusal over the mock transport — never
     ``capture_services_incomplete``, which blamed the host's capability for
     a declaration the plugin never made. The no-dispatch proof is A16's
-    (the serial arm observes the port); this arm pins the refusal's CAUSE."""
+    (the adapter's CALLS log records no dispatch); this arm pins the
+    refusal's CAUSE."""
     async def scenario() -> None:
         await _connected(seam)
         with pytest.raises(SeamError) as caught:
@@ -824,11 +825,9 @@ def test_stop_of_an_unknown_capture_is_not_found(tmp_path: Path) -> None:
 
 def test_the_descriptor_declared_capture_verb_is_dispatched(tmp_path: Path) -> None:
     """Ruling 6: the capture verb is descriptor-declared. The adapter's
-    verb log proves the ``capture`` policy ran. (The ``invoke`` fallback is
-    implemented in the seam's resolution order but has no fixture arm: a
-    descriptor declaring ``invoke`` pulls the measurement-profiles
-    machinery — channels/profiles/contracts/actions, the schema's own
-    allOf — which is I3b's named DON'T-BUILD. Disclosed.)"""
+    verb log proves the ``capture`` policy ran. (A descriptor declaring
+    ``invoke`` but not ``capture`` gets the verb refusal, never a fallback
+    dispatch — the arm above (A16) pins it.)"""
     host = _host(tmp_path, verbs=("capture",))
 
     async def scenario() -> str:

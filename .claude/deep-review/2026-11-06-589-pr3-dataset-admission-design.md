@@ -575,6 +575,24 @@ the false positive that earns gates exemptions. Expect `literals_examined` to ri
 at least the two prefixes and `files_scanned` by one if a module is added; both are
 expected movements, and the exemption counts staying exact is the thing to defend.
 
+**MEASURED MUTATION NAMED-SETS, 2026-11-07 (post-build, append-only — two independent
+refute lanes ran the §9 mutation matrix by execution; this section records what the
+mutations ACTUALLY reddened and supersedes the matrix's named sets above by date. The
+frozen matrix bytes stay as committed; the arms themselves are unaffected — each still
+pins its behavior and passes on the real code. What was wrong was the blast-radius
+prediction, not the acceptance.)** M10 (skip schema validation) reddened **A5 only**,
+not A5–A9: A6–A9 refuse in the M-checks, which the mutation does not skip. M17 (restore
+the `invoke` fallback) reddened **A16 only**, not A16+A17. M19 (skip the library row)
+reddened **A13 only**, not A12/A13 — A12's fresh library REBUILDS the row from the
+files, so a skipped runtime row record is invisible to it by design (AR-6 working as
+intended). M20 (drop the wrapper) reddened **A18+A20**, not A18–A20 — A19 passes
+because it attaches the wrapper itself over its own `_CaptureCapable` instance, so the
+seam never installing one does not reach it. M18 (write-before-validate) reddened
+**A11+A6 plus A8**. M9 (skip the mint) reddened **A1** — but with a twelve-arm blast
+radius, which is past this record's own ">3 arms outside the named set means coupled
+fixtures" threshold; the threshold's instruction (re-slice before trusting any green)
+applies to whoever next mutates the mint.
+
 **Live leg (operator-run, marker-partitioned, NOT gating):** the real plugin remains
 the integration witness — its catalog reshape is a plugin-repo pairing row (parent
 record §3.1), not an SDK prerequisite; after it lands, an invoke fetch → admitted

@@ -102,8 +102,10 @@ def _private_copy(manifest: dict[str, Any]) -> dict[str, Any]:
 
 def _write_dataset_manifest(event: Any, manifest: dict[str, Any]) -> None:
     """Write ``manifest.json`` atomically (temp + rename, the capture
-    writer's own publication-marker posture)."""
-    payload = json.dumps(manifest, indent=2, sort_keys=True).encode()
+    writer's own publication-marker posture). ``allow_nan=False`` matches
+    every other writer; validation makes it unreachable, and the flag keeps
+    a future bypass from writing a bare ``NaN`` literal to disk."""
+    payload = json.dumps(manifest, indent=2, sort_keys=True, allow_nan=False).encode()
     temp = event / "manifest.json.tmp"
     temp.write_bytes(payload)
     os.replace(temp, event / "manifest.json")
@@ -208,7 +210,17 @@ class DatasetAdmission:
             )
         already = self._admitted.get(dataset_id)
         if already is not None:
-            if _canonical(manifest) == _canonical(already):
+            try:
+                same = _canonical(manifest) == _canonical(already)
+            except ValueError:
+                # This branch serializes BEFORE the schema and the M-checks
+                # run, so the per-lane finiteness check has not seen the
+                # manifest yet — a non-finite value refuses with the prefix,
+                # not the serializer's bare ValueError.
+                raise _refused(
+                    "M04: the manifest carries a non-finite value"
+                ) from None
+            if same:
                 # Idempotent: no new rows, no re-routing — a repeated fetch
                 # returns the admitted manifest for the operation.
                 return _private_copy(already)
@@ -227,6 +239,7 @@ class DatasetAdmission:
         self._check_m_structural(manifest)
         self._check_m10_correlation(manifest, action_id, invoke_input)
         self._check_m11_records(manifest)
+        self._check_canonicalisable(manifest)
         # A private copy: the admitted state is never the caller's object.
         admitted = _private_copy(manifest)
         self._persist(admitted, dataset_id, action_id=action_id, surface=surface)
@@ -403,6 +416,24 @@ class DatasetAdmission:
                 "served path)"
             )
 
+    @staticmethod
+    def _check_canonicalisable(manifest: dict[str, Any]) -> None:
+        """M04's backstop over the WHOLE manifest, as validation: the
+        per-lane check reads only axis coordinates and variable values, and
+        the pinned schema accepts a bare NaN/Infinity wherever it says
+        ``number`` — a value jsonschema passes and ``allow_nan=False``
+        serialization refuses. Caught here, before any filesystem call, the
+        refusal is typed and leaves zero bytes; caught in the write, it
+        would escape the OSError cleanup (a ValueError) and leave a ghost
+        directory the rebuild silently skips."""
+        try:
+            _canonical(manifest)
+        except ValueError:
+            raise _refused(
+                "M04: the manifest carries a non-finite value outside the "
+                "checked axis-coordinate and variable-value lanes"
+            ) from None
+
     # --- persistence (validation has already passed) ------------------------
 
     def _persist(
@@ -414,10 +445,11 @@ class DatasetAdmission:
         surface: str | None,
     ) -> None:
         """Persist one admitted manifest under ``<root>/datasets/<segment>/``
-        with the provenance sidecar, and record the library row. The only
-        states on disk are "no event directory" and "complete published
-        manifest"; a write failure removes the directory best-effort —
-        operation ids never repeat, so a leftover can wedge nothing."""
+        with the provenance sidecar, and record the library row. An existing
+        segment refuses BEFORE any write (a mint collision must not destroy
+        what is already on disk); a write failure removes only the directory
+        this call created, best-effort, so a refusal or a failed write
+        leaves no partial dataset directory behind."""
         segment = dataset_id.replace(":", "-", 1)
         if not _valid_capture_segment(segment):
             # Unreachable for host-minted ids (every mint starts "ds:"), and
@@ -430,7 +462,19 @@ class DatasetAdmission:
         library = self._library()
         event = library.root / _DATASETS_FAMILY / segment
         try:
+            # exist_ok is deliberately absent: an existing segment is a mint
+            # collision with what is already on disk (the mint is 32 bits of
+            # uuid4 hex — an event, not an impossibility), and refusing it
+            # here is what keeps the cleanup below from destroying the prior
+            # dataset.
             event.mkdir(parents=True)
+        except FileExistsError:
+            raise _refused(
+                f"the segment {segment!r} for dataset {dataset_id!r} already "
+                "exists under the capture root: the mint collided with an "
+                "admitted dataset, and the prior dataset is untouched"
+            ) from None
+        try:
             _write_dataset_manifest(event, manifest)
             try:
                 operator = getpass.getuser()
