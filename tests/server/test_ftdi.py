@@ -1716,6 +1716,7 @@ class _HoldingTransport:
     def __init__(self) -> None:
         self._gate = threading.Event()
         self.parked = threading.Event()
+        self.served = 0
         self._inbound = bytearray()
 
     def queue(self, data: bytes) -> None:
@@ -1732,6 +1733,7 @@ class _HoldingTransport:
         self._gate.wait()
         out = bytes(self._inbound[:size])
         del self._inbound[:size]
+        self.served += 1
         if not out:
             time.sleep(0.001)
         return out
@@ -1800,6 +1802,87 @@ def test_a_read_in_flight_across_the_purge_never_surfaces(plugin) -> None:
         )
         assert received == {"data": b""}, (
             "the straddled stale bytes never surfaced on a receive"
+        )
+    finally:
+        transport.release()
+        services.link.close()
+
+
+def test_a_fresh_reply_straddling_the_purge_is_discarded_and_the_link_recovers(
+    plugin,
+) -> None:
+    """The mirror of the straddle arm (#589 review, wave 2): whether a
+    straddled chunk's bytes are stale or fresh is genuinely undecidable —
+    the read began before the purge and the transport cannot prove when
+    its bytes arrived — so the fence's drop is a CHOSEN CONTRACT, and this
+    arm pins which way it goes. Park the reader's read, purge on an EMPTY
+    pipe, then queue the FRESH post-purge reply and release: the straddled
+    read fetches it and the fence discards it — a command issued in the
+    same breath as a purge can lose its first reply, and the caller
+    retries rather than waits. The second half pins the bound: reads that
+    BEGIN after the purge deliver normally, so the loss is exactly the
+    one straddling chunk and the next frame arrives whole."""
+    straddled_reply = b"first-reply-lost\n"
+    next_frame = b"next-frame-delivered\n"
+    driver = ScriptedFtdiDriver(
+        [
+            {
+                "name": "purge-rx",
+                "transaction": {"kind": "ftdi_control", "op": "purge", "queue": "rx"},
+                "response": {},
+            }
+        ]
+    )
+    contract = verify_ftdi_plugin(plugin)
+    transport = _HoldingTransport()
+    services = FtdiCaptureServices(
+        SerialLink(transport),
+        driver,
+        contract.grammar,
+        provider=contract.provider,
+        max_frame_bytes=4096,
+        limits=contract.limits,
+    )
+    context = _context(services, "op-purge-mirror")
+    try:
+        deadline = time.monotonic() + 2.0
+        while not transport.parked.is_set() and time.monotonic() < deadline:
+            time.sleep(0.001)
+        assert transport.parked.is_set(), "the reader parked inside its read"
+        # The purge runs on an EMPTY pipe: nothing queued is pre-purge.
+        asyncio.run(
+            services.transfer(
+                {"kind": "ftdi_control", "op": "purge", "queue": "rx"}, context
+            )
+        )
+        # The fresh reply — the device's answer to a command issued right
+        # after the purge — is fetched by the read that began before it.
+        transport.queue(straddled_reply)
+        transport.release()
+        while transport.served < 1 and time.monotonic() < deadline:
+            time.sleep(0.001)
+        assert transport.served >= 1, "the straddled read completed"
+        assert services.link.ring_length() == 0, (
+            "the straddled read's chunk was discarded even though its "
+            "bytes were fresh post-purge traffic — the fence errs toward "
+            "dropping, and this is the chosen contract"
+        )
+        # The bound: a read that BEGAN after the purge delivers normally.
+        transport.queue(next_frame)
+        assert _wait_for_ring_depth(services.link, len(next_frame)) == len(next_frame)
+        received = asyncio.run(
+            services.transfer(
+                {
+                    "kind": "stream_receive",
+                    "max_bytes": 64,
+                    "termination": "lf",
+                    "exact_bytes": None,
+                },
+                context,
+            )
+        )
+        assert received == {"data": next_frame}, (
+            "the frame after the straddled one arrived whole"
         )
     finally:
         transport.release()

@@ -286,7 +286,15 @@ class SerialLink:
         instant after one, from a read that began before it, is discarded
         with its chunk. The reader keeps running and the ring refills with
         bytes read AFTER the purge. Not counted as overflow — a purge is a
-        caller's deliberate action, not a defect signal."""
+        caller's deliberate action, not a defect signal.
+
+        Caller-visible consequence, stated plainly: a purge may discard
+        the chunk the reader is fetching at that moment, STALE OR FRESH —
+        a command issued in the same breath as a purge can lose its first
+        reply, and that reply is not recoverable from the link. The loss
+        is bounded to the one straddling chunk (reads that begin after
+        the purge deliver normally), so the caller retries the command
+        rather than waiting out a reply that will never arrive."""
         with self._cond:
             self._purge_epoch += 1
             del self._ring[:]
