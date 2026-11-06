@@ -945,6 +945,12 @@ class ScriptedFtdiDriver:
             # undrained bytes exactly as the real one does.
             self._inbound.clear()
 
+    @property
+    def pending(self) -> int:
+        """Bytes currently on the scripted pipe, not yet drained by a read
+        (test instrumentation — the rx-purge parity arm's witness)."""
+        return len(self._inbound)
+
     def set_bitmode(self, mask: int, mode: int) -> None:
         self._control("set_bitmode", {"mask": mask, "mode": mode})
 
