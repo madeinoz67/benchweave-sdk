@@ -474,6 +474,34 @@ can never match.
 **New refusal prefixes (STD-4 additions):** `live_provider_device_ambiguous:`,
 `live_provider_interface_out_of_range:`.
 
+**CORRECTION (fold wave, 2026-11-06, post-rev-7): the URL-form passthrough above is
+amended in two places — the grammar narrows and the attempt URL is canonicalised.**
+Refute lane 1 live-reproduced, twice, that pyftdi's `enumerate_candidates` runs
+`to_int` on the third netloc component and treats a value ≤ 255 as a **0-based device
+index**, never a serial (`:1` selects the first candidate, `:2` the second), so the URL
+form could OPEN A DIFFERENT DEVICE while the colon form correctly refused; the fake's
+serial-semantics model was exactly what kept the suite blind to it. Two folds:
+
+- **Fold A (grammar + net).** A URL-form serial that is a bare number of value ≤ 255 is
+  refused at the parse boundary (`live_provider_selector_malformed:` naming the index
+  reading and the colon-form remedy) — pyftdi cannot express that component as a serial,
+  so a typed refusal beats the silent wrong-device open. Spellings `to_int` still
+  misreads past that set (a unit suffix such as `2B`) are the net's job: after
+  `open_from_url` succeeds with a serial-bearing selector, the ladder VERIFIES the
+  opened device's serial (`Ftdi._usb_dev.serial_number`); on mismatch it closes the
+  device and treats the failure as resolution-class, falling through to the enumerated
+  fallback whose serial filter resolves what the selector names. The verification is
+  the guarantee; the parse refusal is the typed answer for the common spelling. The
+  arm drove the net on a fake that now models pyftdi's index semantics — a green arm
+  against the serial-semantics fake proved nothing, which is how the defect survived
+  rev 7.
+- **Fold D (canonical attempt URL).** The URL handed to pyftdi is BUILT from the parsed
+  ints with explicit `0x%04x` spellings; the raw operator string no longer crosses the
+  seam. pyftdi's `to_int` reads BARE digits as decimal, so `ftdi://123:456/1` — which
+  this grammar parses as 0x123/0x456 — would have handed pyftdi decimal 123/456. A
+  spelling the parser cannot reduce (named vendor, bus/address) still passes through
+  unchanged.
+
 ### 2.3 PR-1 proof
 
 Fake-`_backend` unit arms (no hardware, no pyftdi in the SDK venv) + the generality gate

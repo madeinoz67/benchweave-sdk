@@ -487,7 +487,10 @@ def cli() -> None:
         "ids are hexadecimal, with an optional '0x'. A third part names "
         "the device serial ('0403:6001:610042'), the part after '/' is "
         "the interface index counted from 1, and a bare vendor id "
-        "('0403') admits any product under it. Any device remains "
+        "('0403') admits any product under it. In the URL form, a third "
+        "part that is a bare number of value 255 or less is refused: "
+        "pyftdi reads such a part as a device index, not a serial — use "
+        "the colon form to name such a serial. Any device remains "
         "openable by an operator-supplied selector; only auto-discovery "
         "is family-scoped. Refused on non-live transports."
     ),

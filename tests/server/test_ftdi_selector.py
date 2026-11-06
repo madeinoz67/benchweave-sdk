@@ -22,6 +22,7 @@ when no device answers.
 from __future__ import annotations
 
 import asyncio
+import re
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -72,6 +73,42 @@ class FakeDescriptor:
         self.vid = vid
         self.pid = pid
         self.sn = sn
+
+
+def _pyftdi_to_int(text: str) -> int | None:
+    """``pyftdi.misc.to_int`` mirrored from the installed wheel (misc.py's
+    ``to_int``): the decimal branch — digits plus an optional K/M unit
+    suffix — and the lowercase-``0x`` hex branch. ``None`` when pyftdi
+    would treat the text as a non-number (a serial string). The FAKE needs
+    the full mirror because pyftdi's index reading is what fold A trapped:
+    a third netloc component whose value parses <= 255 selects
+    ``candidates[n]`` (usbtools.py's enumerate_candidates), never a
+    serial."""
+    mo = re.match(r"\A\s*(\d+)\s*(?:([KMkm]i?)?B?)?\s*\Z", text)
+    if mo:
+        value = int(mo.group(1))
+        if mo.group(2):
+            value *= {
+                "K": 1000,
+                "KI": 1 << 10,
+                "M": 1000 * 1000,
+                "MI": 1 << 20,
+            }[mo.group(2).upper()]
+        return value
+    if text.startswith("0x"):
+        try:
+            return int(text, 16)
+        except ValueError:
+            return None
+    return None
+
+
+class FakeOpenedDevice:
+    """What pyftdi's ``Ftdi._usb_dev`` looks like after an open: the pyusb
+    device, of which the ladder reads exactly ``serial_number``."""
+
+    def __init__(self, serial: str | None) -> None:
+        self.serial_number = serial
 
 
 class FakeUsbTools:
@@ -237,25 +274,48 @@ class FakeFtdi:
             raise FakeUsbToolsError(f"Invalid device URL: {url}") from exc
         if pid is None or pid not in self.PRODUCT_IDS.get(vid, {}).values():
             raise FakeUsbToolsError(f"No USB device matches URL {url}")
-        serial = components[2] if len(components) > 2 and components[2] else None
-        matches = [
-            d
-            for d, _ in _INVENTORY
-            if d.vid == vid and d.pid == pid and (serial is None or d.sn == serial)
-        ]
-        if len(matches) > 1:
-            raise FakeUsbToolsError(f"{len(matches)} USB devices match URL {url}")
-        if not matches:
-            raise FakeUsbToolsError(f"No USB device matches URL {url}")
+        # pyftdi's LOCATOR semantics (usbtools.enumerate_candidates), the
+        # behaviour fold A trapped: a third component whose to_int value is
+        # <= 255 is a 0-BASED INDEX into the candidates; only a component
+        # to_int cannot read (or reads > 255) is a serial string. The
+        # serial-semantics model this fake carried before is exactly what
+        # hid the wrong-device open.
+        candidates = [d for d, _ in _INVENTORY if d.vid == vid and d.pid == pid]
+        if len(components) > 2 and components[2]:
+            value = _pyftdi_to_int(components[2])
+            if value is not None and value <= 255:
+                try:
+                    matched = candidates[value - 1 if value else 0]
+                except IndexError:
+                    raise FakeUsbToolsError(
+                        f"No USB device matches URL {url}"
+                    ) from None
+            else:
+                serial_matches = [d for d in candidates if d.sn == components[2]]
+                if len(serial_matches) > 1:
+                    raise FakeUsbToolsError(
+                        f"{len(serial_matches)} USB devices match URL {url}"
+                    )
+                if not serial_matches:
+                    raise FakeUsbToolsError(
+                        f"No USB device with S/N {components[2]}"
+                    )
+                matched = serial_matches[0]
+        else:
+            if len(candidates) > 1:
+                raise FakeUsbToolsError(f"{len(candidates)} USB devices match URL {url}")
+            if not candidates:
+                raise FakeUsbToolsError(f"No USB device matches URL {url}")
+            matched = candidates[0]
         # pyftdi's LATE interface guard (ftdi.py's open_from_device): the
         # interface argument is checked against the resolved device's own
         # interface count AFTER resolution, raising FtdiError — the failure
         # fold C routes to the ladder's typed range check.
-        ifcount = next(c for d, c in _INVENTORY if d is matches[0])
+        ifcount = next(c for d, c in _INVENTORY if d is matched)
         port = int(path) if path else 1
         if port > ifcount:
             raise FakeFtdiError(f"No such FTDI port: {port}")
-        self.usb_dev = object()
+        self._usb_dev = FakeOpenedDevice(matched.sn)
 
     def open(
         self, vid: int, pid: int, serial: str | None = None, interface: int = 1
@@ -272,7 +332,7 @@ class FakeFtdi:
         ]
         if not matches:
             raise OSError("Device not found")
-        self.usb_dev = object()
+        self._usb_dev = FakeOpenedDevice(matches[0].sn)
 
     def close(self) -> None:
         self.closed += 1
@@ -757,6 +817,103 @@ def test_the_same_bad_port_refuses_identically_from_both_forms(
         assert "1..1" in str(excinfo.value)
 
 
+# -- folds A and D: pyftdi's URL locator semantics, the serial-verification
+# -- net, and the canonical attempt URL
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "ftdi://0x0403:0x6001:1/1",
+        "ftdi://0x0403:0x6001:0/1",
+        "ftdi://0x0403:0x6001:00000000/1",
+        "ftdi://0x0403:0x6001:0x1b/1",
+    ],
+)
+def test_a_url_serial_pyftdi_reads_as_an_index_refuses_at_parse(text: str) -> None:
+    """Fold A: a URL-form serial that is a bare number with value <= 255 is
+    refused at the parse boundary naming the ambiguity — pyftdi's URL
+    grammar reads such a component as a device index (``to_int`` <= 255 in
+    usbtools' enumerate_candidates: ``:1`` selects the first candidate,
+    ``:2`` the second), never a serial, so the URL form cannot name that
+    device and the message points at the colon form that can.
+    Live-reproduced by the refute lane, twice: this spelling OPENED a
+    different device while the colon spelling correctly refused."""
+    with pytest.raises(
+        RuntimeError, match="live_provider_selector_malformed:"
+    ) as excinfo:
+        ftdi_module._parse_ftdi_selector(text)
+    message = str(excinfo.value)
+    assert "index" in message
+    assert "<vid>:<pid>:<serial>" in message
+
+
+def test_a_url_serial_pyftdi_misreads_never_opens_the_wrong_device(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fold A's net, driven on the fake that now models pyftdi's INDEX
+    semantics: a serial spelling the parse accepts (``2B`` — pyftdi's
+    ``to_int`` reads the B-suffixed decimal 2) selects the SECOND candidate
+    in pyftdi, a device the selector did not name. The ladder verifies the
+    opened device's serial after ``open_from_url`` succeeds; on mismatch it
+    CLOSES the device and falls through to the enumerated fallback, whose
+    serial filter finds zero and refuses naming both serials. A green arm
+    against a fake still modelling serial semantics proves nothing — that
+    model is what hid the wrong-device open."""
+    usbtools, _core = _install_backend(
+        monkeypatch,
+        devices=[
+            ((0x0403, _OFFICIAL_PID, "610042"), 1),
+            ((0x0403, _OFFICIAL_PID, "700001"), 1),
+        ],
+    )
+    with pytest.raises(
+        RuntimeError, match="live_provider_device_unavailable:"
+    ) as excinfo:
+        open_ftdi("ftdi://0x0403:0x6001:2B/1")
+    message = str(excinfo.value)
+    assert "enumeration found 0 matching device(s)" in message
+    assert "opened a device reporting serial" in message
+    assert "'700001'" in message and "'2B'" in message
+    assert _INSTANCES[-1].closed == 1  # the wrong device was closed, not kept
+    assert _INSTANCES[-1].open_calls == []  # the fallback's filter refused first
+    assert usbtools.find_all_calls  # the enumerated fallback really ran
+
+
+def test_the_url_attempt_is_canonicalised_to_explicit_hex(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fold D: the URL handed to pyftdi is BUILT from the parsed ints with
+    explicit ``0x`` spellings — pyftdi's ``to_int`` reads BARE digits as
+    decimal, so passing the raw operator string (``ftdi://123:456/1``,
+    which this grammar parsed as 0x123/0x456) would hand pyftdi a different
+    vendor and product than the selector named. The grammar's ids are
+    hexadecimal in both forms; the canonical attempt URL makes pyftdi read
+    the pair the parser read."""
+    _install_backend(monkeypatch, devices=[((0x123, 0x456, None), 1)])
+    driver = open_ftdi("ftdi://123:456/1")
+    assert isinstance(driver, ftdi_module._PyftdiDriver)
+    assert _INSTANCES[-1].url_calls == ["ftdi://0x0123:0x0456/1"]
+
+
+def test_a_verified_url_serial_opens_directly_without_a_fallback_detour(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The honest other half of fold A's net: a URL-form serial pyftdi
+    reads as a serial (numeric above 255, or alphabetic) that the opened
+    device really reports opens directly through the incumbent arm — the
+    verification adds no fallback detour, so the net costs nothing on the
+    legal path."""
+    usbtools, _core = _install_backend(
+        monkeypatch, devices=[((0x0403, _OFFICIAL_PID, "610042"), 1)]
+    )
+    driver = open_ftdi("ftdi://0x0403:0x6001:610042/1")
+    assert isinstance(driver, ftdi_module._PyftdiDriver)
+    assert usbtools.find_all_calls == []
+    assert _INSTANCES[-1].open_calls == []
+    assert _INSTANCES[-1].url_calls == ["ftdi://0x0403:0x6001:610042/1"]
+
+
 def test_a_port_beyond_the_device_interface_count_refuses_before_the_open(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1033,6 +1190,70 @@ def test_live_the_ladder_opens_the_scan_derived_selector(plugin: Any) -> None:
     netloc, _, interface = body.rpartition("/")
     colon_form = netloc.replace("0x", "") + f"/{interface}"
     driver = open_ftdi(colon_form)
+    try:
+        assert isinstance(driver, ftdi_module._PyftdiDriver)
+    finally:
+        driver.close()
+
+
+@pytest.mark.live_ftdi
+def test_live_the_url_index_serial_spelling_refuses_typed() -> None:
+    """LIVE, fold A's bench leg — the spelling the refute lane reproduced
+    OPENING A WRONG DEVICE (a URL-form third component pyftdi reads as a
+    device index): derived from the scan's own first selector, never
+    hardcoded, the same vid/pid with the third component set to ``1``
+    refuses at the parse boundary naming the index reading, before any USB
+    claim happens."""
+    import usb.core
+
+    from benchweave_sdk_server.ftdi import _ftdi_scan_selectors, open_ftdi
+
+    try:
+        attached = any(
+            usb.core.find(idVendor=vid) is not None
+            for vid in _registered_family_vendors()
+        )
+    except Exception:
+        pytest.skip("no USB backend on this host")
+    if not attached:
+        pytest.skip("no FTDI-class device attached to this host")
+    row = _ftdi_scan_selectors()[0]
+    netloc = row[len("ftdi://") :].rsplit("/", 1)[0]
+    pair = ":".join(netloc.split(":")[:2])  # the scan row's own vid:pid
+    trap = f"ftdi://{pair}:1/1"
+    with pytest.raises(RuntimeError, match="live_provider_selector_malformed:") as exc:
+        open_ftdi(trap)
+    assert "index" in str(exc.value)
+
+
+@pytest.mark.live_ftdi
+def test_live_a_url_selector_with_the_reported_serial_opens_and_closes() -> None:
+    """LIVE, fold A's positive control: the scan's first selector, when its
+    row carries a serial, opens over the URL arm with the post-open serial
+    verification running against real hardware — and the device is closed
+    again, left unclaimed."""
+    import usb.core
+
+    from benchweave_sdk_server.ftdi import _ftdi_scan_selectors, open_ftdi
+
+    try:
+        attached = any(
+            usb.core.find(idVendor=vid) is not None
+            for vid in _registered_family_vendors()
+        )
+    except Exception:
+        pytest.skip("no USB backend on this host")
+    if not attached:
+        pytest.skip("no FTDI-class device attached to this host")
+    selectors = _ftdi_scan_selectors()
+    serialled = [
+        text
+        for text in selectors
+        if ftdi_module._parse_ftdi_selector(text).serial is not None
+    ]
+    if not serialled:
+        pytest.skip("no attached device reports a serial the selector can carry")
+    driver = open_ftdi(serialled[0])
     try:
         assert isinstance(driver, ftdi_module._PyftdiDriver)
     finally:

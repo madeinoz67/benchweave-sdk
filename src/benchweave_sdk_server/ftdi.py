@@ -232,6 +232,16 @@ _VID_PID_FORM = re.compile(
 _BARE_VID_FORM = re.compile(r"\A(?:0x)?[0-9a-fA-F]{1,4}\Z")
 #: The serial charset both forms share.
 _SERIAL_CHARS = re.compile(r"\A[A-Za-z0-9._-]{1,64}\Z")
+#: A URL-form serial pyftdi provably misreads as a device index: pyftdi's
+#: ``to_int`` parses bare decimal digits — or a lowercase-``0x`` hex
+#: literal — to a value <= 255, and ``usbtools.enumerate_candidates`` then
+#: uses that component as a 0-based candidate index, never a serial
+#: (``:1`` selects the first candidate, ``:2`` the second). Spellings
+#: ``to_int`` still misreads beyond this bare-number set (a unit suffix
+#: such as ``2B``) pass this check and are caught by ``open_ftdi``'s
+#: post-open serial verification — the verification is the net; this
+#: refusal is the typed answer for the common spelling.
+_URL_SERIAL_INDEX_FORM = re.compile(r"\A(?:0x[0-9a-fA-F]+|[0-9]+)\Z")
 #: The interface path of the URL form (pyftdi's ``?`` listing form would
 #: SystemExit a host; this boundary refuses it typed instead).
 _INTERFACE_PATH = re.compile(r"\A[0-9]{1,2}\Z")
@@ -313,6 +323,28 @@ def _hex_component(text: str) -> int:
     return int(text, 16)
 
 
+def _pyftdi_url_serial_is_index(serial: str) -> bool:
+    """Whether pyftdi's URL grammar reads this serial component as a
+    device index rather than a serial (see ``_URL_SERIAL_INDEX_FORM``)."""
+    if not _URL_SERIAL_INDEX_FORM.match(serial):
+        return False
+    value = int(serial, 16) if serial.startswith("0x") else int(serial)
+    return value <= 255
+
+
+def _opened_device_serial(ftdi: Any) -> str | None:
+    """The serial of the device a successful pyftdi open holds — pyftdi's
+    ``Ftdi._usb_dev`` is the pyusb device, whose ``serial_number`` is the
+    descriptor-carried string. ``None`` when it cannot be read: an
+    unreadable serial cannot be verified, and the caller treats that as a
+    mismatch so the enumerated fallback resolves instead."""
+    with contextlib.suppress(Exception):
+        device = getattr(ftdi, "_usb_dev", None)
+        serial = getattr(device, "serial_number", None)
+        return serial if isinstance(serial, str) else None
+    return None
+
+
 def _parse_ftdi_selector(text: str) -> FtdiSelector:
     """The one parser for both selector forms (issue #589, rev 7 §2.2):
 
@@ -331,7 +363,12 @@ def _parse_ftdi_selector(text: str) -> FtdiSelector:
       characters) yields an OPAQUE selector that passes through and simply
       has no pair for the enumerated fallback. A non-index interface path
       is refused here (pyftdi's ``?`` listing form would SystemExit a
-      host).
+      host). A URL-form serial that is a bare number of value <= 255 is
+      refused here too: pyftdi's URL grammar reads such a component as a
+      device index, never a serial, so the URL form cannot name that
+      device — the colon form carries it (spellings pyftdi still misreads
+      past that set are caught by :func:`open_ftdi`'s post-open serial
+      verification).
 
     Port 0 is refused at this boundary with the range named (pyftdi
     silently coerces ``/0`` to 1); a port beyond the device's interface
@@ -366,7 +403,24 @@ def _parse_ftdi_selector(text: str) -> FtdiSelector:
                 # fallback.
                 return FtdiSelector(raw, None, None, None, port, True)
             serial = components[2] if len(components) > 2 else None
-            if serial is None or _SERIAL_CHARS.match(serial):
+            if serial is None:
+                return FtdiSelector(raw, vid, pid, None, port, True)
+            if _SERIAL_CHARS.match(serial):
+                if _pyftdi_url_serial_is_index(serial):
+                    # pyftdi's URL grammar cannot carry this serial: it
+                    # reads a bare number of value <= 255 as a 0-based
+                    # device index, so the URL form would OPEN A DIFFERENT
+                    # DEVICE (or an arbitrary one) rather than refuse —
+                    # live-reproduced. A typed refusal naming the ambiguity
+                    # beats the silent fall-through.
+                    raise _selector_malformed(
+                        raw,
+                        f"the serial component {serial!r} is a bare number "
+                        "of value <= 255, which pyftdi's URL grammar reads "
+                        "as a device index, never a serial — this form "
+                        "cannot name that device; the colon form "
+                        "<vid>:<pid>:<serial> carries the serial verbatim",
+                    )
                 return FtdiSelector(raw, vid, pid, serial, port, True)
         # An empty component, a 4-component bus/address form, or a serial
         # the colon charset cannot express: opaque passthrough, exactly as
@@ -504,8 +558,9 @@ def open_ftdi(url: str) -> FtdiDriver:
     ``finally``, because pyftdi 0.57.2 has no removal API and a leaked row
     makes a later joker-URL enumeration see the pair. A resolution-class
     failure (``UsbToolsError`` — table gate, no match, a refused serial —
-    or ``FtdiError``, pyftdi's own pre-claim guards, its late
-    interface check among them) falls through to an enumerated fallback: ``UsbTools.find_all`` over the
+    or ``FtdiError``, pyftdi's own pre-claim guards, its late interface
+    check among them) falls through to an enumerated fallback:
+    ``UsbTools.find_all`` over the
     parsed pair with ``nocache=True`` (the bus as it is now), the selector's
     serial honoured always, twins refused with every candidate named, the
     interface validated against the device's own interface count before the
@@ -525,10 +580,27 @@ def open_ftdi(url: str) -> FtdiDriver:
     selector = _parse_ftdi_selector(url)
     ftdi = ftdi_cls()
     url_failure: BaseException | None = None
+    url_mismatch = ""
     registered_note = ""
     if selector.url_form:
         vid, pid = selector.vid, selector.pid
         pair_known = vid is not None and pid is not None
+        # The URL handed to pyftdi is BUILT from the parsed ints with
+        # explicit 0x spellings (fold D): pyftdi's to_int reads BARE digits
+        # as decimal, so the raw operator string — ftdi://123:456/1, which
+        # this grammar parsed as 0x123/0x456 — would hand pyftdi a
+        # different vendor and product than the selector named. A spelling
+        # this parser cannot reduce (named vendor, bus/address) passes
+        # through unchanged: the incumbent path's own vocabulary.
+        if vid is not None:
+            parts = [f"0x{vid:04x}"]
+            if pid is not None:
+                parts.append(f"0x{pid:04x}")
+            if selector.serial is not None:
+                parts.append(selector.serial)
+            attempt_url = "ftdi://" + ":".join(parts) + f"/{selector.port}"
+        else:
+            attempt_url = url
         saved = (
             OrderedDict(ftdi_cls.PRODUCT_IDS[vid])
             if pair_known and vid in ftdi_cls.PRODUCT_IDS
@@ -544,8 +616,7 @@ def open_ftdi(url: str) -> FtdiDriver:
             ftdi_cls.add_custom_product(vid, pid)
             transient = True
         try:
-            ftdi.open_from_url(url)
-            return _PyftdiDriver(ftdi)
+            ftdi.open_from_url(attempt_url)
         except Exception as exc:
             with contextlib.suppress(Exception):
                 ftdi.close()
@@ -566,6 +637,31 @@ def open_ftdi(url: str) -> FtdiDriver:
             # selector forms). A claim/busy/permission failure is a pyusb
             # USBError, wears neither class, and refuses immediately above.
             url_failure = exc
+        else:
+            if selector.serial is None:
+                return _PyftdiDriver(ftdi)
+            # The serial the selector names is verified against the device
+            # pyftdi actually opened (fold A): a serial spelling pyftdi
+            # misreads — a third component it treats as a device index —
+            # opens a DIFFERENT device here. Close it and fall through to
+            # the enumerated fallback, whose serial filter resolves what
+            # the selector names; a driver for a device the selector did
+            # not name is never returned.
+            opened = _opened_device_serial(ftdi)
+            if opened == selector.serial:
+                return _PyftdiDriver(ftdi)
+            with contextlib.suppress(Exception):
+                ftdi.close()
+            if transient and selector.vid is not None and selector.pid is not None:
+                registered_note = (
+                    f"; the selector's own pair 0x{selector.vid:04x}:"
+                    f"0x{selector.pid:04x} was registered for the URL "
+                    "attempt and removed again"
+                )
+            url_mismatch = (
+                f"; the URL attempt opened a device reporting serial "
+                f"{opened!r}, the selector names {selector.serial!r}"
+            )
         finally:
             # Restore, not merge: the per-vid row is mutated in place, so
             # the save above COPIED it — restoring the live object would
@@ -619,7 +715,9 @@ def open_ftdi(url: str) -> FtdiDriver:
             detail = (
                 f"URL attempt: {type(url_failure).__name__}; " + detail
             )
-        raise _device_unavailable(selector, detail, registered_note)
+        raise _device_unavailable(
+            selector, detail + url_mismatch, registered_note
+        )
     if len(rows) > 1:
         raise _device_ambiguous(selector, rows)
     device_vid, device_pid, _, ifcount = rows[0]
