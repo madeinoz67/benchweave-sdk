@@ -1744,6 +1744,11 @@ def _ftdi_scan_selectors() -> list[str]:
         rows: list[tuple[int, int, str | None, int]] = []
         for vendor in sorted(_registered_vendor_ids()):
             rows.extend(_scan_vendor_rows(usb_core, usb_util, vendor))
+        # None-safe key INSIDE the guarded block: twins under one vid/pid
+        # where one device reports no serial tuple-compare None against
+        # str and would raise a bare TypeError past every typed refusal
+        # (fold B) — an unsorted escape that made both devices invisible.
+        rows.sort(key=lambda row: (row[0], row[1], row[2] or "", row[3]))
     except Exception as exc:
         raise RuntimeError(
             f"live_provider_enumeration_failed: {type(exc).__name__}: the "
@@ -1751,7 +1756,7 @@ def _ftdi_scan_selectors() -> list[str]:
             "--device <selector>"
         ) from exc
     selectors: list[str] = []
-    for vid, pid, serial, ifcount in sorted(rows):
+    for vid, pid, serial, ifcount in rows:
         serial_part = (
             f":{serial}"
             if serial is not None and _SERIAL_CHARS.match(serial)

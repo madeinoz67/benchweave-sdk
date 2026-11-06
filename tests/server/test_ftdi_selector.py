@@ -881,6 +881,29 @@ def test_the_emitted_selectors_open_through_the_ladder(
     assert [call["interface"] for call in calls] == [1, 2]
 
 
+def test_mixed_serial_twins_list_both_rows_not_an_untyped_crash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fold B (refute lane 2): two devices under one vid/pid where one
+    reports no serial and one does must BOTH list — the rows sort with a
+    None-safe key inside the guarded block. The bare ``sorted(rows)`` that
+    sat OUTSIDE the ``try`` tuple-compared ``None`` against ``str`` and
+    raised ``TypeError`` past every typed refusal, so the seam's FTDI branch
+    answered an untyped 500 and BOTH devices became invisible."""
+    _install_backend(
+        monkeypatch,
+        devices=[
+            ((0x0403, _OFFICIAL_PID, None), 1),
+            ((0x0403, _OFFICIAL_PID, "610042"), 1),
+        ],
+    )
+    selectors = ftdi_module._ftdi_scan_selectors()
+    assert selectors == [
+        "ftdi://0x0403:0x6001/1",  # the no-serial row sorts first
+        "ftdi://0x0403:0x6001:610042/1",
+    ]
+
+
 def test_enumeration_failure_names_the_class_and_the_way_out(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
