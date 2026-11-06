@@ -474,3 +474,85 @@ carries (the index grid comes from `byte_length`, never an invented interval).
 (c) The web picker's "never offer what analysis refuses" filter made D5 quieter than a
 refusal — the rows were invisible, not rejected; a refusal that names itself beats a
 filter that hides (the D12/D18 silently-empty pattern, third sighting).
+
+---
+
+## 11. Fold append (2026-11-07, post-build — append-only; the frozen bytes above stay as committed)
+
+Two refute lanes ran against the build. Both agreed the served wire is defended —
+every admitted format renders honestly on every surface, the index axis never wears a
+seconds label, and both deleted tables were replaced without narrowing their call
+sites. This section records the fold that resulted and the corrections that belong to
+the record itself.
+
+**The §2.3 misattribution, corrected (lane 1 F1, G4).** §2.3 says the series refusal
+keeps "same code, same message, per the parent's 'refuses as today'". The parent
+(`2026-11-06-589-live-bringup-design.md:871`) ruled BEHAVIOUR only — "an UNKNOWN
+format (not in `_FORMATS`) refuses as today" — and never ruled on the message. The
+build therefore rightly changed the text (it names the admitted set; the old text
+stated a falsehood after PR-4). §6's deferral ("kept bare per the parent's 'as
+today'") inherited the same misreading: the parent's silence was never a bare-message
+ruling, so the deferral's premise was the child putting words in the parent.
+
+**The series refusal joins the fifth prefix (maintainer adjudication).**
+`standalone_capture_format_unknown:` — §3's row five, the one NEW prefix — now fires
+at BOTH capture-family doors. Its layer ruling is unchanged:
+`SeamError("invalid_request", …)` at the operation boundary (not construction, not
+connect — the parent's `ValueError`-at-construction / `RuntimeError`-at-connect pins
+stay untouched). The adjudication overrules §6's deferral on coherence grounds, not
+by claiming its trigger ("a CI need to branch on it") fired: the same registry lookup
+(`catalogue._FORMAT_SPECS.get`) refuses the same trigger class — a format outside the
+registry — at two doors of one operation family, and STD-4 reaches `SeamError` paths
+(the invariant's own list is full of them; the `_REPORT_REFUSAL_CODES` comment at the
+seam says the prefix stays in the wire message), so a typed refusal carrying bare
+prose is the thing the invariant forbids. One name, both doors; the series message
+keeps its `artifact_read` guidance (read-side audience), the START door keeps its
+own (write-side). Nothing in-tree branches on the bare text (grep: no test or source
+matches it beyond the guidance substring A9 already pinned). `docs/internal/
+invariants.md` STD-4 is amended to name both doors. A9 pins the prefix; RED at head
+was the bare message: `'capture_series serves waveform_f64le, raw_binary primaries;
+use artifact_read for a csv capture'.startswith('standalone_capture_format_unknown:')`
+→ `False`.
+
+**The A7 dataset half — the trigger fired unbuilt, and is now armed.** §2.4.3
+conditioned the walk's dataset half on PR-3's landing; this branch's own base
+(`8bf2304`) IS the PR-3 merge, so §7.3's falsifier ("reddens the A7 walk's dataset
+half") named something that could not fire — R5 was unmet at the build. Served
+reality, measured by lane 2: a dataset is manifest-only (inline values, no primary,
+no format — `capture_list`'s datasets row carries neither), and every display surface
+answers a dataset id with `not_found` / `no published capture: <id>` — the series
+door via `_event_dir`'s manifest check, the analysis and export doors via
+`_stale_row_refusal`. Nothing served is wrong; the property existed unpinned. The
+fold arms it: `test_a7_dataset_half_a_dataset_id_refuses_honestly_on_every_surface`
+admits a REAL dataset through the invoke machinery and asserts the honest
+`not_found` on all three surfaces — the R-C falsifier a second decoder would redden,
+finally able to fail. A dataset RENDERER (series from dataset variables) remains a
+corpus motion; when it lands it must arrive through the registry (S5), and this arm
+is the half that inverts then.
+
+**Measured mutation named-sets (the fold's own three, executed one at a time; each
+reddened exactly its named surface, so unlike PR-3's append nothing here supersedes
+a §8 set):** M-R5a (a `ds:` branch in `_event_dir` resolving into the datasets
+family — the second decoder's first step at the series door) reddened the SERIES
+assert only: `'invalid_request' == 'not_found'` fails. M-R5b (`_stale_row_refusal`
+skipping `ds:` ids) reddened the ANALYSIS assert via the message discriminator — the
+CODE stayed `not_found` (`standalone_report_capture_unknown`, the loader's own
+refusal, reached only because the skip moved the refusal site), proving the arm's
+message pin is load-bearing, not decorative. M-R5c (the export loop skipping the
+stale-row refusal) reddened the EXPORT assert the same way. Each run: one failure,
+the named surface, nothing else.
+
+**The units-ceiling wording (NIT).** §2.3's "the two-distinct-units ceiling counts
+`y_label`s" described the mechanism correctly, but the served text still said "two
+distinct units" while counting labels — and `byte value` is a label, not a unit. The
+refusal now reads "two distinct y labels"; prefix and trigger class unchanged
+(STD-4 untouched); the guide already said labels (`user_guide/plugin-sdk.qmd:1000`),
+so the wire joins the prose rather than the reverse. A5 pins the wording.
+
+**Left as adjudicated (the two accepts):** the record's `.data` charter sentence
+stays as written — an unknown-format primary named with its own extension raises an
+uncaught `FileNotFoundError` (byte-identical at base, pre-existing, unreachable
+through the host's own writer). And both refute lanes' first-run `21 failed / 10
+errors` symptoms were corrupted or raced venvs in their own scratch worktrees, not
+this branch's code (lesson already in the ledger: never run `uv run` gates
+concurrently with a suite).

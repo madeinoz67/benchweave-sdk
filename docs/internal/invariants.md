@@ -103,12 +103,16 @@ the invariants below anchor there.
   `benchweave_sdk_server/dataset_admission.py`,
   `benchweave_sdk_server/seam.py`. The format path (issue #589 PR-4)
   adds one more, `standalone_capture_format_unknown:`
-  (`SeamError("invalid_request", …)` at `_op_capture_start`'s operation
-  boundary — a format outside `catalogue._FORMAT_SPECS` on a direct
-  handler call; the served schema's enum DERIVES from the same registry,
-  so schema-validated callers refuse earlier, and the mirror is the A-F8
-  settle_pct posture: the host does not publish a capture every display
-  surface refuses. The registry itself — `FormatSpec` plus
+  (`SeamError("invalid_request", …)` at BOTH capture-family doors — a
+  format outside `catalogue._FORMAT_SPECS`: at `_op_capture_start` on a
+  direct handler call, where the served schema's enum DERIVES from the
+  same registry, so schema-validated callers refuse earlier, and the
+  mirror is the A-F8 settle_pct posture (the host does not publish a
+  capture every display surface refuses); and at `_op_capture_series`,
+  where a published manifest whose format is outside the registry
+  refuses with the SAME prefix (the fold adjudication, 2026-11-07: same
+  trigger class, one name for both doors of the operation family).
+  The registry itself — `FormatSpec` plus
   `_FORMAT_SPECS`, with `_FORMATS` derived — is the single source behind
   the served enum, the write-side bound math and the display decoders;
   the exhaustion walk in `tests/server/test_format_path.py` pins the
