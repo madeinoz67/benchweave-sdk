@@ -294,7 +294,12 @@ class SerialLink:
         reply, and that reply is not recoverable from the link. The loss
         is bounded to the one straddling chunk (reads that begin after
         the purge deliver normally), so the caller retries the command
-        rather than waiting out a reply that will never arrive."""
+        rather than waiting out a reply that will never arrive. A reply
+        larger than one read quantum can lose its head and keep its tail:
+        the fence drops whole chunks, never parts of one, so the
+        terminator-bearing tail can be delivered as a frame that reads as
+        complete — a caller that must not accept partial frames
+        resynchronises after purging."""
         with self._cond:
             self._purge_epoch += 1
             del self._ring[:]
