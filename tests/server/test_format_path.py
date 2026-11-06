@@ -116,7 +116,7 @@ def write_waveform(
 ) -> Path:
     payload = b"".join(struct.pack("<d", value) for value in values)
     event = write_event(root, capture_id, fmt="waveform_f64le", payload=payload)
-    manifest = json.loads((event / "manifest.json").read_text())
+    manifest = json.loads((event / "manifest.json").read_text(encoding="utf-8"))
     manifest["sample_count"] = len(values)
     manifest["sample_interval_s"] = interval
     manifest["unit"] = unit
@@ -333,7 +333,7 @@ def test_a7_walk_every_admitted_format_over_every_surface(
     assert exported["created"] is True
     document = (
         tmp_path / "captures" / "reports" / f"{exported['report_id']}.html"
-    ).read_text()
+    ).read_text(encoding="utf-8")
     assert expected_x_label in document
     if spec.axis == "index":
         assert ">t (s)<" not in document
@@ -458,7 +458,7 @@ def test_a4_report_exports_raw_with_the_honest_absences(
     assert exported["created"] is True
     document = (
         capture_root / "reports" / f"{exported['report_id']}.html"
-    ).read_text()
+    ).read_text(encoding="utf-8")
     assert "raw_binary" in document, "the caption carries the format"
     assert "sample index" in document, "the x axis is the index, named"
     assert "byte value" in document, "the y label is the spec's, named"
@@ -534,7 +534,7 @@ def test_a8_markers_on_raw_validate_in_index_units(seam, capture_root) -> None:
     first = call(seam, "report_export", {"capture_ids": ["fx-raw-marked"]})
     document = (
         capture_root / "reports" / f"{first['report_id']}.html"
-    ).read_text()
+    ).read_text(encoding="utf-8")
     assert "first byte" in document and "last byte" in document
     second = call(seam, "report_export", {"capture_ids": ["fx-raw-marked"]})
     assert second["report_id"] == first["report_id"]
@@ -698,10 +698,10 @@ def test_a14_the_manifest_asymmetry_is_the_corpus_shape(tmp_path: Path) -> None:
     wave = publish(host, _start("waveform_f64le", 4))
     raw = publish(host, _start("raw_binary", 4))
     wave_manifest = json.loads(
-        (tmp_path / "captures" / wave["capture_id"] / "manifest.json").read_text()
+        (tmp_path / "captures" / wave["capture_id"] / "manifest.json").read_text(encoding="utf-8")
     )
     raw_manifest = json.loads(
-        (tmp_path / "captures" / raw["capture_id"] / "manifest.json").read_text()
+        (tmp_path / "captures" / raw["capture_id"] / "manifest.json").read_text(encoding="utf-8")
     )
     assert wave_manifest["sample_count"] == 4
     assert wave_manifest["sample_interval_s"] == 0.001
