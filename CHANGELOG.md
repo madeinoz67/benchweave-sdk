@@ -2,6 +2,102 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.24.0] - 2026-11-06
+
+### Bug Fixes
+
+- Fold the refute wave on the replay transport — five findings + two NITs (#564)
+- The lane-A high folds — mapping coercion, banked bind, purge refusal (#568)
+- Enforce the contract's declared limits at the ladder (#568, F3b)
+- Recorder accumulation, the connection marker, the fault latch (#568)
+- The delta-refute residuals and the stale-claim corrections (#568)
+- The scripted double is disclosed on every surface (#568, acceptance A)
+- The capture-services refusal is typed and names its members (#568, acceptance B)
+- Host_info's output schema carries the rehearsal field (#568, A)
+- Release-cut regenerates the provider fixture arm (#568, release F1)
+- The class-reference badge to the lock's ACTIVE 0.6.0 (#568, release F3)
+- The standards-family count is derived from the lock (#568, release F5)
+- The contributor window excludes the operator's handle identities (#568, release F6)
+- The scan/pick/bind path works on ftdi (#568, claims-surface F2)
+- The bindings prefix stops lying; the reachable prefixes named (#568, F6)
+- The bindings document gains a format version and a v1 migration (#568, A1)
+- The executor supplies the dispatch table — the registry serves (#568, E1)
+- The provider dialect's refusals name the corpus, never "journal" (#568, M1)
+- The ftdi factory resolves the endpoint once per connect (#568, A3)
+- Ftdi discovery logs the dispatchless-adapter omission (#568, A4)
+- A served fault latches the mock double (#568, M2)
+- M3/R1/R3 — the dead branch driven, the count active-only, the slash (#568)
+- The scaffold arm sets enumerate from the mechanism (#568, R2)
+- Pair the corpus anchor with the evaluator's clock (#575)
+- A full write wakes the stream reader — the delivery margin doubled (#568)
+- One deterministic package-dir pick under src/
+
+### Documentation
+
+- Row T5 — release-version literals in tests (issue #473) (#219)
+- Issue #562 work item 3 — FTDI transport-provider contract + replay transport design record
+- STE register pass on the #566 prose; fixtures re-pinned
+- Strict session continuity bounds mock rehearsal (#567 row 14)
+- Issue #568 design record — the live FTDI provider transport
+- Record §7's landed rows; conform adopt and the guide host (#568)
+- The lane-B folds — disclosure, cross-pin, register, declarations (#568)
+- STE register pass over the FTDI operator prose (#568)
+- Name the host-lifecycle members and sweep the member counts (#568, acceptance C/D/E)
+- Issue #570 design record — the mock provider dialect
+- The operator surfaces state the ftdi endpoint lifecycle (#568, F1)
+- Correction markers at the record's claim sites (#568, F3)
+- Copier.yml says one true thing about the provider shape (#568, F4)
+- The guide documents the provider dialect beside the other two (#568, F5)
+- The provider arm's ui-less shape stated as the regen's own discipline (#568, F7)
+- Split the ftdi scan sentences around the identify mentions (#568, F1 fixup)
+- Row c's accuracy correction and version-class reasoning (#568, G1/G2)
+- The v0.24.0 walk records its exact suite counts [skip ci]
+
+### Features
+
+- The replay transport — a recorded journal served as the wire (#564)
+- The live FTDI provider transport (#568)
+- The shipped rehearsal double and the three-transport B1 (#568)
+- Declare the capture lifecycle on CaptureServices (#568)
+- --record emits a replay journal from the live ftdi session (#568)
+- New --provider-transport, the scaffold provider variant (#568)
+- The mock provider dialect — a provider plugin rehearses on --transport mock (#570)
+- The dialect bounds D1-D5 built, not deferred (#570, owner expansion)
+- Ftdi discovery and the binding store — the endpoint lifecycle (#568, row a)
+- The provider-agnostic executor registry (#568, row e)
+- The contract revision 1.1.0 with the honest native_libraries (#568, row c)
+
+### Miscellaneous
+
+- Bump fastapi from 0.152.0 to 0.162.0
+- Bump ruff from 0.17.1 to 0.17.3
+- Bump playwright from 1.64.0 to 1.64.1
+- Bump fastmcp from 4.1.1 to 4.1.4
+- Bump the codeql-action group with 2 updates
+- Bump astral-sh/setup-uv from 10.3.0 to 10.3.2
+- Bump actions/setup-python from 7.0.0 to 7.1.0
+- Cut v0.24.0 — release surfaces and the phase-2 patch
+- Apply the v0.24.0 phase-2 patch at the tag commit [skip ci]
+
+### Scaffold
+
+- Wire-discipline helpers + the vectors evidence gate (#566)
+- Evidence kinds are a closed set of names (#566 row 15)
+
+### Validation
+
+- Read receipts are a contract, not a convention (#567 row 13)
+
+### Vectors
+
+- The descriptor-walk demand-order contract (#567 row 12)
+
+
+### Contributors
+
+- Stephen Eaton (59 commits)
+- Dependabot[bot] (7 commits)
+- Madeinoz67 (1 commit)
 ## [0.23.0] - 2026-10-26
 
 ### Documentation
