@@ -78,7 +78,7 @@ import json
 import shutil
 import tokenize
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePath
 
 REPO = Path(__file__).resolve().parents[1]
 SRC_ROOT = REPO / "src"
@@ -278,6 +278,17 @@ def _executor_block_span(tree: ast.Module) -> tuple[int, int] | None:
     return None
 
 
+def _scan_rel(path: PurePath, root: PurePath) -> str:
+    """The ONE site a scanned path becomes a comparable string: forward
+    slashes on every OS. The committed allowlist keys, ``TRANSPORT_REL``
+    and the lock's recorded paths are all forward-slash spellings, and on
+    Windows ``str(relative_to(...))`` yields backslashes — PR #238's red,
+    where every allowlisted constant reported as a device identity because
+    the lookup key missed. There is deliberately no second normalisation
+    site; per-consumer normalising is how the two spellings come back."""
+    return path.relative_to(root).as_posix()
+
+
 def _scan(root: Path) -> Scan:
     scan = Scan()
     lock_paths = _lock_relative_paths()
@@ -289,7 +300,7 @@ def _scan(root: Path) -> Scan:
         if path in excluded_set:
             continue  # lock membership, not assertion (STD-5: vendored
             # bytes are main-side's to fix, never edited here)
-        rel = str(path.relative_to(root))
+        rel = _scan_rel(path, root)
         source = path.read_text(encoding="utf-8")
         tree = ast.parse(source, filename=str(path))
         docstrings = _docstring_ids(tree)
@@ -427,7 +438,7 @@ class TestTheGateHoldsOnRealSource:
         # fact — a second one arriving by sync moves this pin, which is
         # the disclosed cost of the assertion).
         py_in_lock = [p for p in _lock_relative_paths() if p.suffix == ".py"]
-        assert [str(p) for p in py_in_lock] == ["plugin-ui/contracts.py"]
+        assert [p.as_posix() for p in py_in_lock] == ["plugin-ui/contracts.py"]
 
     def test_the_transport_block_locates_by_symbol(self) -> None:
         """The exemption exists only because PROVIDER_EXECUTORS is found in
@@ -438,6 +449,32 @@ class TestTheGateHoldsOnRealSource:
             filename=TRANSPORT_REL,
         )
         assert _executor_block_span(tree) is not None
+
+    def test_the_scan_rel_is_forward_slashed_on_every_os(self) -> None:
+        """PR #238's Windows red, made host-independent: the one site a
+        scanned path becomes a comparable string must normalise BOTH path
+        flavours to forward slashes, because the committed allowlist keys,
+        ``TRANSPORT_REL`` and the lock's recorded paths are all
+        forward-slash. On Windows ``str(relative_to(...))`` yields
+        backslashes — every allowlisted constant then reported as a device
+        identity and the transport-block exemption stopped matching (the
+        CI log: ftdi.py 0x0403, library.py 0x1000, lifecycle.py 0x8/
+        0x200/0x1000, six arms red). This arm drives a Windows-flavoured
+        relative path on any host, so the separator bug cannot hide behind
+        the host it runs on."""
+        from pathlib import PurePosixPath, PureWindowsPath
+
+        windows = PureWindowsPath("src\\benchweave_sdk_server\\ftdi.py")
+        # The failure shape itself, pinned: str() of a Windows relative
+        # path is backslashed, and that spelling misses the allowlist.
+        backslashed = str(windows.relative_to(PureWindowsPath("src")))
+        assert backslashed == "benchweave_sdk_server\\ftdi.py"
+        assert (backslashed, 0x40) not in _CLASS_ALLOWLIST
+        # The single normalisation site fixes both flavours identically.
+        assert _scan_rel(windows, PureWindowsPath("src")) == TRANSPORT_REL
+        assert (TRANSPORT_REL, 0x40) in _CLASS_ALLOWLIST
+        posix = PurePosixPath("src/benchweave_sdk_server/ftdi.py")
+        assert _scan_rel(posix, PurePosixPath("src")) == TRANSPORT_REL
 
 
 class TestTheGateBites:
@@ -617,7 +654,7 @@ class TestTheGateBites:
         bytes are the main repository's to fix — never edited, never
         linted into shape here)."""
         scratch = _scratch_copy(tmp_path)
-        vendored = str(STANDARDS_REL / "plugin-ui" / "contracts.py")
+        vendored = (STANDARDS_REL / "plugin-ui" / "contracts.py").as_posix()
         _plant(scratch, vendored, "\n_LEAK = 0x9999\n")
         scan = _scan(scratch)
         assert not any(
