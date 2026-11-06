@@ -381,3 +381,18 @@ by design.
 | 7 | Contributor window `v0.19.0..HEAD` | 25 commits in the window — human authors other than the operator/bots: none; the walk acknowledges new human contributors and records an empty window as a result |
 | 8 | Gateway uv.lock SDK pin | recorded note — moves at the gateway's next lock run / pointer advance |
 | 9 | Served-set bump class | SERVED-SET MOTION in the window — the class is asserted by the sync machinery (sdk_bump_class_invalid:); the walk records it; release-cut refuses to guess a class (D7) |
+
+## Result record — v0.23.1 (2026-11-06)
+
+| # | Surface | Result |
+|---|---------|--------|
+| 1 | README stamp | updated → SDK 0.23.1 by release-cut (occurrence-validated) |
+| 1b | User-guide "current SDK" sentence | n-a — no page in this tree carries a "current SDK" sentence (`docs/` holds `internal/` only; the wheel filename is a glob since #102) |
+| 2 | Website hero status | updated — SDK 0.23.1 by release-cut (occurrence-validated); OTDP / adapter-API stamps the walk confirms against the lock's active rows |
+| 3 | Docs selector | PHASE-2 — patch staged at `.release/phase2-v0.23.1.patch`; the tag commit applies it (registration precedes the tag; the same patch moves the zero-literal gate battery's three anchors, #524) |
+| 4 | Compatibility tagline | updated — SDK 0.23.1 against the main-repository floor by release-cut (occurrence-validated) |
+| 5 | Standards badges | correct-as-is — all 7 site badges match the lock's active rows: otdp 0.2.4, registry 0.1.3, execution 0.2.0, interface 0.1.1, plugin-ui 0.4.0, plugin-ui-preview 0.2.0, plugin-ui-class-reference 0.6.0 (compared set-for-set) |
+| 6 | great-docs.yml versions | PHASE-2 — the tag commit applies the staged patch (the ordering constraint) |
+| 7 | Contributor window `v0.23.0..HEAD` | 78 commits in the window — human authors other than the operator/bots: none; the walk acknowledges new human contributors and records an empty window as a result |
+| 8 | Gateway uv.lock SDK pin | recorded note — moves at the gateway's next lock run / pointer advance |
+| 9 | Served-set bump class | n-a — no served-set motion in the window: standards-lock.json is identical to v0.23.0's apart from compatibility.sdk (the certified-version field) |
