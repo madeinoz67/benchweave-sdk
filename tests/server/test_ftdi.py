@@ -2039,3 +2039,132 @@ def test_a_split_reply_delivers_its_tail_as_a_complete_frame_after_a_purge(
     finally:
         transport.release()
         services.link.close()
+
+
+def test_a_purge_between_a_frames_head_and_tail_delivers_the_tail_alone(
+    plugin,
+) -> None:
+    """Refute lane 2's second corruption path, armed: the ring clear ALONE
+    is enough. The head is fetched by a read that completes BEFORE the
+    purge and is appended to the ring; the purge's clear removes it; the
+    tail is read after the purge and delivered as a frame that reads as
+    complete. No read straddles the purge, so the fence is never involved —
+    this arm stays green under fence removal, correctly, which is why its
+    discriminating mutation is the RING CLEAR: with the clear gone the head
+    survives, the receive returns head and tail together, and the
+    tail-alone assertion reddens. This is the path that makes the hazard
+    independent of read timing, and it is why the caller contract attributes
+    truncation to any purge landing mid-frame rather than to the fence."""
+    head = b"head-half"
+    tail = b"tail-half\n"
+    driver = ScriptedFtdiDriver(
+        [
+            {
+                "name": "purge-rx",
+                "transaction": {"kind": "ftdi_control", "op": "purge", "queue": "rx"},
+                "response": {},
+            }
+        ]
+    )
+    contract = verify_ftdi_plugin(plugin)
+    transport = _HoldingTransport()
+    services = FtdiCaptureServices(
+        SerialLink(transport),
+        driver,
+        contract.grammar,
+        provider=contract.provider,
+        max_frame_bytes=4096,
+        limits=contract.limits,
+    )
+    context = _context(services, "op-purge-ring-clear-truncation")
+    try:
+        deadline = time.monotonic() + 2.0
+        while not transport.parked.is_set() and time.monotonic() < deadline:
+            time.sleep(0.001)
+        assert transport.parked.is_set(), "the reader parked inside its read"
+        transport.queue(head)
+        transport.release()  # this read completes BEFORE the purge: no straddle
+        assert _wait_for_ring_depth(services.link, len(head)) == len(head)
+        asyncio.run(
+            services.transfer(
+                {"kind": "ftdi_control", "op": "purge", "queue": "rx"}, context
+            )
+        )
+        assert services.link.ring_length() == 0, (
+            "the ring clear removed the head that the reader had already "
+            "appended before the purge"
+        )
+        transport.queue(tail)  # the tail arrives AFTER the purge
+        assert _wait_for_ring_depth(services.link, len(tail)) == len(tail)
+        received = asyncio.run(
+            services.transfer(
+                {
+                    "kind": "stream_receive",
+                    "max_bytes": 64,
+                    "termination": "lf",
+                    "exact_bytes": None,
+                },
+                context,
+            )
+        )
+        assert received == {"data": tail}, (
+            "the terminator-bearing tail was delivered as a frame that reads "
+            "as complete with its head gone, reached with no straddling read"
+        )
+    finally:
+        transport.release()
+        services.link.close()
+
+
+def test_a_quiet_receive_row_is_consumed_so_it_cannot_wedge_the_double(
+    plugin,
+) -> None:
+    """Refute lane 1, F-B. A quiet receive is the documented parked-read
+    outcome on this transport, and the recorder journals one as an empty
+    response (`_stream_row` writes no data key when the read is empty), so
+    a real recorded journal containing one is a legitimate shape. The
+    construction release branch identifies a device-initiated frame by row
+    SHAPE; keying it on a non-empty response left the quiet row at the
+    script head, and the next control call refused with "row
+    'quiet-receive' expects None None, got purge". This arm pins the
+    consumption: a purge queued behind a quiet receive must match."""
+    driver = ScriptedFtdiDriver(
+        [
+            {
+                # A quiet receive: no bytes, the shape the recorder writes.
+                "name": "quiet-receive",
+                "transaction": {"kind": "stream_receive"},
+                "response": {},
+            },
+            {
+                "name": "purge-rx",
+                "transaction": {"kind": "ftdi_control", "op": "purge", "queue": "rx"},
+                "response": {},
+            },
+        ]
+    )
+    contract = verify_ftdi_plugin(plugin)
+    transport = _HoldingTransport()
+    services = FtdiCaptureServices(
+        SerialLink(transport),
+        driver,
+        contract.grammar,
+        provider=contract.provider,
+        max_frame_bytes=4096,
+        limits=contract.limits,
+    )
+    context = _context(services, "op-quiet-receive-row")
+    try:
+        asyncio.run(
+            services.transfer(
+                {"kind": "ftdi_control", "op": "purge", "queue": "rx"}, context
+            )
+        )
+        assert driver.pending == 0, (
+            "the quiet receive released no bytes, and the purge behind it "
+            "matched — so the row was consumed at construction rather than "
+            "left at the script head to wedge every later call"
+        )
+    finally:
+        transport.release()
+        services.link.close()

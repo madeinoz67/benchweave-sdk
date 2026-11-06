@@ -294,21 +294,28 @@ class SerialLink:
         reply, and that reply is not recoverable from the link. The loss
         is bounded to the one straddling chunk (reads that begin after
         the purge deliver normally), so the caller retries the command
-        rather than waiting out a reply that will never arrive. A reply
-        larger than one read quantum can lose its head and keep its tail:
-        the fence drops whole chunks, never parts of one, so the
+        rather than waiting out a reply that will never arrive.
+
+        A purge landing mid-frame can corrupt a frame rather than lose
+        it, and two mechanisms reach that same outcome. The fence drops
+        the whole chunk holding a frame's head when the reader fetched
+        that chunk across the purge; and this clear removes a head the
+        reader had already appended, where the tail then arrives after
+        the purge. Neither mechanism drops part of a chunk, so the
         terminator-bearing tail can be delivered as a frame that reads as
-        complete — a caller that must not accept partial frames
-        resynchronises after purging.
+        complete. That is corruption and not a retry. Note that it needs
+        no straddling read: any purge landing between a frame's head and
+        its tail can produce it, by either mechanism. A caller that must
+        not accept partial frames resynchronises after purging.
 
         The obligation above stands in for machinery this contract does
         not build, and the trigger that would force that machinery is: a
         caller that CANNOT resynchronise. At that point the fence needs to
         carry a resynchronise-required state and ``stream_receive`` must
-        refuse a headless frame rather than deliver it, because a
-        truncated frame that reads as complete is corruption and not a
-        retry. Until such a caller exists, a caller-initiated purge with a
-        stated resync obligation is the smaller and honest shape."""
+        refuse a headless frame rather than deliver it, since a caller
+        cannot tell such a frame from a real one. Until such a caller
+        exists, a caller-initiated purge with a stated resync obligation
+        is the smaller and honest shape."""
         with self._cond:
             self._purge_epoch += 1
             del self._ring[:]

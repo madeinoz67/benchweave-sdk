@@ -820,9 +820,14 @@ class ScriptedFtdiDriver:
             self._script.append(self._parse_row(row, index))
             # A response-only stream row is a device-initiated frame: it is
             # on the pipe from the start, exactly as a device that speaks
-            # first would be.
+            # first would be. The row is identified by SHAPE (no op, no
+            # request), never by a non-empty response: a quiet receive is
+            # the documented parked-read outcome and the recorder journals
+            # it as an empty response, so gating on content would leave the
+            # row at the script head and wedge every later call. Releasing
+            # an empty frame is a no-op append that still consumes the row.
             entry = self._script[-1]
-            if entry.op is None and entry.request is None and entry.response:
+            if entry.op is None and entry.request is None:
                 self._inbound += self._script.pop().response
 
     def _parse_row(self, row: Mapping[str, Any], index: int) -> _ScriptEntry:
@@ -1315,7 +1320,8 @@ class FtdiCaptureServices(SerialCaptureServices):
         # in it at purge time. The clear is atomic against the reader's
         # appends and fences the reader's in-flight read (a straddled
         # chunk is discarded), so nothing fetched before the purge
-        # surfaces after it; bytes read after it land as fresh traffic.
+        # surfaces after it; bytes fetched by a read that begins after it
+        # land as fresh traffic.
         if op == "purge" and transaction.get("queue") == "rx":
             self._link.purge_rx()
         # 6. Result validation: the live device is untrusted against its
