@@ -300,3 +300,24 @@ def test_the_measurement_without_a_catalog_leaves_the_set_unresolved(
 # for the invoke capability), so "descriptor pins nothing" cannot occur here
 # — the resolver's empty-entries None return is exercised by every
 # non-invoke plugin the rest of the suite loads.
+
+
+def test_a_catalog_invalid_pin_maps_to_serve_exit_2(
+    tmp_path: Path, invoke_project_builder, capsys
+) -> None:
+    """The CLI's fail-fast for the contract family (the budget arm's
+    sibling): a lying pin refuses serve construction with the typed prefix
+    on stderr and exit 2, never a traceback."""
+    from benchweave_sdk_server.cli import _build_seam
+
+    project = invoke_project_builder(tmp_path / "exit2")
+    _add_pin(
+        project,
+        "vendor-profile.json",
+        _invalid_profile_document(),
+        "https://vendor.example/profile-1",
+    )
+    with pytest.raises(SystemExit) as caught:
+        _build_seam(project)
+    assert caught.value.code == 2
+    assert "profile_contract_invalid:" in capsys.readouterr().err
