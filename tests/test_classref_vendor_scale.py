@@ -143,14 +143,21 @@ def test_many_vendor_operations_derive_and_validate(vendor_ops: int) -> None:
 
 
 @pytest.mark.parametrize("vendor_ops", [8, 40])
-def test_many_vendor_operations_pass_the_rendered_gate(
+def test_many_vendor_operations_derive_but_refuse_the_rendered_gate(
     vendor_ops: int, tmp_path: Path
 ) -> None:
-    """The gate path (verify-ui): a scaffolded project carrying the derived
-    documents verifies with zero findings — the written manifest's layout
-    block re-validates against the family schema (H2), renders, and censuses
-    clean, so a device with many vendor operations is shippable, not merely
-    derivable."""
+    """The gate path (verify-ui): a scaffolded project with many vendor
+    operations DERIVES cleanly (the written manifest's layout block
+    re-validates against the family schema, H2) and then the gate REFUSES
+    it: the descriptor pins the vendor catalog under contracts[], and since
+    #589 PR-2 a pinned entry that is neither measurement-shaped nor
+    catalog-schema-valid refuses seam construction — verify-ui's render
+    half builds the real standalone host, and the host matches the
+    gateway, whose loader refuses the same bytes at activation. This
+    arm's pre-PR-2 form ("pass_the_rendered_gate", a zero-findings gate)
+    asserted a shippable claim that was FALSE on both hosts; the clean
+    gate returns only with the R2 corpus motion (vendor pins move out of
+    contracts[], main-side)."""
     if REFERENCE is None:
         pytest.fail("no vendored reference for otdp.logic_analyser/1.0.0")
     project = tmp_path / "project"
@@ -178,8 +185,11 @@ def test_many_vendor_operations_pass_the_rendered_gate(
     for slug, scaffold in derived.preset_scaffolds.items():
         (presets / f"{slug}.json").write_bytes(_raw(scaffold))
     (ui / "class-reference.json").write_bytes(_raw(declaration_scaffold(derived)))
-    report = verify_ui(project, reference=REFERENCE)
-    assert not report.findings, list(report.findings)
+    with pytest.raises(
+        ValueError,
+        match=r"profile_contract_invalid: urn:veridian:vendor-catalog:1.0.0",
+    ):
+        verify_ui(project, reference=REFERENCE)
 
 
 def _children_schemas(node: Any) -> list[dict[str, Any]]:
