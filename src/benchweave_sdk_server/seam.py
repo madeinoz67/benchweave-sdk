@@ -800,12 +800,19 @@ class StandaloneSeam:
             self._invoke_constraints[action_id] = validator
         return validator
 
-    async def _op_invoke(
+    async def _invoke_core(
         self, arguments: dict[str, Any], correlation: str
     ) -> dict[str, Any]:
-        """Invoke one declared action under the pinned profile contract.
+        """The invoke path, LOCK-FREE by contract (issue #589 PR-2 + PR-6's
+        reentrancy constraint): every gate, the dispatch and the result
+        checks run here, and the CALLER owns the ``_op_mutex`` span —
+        ``_op_invoke`` acquires it for the catalogue dispatch, and a caller
+        that already holds the mutex (a preset apply whose settings ARE a
+        configure action's input, dispatching through this path) runs the
+        core directly. ``asyncio.Lock`` is not reentrant: a locked core
+        called from a locked span hangs, it does not race.
 
-        The pre-dispatch gates mirror the gateway's ``_invoke_gate`` I1–I5
+        The pre-dispatch gates mirror the gateway's ``_invoke_gate`` I1-I5
         in order, with ZERO adapter calls: a refusal is a clean typed
         rejection before the device is touched. The post-dispatch result
         gates mirror the gateway's post-dispatch checks: the closed
@@ -821,119 +828,126 @@ class StandaloneSeam:
         self._refuse_degraded(correlation)
         if not self._session.connected:
             raise self._fail("not_ready", "device is not connected", correlation)
-        # Under the op mutex for the whole span (R6): gates, dispatch and
-        # result checks read one plugin's contracts — a reload swapping the
-        # plugin mid-invoke is the chimera the mutex exists to prevent.
-        async with self._op_mutex:
-            contracts = self._invoke_contracts
-            operations = self._session.plugin.descriptor.get("operations", {})
-            # I1 capability: the descriptor's declared invoke operation AND
-            # the resolved contract pair — the gateway's controller-existence
-            # rule, in substance.
-            if (
-                contracts is None
-                or not isinstance(operations, dict)
-                or "invoke" not in operations
-            ):
-                raise self._fail(
-                    "unavailable",
-                    "invoke requires the pinned contract set (catalog and "
-                    "measurement schema) resolved at load",
-                    correlation,
-                    reason="contracts_unresolved",
-                )
-            action_id = arguments["action_id"]
-            # I2 declared action (defense in depth: the descriptor's own
-            # actions map).
-            declared = self._session.plugin.descriptor.get("actions")
-            if not isinstance(declared, dict) or action_id not in declared:
-                raise self._fail(
-                    "invalid_request",
-                    f"action {action_id!r} is not declared by the descriptor "
-                    "actions map",
-                    correlation,
-                )
-            # I3 catalog resolution (M14: an unknown contract is never
-            # opaque success).
-            action = contracts.actions.get(action_id)
-            if action is None:
-                raise self._fail(
-                    "invalid_request",
-                    f"action {action_id!r} does not resolve in the pinned "
-                    "profile catalog (M14)",
-                    correlation,
-                )
-            # I4 the pinned catalog's per-action input schema.
-            value = arguments["input"]
-            error = next(iter(action.input_validator.iter_errors(value)), None)
+        contracts = self._invoke_contracts
+        operations = self._session.plugin.descriptor.get("operations", {})
+        # I1 capability: the descriptor's declared invoke operation AND
+        # the resolved contract pair — the gateway's controller-existence
+        # rule, in substance.
+        if (
+            contracts is None
+            or not isinstance(operations, dict)
+            or "invoke" not in operations
+        ):
+            raise self._fail(
+                "unavailable",
+                "invoke requires the pinned contract set (catalog and "
+                "measurement schema) resolved at load",
+                correlation,
+                reason="contracts_unresolved",
+            )
+        action_id = arguments["action_id"]
+        # I2 declared action (defense in depth: the descriptor's own
+        # actions map).
+        declared = self._session.plugin.descriptor.get("actions")
+        if not isinstance(declared, dict) or action_id not in declared:
+            raise self._fail(
+                "invalid_request",
+                f"action {action_id!r} is not declared by the descriptor "
+                "actions map",
+                correlation,
+            )
+        # I3 catalog resolution (M14: an unknown contract is never
+        # opaque success).
+        action = contracts.actions.get(action_id)
+        if action is None:
+            raise self._fail(
+                "invalid_request",
+                f"action {action_id!r} does not resolve in the pinned "
+                "profile catalog (M14)",
+                correlation,
+            )
+        # I4 the pinned catalog's per-action input schema.
+        value = arguments["input"]
+        error = next(iter(action.input_validator.iter_errors(value)), None)
+        if error is not None:
+            raise self._fail(
+                "invalid_request",
+                f"input violates the action's catalog input schema at "
+                f"{error.json_path}: {error.message}",
+                correlation,
+            )
+        # I5 the descriptor action's input_constraints narrowing.
+        constraints = self._invoke_constraints_validator(
+            action_id, declared[action_id]
+        )
+        if constraints is not None:
+            error = next(iter(constraints.iter_errors(value)), None)
             if error is not None:
                 raise self._fail(
                     "invalid_request",
-                    f"input violates the action's catalog input schema at "
-                    f"{error.json_path}: {error.message}",
+                    f"input violates the descriptor action's "
+                    f"input_constraints at {error.json_path}: "
+                    f"{error.message}",
                     correlation,
                 )
-            # I5 the descriptor action's input_constraints narrowing.
-            constraints = self._invoke_constraints_validator(
-                action_id, declared[action_id]
-            )
-            if constraints is not None:
-                error = next(iter(constraints.iter_errors(value)), None)
-                if error is not None:
-                    raise self._fail(
-                        "invalid_request",
-                        f"input violates the descriptor action's "
-                        f"input_constraints at {error.json_path}: "
-                        f"{error.message}",
-                        correlation,
-                    )
-            row = declared[action_id]
-            timeout_ms = (
-                int(row["timeout_ms"]) if isinstance(row, dict) else 0
-            )
-            data = await self._execute(
-                "invoke",
-                {"action_id": action_id, "input": value},
+        row = declared[action_id]
+        timeout_ms = (
+            int(row["timeout_ms"]) if isinstance(row, dict) else 0
+        )
+        data = await self._execute(
+            "invoke",
+            {"action_id": action_id, "input": value},
+            correlation,
+            timeout_ms=timeout_ms or None,
+        )
+        # The RESULT gates, in the gateway's order.
+        if set(data) != {"action_id", "result"}:
+            raise self._fail(
+                "unavailable",
+                f"invoke result refused: the data must be exactly "
+                f"{{action_id, result}} (got {sorted(data)})",
                 correlation,
-                timeout_ms=timeout_ms or None,
             )
-            # The RESULT gates, in the gateway's order.
-            if set(data) != {"action_id", "result"}:
-                raise self._fail(
-                    "unavailable",
-                    f"invoke result refused: the data must be exactly "
-                    f"{{action_id, result}} (got {sorted(data)})",
-                    correlation,
-                )
-            if data.get("action_id") != action_id:
-                raise self._fail(
-                    "unavailable",
-                    f"invoke result refused: uncorrelated action_id "
-                    f"{data.get('action_id')!r}",
-                    correlation,
-                )
-            payload = data["result"]
-            result_error = next(
-                iter(action.output_validator.iter_errors(payload)), None
+        if data.get("action_id") != action_id:
+            raise self._fail(
+                "unavailable",
+                f"invoke result refused: uncorrelated action_id "
+                f"{data.get('action_id')!r}",
+                correlation,
             )
-            if result_error is not None:
-                raise self._fail(
-                    "unavailable",
-                    f"invoke result refused: the result violates the "
-                    f"action's catalog output schema at "
-                    f"{result_error.json_path}: {result_error.message}",
-                    correlation,
-                )
-            if contracts.is_dataset_shaped(payload):
-                raise self._fail(
-                    "unavailable",
-                    "invoke returned a dataset-shaped result; this host "
-                    "does not yet admit datasets on the invoke path (the "
-                    "admission surface is a named seam of issue #589)",
-                    correlation,
-                    reason="dataset_admission_absent",
-                )
-            return {"action_id": action_id, "result": payload}
+        payload = data["result"]
+        result_error = next(
+            iter(action.output_validator.iter_errors(payload)), None
+        )
+        if result_error is not None:
+            raise self._fail(
+                "unavailable",
+                f"invoke result refused: the result violates the "
+                f"action's catalog output schema at "
+                f"{result_error.json_path}: {result_error.message}",
+                correlation,
+            )
+        if contracts.is_dataset_shaped(payload):
+            raise self._fail(
+                "unavailable",
+                "invoke returned a dataset-shaped result; this host "
+                "does not yet admit datasets on the invoke path (the "
+                "admission surface is a named seam of issue #589)",
+                correlation,
+                reason="dataset_admission_absent",
+            )
+        return {"action_id": action_id, "result": payload}
+
+    async def _op_invoke(
+        self, arguments: dict[str, Any], correlation: str
+    ) -> dict[str, Any]:
+        """The catalogue dispatch: the whole invoke span under the op mutex
+        (R6 — gates, dispatch and result checks read one plugin's
+        contracts; a reload swapping the plugin mid-invoke is the chimera
+        the mutex exists to prevent), delegating to the lock-free
+        :meth:`_invoke_core`."""
+        async with self._op_mutex:
+            return await self._invoke_core(arguments, correlation)
 
     async def _op_device_reset(
         self, arguments: dict[str, Any], correlation: str

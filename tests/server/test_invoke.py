@@ -394,3 +394,27 @@ def test_a_reset_receipt_without_acknowledged_refuses(
         call(seam, "device_reset", {"device_id": DEV})
     assert caught.value.code == "unavailable"
     assert "acknowledged" in caught.value.message
+
+
+def test_the_invoke_core_runs_inside_a_caller_held_mutex(
+    tmp_path: Path, invoke_project_builder
+) -> None:
+    """PR-6's reentrancy shape: the gate work lives in a LOCK-FREE core so
+    a caller that already holds ``_op_mutex`` (a preset apply dispatching
+    its configure action through invoke) can run the invoke path without
+    deadlocking — ``asyncio.Lock`` is not reentrant, so a locked core
+    called from a locked span hangs, it does not race.
+    """
+    import asyncio
+
+    seam, adapter = _seam(invoke_project_builder(tmp_path / "core"))
+    adapter.SCRIPT["invoke"] = {"ok": True}
+
+    async def _under_caller_held_mutex() -> dict[str, Any]:
+        async with seam._op_mutex:
+            return await seam._invoke_core(
+                invoke_args("demo.probe/1.0.0"), "test-correlation"
+            )
+
+    result = asyncio.run(_under_caller_held_mutex())
+    assert result == {"action_id": "demo.probe/1.0.0", "result": {"ok": True}}
