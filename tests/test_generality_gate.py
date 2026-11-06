@@ -8,24 +8,32 @@ contract, never from a device identity constant in the source — and the
 action surface is the descriptor's data, never ``src/`` vocabulary. This
 gate fails closed on the literals that would break that property:
 
-* **Device identity as a CLASS**: any hex literal ``0x[0-9a-fA-F]{1,8}`` in
-  code under ``src/`` (one to eight digits, so a near-miss product id like
-  ``0xdc49`` and a sub-4-digit value like ``0xfa3`` both redden, where a
-  4-digit or value-range rule passed them) — excepted only inside the
-  transport module's symbol-located ``PROVIDER_EXECUTORS`` registration
-  block (the one sanctioned place a family's identity may live) and by the
-  committed allowlist below, each entry carrying its reason. There is
-  deliberately NO decimal rule: a decimal device id is indistinguishable
-  from a timeout, buffer size or baud rate by shape, and listing the
-  decimals one device happens to have is device-specificness wearing a
-  generality rule's clothes — decimal identities are a named residual in
-  the design record, backstopped behaviourally by the archetype matrix.
+* **Device identity as a CLASS**: any hex literal in code under ``src/``,
+  detected from the tokenize stream by what the token IS rather than one
+  spelling of it — ``0x`` or ``0X`` prefix, zero padding to any width,
+  PEP-515 underscores (fold E: the ``{1,8}``-digit lowercase-``0x`` regex
+  passed ``0XDC49``, ``0x000000dc49`` and ``0xdc_49``, three legal
+  spellings of one value) — excepted only inside the transport module's
+  symbol-located ``PROVIDER_EXECUTORS`` registration block (the one
+  sanctioned place a family's identity may live) and by the committed
+  allowlist below, each entry carrying its reason. There is deliberately
+  NO decimal rule: a decimal device id is indistinguishable from a
+  timeout, buffer size or baud rate by shape, and listing the decimals one
+  device happens to have is device-specificness wearing a generality
+  rule's clothes — decimal identities are a named residual in the design
+  record, backstopped behaviourally by the archetype matrix.
 * **This device's own literals as a regression layer**, separate from the
   class rule and honestly narrower: the measurement corpus's OEM product
-  id ``0xdc48`` (hex or decimal, by int value), its descriptor-carried
-  serial ``53305982`` and the project name ``logicport`` (any case) — as
-  int constants by value or string constants by substring, and the family
-  vendor id ``0x0403`` by value outside the sanctioned block.
+  id ``0xdc48`` (hex or decimal, by int value; as a string, by SUBSTRING —
+  every pair, prefix and padding spelling contains ``dc48``), its
+  descriptor-carried serial ``53305982`` and the project name
+  ``logicport`` (any case) as string substrings, and the family vendor id
+  ``0x0403`` by int value outside the sanctioned block and as a string by
+  EXACT value only (fold I: ``'0403'`` passed as a bare string while the
+  int was denied — but the vendor id legally rides inside the help and
+  guide's printed example sentences, which name the FAMILY every FTDI
+  device shares, so the string rule pins the bare form, not the
+  substring).
 * **The plugin's action names in ALL quoted positions**: ``configure_fpga``,
   ``set_trigger``, ``set_trigger_position``, ``read_samples``, ``resync``
   and ``stop`` as quoted strings anywhere — dict key, comparison value or
@@ -34,6 +42,15 @@ gate fails closed on the literals that would break that property:
   ``if action_id == "stop":`` and ``.get("stop")`` invisible). Bare words
   (``stop_event``, ``capture_stop``, ``.stop()``) are unquoted identifiers
   no rule touches.
+  **What this rule does NOT catch** (rubric G4, stated): ASSEMBLY —
+  ``'st' + 'op'``, ``''.join(('st', 'op'))`` and a name split across
+  f-string parts (``f"st{suffix}"``) build the word from constants no one
+  of which equals it, while the literal PARTS an f-string does carry are
+  examined like any other constant; BYTES — ``b"stop"`` is a ``bytes``
+  constant the string pass skips; and DOCSTRING POSITION — a first
+  statement docstring is exempt as documentation. The computed-constant
+  residual already named below is the same class: the behavioural layer
+  (the archetype matrix) is the backstop for all of them.
 
 The vendored standards tree is excluded by LOCK MEMBERSHIP, not by
 assertion: the excluded set is exactly the paths ``standards-lock.json``
@@ -58,7 +75,6 @@ from __future__ import annotations
 import ast
 import io
 import json
-import re
 import shutil
 import tokenize
 from dataclasses import dataclass, field
@@ -93,19 +109,40 @@ _ACTION_NAMES = (
 )
 
 #: Substrings banned in string constants anywhere in ``src/`` (compared
-#: casefolded) — this device's own identity spellings only.
+#: casefolded) — this device's own identity spellings only. The OEM
+#: product id rides as a bare SUBSTRING so every spelling of it reddens
+#: (pair, prefixed, zero-padded — each contains ``dc48``); the vendor id
+#: does not ride here at all — see ``_BANNED_EXACT_STRINGS`` for why.
 _BANNED_SUBSTRINGS = (
-    "0xdc48",
-    "0403:dc48",
+    "dc48",
     "53305982",
     "logicport",
 )
 
-#: One hex literal in code: the class rule's detector (source spelling,
-#: not int value — the value range (0xFF, 0xFFFF] was rev 6's rule and
-#: passed both a 5-digit id and anything planted outside the transport
-#: module).
-_HEX_LITERAL = re.compile(r"\A0x[0-9a-fA-F]{1,8}\Z")
+#: String constants denied by EXACT casefolded value — the BARE identity
+#: forms (fold I: ``'0x0403'`` and ``'0403'`` passed as strings while the
+#: int values were denied). Exact, not substring, because the family
+#: vendor id legitimately appears inside LONGER strings: the ``--device``
+#: help's printed example sentences, the same class the user guide prints,
+#: name the FAMILY (every FTDI device shares the vendor id); a constant
+#: that is nothing BUT the id names a device selection.
+_BANNED_EXACT_STRINGS = ("0x0403", "0403")
+
+
+def _hex_token_value(text: str) -> int | None:
+    """The value of a hex NUMBER token, whatever its spelling — ``0x`` or
+    ``0X`` prefix, zero padding to any width, PEP-515 underscores (fold E:
+    the ``{1,8}``-digit lowercase-``0x`` regex passed ``0XDC49``,
+    ``0x000000dc49`` and ``0xdc_49``, three legal spellings of one device
+    identity). ``None`` when the token is not hex — decimal numbers and
+    everything else."""
+    if len(text) < 3 or text[:2].lower() != "0x":
+        return None
+    digits = text[2:].replace("_", "")
+    try:
+        return int(digits, 16)
+    except ValueError:
+        return None
 
 #: Explicit exemptions of the class rule, each with its reason. The length
 #: is PINNED by the production arm, and the arm asserts every entry is
@@ -156,11 +193,18 @@ _EXPECTED_ALLOWLISTED_LITERALS = 30
 _EXPECTED_BLOCK_EXEMPTIONS = 1
 
 #: The pinned denominators of the production scan (design record §0.3:
-#: "asserts each against its committed value" — any source edit that moves
-#: one of these moves the gate with it, deliberately). The lock's file
-#: count is NOT pinned here: it is asserted against the lock's own
-#: recorded entries at runtime, so a corpus sync moves the number without
-#: reddening a gate this repository cannot fix (275 as of this commit).
+#: "asserts each against its committed value"). WHICH PIN IS WHICH, and
+#: why (fold F): ``files_scanned`` and ``literals_examined`` are FLOORS —
+#: they redden only when the scan NARROWS (a file or literal class leaves
+#: the sweep), because equality reddened every later PR by existing: a new
+#: module and its refusal-prefix strings are literals the scan counts, and
+#: the PR-1 fold wave itself moved ``literals_examined`` 17487 → 17533
+#: with zero findings. ``allowlisted_entries`` and ``block_exemptions``
+#: stay EXACT — a growing exemption is the thing to fight, and a floor
+#: could never catch one. The lock's file count is NOT pinned here: it is
+#: asserted against the lock's own recorded entries at runtime, so a
+#: corpus sync moves the number without reddening a gate this repository
+#: cannot fix (275 as of this commit).
 _EXPECTED_FILES_SCANNED = 50
 _EXPECTED_LITERALS_EXAMINED = 17487
 
@@ -253,12 +297,16 @@ def _scan(root: Path) -> Scan:
         if rel == TRANSPORT_REL:
             block = _executor_block_span(tree)
         scan.files_scanned += 1
-        # The class rule: hex-literal SPELLINGS in code (tokenize sees the
-        # exact source token; strings and comments are different token
+        # The class rule: hex VALUES in code, detected spelling-agnostically
+        # from the tokenize stream (strings and comments are different token
         # kinds and are not examined here).
         for tok in tokenize.generate_tokens(io.StringIO(source).readline):
-            if tok.type == tokenize.NUMBER and _HEX_LITERAL.match(tok.string):
-                value = int(tok.string, 16)
+            value = (
+                _hex_token_value(tok.string)
+                if tok.type == tokenize.NUMBER
+                else None
+            )
+            if value is not None:
                 lineno = tok.start[0]
                 in_block = (
                     block is not None
@@ -309,6 +357,18 @@ def _scan(root: Path) -> Scan:
                     )
             elif isinstance(value, str):
                 folded = value.casefold()
+                if folded in _BANNED_EXACT_STRINGS:
+                    scan.findings.append(
+                        Finding(
+                            rel,
+                            node.lineno,
+                            "device-or-action-name",
+                            f"{value!r} — a bare device-identity string "
+                            "(exact value; the family vendor id is legal "
+                            "inside the help/guide's printed examples, "
+                            "which are longer strings)",
+                        )
+                    )
                 for needle in _BANNED_SUBSTRINGS:
                     if needle in folded:
                         scan.findings.append(
@@ -347,8 +407,8 @@ class TestTheGateHoldsOnRealSource:
         for finding in scan.findings:
             print(f"  {finding.rel}:{finding.lineno} {finding.rule}: {finding.detail}")
         assert scan.findings == []
-        assert scan.files_scanned == _EXPECTED_FILES_SCANNED
-        assert scan.literals_examined == _EXPECTED_LITERALS_EXAMINED
+        assert scan.files_scanned >= _EXPECTED_FILES_SCANNED
+        assert scan.literals_examined >= _EXPECTED_LITERALS_EXAMINED
         assert scan.block_exemptions == _EXPECTED_BLOCK_EXEMPTIONS
         assert scan.allowlisted_entries == _EXPECTED_ALLOWLISTED_LITERALS
 
@@ -458,6 +518,78 @@ class TestTheGateBites:
         _plant(scratch, "benchweave_sdk_server/session.py", "\n_LEAK = 0xdc49\n")
         scan = _scan(scratch)
         assert any(f.rule == "device-identity-class" for f in scan.findings)
+
+    def test_every_legal_hex_spelling_fails(self, tmp_path: Path) -> None:
+        """Fold E (refute lane 2, planted with findings=0 on this gate): a
+        device identity is a VALUE, and Python spells one value many ways —
+        ``0XDC49`` (uppercase prefix), ``0x000000dc49`` (zero padding past
+        the {1,8} digit cap) and ``0xdc_49`` (PEP-515 underscore) are three
+        legal spellings the lowercase-``0x`` digit-capped regex passed.
+        The class rule detects hex by what the token IS, not by one
+        spelling of it."""
+        scratch = _scratch_copy(tmp_path)
+        _plant(
+            scratch,
+            "benchweave_sdk_server/session.py",
+            "\n_LEAK_UPREFIX = 0XDC49\n_LEAK_PADDED = 0x000000dc49\n_LEAK_USCORE = 0xdc_49\n",
+        )
+        scan = _scan(scratch)
+        class_rows = [f for f in scan.findings if f.rule == "device-identity-class"]
+        assert len(class_rows) == 3, [f.detail for f in scan.findings]
+
+    def test_the_identity_string_forms_fail(self, tmp_path: Path) -> None:
+        """Fold I (refute lane 2): ``'0x0403'``, ``'0403'`` and ``'dc48'``
+        all passed as string constants while the substring ``0xdc48`` was
+        banned — a string-form identity asymmetry. The bare vendor-id
+        spellings are denied by EXACT value and the OEM product id by
+        substring: an identity planted as its own constant reddens, while
+        the ``--device`` help's printed example sentences (the same class
+        the user guide prints) are longer strings that carry the family
+        vendor id legally — naming the family, not a device."""
+        scratch = _scratch_copy(tmp_path)
+        _plant(
+            scratch,
+            "benchweave_sdk_server/seam.py",
+            '\n_LEAK_VID = "0x0403"\n_LEAK_BARE = "0403"\n_LEAK_PID = "pid dc48 noted"\n',
+        )
+        scan = _scan(scratch)
+        details = [f.detail for f in scan.findings if f.rule == "device-or-action-name"]
+        assert len(details) == 3, [f.detail for f in scan.findings]
+
+    def test_the_printed_help_examples_stay_legal(self, tmp_path: Path) -> None:
+        """The honest other half of fold I: the ``--device`` help's example
+        sentences — ``'ftdi://0x0403:0x6001/1'``, ``'('0403') admits any
+        product under it'`` — are documentation of the family, the same
+        class the user guide prints, and the string rules must not redden
+        them."""
+        scratch = _scratch_copy(tmp_path)
+        scan = _scan(scratch)
+        assert scan.findings == []
+
+    def test_unrelated_growth_does_not_redden_the_gate(self, tmp_path: Path) -> None:
+        """Fold F (the team lead's own finding): the scan denominators are
+        FLOORS, not equality pins — a new module under ``src/`` and its
+        refusal-prefix strings are literals the scan counts, so equality
+        reddened every later PR by existing (this fold wave's own src
+        edits moved ``literals_examined`` from 17487 to 17533 with zero
+        findings — the red run that motivated the floor). What still
+        reddens: a NARROWED scan (a file leaving the tree drops below the
+        floor) and every exemption count, which stays exact."""
+        scratch = _scratch_copy(tmp_path)
+        (scratch / "benchweave_sdk_server" / "unrelated_new_module.py").write_text(
+            '_NOTE = "device_refusal_prefix_still_counts"\n', encoding="utf-8"
+        )
+        _plant(
+            scratch,
+            "benchweave_sdk_server/session.py",
+            '\n_UNRELATED = "a new refusal string"\n',
+        )
+        scan = _scan(scratch)
+        assert scan.findings == []
+        assert scan.files_scanned >= _EXPECTED_FILES_SCANNED
+        assert scan.literals_examined >= _EXPECTED_LITERALS_EXAMINED
+        assert scan.block_exemptions == _EXPECTED_BLOCK_EXEMPTIONS
+        assert scan.allowlisted_entries == _EXPECTED_ALLOWLISTED_LITERALS
 
     def test_a_sub_four_digit_id_fails_outside_the_transport_module(self, tmp_path: Path) -> None:
         """``0xfa3`` — a sub-4-digit value — also passed rev 6's rules
