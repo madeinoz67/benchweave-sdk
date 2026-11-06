@@ -1,6 +1,6 @@
 {
-  "base_sha": "625eee9e6b3e03c03e3549ec915f16d3c3bf2287",
-  "prev_tag": "v0.22.0",
+  "base_sha": "affa3ed830461c454130d2a85584a492c812aca5",
+  "prev_tag": "v0.23.0",
   "surfaces": [
     {
       "kind": "substitution",
@@ -43,5 +43,5 @@
       "path": "tests/test_zero_literal_gate.py"
     }
   ],
-  "version": "0.23.0"
+  "version": "0.24.0"
 }
