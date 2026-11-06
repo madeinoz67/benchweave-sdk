@@ -516,19 +516,32 @@ index**, never a serial (`:1` selects the first candidate, `:2` the second), so 
 form could OPEN A DIFFERENT DEVICE while the colon form correctly refused; the fake's
 serial-semantics model was exactly what kept the suite blind to it. Two folds:
 
-- **Fold A (grammar + net).** A URL-form serial that is a bare number of value ≤ 255 is
-  refused at the parse boundary (`live_provider_selector_malformed:` naming the index
-  reading and the colon-form remedy) — pyftdi cannot express that component as a serial,
-  so a typed refusal beats the silent wrong-device open. Spellings `to_int` still
-  misreads past that set (a unit suffix such as `2B`) are the net's job: after
-  `open_from_url` succeeds with a serial-bearing selector, the ladder VERIFIES the
-  opened device's serial (`Ftdi._usb_dev.serial_number`); on mismatch it closes the
-  device and treats the failure as resolution-class, falling through to the enumerated
-  fallback whose serial filter resolves what the selector names. The verification is
-  the guarantee; the parse refusal is the typed answer for the common spelling. The
-  arm drove the net on a fake that now models pyftdi's index semantics — a green arm
-  against the serial-semantics fake proved nothing, which is how the defect survived
-  rev 7.
+- **Fold A (grammar + net), priority corrected by lane 1's raw probe: the parse-time
+  refusal is the PRIMARY layer; the post-open verification is defence in depth.** The
+  probe measured three behaviours — `:1/1` opened `candidates[0]` (wrong serial),
+  `:00000000/1` opened `candidates[0]` the same way (`to_int` = 0), and `:007/1`
+  (`to_int` = 7 → index 6) happened to MISS the candidate list and fell to the
+  fallback, which refused correctly — so the wrong opens occur only when the index
+  lands inside the candidate list, and `:007`'s "reasonable" behaviour was an accident
+  of the bench's candidate count, not a property of the selector (with eight
+  candidates it opens `candidates[6]`; it refuses at parse now, one step earlier than
+  the old fallback refusal, same ambiguity class). Two reasons the refusal, not the
+  verification, carries the property: an explicit index SKIPS pyftdi's own
+  ">N USB devices match" ambiguity refusal, and on a twins bench where both units
+  report the SAME serial the verification is blind — the opened device's serial equals
+  the selector's because both units carry it — so the wrong unit is claimed with no
+  ambiguity check anywhere in the path. Both layers shipped: a URL-form serial that is
+  a bare number of value ≤ 255 is refused at the parse boundary
+  (`live_provider_selector_malformed:` naming the index reading and the colon-form
+  remedy, which resolves through the serial-filtering fallback); and spellings
+  `to_int` still misreads past that set (a unit suffix such as `2B`) meet the net —
+  after `open_from_url` succeeds with a serial-bearing selector, the ladder VERIFIES
+  the opened device's serial (`Ftdi._usb_dev.serial_number`); on mismatch it closes
+  the device and treats the failure as resolution-class, falling through to the
+  enumerated fallback whose serial filter resolves what the selector names. The net
+  arm drove the wrong-device open on a fake that now models pyftdi's index semantics —
+  a green arm against the serial-semantics fake proved nothing, which is how the
+  defect survived rev 7.
 - **Fold D (canonical attempt URL).** The URL handed to pyftdi is BUILT from the parsed
   ints with explicit `0x%04x` spellings; the raw operator string no longer crosses the
   seam. pyftdi's `to_int` reads BARE digits as decimal, so `ftdi://123:456/1` — which

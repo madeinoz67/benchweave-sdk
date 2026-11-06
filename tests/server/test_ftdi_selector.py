@@ -847,19 +847,33 @@ def test_the_same_bad_port_refuses_identically_from_both_forms(
 @pytest.mark.parametrize(
     "text",
     [
+        # Lane 1's probe, verbatim spellings: ':1' selects candidates[0]
+        # (opened, wrong serial on the bench), ':00000000' selects
+        # candidates[0] the same way (to_int = 0), and ':007' — which on
+        # lane 1's bench HAPPENED to miss the candidate list and fall to
+        # the fallback — is one spelling of the same ambiguity: with eight
+        # candidates on the bus it opens candidates[6]. All three refuse
+        # at the parse boundary, the PRIMARY layer.
         "ftdi://0x0403:0x6001:1/1",
         "ftdi://0x0403:0x6001:0/1",
         "ftdi://0x0403:0x6001:00000000/1",
+        "ftdi://0x0403:0x6001:007/1",
         "ftdi://0x0403:0x6001:0x1b/1",
     ],
 )
 def test_a_url_serial_pyftdi_reads_as_an_index_refuses_at_parse(text: str) -> None:
-    """Fold A: a URL-form serial that is a bare number with value <= 255 is
-    refused at the parse boundary naming the ambiguity — pyftdi's URL
-    grammar reads such a component as a device index (``to_int`` <= 255 in
-    usbtools' enumerate_candidates: ``:1`` selects the first candidate,
-    ``:2`` the second), never a serial, so the URL form cannot name that
-    device and the message points at the colon form that can.
+    """Fold A, PRIMARY layer: a URL-form serial that is a bare number with
+    value <= 255 is refused at the parse boundary naming the ambiguity —
+    pyftdi's URL grammar reads such a component as a device index
+    (``to_int`` <= 255 in usbtools' enumerate_candidates: ``:1`` selects
+    the first candidate, ``:2`` the second), never a serial. This refusal,
+    not the post-open verification, is the load-bearing half: an explicit
+    index also SKIPS pyftdi's own ">N USB devices match" ambiguity
+    refusal, and on a twins bench where both units report the SAME serial
+    the verification is blind (the opened device's serial equals the
+    selector's — both units carry it), so the wrong unit is claimed with
+    no ambiguity check anywhere in the path. The colon form
+    ``vid:pid:serial`` resolves through the serial-filtering fallback.
     Live-reproduced by the refute lane, twice: this spelling OPENED a
     different device while the colon spelling correctly refused."""
     with pytest.raises(

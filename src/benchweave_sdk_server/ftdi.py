@@ -236,11 +236,16 @@ _SERIAL_CHARS = re.compile(r"\A[A-Za-z0-9._-]{1,64}\Z")
 #: ``to_int`` parses bare decimal digits — or a lowercase-``0x`` hex
 #: literal — to a value <= 255, and ``usbtools.enumerate_candidates`` then
 #: uses that component as a 0-based candidate index, never a serial
-#: (``:1`` selects the first candidate, ``:2`` the second). Spellings
-#: ``to_int`` still misreads beyond this bare-number set (a unit suffix
-#: such as ``2B``) pass this check and are caught by ``open_ftdi``'s
-#: post-open serial verification — the verification is the net; this
-#: refusal is the typed answer for the common spelling.
+#: (``:1`` selects the first candidate, ``:2`` the second, ``:007`` the
+#: seventh). The parse-time refusal over this set is the PRIMARY defence:
+#: an explicit index also SKIPS pyftdi's own ">N USB devices match"
+#: ambiguity refusal, and on a twins bench where both units report the
+#: SAME serial even a post-open serial check is blind (both units carry
+#: it) — so without this refusal the wrong unit can be claimed with no
+#: ambiguity check anywhere in the path. Spellings ``to_int`` still
+#: misreads beyond this bare-number set (a unit suffix such as ``2B``)
+#: pass this check and meet ``open_ftdi``'s post-open verification —
+#: defence in depth, itself blind when candidates share one serial.
 _URL_SERIAL_INDEX_FORM = re.compile(r"\A(?:0x[0-9a-fA-F]+|[0-9]+)\Z")
 #: The interface path of the URL form (pyftdi's ``?`` listing form would
 #: SystemExit a host; this boundary refuses it typed instead).
@@ -652,12 +657,15 @@ def open_ftdi(url: str) -> FtdiDriver:
             if selector.serial is None:
                 return _PyftdiDriver(ftdi)
             # The serial the selector names is verified against the device
-            # pyftdi actually opened (fold A): a serial spelling pyftdi
-            # misreads — a third component it treats as a device index —
-            # opens a DIFFERENT device here. Close it and fall through to
-            # the enumerated fallback, whose serial filter resolves what
-            # the selector names; a driver for a device the selector did
-            # not name is never returned.
+            # pyftdi actually opened (fold A, defence in depth — the
+            # parse-time refusal is the primary layer): a serial spelling
+            # pyftdi misreads — a third component it treats as a device
+            # index — opens a DIFFERENT device here. Close it and fall
+            # through to the enumerated fallback, whose serial filter
+            # resolves what the selector names; a driver for a device the
+            # selector did not name is never returned. Named blind spot:
+            # when candidates share ONE serial this check cannot tell them
+            # apart — which is exactly why the parse refusal leads.
             opened = _opened_device_serial(ftdi)
             if opened == selector.serial:
                 return _PyftdiDriver(ftdi)
