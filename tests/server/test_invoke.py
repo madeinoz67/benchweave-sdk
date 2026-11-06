@@ -403,18 +403,28 @@ def test_the_invoke_core_runs_inside_a_caller_held_mutex(
     a caller that already holds ``_op_mutex`` (a preset apply dispatching
     its configure action through invoke) can run the invoke path without
     deadlocking — ``asyncio.Lock`` is not reentrant, so a locked core
-    called from a locked span hangs, it does not race.
+    called from a locked span hangs, it does not race. The run is bounded
+    at 5s so that regression arrives as a red arm naming the deadlock,
+    never as a CI-ceiling cancellation that reads as infrastructure.
     """
-    import asyncio
-
     seam, adapter = _seam(invoke_project_builder(tmp_path / "core"))
     adapter.SCRIPT["invoke"] = {"ok": True}
 
     async def _under_caller_held_mutex() -> dict[str, Any]:
         async with seam._op_mutex:
-            return await seam._invoke_core(
-                invoke_args("demo.probe/1.0.0"), "test-correlation"
-            )
+            try:
+                return await asyncio.wait_for(
+                    seam._invoke_core(
+                        invoke_args("demo.probe/1.0.0"), "test-correlation"
+                    ),
+                    timeout=5.0,
+                )
+            except TimeoutError as exc:
+                raise AssertionError(
+                    "_invoke_core did not return within 5s while the caller "
+                    "held _op_mutex — the core acquired the mutex it must "
+                    "not (the lock-free contract, issue #589 PR-2)"
+                ) from exc
 
     result = asyncio.run(_under_caller_held_mutex())
     assert result == {"action_id": "demo.probe/1.0.0", "result": {"ok": True}}
