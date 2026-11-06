@@ -25,6 +25,7 @@ from .classref import (
     derive_ui,
     find_reference,
 )
+from .packaging import _package_dir
 
 
 @dataclass(frozen=True)
@@ -834,12 +835,7 @@ def verify_ui(
     client: Any = None,
 ) -> GateReport:
     """The full gate: validate, derive, render, census, assert (record §5)."""
-    package_root = project / "src"
-    package_dir = next(
-        (path for path in package_root.iterdir() if path.is_dir()), None
-    )
-    if package_dir is None:
-        raise ValueError(f"classref_gate_project: no package under {package_root}")
+    package_dir = _package_dir(project, refusal="classref_gate_project")
     descriptor_path = package_dir / "descriptor.json"
     descriptor_raw = descriptor_path.read_bytes()
     derived = _derive_for_project(descriptor_raw, reference, descriptor_path)
