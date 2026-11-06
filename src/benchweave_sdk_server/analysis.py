@@ -43,9 +43,9 @@ import struct
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-
-from .catalogue import FormatSpec, _FORMAT_SPECS
 from typing import Any
+
+from .catalogue import _FORMAT_SPECS, FormatSpec
 
 #: The definition id printed on every report and carried by every stats
 #: object: the numbers mean exactly this computation, nothing else.
@@ -756,9 +756,9 @@ def resolve_markers(
     escapes at render, never here."""
     fmt = manifest.get("format")
     spec = _FORMAT_SPECS.get(fmt) if isinstance(fmt, str) else None
+    interval: Any = 1.0
     if spec is not None and spec.axis == "index":
         count = manifest.get("byte_length")
-        interval = 1.0
         span_note = "(byte_length - 1; 0-based sample index)"
         if type(count) is not int or count < 1:
             raise AnalysisRefusal(
