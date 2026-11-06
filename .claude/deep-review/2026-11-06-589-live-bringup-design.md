@@ -1200,3 +1200,42 @@ new serve arm pins that startup refusal once for all of them, the fixture assert
 verify refusal, and the control arm proves the pin the gate names flips with the removed
 row (composed-burst → member-declaration, measured). Those three arms flip back to their
 clean-gate shapes with the R2 corpus motion; the skips name that carrier.
+
+---
+
+## Appendix (2026-11-07, PR-2 continuation 2): the continuation's own correction corrected — CB is 23, and meridian:member-declaration is real
+
+**Correction by append; everything above, including continuation 1, is unchanged.** The
+team-lead re-measured the classification on `pr2-589-builder` (`69 failed, 249 passed, 9
+errors in 163.70s`) and continuation 1's loop-lane claim does not survive it. Re-measured
+on a detached worktree at `04fdb72`:
+
+- **The loop lane is 8 composed-burst + 1 `urn:meridian:member-declaration:1.0.0`, not
+  nine composed-burst.** Raw count over the nine ERROR bodies:
+  `8 Error: profile_contract_invalid: urn:meridian:composed-burst:1.0.0`,
+  `1 Error: profile_contract_invalid: urn:meridian:member-declaration:1.0.0`. The eighth
+  and ninth belong to DIFFERENT fixtures: the `loop` cascade carries the eight
+  composed-burst errors; the ninth is `test_the_composed_surface_disappears_without_the_pin`'s
+  setup in the `control` fixture — its project strips the composed pin, so the gate names
+  the next row (meridian:member-declaration). Continuation 1 read the first several error
+  bodies, saw composed-burst, and extrapolated to all nine.
+- **The two failures that print no `E ValueError:` line are the two main-lane
+  CLI-subprocess arms**, both measured and both bucket (a) — the refusal rides inside the
+  captured CLI output of an exit-code AssertionError, so a traceback-line classification
+  misses it: `test_classref_cli.py::test_derive_then_verify_clean_roundtrip`
+  (`AssertionError: Error: profile_contract_invalid: urn:veridian:vendor-catalog:1.0.0
+  …`, CliRunner in-process) and `test_classref_acceptance.py::test_a1_the_workflow_runs_clean`
+  (`AssertionError: Error: profile_contract_invalid: urn:meridian:composed-burst:1.0.0 …`).
+  67 E-lines + these 2 = pytest's 69 failures; no failure lacks a pin-naming cause.
+
+**Final split (the third and reconciled one): 48 vendor-catalog + 23 composed-burst +
+3 member-declaration-smu + 2 vendor-catalog-pair + 1 each vendor-catalog-trio,
+refless-composed, veridian:member-declaration AND meridian:member-declaration = 80.**
+Continuation 1's "48 + 24 … = 80" double-counted: it already carried the acceptance a1
+arm under composed-burst's main lane AND counted nine loop errors as composed-burst where
+only eight are. The per-module table above stands except its dev_loop row: **8
+composed-burst (loop cascade) + 1 meridian:member-declaration (control cascade)**, two
+cascades, not one. The disposition is unchanged — the dev-loop module's committed form
+already asserts the control fixture's meridian:member-declaration refusal (its
+`CONTROL_REFUSAL` constant), which is the measurement that first contradicted
+continuation 1.
