@@ -57,6 +57,14 @@ class FakeUSBError(Exception):
     permission) that must NOT trigger the fallback — one bounded attempt."""
 
 
+class FakeFtdiError(Exception):
+    """The miniature of pyftdi's ``FtdiError``: pyftdi's own FTDI-level
+    failure — the LATE interface guard (``No such FTDI port: N``, raised in
+    ``open_from_device`` AFTER the device is resolved and before the claim)
+    and the pre-claim URL-path refusals. Claim/busy/permission arrive from
+    pyusb as ``USBError`` instead, never wrapped in this class."""
+
+
 class FakeDescriptor:
     """The ``UsbDeviceDescriptor`` fields the ladder reads: vid, pid, sn."""
 
@@ -239,6 +247,14 @@ class FakeFtdi:
             raise FakeUsbToolsError(f"{len(matches)} USB devices match URL {url}")
         if not matches:
             raise FakeUsbToolsError(f"No USB device matches URL {url}")
+        # pyftdi's LATE interface guard (ftdi.py's open_from_device): the
+        # interface argument is checked against the resolved device's own
+        # interface count AFTER resolution, raising FtdiError — the failure
+        # fold C routes to the ladder's typed range check.
+        ifcount = next(c for d, c in _INVENTORY if d is matches[0])
+        port = int(path) if path else 1
+        if port > ifcount:
+            raise FakeFtdiError(f"No such FTDI port: {port}")
         self.usb_dev = object()
 
     def open(
@@ -293,7 +309,7 @@ def _install_backend(
     monkeypatch.setattr(
         ftdi_module,
         "_BACKEND",
-        lambda: (FakeFtdi, usbtools, core, FakeUsbUtil(), FakeUsbToolsError),
+        lambda: (FakeFtdi, usbtools, core, FakeUsbUtil(), FakeUsbToolsError, FakeFtdiError),
     )
     return usbtools, core
 
@@ -718,6 +734,27 @@ def test_a_bare_vid_on_an_unregistered_vendor_refuses_zero_matching(
 # ---------------------------------------------------------------------------
 # Interface range, cache staleness, seam typing
 # ---------------------------------------------------------------------------
+
+
+def test_the_same_bad_port_refuses_identically_from_both_forms(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fold C (refute lane 1): one input, two spellings, ONE refusal — port
+    2 on a 1-interface device is ``live_provider_interface_out_of_range:``
+    naming ``1..1`` whether the selector spells it ``0403:6001/2`` or
+    ``ftdi://0x0403:0x6001/2``. The URL arm used to answer
+    ``device_unavailable`` ("URL attempt: FtdiError") because pyftdi's LATE
+    interface guard fired after resolution and the ladder surfaced the raw
+    class — two causes for one operator mistake. The URL arm's FtdiError is
+    resolution-class now: it falls through to the enumerated path, whose own
+    range check types the refusal."""
+    _install_backend(monkeypatch, devices=[((0x0403, _OFFICIAL_PID, "610042"), 1)])
+    for selector in ("0403:6001/2", "ftdi://0x0403:0x6001/2"):
+        with pytest.raises(
+            RuntimeError, match="live_provider_interface_out_of_range:"
+        ) as excinfo:
+            open_ftdi(selector)
+        assert "1..1" in str(excinfo.value)
 
 
 def test_a_port_beyond_the_device_interface_count_refuses_before_the_open(

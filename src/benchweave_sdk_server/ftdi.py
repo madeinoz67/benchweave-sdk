@@ -179,13 +179,16 @@ def _require_backend() -> Any:
 #: ``(Ftdi, UsbTools, usb.core, usb.util, UsbToolsError)`` — the two pyftdi
 #: classes the ladder drives, the two pyusb modules the family scan
 #: enumerates and reads serial strings through (pyftdi's product tables are
-#: never consulted — that is the point), and pyftdi's resolution-class
-#: exception, the only class the ladder's fallback is gated on. ``None``
-#: means import the real backend.
-_BACKEND: Callable[[], tuple[Any, Any, Any, Any, Any]] | None = None
+#: never consulted — that is the point), and pyftdi's two resolution-class
+#: exceptions the ladder's fallback is gated on (``UsbToolsError``: table
+#: gate, no match, a refused serial; ``FtdiError``: pyftdi's own late
+#: guards, pre-claim — its ``No such FTDI port: N`` interface check. A
+#: claim/busy/permission failure arrives from pyusb as ``USBError`` instead
+#: and never wears either class). ``None`` means import the real backend.
+_BACKEND: Callable[[], tuple[Any, ...]] | None = None
 
 
-def _backend() -> tuple[Any, Any, Any, Any, Any]:
+def _backend() -> tuple[Any, ...]:
     if _BACKEND is not None:
         return _BACKEND()
     try:
@@ -194,7 +197,7 @@ def _backend() -> tuple[Any, Any, Any, Any, Any]:
         # this refusal's class too, and only the real import proves it.
         import usb.core  # type: ignore[import-untyped]  # pyusb, a pyftdi dependency
         import usb.util  # type: ignore[import-untyped]  # pyusb, a pyftdi dependency
-        from pyftdi.ftdi import Ftdi  # type: ignore[import-untyped]  # pyftdi, [server] extra
+        from pyftdi.ftdi import Ftdi, FtdiError  # type: ignore[import-untyped]  # pyftdi, [server] extra
         from pyftdi.usbtools import (  # type: ignore[import-untyped]  # pyftdi
             UsbTools,
             UsbToolsError,
@@ -204,7 +207,7 @@ def _backend() -> tuple[Any, Any, Any, Any, Any]:
             "live_provider_backend_missing: install 'benchweave-sdk[server]' "
             "for ftdi transport support (pyftdi rides the server extra)"
         ) from exc
-    return Ftdi, UsbTools, usb.core, usb.util, UsbToolsError
+    return Ftdi, UsbTools, usb.core, usb.util, UsbToolsError, FtdiError
 
 
 #: One vid/pid-form component: 1-4 hexadecimal digits, ``0x`` optional.
@@ -500,8 +503,9 @@ def open_ftdi(url: str) -> FtdiDriver:
     every URL form fail) and the class table RESTORED after it in a
     ``finally``, because pyftdi 0.57.2 has no removal API and a leaked row
     makes a later joker-URL enumeration see the pair. A resolution-class
-    failure (``UsbToolsError`` — table gate, no match, a refused serial)
-    falls through to an enumerated fallback: ``UsbTools.find_all`` over the
+    failure (``UsbToolsError`` — table gate, no match, a refused serial —
+    or ``FtdiError``, pyftdi's own pre-claim guards, its late
+    interface check among them) falls through to an enumerated fallback: ``UsbTools.find_all`` over the
     parsed pair with ``nocache=True`` (the bus as it is now), the selector's
     serial honoured always, twins refused with every candidate named, the
     interface validated against the device's own interface count before the
@@ -517,7 +521,7 @@ def open_ftdi(url: str) -> FtdiDriver:
     are ``RuntimeError`` so the session's connect path passes them through
     unwrapped for the seam to map ``not_ready``.
     """
-    ftdi_cls, usbtools, usb_core, usb_util, usbtools_error = _backend()
+    ftdi_cls, usbtools, usb_core, usb_util, usbtools_error, ftdi_error = _backend()
     selector = _parse_ftdi_selector(url)
     ftdi = ftdi_cls()
     url_failure: BaseException | None = None
@@ -551,10 +555,16 @@ def open_ftdi(url: str) -> FtdiDriver:
                     f"0x{selector.pid:04x} was registered for the URL "
                     "attempt and removed again"
                 )
-            if not isinstance(exc, usbtools_error):
+            if not isinstance(exc, (usbtools_error, ftdi_error)):
                 raise _device_unavailable(
                     selector, f"URL attempt: {type(exc).__name__}", registered_note
                 ) from exc
+            # Resolution-class (fold C): UsbToolsError OR pyftdi's own
+            # FtdiError — its late interface guard ("No such FTDI port: N")
+            # fires after resolution, so the enumerated path re-types the
+            # failure (the same bad port refuses identically from both
+            # selector forms). A claim/busy/permission failure is a pyusb
+            # USBError, wears neither class, and refuses immediately above.
             url_failure = exc
         finally:
             # Restore, not merge: the per-vid row is mutated in place, so
@@ -1739,7 +1749,7 @@ def _ftdi_scan_selectors() -> list[str]:
     rows sort for determinism. Every emitted selector is openable by the
     ladder (``open_ftdi``).
     """
-    _ftdi_cls, _usbtools, usb_core, usb_util, _usbtools_error = _backend()
+    _ftdi_cls, _usbtools, usb_core, usb_util, _usbtools_error, _ftdi_error = _backend()
     try:
         rows: list[tuple[int, int, str | None, int]] = []
         for vendor in sorted(_registered_vendor_ids()):

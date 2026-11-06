@@ -273,6 +273,20 @@ returns exactly the descriptor-carried string at the device's bus/address — th
 pyftdi would compare IS the reported serial; the serial form failed for the table-gate
 reason only.
 
+**CORRECTION (fold wave, 2026-11-06, post-rev-7): the sentence above this paragraph
+overstates the ladder — "delegates nothing to pyftdi's late guards" was false for the
+URL arm.** Refute lane 1 measured it: `ftdi://0x0403:0xdc48/2` answered
+`device_unavailable` ("URL attempt: FtdiError") while `0403:dc48/2` answered the typed
+`interface_out_of_range` ("1..1") — one operator mistake, two spellings, two causes,
+because pyftdi's late interface guard fired inside `open_from_url` before the ladder's
+own range check could run. §2.2's mechanism is the authority and the code now follows
+it exactly: the URL arm's failure gate is TYPE-based on BOTH resolution classes
+(`UsbToolsError` OR `FtdiError` — the late interface guard is pre-claim, so routing it
+to the enumerated path cannot smuggle a claim retry), and the enumerated path re-types
+the failure with its own `1 <= port <= ifcount` check, so both spellings of a bad port
+now refuse identically. A claim/busy/permission failure still arrives as pyusb's
+`USBError`, wears neither class, and refuses immediately — §2.2's carve-out is intact.
+
 ### 2.2 Mechanism
 
 **Selector grammar** (the `--device` value on `--transport ftdi`, and the binding's
