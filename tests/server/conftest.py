@@ -245,7 +245,11 @@ def invoke_project_builder():
     VENDORED = REPO / "src/benchweave_sdk/standards/otdp/0.2.4"
     ADAPTER = (REPO / "tests/server/fixtures/scripted_invoke_adapter.py").read_bytes()
 
-    def _catalog(*, with_measurement_ref: bool = False) -> dict[str, Any]:
+    def _catalog(
+        *,
+        with_measurement_ref: bool = False,
+        with_correlated_fetch: bool = False,
+    ) -> dict[str, Any]:
         """The synthetic profile catalog: valid against the vendored catalog
         schema, invented action names, one action per gate the arms need.
         The measurement-referencing action is OPT-IN — a catalog that
@@ -282,6 +286,25 @@ def invoke_project_builder():
                     "schema by urn (the closed-registry probe arms)."
                 ),
                 "input_schema": {"$ref": "urn:otdp:measurement:0.2.4"},
+                "output_schema": {"type": "object"},
+                "side_effect": "none",
+                "lifecycle": "direct",
+            }
+        if with_correlated_fetch:
+            # The M10-correlation arm's action: its pinned input schema
+            # DECLARES the echo fields, so the admission core's correlation
+            # gate is armed exactly as the gateway's is
+            # (dataset_services.py's _check_m10_correlation reads the same
+            # declared-properties gate).
+            actions["demo.correlated_fetch/1.0.0"] = {
+                "description": (
+                    "Synthetic fetch action whose input declares the "
+                    "configuration_id echo field (the M10 arms)."
+                ),
+                "input_schema": closed(
+                    {"configuration_id": {"type": "string", "minLength": 1}},
+                    ["configuration_id"],
+                ),
                 "output_schema": {"type": "object"},
                 "side_effect": "none",
                 "lifecycle": "direct",
@@ -336,6 +359,7 @@ def invoke_project_builder():
         declare_reset: bool = False,
         pin_catalog: bool = True,
         catalog_with_measurement_ref: bool = False,
+        catalog_with_correlated_fetch: bool = False,
         pin_measurement: bool = True,
         extra_pins: list[dict[str, Any]] | None = None,
     ) -> Path:
@@ -358,7 +382,8 @@ def invoke_project_builder():
             pins.append(measurement)
         if pin_catalog:
             document = _catalog(
-                with_measurement_ref=catalog_with_measurement_ref
+                with_measurement_ref=catalog_with_measurement_ref,
+                with_correlated_fetch=catalog_with_correlated_fetch,
             )
             payload = (json.dumps(document, indent=2) + "\n").encode()
             pins.append(_pin(package, "profile-catalog.json", payload))
@@ -409,6 +434,11 @@ def invoke_project_builder():
                 "demo.typed_echo/1.0.0", side_effect="none", cancellable=False
             ),
         }
+        if catalog_with_correlated_fetch:
+            descriptor["actions"].setdefault(
+                "demo.correlated_fetch/1.0.0",
+                _action("demo.correlated_fetch/1.0.0", side_effect="none"),
+            )
         if pins:
             descriptor["contracts"] = pins
         raw = (json.dumps(descriptor, indent=2) + "\n").encode()

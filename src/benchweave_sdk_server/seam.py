@@ -51,6 +51,7 @@ from benchweave_sdk.validation import validate_read_receipt
 
 from . import catalogue
 from .binding import BindingAbsent, BindingStale
+from .dataset_admission import DatasetAdmission
 from .errors import SeamError
 from .events import EventBus
 from .invoke_contracts import (
@@ -339,9 +340,51 @@ class StandaloneSeam:
             resolve_invoke_contracts(session.plugin)
         )
         check_action_budget_feasibility(session.plugin)
+        # The dataset admission core (issue #589 §4): built from the SAME
+        # resolution, sharing one this-run admitted registry across reloads
+        # (a reload rebuilds the validation surfaces; the manifests the
+        # host process admitted stay lookable up, as the files are).
+        self._dataset_admission: DatasetAdmission | None = None
+        self._admitted_datasets: dict[str, dict[str, Any]] = {}
+        self._arm_dataset_admission(self._invoke_contracts)
         # I5's per-action constraints validators, compiled once per action
         # on first use (the gateway's _invoke_constraints cache shape).
         self._invoke_constraints: dict[str, Any] = {}
+
+    def _arm_dataset_admission(self, contracts: ResolvedContracts | None) -> None:
+        """Build (or clear) the admission core for the CURRENT plugin and
+        install the session's services wrapper — the gateway's
+        ``build_dataset_services`` gate, mirrored: the two base members
+        attach exactly when the invoke lane is armed (resolved contracts ∧
+        a declared invoke operation), on every transport (the wrapper
+        applies at the session's one services mint site); the
+        permission-gated payload members are seam S4 and never attach
+        here."""
+        operations = self._session.plugin.descriptor.get("operations", {})
+        armed = (
+            contracts is not None
+            and isinstance(operations, dict)
+            and "invoke" in operations
+        )
+        if armed:
+            assert contracts is not None
+            channels = tuple(
+                str(channel.get("id"))
+                for channel in self._session.plugin.descriptor.get("channels", [])
+                if isinstance(channel, dict)
+            )
+            admission = DatasetAdmission(
+                contracts=contracts,
+                channels=channels,
+                library=lambda: self._library(""),
+                surface=lambda: _SURFACE.get(),
+                admitted=self._admitted_datasets,
+            )
+            self._dataset_admission = admission
+            self._session.services_wrapper = admission.attach
+        else:
+            self._dataset_admission = None
+            self._session.services_wrapper = None
 
     @property
     def session(self) -> PluginSession:
@@ -550,6 +593,15 @@ class StandaloneSeam:
             "rehearsal": self.rehearsal,
             "sdk_version": sdk_version(),
             "link": self._link_state(),
+            # The D10 disclosure (issue #589 §5.2): host truth, not lane
+            # state — every host carries it, armed or not.
+            "dataset_admission": {
+                "standard": "host-admits-on-invoke-result",
+                "gateway_divergence": (
+                    "the gateway still requires dataset_publish until GW-1 "
+                    "(issue #589 row D10)"
+                ),
+            },
             "presentation": {
                 "features": sorted(SUPPORTED_FEATURES),
                 "panels": sorted(SUPPORTED_PANELS),
@@ -894,11 +946,33 @@ class StandaloneSeam:
         timeout_ms = (
             int(row["timeout_ms"]) if isinstance(row, dict) else 0
         )
+        admission = self._dataset_admission
+        # The mint and the dispatch recording are ONE motion (issue #589
+        # §2c): the observe hook fires inside ``execute`` immediately after
+        # the context is constructed (``dataset_id = "ds:" + operation_id``,
+        # per dispatch) and before the adapter runs — the adapter reads the
+        # id DURING execute, and the controller records {dataset_id,
+        # action_id, input} against the operation for the explicit member's
+        # M10 correlation, mirroring the bridge's mint_dataset_id recording.
+        minted: dict[str, Any] = {}
+
+        def _observe(context: HostOperationContext) -> None:
+            minted["dataset_id"] = context.dataset_id
+            if admission is not None:
+                admission.record_dispatch(
+                    context.operation_id,
+                    dataset_id=context.dataset_id,
+                    action_id=action_id,
+                    input=value,
+                )
+
         data = await self._execute(
             "invoke",
             {"action_id": action_id, "input": value},
             correlation,
             timeout_ms=timeout_ms or None,
+            mint_dataset_id=True,
+            observe_context=_observe,
         )
         # The RESULT gates, in the gateway's order.
         if set(data) != {"action_id", "result"}:
@@ -928,13 +1002,45 @@ class StandaloneSeam:
                 correlation,
             )
         if contracts.is_dataset_shaped(payload):
-            raise self._fail(
-                "unavailable",
-                "invoke returned a dataset-shaped result; this host "
-                "does not yet admit datasets on the invoke path (the "
-                "admission surface is a named seam of issue #589)",
-                correlation,
-                reason="dataset_admission_absent",
+            # The ruled path (issue #589 §4): a dataset-shaped result is
+            # ADMITTED, never laundered as a plain result — admission
+            # failure is still a typed refusal. The invoke result itself is
+            # unchanged: admission is a host side-effect, not a result
+            # mutation.
+            if admission is None:  # pragma: no cover — the lane is armed
+                raise self._fail(
+                    "unavailable",
+                    "invoke returned a dataset-shaped result but the "
+                    "admission lane is not armed",
+                    correlation,
+                    reason="dataset_admission_absent",
+                )
+            try:
+                admitted = admission.admit(
+                    payload,
+                    dataset_id=minted.get("dataset_id"),
+                    action_id=action_id,
+                    invoke_input=value,
+                    surface=_SURFACE.get(),
+                )
+            except ValueError as exc:
+                raise self._fail(
+                    "invalid_request", str(exc), correlation
+                ) from exc
+            except OSError as exc:
+                raise self._fail(
+                    "unavailable",
+                    f"the admitted dataset could not be persisted: {exc}",
+                    correlation,
+                ) from exc
+            # The capture_started precedent: one event row, closed payload.
+            self.events.publish(
+                "dataset_admitted",
+                {
+                    "dataset_id": admitted.get("dataset_id"),
+                    "kind": admitted.get("kind"),
+                    "action_id": action_id,
+                },
             )
         return {"action_id": action_id, "result": payload}
 
@@ -1877,9 +1983,12 @@ class StandaloneSeam:
             has_presentation=self._session.plugin.has_presentation,
         )
         # The pre-swap resolution becomes the served one only at the swap:
-        # the incoming registry, and a fresh I5 constraints cache.
+        # the incoming registry, a fresh I5 constraints cache, and the
+        # admission core rebuilt over the incoming contracts (the shared
+        # admitted registry survives — the files do).
         self._invoke_contracts = incoming_contracts
         self._invoke_constraints = {}
+        self._arm_dataset_admission(incoming_contracts)
         self._preset_digests = self._pin_presets()
         # The observation ring belongs to the PREVIOUS plugin version:
         # samples from the old code would launder into the new version's
@@ -2016,19 +2125,31 @@ class StandaloneSeam:
         return root
 
     def _resolve_capture_verb(self, correlation: str) -> str:
-        """Ruling 6: the capture verb is descriptor-declared — ``capture``
-        first, the declared ``invoke`` second, and no declaration at all is
-        an explicit gap the refusal names."""
+        """The capture verb is descriptor-declared — ``capture`` only
+        (issue #589 §4, D6): the removed ``invoke`` fallback passed capture
+        arguments verbatim to a verb whose adapter contract is
+        ``{action_id, input}``, and no declarative source for the action id
+        exists (the descriptor's ``actions`` map is keyed by action id; a
+        capture request carries none) — it could never produce a valid
+        dispatch. The capture-over-class-actions composition is seam S2,
+        deliberately unbuilt."""
         operations = self._session.plugin.descriptor.get("operations", {})
         if "capture" in operations:
             return "capture"
-        if "invoke" in operations:
-            return "invoke"
+        declared = (
+            sorted(str(name) for name in operations)
+            if isinstance(operations, dict)
+            else []
+        )
         raise self._fail(
             "unavailable",
-            "no capture verb is declared: neither 'capture' nor 'invoke' "
-            "appears in the descriptor's operations policy",
+            "standalone_capture_verb_undeclared: no 'capture' operation is "
+            "declared by this plugin (the descriptor's operations policy "
+            f"declares: {', '.join(declared) or 'nothing'}); this plugin "
+            "serves data through its actions — invoke them (a "
+            "dataset-shaped invoke result is admitted as a dataset)",
             correlation,
+            reason="capture_verb_undeclared",
         )
 
     def _capture_metadata(
@@ -2096,6 +2217,13 @@ class StandaloneSeam:
                 "clear it before capturing",
                 correlation,
             )
+        # Declaration precedes host capability (issue #589 §4, D6's
+        # accompanying move): the verb check runs BEFORE the capture
+        # services duck-check, so a plugin that never declared capture gets
+        # the verb refusal — not a capability refusal blaming the host for
+        # a declaration the plugin never made (the seam's own wrong-cause
+        # discipline, the acceptance review's B).
+        verb = self._resolve_capture_verb(correlation)
         services = self._session.services
         # The acceptance review's B: the duck-check refusal is TYPED — the
         # machine-matchable prefix names the missing members (the
@@ -2133,7 +2261,6 @@ class StandaloneSeam:
                 reason="capture_services_incomplete",
                 missing=missing,
             )
-        verb = self._resolve_capture_verb(correlation)
         capture_services = cast("_CaptureCapable", services)
         fmt = str(arguments.get("format", "raw_binary"))
         bytes_per_sample = _BYTES_PER_SAMPLE.get(fmt, 1)
@@ -2448,6 +2575,26 @@ class StandaloneSeam:
         self, arguments: dict[str, Any], correlation: str
     ) -> dict[str, Any]:
         library = self._library(correlation)
+        # The admitted-dataset sibling (issue #589 §4): one inventory
+        # surface, two closed row shapes — a dataset manifest carries no
+        # primary artifact, so its row carries no capture's
+        # format/byte_length fields.
+        dataset_rows: list[dict[str, Any]] = [
+            {
+                "dataset_id": stored["dataset_id"],
+                "kind": stored["kind"],
+                "started_at": stored["started_at"],
+                "status": stored["status"],
+                "action_id": stored["action_id"],
+                "surface": stored["surface"],
+                "operator": stored["operator"],
+                "project": stored["project"],
+                "pinned": bool(stored["pinned"]),
+                "tags": list(stored["tags"]),
+                "notes": str(stored["notes"]),
+            }
+            for stored in library.list_datasets()
+        ]
         rows: list[dict[str, Any]] = []
         for stored in library.list_captures():
             rows.append(
@@ -2488,7 +2635,7 @@ class StandaloneSeam:
         rows.sort(
             key=lambda row: (row["started_at"], row["capture_id"]), reverse=True
         )
-        return {"captures": rows}
+        return {"captures": rows, "datasets": dataset_rows}
 
     def _event_dir(self, capture_id: str, correlation: str) -> Path:
         """The event directory for a published capture id, refused for ids
@@ -3670,17 +3817,26 @@ class StandaloneSeam:
         correlation: str,
         *,
         timeout_ms: int | None = None,
+        mint_dataset_id: bool = False,
+        observe_context: Callable[[HostOperationContext], None] | None = None,
     ) -> dict[str, Any]:
         """Run one adapter envelope and map its outcome honestly.
 
         ``timeout_ms`` overrides the verb's own declared policy with the
         ACTION row's deadline — the invoke dispatch only (issue #589 §3.2:
         the per-action contract is honoured from the descriptor, never
-        assumed); every other caller keeps the verb policy.
+        assumed); every other caller keeps the verb policy. The invoke
+        dispatch alone also passes ``mint_dataset_id`` and
+        ``observe_context`` (issue #589 §4: the per-dispatch dataset mint
+        and its recording).
         """
         try:
             envelope = await self._session.execute(
-                verb, arguments, timeout_ms=timeout_ms
+                verb,
+                arguments,
+                timeout_ms=timeout_ms,
+                mint_dataset_id=mint_dataset_id,
+                observe_context=observe_context,
             )
         except ConformanceError as exc:
             raise self._fail(

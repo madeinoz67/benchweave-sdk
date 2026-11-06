@@ -1,13 +1,14 @@
-"""The DatasetServices protocol pins (#146 slice 1).
+"""The DatasetServices protocol pins (#146 slice 1, flipped by #589 PR-3).
 
 The protocol is a structural contract for the pinned extension contract §3
-dataset services. Nothing in this SDK implements it yet (the standalone
-capture-writer parity is future work; the gateway dataset path is the
-intended first implementation and ships with its own slices), so what can
-be pinned SDK-side is the surface itself: the seven members with their
-corpus signatures, the composed twelve-member shape, the honest
-no-implementation docstring, and the ``OperationContext.dataset_id``
-invoke-minting note. Behavioral pins ride the gateway slices.
+dataset services. Since PR-3 (issue #589 §4) the two base members have a
+standalone first partial implementation over the capture root
+(``benchweave_sdk_server.dataset_admission``); the payload members remain
+declared-only (the permission-gated payload lane is seam S4). What is
+pinned SDK-side: the seven members with their corpus signatures, the
+composed twelve-member shape, the honest docstring naming the partial
+implementation, and the ``OperationContext.dataset_id`` invoke-minting
+note. The full protocol's behavioral pins ride the gateway slices.
 """
 
 from __future__ import annotations
@@ -67,17 +68,22 @@ def test_every_dataset_member_is_an_async_context_bound_method() -> None:
         assert "context" in parameters, name
 
 
-def test_the_docstring_is_honest_that_nothing_implements_the_protocol_yet() -> None:
-    """The B14 discipline, inverted: unlike CaptureServices (whose docstring
-    names its first partial implementation), DatasetServices ships with no
-    implementation in this SDK, and the docstring must say so rather than
-    implying a runtime exists. When an implementation lands, this pin flips
-    with the wording — the same motion test_capture_writer applies."""
+def test_the_docstring_names_the_first_partial_implementation() -> None:
+    """The B14 discipline, flipped by PR-3 (issue #589 §4): the docstring
+    now names the first partial implementation and stays honest about what
+    it does NOT implement — the two base members over the capture root, the
+    payload members awaiting their permission-gated composition (the
+    CaptureServices precedent's own motion)."""
     doc = _doc(DatasetServices)
     assert doc, "the protocol carries a docstring"
-    assert "No implementation" in doc
-    # The protocol must not borrow the capture writer's claim.
-    assert "StandaloneCaptureWriter implements" not in doc
+    # The two implemented members and their home are named.
+    assert "benchweave_sdk_server.dataset_admission" in doc
+    assert "dataset_publish" in doc and "dataset_lookup" in doc
+    # The payload members' absence is stated, not implied.
+    assert "payload members" in doc
+    assert "await" in doc
+    # The pre-PR-3 claim is gone.
+    assert "No implementation" not in doc
     # The NIT-1 honesty fix, pinned: payload_abort carries no context and
     # survives the deadline, so only the context-bound members reuse the
     # context machinery — the docstring must not overstate the reuse.

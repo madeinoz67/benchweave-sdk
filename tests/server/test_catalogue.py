@@ -94,6 +94,41 @@ def test_unknown_name_has_no_row() -> None:
     assert catalogue.spec("lease_create") is None
 
 
+def test_capture_list_gains_an_optional_datasets_sibling() -> None:
+    """Issue #589 PR-3 (§3 of the design record): ``capture_list``'s result
+    gains an OPTIONAL ``datasets`` array with its own closed row schema —
+    the capture row's ``format``/``byte_length``/``sha256`` are
+    primary-artifact fields a manifest does not carry, so the sibling row
+    does not lie about shapes (a deliberate refinement of rev 7 §4 item 3,
+    flagged in the record). Existing consumers are unaffected: ``captures``
+    stays required, ``datasets`` stays optional."""
+    schema = catalogue.spec("capture_list").result_schema
+    assert schema["required"] == ["captures"]
+    row = schema["properties"]["datasets"]["items"]
+    assert row["additionalProperties"] is False
+    assert row["required"] == [
+        "dataset_id", "kind", "started_at", "status", "action_id",
+        "surface", "operator", "project", "pinned", "tags", "notes",
+    ]
+    # The capture row is unchanged: the 13-key closed set.
+    capture = schema["properties"]["captures"]["items"]
+    assert capture["required"] == [
+        "capture_id", "state", "started_at", "format", "byte_length",
+        "sha256", "surface", "project", "tags", "notes", "pinned",
+        "stop_reason", "progress_bytes",
+    ]
+
+
+def test_host_info_carries_the_closed_admission_disclosure() -> None:
+    """The D10 disclosure's served shape: a closed two-string object,
+    required once present — a consumer cannot miss it (issue #589 §5)."""
+    schema = catalogue.spec("host_info").result_schema
+    block = schema["properties"]["dataset_admission"]
+    assert block["additionalProperties"] is False
+    assert block["required"] == ["standard", "gateway_divergence"]
+    assert "dataset_admission" in schema["required"]
+
+
 def test_device_summary_carries_the_endpoint_fields() -> None:
     """Issue #385 §1.2's wire-visible widening: every ``device_discover``
     row names its physical endpoint — ``port_path`` always a string,

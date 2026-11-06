@@ -82,7 +82,26 @@ the invariants below anchor there.
   is nowhere in the descriptor) — anchors:
   `benchweave_sdk_server/invoke_contracts.py`,
   `benchweave_sdk_server/seam.py` (construction and the pre-swap reload
-  resolution).
+  resolution). The dataset admission lane (issue #589 PR-3) adds four more:
+  `standalone_dataset_context_absent:` (`ValueError` at the services
+  boundary — a `dataset_publish` reached with a null `context.dataset_id`,
+  a non-invoke dispatch), `standalone_dataset_invalid:` (admission
+  validation refusal: `SeamError("invalid_request", …)` at the invoke
+  operation boundary with the pinned schema's `json_path` and the D10
+  divergence sentence in the message, `ValueError` when raised through the
+  services member — every refusal fires before any filesystem call),
+  `standalone_dataset_unknown:` (`ValueError` at the services member — a
+  `dataset_lookup` for an id this host process did not admit; a build-time
+  reconciliation, disclosed: the design record §4's table names three
+  prefixes and no lookup row, and STD-4 forbids bare-prose refusal paths,
+  so the lookup miss carries its own honest prefix rather than borrowing
+  the schema refusal's), and `standalone_capture_verb_undeclared:`
+  (`SeamError("unavailable", …)` — `capture_start` with no `capture`
+  operation declared; the D6 repair removed the lying `invoke` fallback
+  and moved the verb check BEFORE the capture-services duck-check:
+  declaration precedes host capability) — anchors:
+  `benchweave_sdk_server/dataset_admission.py`,
+  `benchweave_sdk_server/seam.py`.
   Known wound, disclosed: the provider
   pin's read inherits the SDK-wide bounded-file cap
   (`presentation.INPUT_BYTE_LIMIT`), so a corpus-valid contract above the cap
@@ -202,6 +221,27 @@ with permanent planted-violation arms R-5c). The generated plugin runtime has **
   `TestR5FallbackIsolation` (the isolation clause's only pin) in
   `tests/server/test_mcp_shim.py`. *Two hosts on one bench is the reference fork's
   shape — the entry point that cannot hold state cannot become the second one.*
+- **[SRF-6]** (the #589 PR-3 design record's new row; the maintainer assigns
+  the final ID at landing) The standalone dataset admission path validates
+  what the gateway's `dataset_publish` validates — identity (the manifest's
+  `dataset_id` equals the host-minted `"ds:" + operation_id`, minted per
+  invoke dispatch at context construction), idempotency (a byte-identical
+  manifest under a used id returns the admitted manifest; a divergent one
+  refuses naming immutability), the pinned measurement schema (read through
+  PR-2's contract resolution, never re-derived in `src/`), the M01–M04
+  structural checks including the channels cross-check against the
+  descriptor, the M10 echo subset, and M11 scope stated honestly (no
+  payload lane ships: artifact-backed variables refuse naming the absent
+  surface) — minus the payload lane. Validation precedes any filesystem
+  call: a refusal leaves zero bytes under the capture root's `datasets/`
+  family, and the one write is atomic. Anchors:
+  `benchweave_sdk_server/dataset_admission.py` (the core),
+  `benchweave_sdk_server/seam.py::_invoke_core` (the inline call, the
+  mint's observe hook), pinned by the A1–A20 arms in
+  `tests/server/test_dataset_admission.py` and the mutation matrix in the
+  design record §9. *The parity arms pin the gateway code as read at the
+  design; the decisive cross-repo control is GW-1's main-side test (a
+  named pairing row, not an SDK prerequisite).*
 - **[TWO-1]** **Two-repo discipline**: an SDK change lands as a commit in this repository
   (pushed), then a pointer commit in the main repository; the main repository's
   `make sync-sdk-standards` refuses to run against a submodule HEAD that differs from the

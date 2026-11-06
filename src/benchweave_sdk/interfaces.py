@@ -185,12 +185,14 @@ class DatasetServices(HostServices, Protocol):
     the base transport: publishing or looking up a dataset grants no
     device I/O, and every context-bound member reuses the operation
     context's deadlines, cancellation, exception classes and scoped
-    ownership. No
-    implementation of this twelve-member protocol ships in this SDK yet;
-    the gateway's dataset path is the intended first implementation, and
-    a standalone hostless writer (the capture-writer parity) remains
-    future work — the protocol exists so both implement one structural
-    shape. A host without dataset support should hand adapters plain
+    ownership. First partial implementation:
+    ``benchweave_sdk_server.dataset_admission`` implements the two base
+    members (``dataset_publish`` and ``dataset_lookup``) of this
+    twelve-member protocol over the standalone capture root, admitting the
+    manifests of dataset-shaped invoke results (issue #589); the payload
+    members await their permission-gated composition (seam S4) — the
+    gateway's dataset path remains their first full implementation. A host
+    without dataset support should hand adapters plain
     :class:`HostServices`.
 
     See Also

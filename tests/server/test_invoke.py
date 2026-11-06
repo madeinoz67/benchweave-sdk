@@ -181,15 +181,18 @@ def test_the_result_must_satisfy_the_catalog_output_schema(
     assert "$.value" in caught.value.message
 
 
-def test_a_dataset_shaped_result_refuses_naming_the_absent_admission(
+def test_a_dataset_shaped_but_schema_invalid_result_refuses_through_admission(
     tmp_path: Path, invoke_project_builder
 ) -> None:
-    """A dataset-shaped result is never laundered as a plain result: until
-    the admission path exists (PR-3's seam) it refuses ``unavailable``
-    naming the absent surface. The required key set is derived from the
-    pinned measurement schema (the vendored 0.2.4 dataset definition), read
-    here from the vendored bytes so the arm reddens loudly if the corpus
-    ever moves it."""
+    """A dataset-shaped result is never laundered as a plain result: since
+    PR-3 the admission path exists, so the nulls manifest (every required
+    key present, every value schema-invalid) refuses ``invalid_request``
+    through the admission core — and the IDENTITY check fires first (the
+    gateway's own order: identity precedes the schema), naming the
+    host-minted id the null ``dataset_id`` fails to carry. The required
+    key set is derived from the pinned measurement schema (the vendored
+    0.2.4 dataset definition), read here from the vendored bytes so the
+    arm reddens loudly if the corpus ever moves it."""
     measurement = json.loads(
         (Path(__file__).resolve().parents[2]
          / "src/benchweave_sdk/standards/otdp/0.2.4/otdp-measurement.schema.json")
@@ -200,9 +203,11 @@ def test_a_dataset_shaped_result_refuses_naming_the_absent_admission(
     adapter.SCRIPT["invoke"] = dataset_shaped
     with pytest.raises(SeamError) as caught:
         call(seam, "invoke", invoke_args("demo.probe/1.0.0"))
-    assert caught.value.code == "unavailable"
-    assert "dataset" in caught.value.message
-    assert caught.value.details.get("reason") == "dataset_admission_absent"
+    assert caught.value.code == "invalid_request"
+    assert "standalone_dataset_invalid:" in caught.value.message
+    assert "does not carry the host-minted id" in caught.value.message
+    assert "ds:op-" in caught.value.message
+    assert "gateway" in caught.value.message, "the D10 divergence sentence rides the refusal"
 
 
 # --- D8: the per-action deadline and the feasibility check ---------------------
