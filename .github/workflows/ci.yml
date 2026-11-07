@@ -242,9 +242,13 @@ jobs:
           uv run benchweave-sdk new "$ROOT/ui" --package example_plugin --with-ui
           uv run benchweave-sdk new "$ROOT/provider" --package example_plugin --provider-transport
           uv run benchweave-sdk new "$ROOT/provider-stripped" --package example_plugin --provider-transport
-          # A7's one mutated variable, and nothing else. Pre-release, PyPI
-          # cannot serve the `==` pin, so UV_FIND_LINKS is the only resolver
-          # for the wheel built above — uv locks every extra on any sync.
+          # A7's one mutated variable, and nothing else. UV_FIND_LINKS makes
+          # the wheel built above resolvable, but it is NOT the only source
+          # whenever the dev version equals the latest published release (PyPI
+          # served 0.24.0 while this branch was built on it). With no lock,
+          # uv prefers the flat index; the export therefore precedes every
+          # sync below, and each sync is followed by a lock-source assertion
+          # so the legs cannot silently exercise PyPI's bytes instead.
           sed 's/benchweave-sdk\[server\]==/benchweave-sdk==/' \
             "$ROOT/provider-stripped/pyproject.toml" > "$ROOT/provider-stripped/pyproject.toml.tmp"
           mv "$ROOT/provider-stripped/pyproject.toml.tmp" "$ROOT/provider-stripped/pyproject.toml"
@@ -286,6 +290,16 @@ jobs:
               echo "::error::$dir: uv sync --extra $extra failed — $(classify "$CODE")"
               exit 1
             fi
+            # The pin must resolve to the wheel THIS lane built, not to the
+            # release PyPI happens to carry under the same version. uv records
+            # the winning index in the lock it writes, so the claim is
+            # checked rather than assumed: a pre-existing lock (or a future
+            # reordering that syncs before the export) would silently swap
+            # the bytes under test.
+            if ! grep -qF "registry = \"$DIST\"" "$dir/uv.lock"; then
+              echo "::error::$dir: uv.lock does not resolve benchweave-sdk from $DIST — this leg would exercise PyPI's bytes, not the wheel under test"
+              exit 1
+            fi
             capture_in "$dir" uv run "$@"
             if [ "$CODE" -ne 0 ]; then
               printf '%s\n' "$OUT"
@@ -321,6 +335,10 @@ jobs:
             echo "::error::provider-stripped: uv sync --extra test failed — $(classify "$CODE")"
             exit 1
           fi
+          grep -qF "registry = \"$DIST\"" "$ROOT/provider-stripped/uv.lock" || {
+            echo "::error::provider-stripped: uv.lock does not resolve benchweave-sdk from $DIST — the control would prove the wrong wheel"
+            exit 1
+          }
           capture_in "$ROOT/provider-stripped" uv run pytest -q
           printf '%s\n' "$OUT"
           if [ "$CODE" -eq 0 ]; then

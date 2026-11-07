@@ -715,6 +715,38 @@ verbatim, with only the repo-root scaffold binary substituted for `uv run`):
   class: uv usage/spawn/undefined extra)`, never "findings".
 - Undefined extra in the control's sync → step exits 1 naming the tooling
   class rather than accepting the failure as the expected refusal.
+- Point `UV_FIND_LINKS` at an existing but empty directory → the syncs
+  succeed from PyPI and the step exits 1 with "uv.lock does not resolve
+  benchweave-sdk from <smoke-dist> — this leg would exercise PyPI's bytes,
+  not the wheel under test."
+
+**Resolver provenance — a measured correction to §2.7's premise.** §2.7 says
+"pre-release, PyPI does not carry the dev version, so find-links is the only
+resolver". That does not hold while the dev version EQUALS the latest
+published release, and that is this branch's situation: PyPI serves
+`benchweave-sdk==0.24.0` (uploaded 2026-11-06T08:19Z), which is exactly this
+branch's version. Measured on four fresh project trees:
+
+- With no lock present, uv prefers the `--find-links` flat index and installs
+  the wheel under test — verified by hashing the installed
+  `benchweave_sdk_server/ftdi.py` against the built wheel (`957e53ec…`,
+  96,483 bytes) rather than trusting the log.
+- `uv sync` writes a `uv.lock` recording the WINNING index. A lock written by
+  an earlier sync that ran without `UV_FIND_LINKS` pins
+  `source = { registry = "https://pypi.org/simple" }`, and every later sync
+  in that project honours it — installing PyPI's 0.24.0 (`3759c7ae…` in the
+  installed file, 68,844 bytes, an older `ftdi.py`).
+- Location, pin shape and the dist directory are NOT the discriminator (each
+  was cross-tested); the lock is.
+
+The step therefore exports `UV_FIND_LINKS` before any sync and asserts the
+lock's source after each one. Consequence worth naming: the first RED-baseline
+pass taken for this record was contaminated exactly this way (a `uv sync
+--extra lint` that ran before the export wrote a PyPI-sourced lock, and the
+tests leg then ran the published wheel). The RED table above is the CLEAN
+re-measurement from fresh scaffolds, where all three pre-fix arms installed
+the pre-fix wheel — the outcome was identical in both passes, which is why the
+contamination was worth chasing rather than waving through.
 
 **Deviation found in the landed generator (not introduced here).** §2.1
 specified the single-line `uv run --extra lint ruff check .` form; the
