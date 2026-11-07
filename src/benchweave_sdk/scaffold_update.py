@@ -32,7 +32,14 @@ from .scaffold import (
 from .served import active_version
 
 ANSWERS_NAME = ".copier-answers.yml"
+# copier runs ``git merge-file -L "before updating" -L "last update" -L "after
+# updating"`` and marks a file conflicted when either of these two lines is
+# present (copier/_main.py, the inline conflict pass).
 _CONFLICT_MARKER = b"<<<<<<<"
+_CONFLICT_BEFORE = _CONFLICT_MARKER + b" before updating"
+_CONFLICT_SEPARATOR = b"======="
+_CONFLICT_END = b">>>>>>>"
+_CONFLICT_AFTER = _CONFLICT_END + b" after updating"
 
 
 def _load_run_update() -> Any:
@@ -215,6 +222,60 @@ def _require_target_ref(source: str, ref: str, *, role: str = "target") -> None:
         )
 
 
+def _collapse_identical_conflicts(content: bytes) -> bytes | None:
+    """Collapse copier conflict blocks whose two sides are byte-identical.
+
+    A block whose sides agree carries no disagreement to resolve: copier's
+    inline ``git merge-file`` pass produced exactly that for a newly added
+    template member on the Windows runner (issue #596), so the block reduces
+    to its common side and the file is not a conflict at all.
+
+    Returns ``None`` for anything this guard cannot prove is spurious — sides
+    that differ, a start marker with no closing marker, a label other than
+    copier's own ``before updating``/``after updating`` pair, or marker text
+    left outside a recognised block — and the caller then reports the file and
+    leaves it exactly as copier wrote it. What it does NOT catch: a block
+    split by a ``=======`` line inside its own content is ambiguous, so the
+    split is taken from the LAST separator (git's real one unless the content
+    itself ends with one) and a mismatch returns ``None``. It also cannot tell
+    document text that mimics a conflict block from a real one; the caller
+    keeps the broad marker scan as its fallback, so such a file is reported
+    rather than collapsed.
+    """
+    if _CONFLICT_MARKER not in content:
+        return None
+    lines = content.splitlines(keepends=True)
+    resolved: list[bytes] = []
+    collapsed = False
+    index = 0
+    while index < len(lines):
+        if lines[index].rstrip(b"\r\n") != _CONFLICT_BEFORE:
+            resolved.append(lines[index])
+            index += 1
+            continue
+        closing = index + 1
+        while closing < len(lines) and lines[closing].rstrip(b"\r\n") != _CONFLICT_AFTER:
+            closing += 1
+        if closing == len(lines):
+            return None
+        separator = closing - 1
+        while separator > index and lines[separator].rstrip(b"\r\n") != _CONFLICT_SEPARATOR:
+            separator -= 1
+        if separator == index:
+            return None
+        before = lines[index + 1 : separator]
+        after = lines[separator + 1 : closing]
+        if before != after:
+            return None
+        resolved.extend(before)
+        collapsed = True
+        index = closing + 1
+    joined = b"".join(resolved)
+    if not collapsed or _CONFLICT_MARKER in joined:
+        return None
+    return joined
+
+
 def upgrade_project(
     project: Path, *, target_ref: str | None = None
 ) -> tuple[list[str], list[str], list[str]]:
@@ -241,7 +302,11 @@ def upgrade_project(
       and skip patterns protect content, not existence.
     - Files that ended in conflict markers are reported by name — the author
       resolves both sides and commits; an update never fails on conflicts,
-      and never resolves them silently.
+      and never resolves them silently. A block whose two sides are
+      byte-identical is not a disagreement (copier's inline merge can emit
+      one for a newly added member on Windows): it collapses to the common
+      content and is not reported. A file with any differing block is left
+      untouched and reported.
     - Symlinks and Windows junctions are never read or written through;
       each is reported once in ``skipped``.
 
@@ -343,11 +408,28 @@ def upgrade_project(
             _guarded_write(project / relative, content)
             restored.append(relative)
     files, skipped = _walk_content(project, sorted(set(tracked) | set(changed)))
-    conflicted = [
-        entry.relative_to(project).as_posix()
-        for entry in files
-        if _CONFLICT_MARKER in entry.read_bytes()
-    ]
+    conflicted = []
+    collapsed_paths = []
+    for entry in files:
+        content = entry.read_bytes()
+        if _CONFLICT_MARKER not in content:
+            continue
+        collapsed = _collapse_identical_conflicts(content)
+        if collapsed is None:
+            conflicted.append(entry.relative_to(project).as_posix())
+        elif collapsed != content:
+            _guarded_write(entry, collapsed)
+            collapsed_paths.append(entry.relative_to(project).as_posix())
+    if collapsed_paths:
+        # copier records a conflicted file with merge stages 1/2/3 in the
+        # index; a collapsed block has no conflict left to stage, so the
+        # entry goes back to HEAD — the file then reads like any other
+        # update write (untracked when new, modified when tracked).
+        subprocess.run(  # noqa: S603, S607 — git has no in-process API
+            ["git", "-C", str(project), "reset", "-q", "--", *collapsed_paths],
+            capture_output=True,
+            check=True,
+        )
     return conflicted, restored, skipped
 
 
