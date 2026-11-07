@@ -315,3 +315,13 @@ file byte-identically. The prefix, not the test, is what the arm measures.
 **Also landed:** the STD-4 register in `docs/internal/invariants.md` names
 the new prefix with its three anchors, and the guide carries one sentence
 for plugin authors.
+
+**The guide leg found the change's own inconsistency.** The `document-writer`
+added the author-facing sentence and then flagged a real defect in the same
+file: the worked example's code listing still raised the bare form. That
+listing is the reference an author copies, so leaving it bare would teach
+the exact shape this slice exists to remove. Prefixing it keeps the example
+and the shipped host in agreement. `tests/test_guide_serial_host.py`
+executes that listing and reads `26 passed`; it asserts nothing about the
+message text, so the change is behaviour-neutral for the arm and
+conformance-fixing for a human reader.
