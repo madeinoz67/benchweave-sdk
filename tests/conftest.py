@@ -22,6 +22,7 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[1]
 VENDORED_TREE = REPO / "src/benchweave_sdk/standards"
+PYTEST_CACHE = REPO / ".pytest_cache"
 
 # Editable-install resilience (local macOS, observed 2026-11-06): a
 # file-provider daemon can set the macOS hidden flag on the worktree venv's
@@ -44,18 +45,40 @@ def _writes(mode: str) -> bool:
     return any(flag in mode for flag in ("w", "x", "a", "+"))
 
 
-def _is_tree_path(candidate: object) -> bool:
+def _resolve(candidate: object) -> Path | None:
+    """The resolved path, or None when the candidate is not a path (an fd
+    int, a file object) or cannot be resolved — nothing to judge either
+    way, and the write will fail on its own."""
     try:
         path = Path(candidate)  # type: ignore[arg-type]
     except TypeError:
-        return False  # an fd int or other non-path — not ours to judge
+        return None
     try:
-        resolved = path.resolve()
+        return path.resolve()
     except OSError:
-        # An unresolvable path cannot be inside the tree either way; the
-        # write will fail on its own.
-        return False
-    return resolved == VENDORED_TREE or VENDORED_TREE in resolved.parents
+        return None
+
+
+def _is_tree_path(candidate: object) -> bool:
+    resolved = _resolve(candidate)
+    return resolved is not None and (
+        resolved == VENDORED_TREE or VENDORED_TREE in resolved.parents
+    )
+
+
+def _working_tree_violation(candidate: object) -> Path | None:
+    """The resolved path when the write would land inside the repository
+    working tree (#442), else None. ``.pytest_cache`` is exempt: pytest's
+    own cache provider writes there, and that directory self-ignores in
+    git, so it cannot become the leaked state this guard surfaces."""
+    resolved = _resolve(candidate)
+    if resolved is None:
+        return None
+    if resolved != REPO and REPO not in resolved.parents:
+        return None
+    if resolved == PYTEST_CACHE or PYTEST_CACHE in resolved.parents:
+        return None
+    return resolved
 
 
 @pytest.fixture(autouse=True)
@@ -63,8 +86,12 @@ def _the_committed_tree_is_never_written(
     monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[None]:
     """No test under tests/ may write the committed vendored standards
-    tree (#427) — the bytes are shared state under ``-n auto``, and the
-    digest-flake root cause was exactly such a window.
+    tree (#427) or any other path inside the repository working tree
+    (#442) — the vendored bytes are shared state under ``-n auto`` (the
+    digest-flake root cause), and a write into the checkout leaks state a
+    later run consumes. The #442 class is exactly that: the pre-#427
+    ``captures/operator-action-token.json`` landed under the checkout
+    root, a path the tree-only predicate never saw.
 
     MECHANISM, exactly (G4): the guard wraps four write vectors and
     refuses BEFORE delegating, so the byte never lands —
@@ -74,25 +101,39 @@ def _the_committed_tree_is_never_written(
     bare ``open(path, "w")`` go through). The trip is an AssertionError
     naming the path.
 
+    The path scope is two predicates, in order: the vendored tree refuses
+    first (its message is unchanged since #427), then anything resolved
+    under ``REPO`` except ``REPO/.pytest_cache`` (#442).
+
     NOT CAUGHT, by the same exactness: ``os.replace``/``os.rename`` into
-    the tree, ``os.open``/``os.fdown`` descriptors (including
+    either scope, ``os.open``/``os.fdown`` descriptors (including
     ``shutil.copyfile``'s sendfile fast path on POSIX), writes from
-    subprocesses, and a symlink swap at a tree path. A test that
+    subprocesses, and a symlink swap at either path. A test that
     re-patches these four hooks itself disarms the guard for its own
-    duration. The vectors actually hooked are pinned by
-    tests/test_tree_guard.py and tests/server/test_tree_guard_reach.py;
-    extending the hooked set means extending those probes in the same
-    change.
+    duration. Nor does the widened scope see a file descriptor opened
+    before the test started, or a leak hidden under the
+    ``.pytest_cache`` exemption; import-system bytecode writes
+    (``__pycache__``) are C-level and never reach these hooks. The
+    vectors actually hooked are pinned by tests/test_tree_guard.py and
+    tests/server/test_tree_guard_reach.py; extending the hooked set means
+    extending those probes in the same change.
     """
     refusal = (
         "write to the committed vendored tree attempted: {path} (#427 — "
         "plant tamper bytes on a tmp copy; the committed bytes are shared "
         "state under -n auto)"
     )
+    working_tree_refusal = (
+        "write into the repository working tree attempted: {path} "
+        "(#442 — resolve your root under tmp_path)"
+    )
 
     def _refuse(path: object) -> None:
         if _is_tree_path(path):
             raise AssertionError(refusal.format(path=path))
+        leaked = _working_tree_violation(path)
+        if leaked is not None:
+            raise AssertionError(working_tree_refusal.format(path=leaked))
 
     original_write_bytes = Path.write_bytes
     original_write_text = Path.write_text
