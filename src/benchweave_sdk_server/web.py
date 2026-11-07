@@ -870,11 +870,17 @@ def _add_html_routes(
     async def _gather_readings(
         device_id: str
     ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
-        """Read every readable parameter, or stop at the first refusal.
+        """Read every readable parameter, isolating per-parameter refusals.
 
         Read-only (NFR-O3: no write happens on a page load or poll); a
         refused seam call surfaces as the page's refused state — the honest
         negative — never as a silent blank.
+
+        Issue #571: a refusal that is about THIS parameter (the adapter
+        answered with an ``invalid_request`` or ``conflict`` envelope while
+        the session is still connected) renders as a refused row and the
+        loop continues; every other class — and any disconnected session —
+        stays page-level and stops the gather as before.
         """
         plugin = seam.session.plugin
         readings: list[dict[str, Any]] = []
@@ -893,11 +899,27 @@ def _add_html_routes(
                     }
                 )
             except SeamError as exc:
-                return readings, {
-                    "code": exc.code,
-                    "message": exc.message,
-                    "adapter": exc.details.get("adapter"),
-                }
+                if exc.code not in ("invalid_request", "conflict") or (
+                    not seam.session.connected
+                ):
+                    return readings, {
+                        "code": exc.code,
+                        "message": exc.message,
+                        "adapter": exc.details.get("adapter"),
+                    }
+                readings.append(
+                    {
+                        "name": name,
+                        "value": None,
+                        "unit": parameter.get("unit"),
+                        "quality": "",
+                        "refusal": {
+                            "code": exc.code,
+                            "message": exc.message,
+                            "adapter": exc.details.get("adapter"),
+                        },
+                    }
+                )
         return readings, None
 
     async def _render_device(

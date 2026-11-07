@@ -106,8 +106,13 @@ def test_the_nine_through_the_real_surface_both_arms(
             assert body["error"]["code"] == "conflict"
             assert body["error"]["details"]["adapter"]["code"] == "DEVICE_REJECTED"
             assert body["error"]["details"]["adapter"]["dispatch_state"] == "dispatched"
-            assert "Readings refused" in html
+            # Issue #571: every readable parameter refuses in this scenario,
+            # so the page renders the refused-row table, not the page-level
+            # notice (design §6 A4: exactly this one expectation changes).
+            assert "Readings refused" not in html
+            assert "refused" in html
             assert "DEVICE_REJECTED" in html
+            assert "<table" in html
             return
 
         # The no-laundering pin: both arms serve the SAME value and quality.
