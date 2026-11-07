@@ -18,6 +18,16 @@ test = ["benchweave-sdk=={{ sdk_version }}", "pytest>=8.0"]
 lint = ["ruff>=0.6"]
 [tool.hatch.build.targets.wheel]
 packages = ["src/{{ package_name }}"]
+[tool.ruff]
+# Both keys below are INERT while the select below stays narrow: E501 and the
+# pyupgrade rules are not selected. They are carried so that an author who
+# widens the select to full E does not birth red on scaffold bytes -- every
+# arm's rendered code carries lines longer than ruff's default 88 and none
+# longer than 100. Do not remove them, and do not lower line-length below 100.
+# They live under [tool.ruff]: ruff treats them as unknown keys in
+# [tool.ruff.lint] and exits 2, the tooling class, not a findings exit.
+line-length = 100
+target-version = "py313"
 [tool.ruff.lint]
 # The minimal starter set: ruff's defaults, selected explicitly so a ruff
 # upgrade cannot silently widen the gate.
