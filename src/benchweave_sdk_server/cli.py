@@ -327,9 +327,8 @@ def _build_seam(
                 # The no-re-probe clause (I3 §3.3, issue #389) now flows
                 # from the endpoint's last_resolution — the path the live
                 # session actually opened. Alias spellings of the same
-                # physical port (cu vs tty, by-id symlinks) do not match
-                # and still re-probe — the alias-matching follow-up owns
-                # that.
+                # physical port (cu vs tty, by-id symlinks) are matched by
+                # node equivalence at discovery (#392), not byte equality.
                 serial_endpoint=endpoint,
                 bindings=store,
                 capture_root=capture_root,

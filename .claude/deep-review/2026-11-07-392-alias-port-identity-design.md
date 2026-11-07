@@ -58,7 +58,17 @@ alias-matching follow-up owns that").
   `realpath` resolves nothing here; the two nodes are peers. The pairing
   is per driver instance: one physical (or virtual) serial device, one
   kernel driver instance, exactly two `/dev` nodes `cu.<stem>` and
-  `tty.<stem>` sharing the stem.
+  `tty.<stem>` sharing the stem. **Grounded in the dependency's code, not
+  only in this machine's `/dev`** (mechanism-critic F3): pyserial's darwin
+  list implementation reads `IOCalloutDevice` verbatim and its own comment
+  calls the result "all of the callout devices"
+  (`serial/tools/list_ports_osx.py`), so `cu.`-only enumeration is a
+  property of the pinned dependency rather than a sample of one. The
+  convention itself is documented in no man page the code can cite
+  (`tty.4` is silent; a whole-SDK `callout` grep is empty) — what remains
+  unproven is that a future macOS or kext cannot register two instances
+  under one stem, which is D3's trigger, and its failure mode degrades to
+  today's identify rather than to a wrong identity.
 - **pyserial on darwin enumerates ONLY the `cu.` spelling.** Observed:
   `comports()` on this machine returns three rows, all `/dev/cu.*`, while
   `/dev` carries both spellings. So the macOS arm of #392 is the operator
