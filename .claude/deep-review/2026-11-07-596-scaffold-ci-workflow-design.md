@@ -787,3 +787,46 @@ found before the correction. The drift map and SRF-1 previously claimed the
 pin was executed by a `publish.yml` generated-tests smoke; that block was
 reverted by the maintainer corrections, and both documents now name this
 `ci.yml` step instead.
+
+## Amendment — the Windows spurious add/add conflict (2026-11-07, found at PR #247)
+
+The first PR run reddened `sdk (windows-latest)` only, on
+`test_adopted_project_first_upgrade_conflicts_honestly_on_managed_edits`. The new
+`.github/workflows/ci.yml` member joins the conflict set on that platform. This is the SRF-1
+consequence the record's own obligation list exists to catch, and the test was not named in
+the design: an unlisted breakage of a test that pins scaffold output.
+
+**What was actually wrong, measured on the Windows runner rather than reasoned about.** A
+temporary diagnostic base64-dumped both sides of the conflict from the runner. The block's two
+sides are BYTE-IDENTICAL to each other and to the target template member: `cmp -l` between them
+is empty, all three are 1058 bytes, 42 lines, zero carriage returns. The base (`v0.8.0`) carries
+no template at all, so every template member is add/add, and Windows copier resolves an add/add
+whose sides agree as a conflict. `upgrade_project` reports conflicts by scanning for
+`_CONFLICT_MARKER`, so it reported a block whose two sides agree.
+
+Two theories were killed by experiment before the dump, and both results are recorded so they
+are not retried: forcing CRLF into the target tree passed, and forcing CRLF into the project's
+copy also passed. Line endings are not the mechanism.
+
+**The consequence is user-facing, not test-only.** On Windows, an author updating a scaffolded
+project can receive conflict markers in a file they never touched.
+
+**Fix.** `_collapse_identical_conflicts` parses well-formed copier blocks and, when every
+block's two sides are byte-identical, returns the content with each block replaced by its common
+side. Any block with differing sides makes it return `None`, so genuine conflicts are reported
+and never rewritten. Because a collapsed file would otherwise remain in the git index as
+unmerged, the update also clears that state; the arm that proves this is separate from the arm
+that proves the collapse, deliberately, because they fail independently.
+
+**What the guard does not catch**, stated so it is not over-claimed: a block with differing
+sides (reported, by design), a non-copier label, a block missing its separator or closer,
+marker text outside a recognised block, and an ambiguous split where `=======` occurs inside the
+content itself.
+
+**Arms.** `test_upgrade_collapses_a_conflict_block_whose_sides_are_identical` reproduces the
+defect WITHOUT Windows, which is why it is worth having: it drives `upgrade_project` with a
+stubbed copier entry point writing a spurious block, a genuine block and a mixed file. It reds
+against the pre-fix code, reds again when only the collapse is neutralised, and reds a third time
+when only the index cleanup is neutralised. The existing adapted-project test still requires
+`AI-GUIDE.md` in `conflicted` with a real marker and the author's line intact, so the fix is
+pinned in both directions.
