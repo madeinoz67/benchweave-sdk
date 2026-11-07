@@ -884,7 +884,7 @@ Parameters and action inputs have different read surfaces. `parameter_read` serv
 
 A parameter with access `wo` is declared-valid per the descriptor schema, but this host cannot operate it. A write needs the read-back that SW-23 requires. A write-only parameter cannot produce that read-back, and a read of it is refused by definition. Do not declare a parameter `wo` when a bench must set it through this host.
 
-A device can refuse the read of a parameter that declares access `ro` or `rw`. The readings page marks that parameter `refused` and still shows the other rows.
+A device can reject the read of a parameter that declares access `ro` or `rw`. The readings page marks that parameter `refused` and shows the other rows. A timeout, a firmware fault, or a malformed read receipt still refuses the whole page.
 
 ### Capture retention and the library page (standalone host)
 

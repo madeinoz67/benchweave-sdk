@@ -347,3 +347,66 @@ run — nothing was built to gate. The build agent runs the §3 arms RED-first
 against this record, then the standard battery
 (`ruff check .`, `mypy`, `sync-standards --check`, `--version` smoke, raw-count
 pytest) per CLAUDE.md §3.
+
+## Fold amendments — 2026-11-07, from the two refute lanes
+
+Both lanes returned DEFENDED (mechanism, served wire). These are claim-precision corrections,
+append-only; no mechanism change. Each names the sentence it supersedes.
+
+**A1 — §2's poll-cost claim is FALSE as written and must not be repeated.** The record says:
+
+> no N×deadline poll cost — the per-parameter classes are fast adapter-envelope answers, not deadlines
+
+That is an unenforced assumption about plugin behaviour, not a property of this change. Nothing
+wall-clock-bounds an adapter on the read path: `session.py:1226-1238` mints an *advisory* deadline
+and there is no `wait_for`. Measured with an adapter sleeping 0.4s and then answering
+`DEVICE_REJECTED`, over 3 parameters: **pre-fix 0.41s** (the first refusal aborts), **post-fix
+1.21s**. Corrected statement: per-parameter isolation makes an all-refusing page cost
+**N × per-read latency**; a healthy page already costs N × D, so the regression is only against the
+aborting behaviour, not against a healthy page.
+
+**A2 — §2 omits a real operational consequence: per-poll dispatch multiplication.** Measured over 5
+polls with 3 parameters, an all-refusing bench goes from **1 to 3 reads dispatched per poll**, and
+refused events on the unbounded EventBus from **5 to 15**. On serial or FTDI benches each of those is
+a wire transaction, re-issued every 2 seconds against a device that keeps saying no. Pre-fix the first
+refusal aborted the poll; post-fix every parameter is attempted. This is a consequence of the fix
+working as designed, not a defect in it, and it belongs in the record rather than in a reviewer's
+notes.
+
+**A3 — §3.2's CSS sentence overstates. The rule is inert.** The record says the refused row is
+marked by "one CSS rule … token-referenced, the notice's own precedent". It is token-referenced and
+the token **does not exist**: `standalone.css:78` references `--bw-status-critical-text`, and
+`grep -rn "^\s*--bw-status-" src/` returns **zero definitions**, so the rule computes to nothing in
+every theme and refused rows render in the same colour as healthy rows. This is PRE-EXISTING —
+`.notice-refused` at `standalone.css:77` has carried the identical dead pair since the #309 fold.
+The marker is textual, so no information is lost and WCAG 1.4.1 holds. **The rule is deliberately
+NOT switched to a live token in this slice**: the intended colour measures **5.47:1 / 4.53:1** while
+the currently inherited colour measures **14.85:1 / 11.32:1**, so making it live would trade
+readability for colour coding. Defining the `--bw-status-*` tokens is its own row.
+
+**A4 — §3.3's "byte-identical" is wrong at the byte level; the right word is content-identical.**
+Rendering the pre and post templates through the same Jinja environment with identical context shows
+**every row, healthy included, gains one whitespace line** between the row header and the first cell,
+because of the `{% if %}`/`{% else %}` newlines. No consumer diffs host-page bytes — the tests are
+substring-based and the htmx swap is shape-agnostic — so this is a wording defect, not a wire defect.
+
+**A5 — the guide sentence shipped unconditioned where the mechanism is class-conditioned.** The
+landed sentence ("A device can refuse the read of a parameter … and still shows the other rows") is
+true only for the rejection vocabulary (`DEVICE_REJECTED`, `INVALID_ARGUMENT`, `UNSUPPORTED`). A
+device refusing the same read by `TIMEOUT`, `PROTOCOL_ERROR` or a malformed receipt still blanks the
+page, and the page-level error dict (`web.py:903-907`) carries only `{code, message, adapter}` with
+**no name field**, so the notice cannot even say which parameter did it. Corrected in
+`user_guide/plugin-sdk.qmd` to condition the promise and name the three exceptions.
+
+**A6 — R1 is wider than the record states, and the widening is worth naming.** R1 covers future
+`_ADAPTER_CODE_MAP` motion. It should also cover today's plugin-authored vocabulary: the
+classification reads the CODE, which the plugin authors, not the CAUSE. A driver that desyncs and
+answers `UNSUPPORTED` for every read renders a page of refused rows rather than a page refusal. Host
+machinery cannot produce this — every host-side `INVALID_ARGUMENT`/`UNSUPPORTED` raise site is
+unreachable from the gather — and each row still shows its refusal verbatim, so nothing looks healthy
+that is not. Recorded as the same residual wearing different clothes, not as a new hole.
+
+**What the amendments do NOT change:** the two-code membership, the fail-closed default, the
+total enumeration, the `session.connected` guard, or the rendered output. Totality is enforced
+structurally — `SeamError.__init__` refuses any code outside the closed seven (`errors.py:69-70`) —
+and an unknown adapter code was driven live and fell to `internal_error`.
