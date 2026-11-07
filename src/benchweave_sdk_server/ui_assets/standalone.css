@@ -75,6 +75,7 @@ h2 { font-size: 1.1rem; margin: 0 0 var(--bw-space-2); }
 
 .notice { border: 1px solid var(--bw-border-strong); border-radius: var(--bw-radius-control); padding: var(--bw-space-3); }
 .notice-refused { border-color: var(--bw-status-critical-border); color: var(--bw-status-critical-text); }
+.readings td.refused { color: var(--bw-status-critical-text); }
 
 .actions { display: flex; gap: var(--bw-space-3); margin: var(--bw-space-3) 0; }
 
