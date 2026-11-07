@@ -246,3 +246,43 @@ behavioral. That is the reopen trigger in §7, row 3.
   itself part of the §1 evidence.
 - muninn recall is not available in this dispatch context; the durable finding is
   proposed through the memory ledger hook instead (tags `sdk`, `design`).
+
+## Addendum — 2026-11-07, the residual arm was attempted and is NOT reachable
+
+The verdict stands as don't-build. This addendum records what happened when the one test-only
+residual in §3 was actually attempted, because the attempt is the evidence for deferring it rather
+than shipping it.
+
+The residual asked for a seam-level arm proving a short write surfaces as `not_ready` with the
+transport-specific message. Four witnesses were measured against the shipped double on
+`tests/server/test_ftdi.py`'s fixture, not assumed:
+
+| witness op | frame written | outcome through the seam |
+|---|---|---|
+| `device_connect` | `deadbeefcafebabe`, 8 bytes | `standalone_connect_failed: TRANSPORT_ERROR` — the connect wrapper, not the generic mapping |
+| `parameter_read` | `55a1`, 2 bytes | no refusal; the double short-writes only above its 4-byte guard, so the knob cannot fire |
+| `parameter_stage` | none | refuses earlier: `parameter is not writable` (`access=ro`) |
+| `parameter_apply` / `device_reset` | none | refuse earlier: nothing staged; no reset operation in the descriptor |
+
+So on the current fixture the only frame above the guard is the connect frame, and it is handled by
+the connect-time wrapper rather than by the `ConnectionError` to `not_ready` mapping in the hot
+path. **A dedicated arm therefore needs a fixture row that does not exist.** Manufacturing one would
+be inventing the witness to make the test pass, which the repository's fixture-provenance rule
+forbids.
+
+**What this leaves, stated exactly:** the short-write refusal is pinned byte-identically at the
+driver level (`test_the_short_write_refusal_names_the_ftdi_transport`, `"ftdi write reported 4 of 8"`),
+and `not_ready` is pinned by C7 for a *different* exception class (`fault_writes` raises `OSError`).
+The composition `ConnectionError` to `not_ready` through the seam has no dedicated arm. It is
+deferred below rather than forced.
+
+**D7 | The seam-level `ConnectionError` to `not_ready` arm** | Not reachable on the current fixture:
+the only frame above the double's 4-byte short-write guard is the connect frame, and the connect
+path maps through its own wrapper. A dedicated arm needs a fixture row that does not exist, and
+manufacturing one would invent the witness | Reopen when a fixture row carries a non-connect frame
+longer than 4 bytes, **or** the short-write guard in `ftdi.py` changes
+
+Two pre-committed rules did their job here and should be recorded as such: the design's UNDERPOWERED
+branch (a witness whose frame is at or below the guard means re-scope, not conclude) caught the
+`parameter_read` attempt, and the second re-scope is what produced the table above instead of a
+passing test that proved nothing.
