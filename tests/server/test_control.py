@@ -669,3 +669,85 @@ def test_redirect_targets_come_from_validated_server_side_objects(connected) -> 
     )
     assert hostile_connect.status_code == 404
     assert "location" not in hostile_connect.headers
+
+
+def test_a12_wo_parameter_is_unreachable_and_the_filter_stays_descriptor_driven(
+    tmp_path: Path,
+) -> None:
+    """The D14 disclosure's anchor (issue #589 PR-6): the read filter is
+    the DESCRIPTOR's own ``access`` declaration — a ``wo`` parameter is
+    declared-valid per the descriptor schema and unreachable through this
+    host (writes require the SW-23 read-back a write-only parameter cannot
+    produce; reads are refused by definition), while an ``rw`` parameter
+    keeps reading and staging through the same unmodified lane."""
+    import asyncio
+
+    project = tmp_path / "wo"
+    shutil.copytree(FIXTURE, project)
+    pkg = project / "src" / "setpoint_demo"
+    descriptor = json.loads((pkg / "descriptor.json").read_text())
+    descriptor["parameters"].append(
+        {
+            "name": "calibration_key",
+            "description": "Synthetic write-only calibration key",
+            "type": "string",
+            "access": "wo",
+            "semantic": "state",
+            "unit": "code",
+            "string_constraints": {"min_length": 1, "max_length": 64},
+            "hazard_class": "unknown",
+            "binding": {"kind": "adapter", "key": "calibration_key"},
+            "write_policy": {
+                "effect": "setting",
+                "completion": "readback",
+                "retry": "never",
+                "verification_parameter": "calibration_key",
+                "settling_timeout_ms": 100,
+            },
+        }
+    )
+    raw = (json.dumps(descriptor, indent=2) + "\n").encode()
+    (pkg / "descriptor.json").write_bytes(raw)
+    digest = hashlib.sha256(raw).hexdigest()
+    body = json.loads((pkg / "binding-catalogue.json").read_text())
+    body["descriptor_sha256"] = digest
+    (pkg / "binding-catalogue.json").write_bytes(
+        (json.dumps(body, indent=2) + "\n").encode()
+    )
+    manifest_path = pkg / "ui" / "manifest.json"
+    body = json.loads(manifest_path.read_text())
+    body["descriptor_sha256"] = digest
+    body_raw = (json.dumps(body, indent=2) + "\n").encode()
+    manifest_path.write_bytes(body_raw)
+    envelope = json.loads((pkg / "presentation.json").read_text())
+    envelope["descriptor_sha256"] = digest
+    envelope["manifest"]["sha256"] = hashlib.sha256(body_raw).hexdigest()
+    (pkg / "presentation.json").write_text(json.dumps(envelope, indent=2) + "\n")
+
+    seam, recorder = _recorder_seam(project)
+    asyncio.run(seam.call("device_connect", {"device_id": DEV}))
+    # The rw parameter still reads through the same descriptor-driven lane.
+    reading = asyncio.run(
+        seam.call("parameter_read", {"device_id": DEV, "parameter": PARAM})
+    )
+    assert reading["parameter"] == PARAM
+    # The wo parameter is in NO readable set...
+    with pytest.raises(Exception) as read_refused:
+        asyncio.run(
+            seam.call(
+                "parameter_read", {"device_id": DEV, "parameter": "calibration_key"}
+            )
+        )
+    assert read_refused.value.code == "not_found"
+    assert "no such readable parameter" in read_refused.value.message
+    # ...and refuses staging with the existing message (access=wo).
+    with pytest.raises(Exception) as stage_refused:
+        asyncio.run(
+            seam.call(
+                "parameter_stage",
+                {"device_id": DEV, "parameter": "calibration_key", "value": "k1"},
+            )
+        )
+    assert stage_refused.value.code == "invalid_request"
+    assert "parameter is not writable" in stage_refused.value.message
+    assert "access=wo" in stage_refused.value.message

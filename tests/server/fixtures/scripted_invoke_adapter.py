@@ -59,6 +59,11 @@ LOOKUP_IDS = []
 #: happened BEFORE any dispatch by reading it).
 CALLS: list[str] = []
 
+#: Every invoke dispatch's ARGUMENTS, in order (issue #589 PR-6: the preset
+#: homes arms prove the action lane carried the preset's settings VERBATIM
+#: — verb names alone cannot prove that).
+INVOKE_ARGUMENTS: list[dict] = []
+
 
 def create_plugin():
     return _ScriptedAdapter()
@@ -99,6 +104,7 @@ class _ScriptedAdapter:
             data = dict(SCRIPT["identify"] or self._default_identity())
             return _ok(request, data)
         if verb == "invoke":
+            INVOKE_ARGUMENTS.append(dict(request.get("arguments") or {}))
             answer = SCRIPT["invoke"]
             if isinstance(answer, dict) and "__error__" in answer:
                 return {"operation_id": request["operation_id"],

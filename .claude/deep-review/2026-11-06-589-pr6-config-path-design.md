@@ -612,3 +612,79 @@ is the runner, the host renders (otdp-decoder.schema.json:5, protocol-decoders.m
 — and the SDK's offline PD checks are still absent while the classref derivation silently
 skips unloadable decoder documents (classref.py:2950-2953): a silent-empty defect one lane
 over from D12, deferred with a named carrier.
+
+---
+
+## 10. Build record (2026-11-07, append-only; the frozen bytes above stay as committed)
+
+Head: `pr6-589-config`, built on `origin/pr4-589-format` (`975cbd5`). The mechanism
+shipped as §2 designs it — both homes served, rows carrying `home`, the collision typed
+at three doors, the lane split through the exported resolver composing the lock-free
+`_invoke_core`, the catalogue keys additive-optional, the guide row landed (§3's two D14
+carries and the homes/lane prose, STE register). What the real code corrected:
+
+1. **The prefixes, and their count.** Two prefixes minted, not one:
+   `standalone_preset_home_conflict:` (a `ValueError` at seam construction, at reload
+   against the incoming plugin BEFORE the swap, and at the authoring `preset_put` before
+   any byte is written) and `standalone_presentation_unreadable:` (a `ValueError` when
+   the manifest walk cannot read documents the load already validated — bytes drifted or
+   a symlinked component appeared). §6 said "grows ONE prefix"; the alternative to the
+   second was a bare-prose `ValueError` (a STD-4 break) or a silent `{}` (D12's own
+   defect class). A package with NO presentation returns `{}` without refusal — the
+   honest empty, distinct from an unwalkable one.
+2. **The collision check's reload site is NOT "the same call site, already re-pins"
+   (§5).** In the real `_complete_reload`, the `_pin_presets()` re-pin runs AFTER the
+   session swap — a refusal there leaves the conflicted plugin as the served session,
+   exactly what §2.1 forbids. The check is therefore hoisted into the PRE-swap block
+   beside `resolve_invoke_contracts`/`check_action_budget_feasibility`, whose existing
+   `except ValueError` wraps it as the typed "reload refused, the previous version
+   stays loaded" refusal. The post-swap re-pin still runs (defests + manifest rows).
+3. **"Manifest target" is "binding-catalogue target".** Configuration targets live in
+   `binding-catalogue.json` (`catalogue["targets"]`); the ui-manifest carries assets,
+   bindings and pages. The walk reads targets from the catalogue and asset rows from
+   the manifest — the mechanism §2.1 describes, the document names corrected.
+4. **The parameter lane's result gains `home`.** §2.2.5 said the parameter lane returns
+   its shape "unchanged", but §2.2.6 requires the EVENT row to carry `home`, and
+   `_event_data` derives "from the operation's own result — never a second source of
+   truth". The honest resolution: both lanes' results carry `home` (schema-declared,
+   optional; consumers unaffected), and the event row copies it. One lane still fills
+   one lane-shape — `applied` or `action_id`+`invoke_result`, never both.
+5. **A8 realized as schema-asset drift.** The load-time presentation check validates
+   every target-declared preset against the target's schema with firmware `None`, so a
+   PRISTINE ui-lane preset whose settings fail its pinned schema cannot pass a load —
+   the pristine-invalid case is unconstructible by design. The reachable drift is the
+   schema asset's bytes after construction; the arm tampers them and the SHARED
+   validator answers `invalid_request` with its findings (digest_mismatch naming
+   `preset.settings_schema.sha256`), nothing dispatched.
+6. **A9 realized on the config home.** A presentation target referencing an
+   undeclared action is itself a load refusal (`capability_mismatch` in the vendored
+   check), so a UI-lane A9 cannot exist either. The arm commissions a CONFIG-lane
+   preset pinning the corpus configure input `$id` against a descriptor that declares
+   invoke + contracts but not the configure action: the resolver still resolves the
+   corpus `$id` (it reads the SERVED corpus, not the pin), the lane composes
+   `_invoke_core`, and I2 refuses naming the action — the composition reusing the gate,
+   exactly §7's claim, from the other home.
+7. **The fixture pins the vendored corpus pair verbatim, with the corpus's own pin
+   ids.** A plugin-authored pin id (`urn:example:...`) on the vendored catalog trips
+   the #556 `pinned_id_shadow` refusal at load (the catalog's embedded action `$id`s
+   shadow the served corpus). The corpus examples' own convention — `urn:otdp:`-prefixed
+   pin ids, which the presentation's pinned-document merge skips by design — carries
+   the vendored pair into the invoke resolution without shadowing. The fixture's
+   descriptor also switches to `firmware_policy: "commissioned"` (no descriptor-side
+   list): the load-time preset check judges with firmware `None`, and a listed policy
+   refuses that arm.
+8. **A third collision door beyond §2's touch list.** `preset_put` (the authoring
+   writer) could create the dual-home state at runtime, falsifying the mechanical
+   enforcement §6's SRF draft row claims. The guard is one check in `_preset_put`
+   (before the write, raising `AuthoringError` carrying the prefix) plus a mirror in
+   `repin_preset` (the seam's own writer) and a public `manifest_preset_ids()`; the
+   arm pins refuse-and-nothing-written. §2.3's "no authoring-lane change" meant the
+   authoring HOME stays `config/presets` — it stays.
+9. **`manifest_preset_assets(package_dir)` as §2.1 wrote it**, reading the three
+   documents the loader validated (envelope → manifest under the resource root →
+   binding catalogue) through the bounded reader. The row gains `schema_path` (the
+   target's settings-schema asset resolved) — §2.2.3's "resolved through the same
+   manifest helper" needs the bytes' path, not only the id.
+
+The adapter fixture gained `INVOKE_ARGUMENTS` (the verbatim invoke dispatch arguments,
+beside the verb `CALLS` list) — verb names alone cannot prove A6's verbatim claim.

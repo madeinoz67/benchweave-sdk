@@ -507,6 +507,16 @@ def _preset_put(seam: Any, preset_id: str, document: Any) -> dict[str, Any]:
     _plugin, package = _plugin_paths(seam)
     if not isinstance(document, dict):
         raise AuthoringError("a preset document is a JSON object")
+    # The one-authoritative-copy rule at the runtime writer (issue #589
+    # PR-6): the construction-time collision check governs loads; this
+    # keeps a RUNNING host's authorized write from creating the same
+    # dual-home state — refused before any byte is written.
+    if _safe_name(preset_id) in seam.manifest_preset_ids():
+        raise AuthoringError(
+            f"standalone_preset_home_conflict: preset id {preset_id} is "
+            "served from the presentation manifest's preset assets; keep "
+            "one authoritative copy"
+        )
     blob = _serialise(document)
     valid, findings = _validated_preset(
         seam, blob, preset_id=preset_id, firmware=None
