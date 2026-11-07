@@ -1094,7 +1094,9 @@ CATALOGUE: tuple[OperationSpec, ...] = (
         (
             "Fetch the seam's events after a cursor: the state changes "
             "(connect, disconnect, stage, apply, preset, reload, "
-            "endpoint bind/unbind, invoke, device reset), the capture "
+            "endpoint bind/unbind, invoke, device reset) — a preset row "
+            "names its home and, on the action lane, the dispatched "
+            "action id — the capture "
             "lifecycle (started, progress, stopped), the link family (the "
             "serial link state machine: applied, refused and failed "
             "switches) and every refused seam operation — unknown, "

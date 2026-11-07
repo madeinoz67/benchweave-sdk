@@ -119,18 +119,26 @@ the invariants below anchor there.
   derivation both ways and drives every admitted format over every
   display surface) — anchor: `benchweave_sdk_server/catalogue.py`,
   `benchweave_sdk_server/seam.py`. The preset homes (issue #589 PR-6)
-  add two more, both `ValueError` at the construction/reload layer (the
-  `profile_contract_*` convention — NOT operation handlers, NOT the
-  connect boundary): `standalone_preset_home_conflict:`, refusing a
-  preset id that exists in BOTH documented homes (a `config/presets`
-  file stem equal to a presentation-manifest preset asset id) at seam
-  construction, at reload against the INCOMING plugin before the session
-  swap, and at the authoring `preset_put` before any byte is written —
-  the scaffold's one-authoritative-copy rule, mechanically enforced; and
+  add two more, both `ValueError`: `standalone_preset_home_conflict:`,
+  refusing a preset id that exists in BOTH documented homes (a
+  `config/presets` file stem equal to a presentation-manifest preset
+  asset id) — the scaffold's one-authoritative-copy rule, mechanically
+  enforced — at seam construction and at reload against the INCOMING
+  plugin before the session swap (the `profile_contract_*`
+  construction/reload convention), and at the authoring `preset_put`
+  before any byte is written, where the same prefix rides `AuthoringError`
+  (a `ValueError` subclass carrying `code`, `authoring.py`) and the tool
+  wrapper translates it to a typed error result — the authoring door's
+  authority is that translation, not the construction convention; and
   `standalone_presentation_unreadable:`, refusing a presentation whose
-  already-validated documents cannot be walked for preset assets (bytes
-  drifted or a symlinked component appeared between load and
-  construction — the silent-empty class D12 died from, one lane over).
+  already-validated documents cannot be walked for preset assets — its
+  live doors are the reload PRE-SWAP walk and direct helper calls; at
+  seam construction it is SHADOWED by `HostPresentation`'s own `check_ui`
+  reading the same documents first (drift answers
+  `preview_invalid_presentation:` there, a symlinked component
+  `path_symlink_component:`, unparseable bytes a bare `DocumentError` —
+  the disclosed pre-existing row) — the silent-empty class D12 died
+  from, one lane over.
   Every apply-lane refusal REUSES existing surfaces: invoke's I2/I4/I5
   codes, `_stageable`'s messages, the firmware gate's `conflict`, the
   digest-mismatch findings — anchor: `benchweave_sdk_server/seam.py`,

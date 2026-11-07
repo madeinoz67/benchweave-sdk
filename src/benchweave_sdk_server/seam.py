@@ -407,6 +407,15 @@ class StandaloneSeam:
         return self._transport_kind
 
     @property
+    def op_mutex(self) -> asyncio.Lock:
+        """The op-vs-reload mutex, shared with the authoring writers (issue
+        #589 PR-6 fold): ``preset_put`` reads the manifest rows and moves
+        the serving pins — the same state a reload swaps mid-flight — so
+        the authoring write serializes under the same lock every seam
+        handler does."""
+        return self._op_mutex
+
+    @property
     def rehearsal(self) -> bool:
         """Whether this session runs over a scripted double rather than
         live hardware (the acceptance review's A): set by the session
@@ -548,7 +557,12 @@ class StandaloneSeam:
             data["home"] = result.get("home")
             if result.get("action_id") is not None:
                 data["action_id"] = result.get("action_id")
-            data["applied_count"] = len(result.get("applied", []))
+            else:
+                # The parameter lane's own count only: the action lane
+                # applies through ONE dispatch and writes no parameters,
+                # so an ``applied_count`` there would assert a measurement
+                # the lane never made (issue #589 PR-6 fold).
+                data["applied_count"] = len(result.get("applied", []))
         elif operation == "invoke":
             # STATED verbatim from the descriptor's action row (issue #589
             # §3.2, the revised ruling): a watcher sees WHICH actions
@@ -1573,25 +1587,44 @@ class StandaloneSeam:
             self._staged.clear()
             return {"device_id": self._session.device_id, "applied": applied}
 
-    def _pin_presets(self) -> dict[str, str]:
-        """Digest every declared preset once, at construction. The two
-        documented homes share one id namespace: a config file stem equal
-        to a manifest preset asset id refuses construction — the scaffold's
+    def _pin_presets(self, *, stems: set[str] | None = None) -> dict[str, str]:
+        """Digest every declared preset once, at construction (``stems`` is
+        None) or over the stems a reload's PRE-SWAP scan already cleared
+        (``stems`` given — issue #589 PR-6 fold). The two documented homes
+        share one id namespace: at construction a config file stem equal to
+        a manifest preset asset id refuses construction — the scaffold's
         own one-authoritative-copy rule, made mechanical (issue #589 PR-6,
-        D12)."""
+        D12). The post-swap re-pin runs after the point of no return, so it
+        is incapable of refusing: no collision check (the pre-swap scan
+        already cleared exactly these stems), and a stem whose file
+        vanished or grew unreadable in the swap window is simply not
+        pinned. What that does not catch: a config preset DROPPED into the
+        window is likewise not pinned and stays unserved until the next
+        reload, whose pre-swap scan refuses the collision typed."""
         digests: dict[str, str] = {}
         presets_dir = self._session.plugin.package_dir / "config" / "presets"
         if presets_dir.is_dir():
-            for path in sorted(presets_dir.glob("*.json")):
-                digests[path.stem] = hashlib.sha256(read_file(path)).hexdigest()
-        conflict = sorted(set(digests) & set(self._manifest_presets))
-        if conflict:
-            raise ValueError(
-                f"standalone_preset_home_conflict: preset id {conflict[0]} "
-                f"exists in both homes (config/presets/{conflict[0]}.json "
-                f"and the presentation manifest's preset asset "
-                f"{conflict[0]}); keep one authoritative copy"
-            )
+            if stems is None:
+                for path in sorted(presets_dir.glob("*.json")):
+                    digests[path.stem] = hashlib.sha256(read_file(path)).hexdigest()
+            else:
+                for stem in sorted(stems):
+                    try:
+                        raw = read_file(presets_dir / f"{stem}.json")
+                    except (OSError, ValueError):
+                        continue
+                    digests[stem] = hashlib.sha256(raw).hexdigest()
+        if stems is None:
+            conflict = sorted(set(digests) & set(self._manifest_presets))
+            if conflict:
+                raise ValueError(
+                    f"standalone_preset_home_conflict: preset id "
+                    f"{conflict[0]} exists in both homes "
+                    f"(config/presets/{conflict[0]}.json and the "
+                    f"presentation manifest's preset asset {conflict[0]}); "
+                    "keep one authoritative copy — delete a duplicate, or "
+                    "rename one of two distinct presets"
+                )
         return digests
 
     def manifest_preset_ids(self) -> frozenset[str]:
@@ -1610,7 +1643,8 @@ class StandaloneSeam:
                 f"standalone_preset_home_conflict: preset id {preset_id} is "
                 "served from the presentation manifest's preset assets; an "
                 "authoring write would duplicate it in config/presets — "
-                "keep one authoritative copy"
+                "keep one authoritative copy: delete a duplicate, or "
+                "rename one of two distinct presets"
             )
         path = (
             self._session.plugin.package_dir
@@ -2131,10 +2165,12 @@ class StandaloneSeam:
             overlap = sorted(incoming_stems & set(incoming_presets))
             if overlap:
                 raise ValueError(
-                    f"standalone_preset_home_conflict: preset id {overlap[0]} "
-                    f"exists in both homes (config/presets/{overlap[0]}.json "
-                    f"and the presentation manifest's preset asset "
-                    f"{overlap[0]}); keep one authoritative copy"
+                    f"standalone_preset_home_conflict: preset id "
+                    f"{overlap[0]} exists in both homes "
+                    f"(config/presets/{overlap[0]}.json and the "
+                    f"presentation manifest's preset asset {overlap[0]}); "
+                    "keep one authoritative copy — delete a duplicate, or "
+                    "rename one of two distinct presets"
                 )
         except ValueError as exc:
             raise self._fail(
@@ -2158,13 +2194,17 @@ class StandaloneSeam:
         self._invoke_contracts = incoming_contracts
         self._invoke_constraints = {}
         self._arm_dataset_admission(incoming_contracts)
-        # The manifest preset rows re-walk over the SERVED plugin before the
-        # config re-pin (whose collision check reads them — both homes of
-        # the new plugin, one motion).
-        self._manifest_presets = manifest_preset_assets(
-            self._session.plugin.package_dir
-        )
-        self._preset_digests = self._pin_presets()
+        # The manifest preset rows and the config re-pin both REUSE the
+        # pre-swap walk (issue #589 PR-6 fold): nothing re-reads the
+        # presentation after the point of no return — a re-walk could
+        # refuse, and the swap has already happened — and the re-pin
+        # digests only the stems the pre-swap scan cleared, so the
+        # post-swap section is incapable of refusing and no surface can
+        # serve an id from both homes (a config preset landing inside the
+        # swap window is not pinned; the NEXT reload's pre-swap scan
+        # refuses the collision typed).
+        self._manifest_presets = incoming_presets
+        self._preset_digests = self._pin_presets(stems=incoming_stems)
         # The observation ring belongs to the PREVIOUS plugin version:
         # samples from the old code would launder into the new version's
         # plots, so the ring resets with the plugin.

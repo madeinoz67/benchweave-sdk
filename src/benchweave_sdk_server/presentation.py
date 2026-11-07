@@ -555,8 +555,13 @@ def manifest_preset_assets(package_dir: Path) -> dict[str, dict[str, Any]]:
     Refuses :class:`ValueError` (``standalone_presentation_unreadable:``)
     when a document the load already validated cannot be walked — bytes
     that drifted or a symlinked component appeared between load and here.
-    Construction and reload-before-swap are the callers; both keep the
-    typed-refusal convention.
+    The reload PRE-SWAP walk and direct calls are this prefix's live
+    doors; at seam construction the walk is SHADOWED by
+    ``HostPresentation``'s own ``check_ui``, which reads the same
+    documents first — drift answers ``preview_invalid_presentation:``
+    there and a symlinked component ``path_symlink_component:`` — so the
+    construction call site serves this prefix only for bytes that change
+    between those two calls.
     """
     import json
 

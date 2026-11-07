@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import inspect
 import json
 import sys
 from pathlib import Path
@@ -27,7 +28,11 @@ import pytest
 from benchweave_sdk.scaffold import create_project
 from benchweave_sdk_server.errors import SeamError
 from benchweave_sdk_server.seam import StandaloneSeam
-from benchweave_sdk_server.session import load_plugin_project, mock_plugin_session
+from benchweave_sdk_server.session import (
+    PluginSession,
+    load_plugin_project,
+    mock_plugin_session,
+)
 
 REPO = Path(__file__).resolve().parents[2]
 VENDORED = REPO / "src" / "benchweave_sdk" / "standards" / "otdp" / "0.2.4"
@@ -86,11 +91,15 @@ def _effective_output() -> dict[str, Any]:
 
 
 def _preset_document(
-    descriptor_id: str, schema_bytes: bytes, settings: dict[str, Any]
+    descriptor_id: str,
+    schema_bytes: bytes,
+    settings: dict[str, Any],
+    *,
+    preset_id: str = PRESET_ID,
 ) -> dict[str, Any]:
     return {
         "contract_version": "0.4.0",
-        "id": PRESET_ID,
+        "id": preset_id,
         "title": "Fast acquisition",
         "revision": "1",
         "plugin_id": descriptor_id,
@@ -117,6 +126,7 @@ def _build(
     config_preset_stem: str | None = None,
     supported_firmware: tuple[str, ...] = ("1.0.0",),
     settings: dict[str, Any] | None = None,
+    preset_id: str = PRESET_ID,
 ) -> Path:
     """Scaffold, rewire for invoke over the corpus pins, and add the
     presentation set (one configuration target, one commissioned preset
@@ -197,7 +207,9 @@ def _build(
     if with_presentation:
         schema_bytes = _raw(_corpus_input_schema())
         settings = settings if settings is not None else _settings()
-        preset = _preset_document(descriptor["id"], schema_bytes, settings)
+        preset = _preset_document(
+            descriptor["id"], schema_bytes, settings, preset_id=preset_id
+        )
         preset["supported_firmware"] = list(supported_firmware)
         preset_bytes = _raw(preset)
         (package / "ui" / "settings").mkdir(parents=True, exist_ok=True)
@@ -205,7 +217,7 @@ def _build(
         (package / "ui" / "settings" / "acquisition.schema.json").write_bytes(
             schema_bytes
         )
-        (package / "ui" / "presets" / PRESET_ID).write_bytes(preset_bytes)
+        (package / "ui" / "presets" / preset_id).write_bytes(preset_bytes)
         manifest = {
             "contract_version": "0.4.0",
             "plugin_id": descriptor["id"],
@@ -217,8 +229,8 @@ def _build(
                     "sha256": hashlib.sha256(schema_bytes).hexdigest(),
                 },
                 {
-                    "id": PRESET_ID,
-                    "path": f"presets/{PRESET_ID}",
+                    "id": preset_id,
+                    "path": f"presets/{preset_id}",
                     "sha256": hashlib.sha256(preset_bytes).hexdigest(),
                 },
             ],
@@ -227,7 +239,7 @@ def _build(
                     "id": "acquisition",
                     "kind": "configuration",
                     "target_id": "acquisition",
-                    "preset_ids": [PRESET_ID],
+                    "preset_ids": [preset_id],
                 }
             ],
             "pages": [
@@ -270,7 +282,7 @@ def _build(
                                 _corpus_action(declared_action)["input_schema"]["$id"]
                             ),
                             "schema_asset_id": SCHEMA_ASSET_ID,
-                            "preset_asset_ids": [PRESET_ID],
+                            "preset_asset_ids": [preset_id],
                         }
                     ],
                 }
@@ -283,7 +295,9 @@ def _build(
         (package / "config").mkdir(parents=True, exist_ok=True)
         (package / "config" / "settings.schema.json").write_bytes(schema_bytes)
         (package / "config" / "presets").mkdir(parents=True, exist_ok=True)
-        preset = _preset_document(descriptor["id"], schema_bytes, _settings())
+        preset = _preset_document(
+            descriptor["id"], schema_bytes, _settings(), preset_id=config_preset_stem
+        )
         preset["supported_firmware"] = list(supported_firmware)
         (package / "config" / "presets" / f"{config_preset_stem}.json").write_bytes(
             _raw(preset)
@@ -580,7 +594,7 @@ def test_authoring_put_refuses_a_manifest_preset_id(tmp_path: Path) -> None:
     project = _build(tmp_path / "authoring")
     seam, adapter = _seam(project)
     with pytest.raises(AuthoringError) as caught:
-        authoring._preset_put(seam, PRESET_ID, {"settings": {}})
+        asyncio.run(authoring._preset_put(seam, PRESET_ID, {"settings": {}}))
     assert str(caught.value).startswith("standalone_preset_home_conflict:")
     assert not (
         project / "src" / PACKAGE / "config" / "presets" / f"{PRESET_ID}.json"
@@ -588,3 +602,179 @@ def test_authoring_put_refuses_a_manifest_preset_id(tmp_path: Path) -> None:
     # The manifest's own row keeps serving.
     rows = call(seam, "preset_list")["presets"]
     assert [row["id"] for row in rows] == [PRESET_ID]
+
+
+# --- the fold arms (2026-11-07): the swap window and the authoring write ---
+
+
+def test_f1_swap_window_collision_neither_escapes_nor_serves_both_homes(
+    tmp_path: Path,
+) -> None:
+    """The fold's HIGH, external-writer half: a colliding config preset
+    landing INSIDE the swap window — between the pre-swap scan and the
+    post-swap re-pin — must not escape ``_complete_reload`` as a raw
+    ``ValueError`` (after the swap, so no ``refused`` event, ``reload_state``
+    unset) and must leave no surface serving the id from both homes. The
+    injection is deterministic: the session swap IS the window's await
+    point, so the writer runs as the swap begins."""
+    project = _build(tmp_path / "swap-window")
+    seam, adapter = _seam(project)
+
+    async def scenario() -> dict[str, Any]:
+        original = PluginSession.reload_plugin
+
+        async def injecting(plugin: Any) -> None:
+            # The swap-window writer: the pre-swap scan has already cleared
+            # (no config presets dir at scan time), the swap is running.
+            package = project / "src" / PACKAGE
+            (package / "config" / "presets").mkdir(parents=True, exist_ok=True)
+            schema_bytes = _raw(_corpus_input_schema())
+            preset = _preset_document(
+                json.loads((package / "descriptor.json").read_text())["id"],
+                schema_bytes,
+                _settings(),
+            )
+            (package / "config" / "presets" / f"{PRESET_ID}.json").write_bytes(
+                _raw(preset)
+            )
+            return await original(seam.session, plugin)
+
+        seam.session.reload_plugin = injecting
+        try:
+            return await seam.reload_plugin(source="test")
+        finally:
+            del seam.session.reload_plugin
+
+    result = asyncio.run(scenario())
+    assert result["status"] == "reloaded", result
+    assert seam.reload_state is not None, "a raw escape leaves reload_state unset"
+    rows = call(seam, "preset_list")["presets"]
+    assert [row["id"] for row in rows] == [PRESET_ID], rows
+    assert rows[0]["home"] == "ui", rows
+    # The window-written file is not silently accepted forever: the NEXT
+    # reload's pre-swap scan sees it and refuses typed, previous stays.
+    with pytest.raises(SeamError) as followup:
+        asyncio.run(seam.reload_plugin(source="test"))
+    assert followup.value.code == "invalid_request"
+    assert "standalone_preset_home_conflict:" in followup.value.message
+
+
+def test_f2_preset_put_serializes_against_the_reload_swap(tmp_path: Path) -> None:
+    """The fold's HIGH, serialization half: ``preset_put`` may not
+    interleave with the swap. The migration shape: the plugin's on-disk
+    presentation is rewritten to declare a NEW preset asset id (the served
+    seam still pins the old one), and the authoring write targets that new
+    id while the reload parks INSIDE the swap window — unserialized, the
+    STALE guard admits the write, the file lands, and the post-swap re-pin
+    raises the raw conflict after the swap; serialized under the op mutex,
+    the write waits for the reload and then refuses typed against the
+    POST-swap manifest with nothing written. (The sync/async shim lets the
+    arm run against the unserialized and the serialized writer alike.)"""
+    import shutil
+
+    from benchweave_sdk_server import authoring
+    from benchweave_sdk_server.authoring import AuthoringError
+
+    migrated = "migrated-capture.json"
+    project = _build(tmp_path / "served", config_preset_stem="seed")
+    seam, adapter = _seam(project)
+    # Rewrite the on-disk presentation to the migrated id (a second build's
+    # digest-chained presentation bytes over the SAME descriptor), the way
+    # an author renames a preset before reloading.
+    rewritten = _build(tmp_path / "rewritten", config_preset_stem="seed",
+                       preset_id=migrated)
+    package = project / "src" / PACKAGE
+    for relative in (
+        "presentation.json",
+        "ui/manifest.json",
+        "binding-catalogue.json",
+    ):
+        shutil.copyfile(
+            rewritten / "src" / PACKAGE / relative, package / relative
+        )
+    shutil.copyfile(
+        rewritten / "src" / PACKAGE / "ui" / "presets" / migrated,
+        package / "ui" / "presets" / migrated,
+    )
+    (package / "ui" / "presets" / PRESET_ID).unlink()  # the rename
+
+    async def put(preset_id: str, document: dict[str, Any]) -> Any:
+        outcome = authoring._preset_put(seam, preset_id, document)
+        if inspect.isawaitable(outcome):
+            outcome = await outcome
+        return outcome
+
+    async def scenario() -> tuple[dict[str, Any], str]:
+        original = PluginSession.reload_plugin
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        async def parked(plugin: Any) -> None:
+            entered.set()
+            await release.wait()
+            return await original(seam.session, plugin)
+
+        seam.session.reload_plugin = parked
+        reload_task = asyncio.create_task(seam.reload_plugin(source="test"))
+        await entered.wait()
+        schema_bytes = _raw(_corpus_input_schema())
+        document = _preset_document(
+            json.loads((package / "descriptor.json").read_text())["id"],
+            schema_bytes,
+            _settings(),
+            preset_id=migrated,
+        )
+        put_task = asyncio.create_task(put(migrated, document))
+        await asyncio.sleep(0)  # the write runs to its first await point
+        release.set()
+        result = await reload_task
+        try:
+            await put_task
+            refusal = ""
+        except AuthoringError as exc:
+            refusal = str(exc)
+        return result, refusal
+
+    result, refusal = asyncio.run(scenario())
+    assert result["status"] == "reloaded", result
+    assert refusal.startswith("standalone_preset_home_conflict:"), refusal
+    assert not (
+        package / "config" / "presets" / migrated
+    ).exists(), "the authoring write must not land during the swap"
+    rows = call(seam, "preset_list")["presets"]
+    assert sorted(row["id"] for row in rows) == ["migrated-capture.json", "seed"], rows
+    by_id = {row["id"]: row for row in rows}
+    assert by_id[migrated]["home"] == "ui", rows
+    assert by_id["seed"]["home"] == "config", rows
+
+
+def test_f3_event_row_counts_only_what_a_lane_measures(tmp_path: Path) -> None:
+    """The fold's ``applied_count`` honesty arm: the action lane dispatches
+    ONE invoke and writes zero parameters, so an ``applied_count`` there
+    would assert a measurement the lane never made — the honest row omits
+    it and carries ``action_id``; the parameter lane's row keeps the count
+    it measures."""
+    adapter, _settings, seam = _connected_action_lane(tmp_path, "event-counts")
+    call(seam, "preset_apply", apply_args())
+    event = [
+        row
+        for row in call(seam, "events_get", {"after_id": 0})["events"]
+        if row["kind"] == "preset_apply"
+    ][-1]
+    assert event["data"]["action_id"] == CONFIGURE
+    assert "applied_count" not in event["data"], event["data"]
+
+    from test_control import DEV as SETPOINT_DEV
+    from test_control import _recorder_seam
+
+    seam2, _recorder = _recorder_seam()
+    call(seam2, "device_connect", {"device_id": SETPOINT_DEV})
+    call(seam2, "preset_apply", {"device_id": SETPOINT_DEV, "preset_id": "steady"})
+    rows = [
+        row
+        for row in call(seam2, "events_get", {"after_id": 0})["events"]
+        if row["kind"] == "preset_apply"
+    ]
+    assert rows, "the parameter lane publishes its event"
+    assert rows[-1]["data"]["applied_count"] == 1, rows[-1]["data"]
+    assert "action_id" not in rows[-1]["data"], rows[-1]["data"]

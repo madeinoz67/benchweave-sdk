@@ -155,7 +155,11 @@ rubric's G5 gate is the obligation; this file is the detail behind it.
    the served schemas (`catalogue._PRESET_ROW`'s `home` and
    `_PRESET_APPLY_RESULT`'s `home`/`action_id`/`invoke_result` — additive-
    optional, one lane fills one shape), the event row (`_event_data`'s
-   preset_apply block), and the arms of `tests/server/test_preset_homes.py`
+   preset_apply block) and the events description's preset sentence, the
+   operator-facing preset prose (`benchweave_sdk_server/templates/*.html` —
+   the device page's apply hint names both lanes; PR-6's fold fixed it
+   claiming a write/re-read that action-lane presets never do), and the
+   arms of `tests/server/test_preset_homes.py`
    together. The lane selector is the vendored resolver
    (`resolve_preset_action`) — the SDK never re-implements it; a change to
    resolution semantics is a corpus motion main-side, never an SDK-side fork.

@@ -503,39 +503,45 @@ def _preset_get(seam: Any, preset_id: str) -> dict[str, Any]:
     }
 
 
-def _preset_put(seam: Any, preset_id: str, document: Any) -> dict[str, Any]:
-    _plugin, package = _plugin_paths(seam)
-    if not isinstance(document, dict):
-        raise AuthoringError("a preset document is a JSON object")
-    # The one-authoritative-copy rule at the runtime writer (issue #589
-    # PR-6): the construction-time collision check governs loads; this
-    # keeps a RUNNING host's authorized write from creating the same
-    # dual-home state — refused before any byte is written.
-    if _safe_name(preset_id) in seam.manifest_preset_ids():
-        raise AuthoringError(
-            f"standalone_preset_home_conflict: preset id {preset_id} is "
-            "served from the presentation manifest's preset assets; keep "
-            "one authoritative copy"
+async def _preset_put(seam: Any, preset_id: str, document: Any) -> dict[str, Any]:
+    # Serialized against the reload's swap span (issue #589 PR-6 fold):
+    # the collision guard reads the manifest rows and the write + re-pin
+    # move the serving state a concurrent reload is mid-swapping — the
+    # same op-vs-reload class every seam handler serializes under.
+    async with seam.op_mutex:
+        _plugin, package = _plugin_paths(seam)
+        if not isinstance(document, dict):
+            raise AuthoringError("a preset document is a JSON object")
+        # The one-authoritative-copy rule at the runtime writer (issue #589
+        # PR-6): the construction-time collision check governs loads; this
+        # keeps a RUNNING host's authorized write from creating the same
+        # dual-home state — refused before any byte is written.
+        if _safe_name(preset_id) in seam.manifest_preset_ids():
+            raise AuthoringError(
+                f"standalone_preset_home_conflict: preset id {preset_id} is "
+                "served from the presentation manifest's preset assets; "
+                "keep one authoritative copy: delete a duplicate, or "
+                "rename one of two distinct presets"
+            )
+        blob = _serialise(document)
+        valid, findings = _validated_preset(
+            seam, blob, preset_id=preset_id, firmware=None
         )
-    blob = _serialise(document)
-    valid, findings = _validated_preset(
-        seam, blob, preset_id=preset_id, firmware=None
-    )
-    if not valid:
-        raise AuthoringError(
-            f"the preset would not validate: {len(findings)} finding(s); "
-            "nothing was written",
-            details={"findings": findings},
-        )
-    relative = f"config/presets/{_safe_name(preset_id)}.json"
-    _no_symlinks(package, relative)
-    target = package / relative
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_bytes(blob)
-    # The host's own authorized write moves the serving pin with it (the
-    # construction pin governs writes the host did not make).
-    digest = seam.repin_preset(preset_id)
-    return {"preset_id": preset_id, "sha256": digest, "written": relative}
+        if not valid:
+            raise AuthoringError(
+                f"the preset would not validate: {len(findings)} finding(s); "
+                "nothing was written",
+                details={"findings": findings},
+            )
+        relative = f"config/presets/{_safe_name(preset_id)}.json"
+        _no_symlinks(package, relative)
+        target = package / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(blob)
+        # The host's own authorized write moves the serving pin with it (the
+        # construction pin governs writes the host did not make).
+        digest = seam.repin_preset(preset_id)
+        return {"preset_id": preset_id, "sha256": digest, "written": relative}
 
 
 def _settings_schema_get(seam: Any) -> dict[str, Any]:
@@ -786,7 +792,7 @@ def register_authoring_tools(mcp: FastMCP, *, seam: Any = None) -> None:
 
     async def preset_put(preset_id: str, document: dict[str, Any]) -> Any:
         try:
-            return _preset_put(_needs_seam(), preset_id, document)
+            return await _preset_put(_needs_seam(), preset_id, document)
         except AuthoringError as exc:
             return _error(exc)
 
@@ -875,7 +881,8 @@ def register_authoring_tools(mcp: FastMCP, *, seam: Any = None) -> None:
         "Write one configuration preset document whole. The document is "
         "validated offline against the plugin's descriptor and settings "
         "schema before the write; the running host's serving pin moves "
-        "with the host's own write."
+        "with the host's own write, serialized against a concurrent "
+        "reload."
     )
     settings_schema_get.__doc__ = (
         "Read the plugin's settings schema (config/settings.schema.json)."
