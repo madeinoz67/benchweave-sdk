@@ -308,3 +308,72 @@ are the OS's own built-ins, not this install's bench devices.
    between may drop the connected row once (trust-2 firing on stale
    evidence) — self-healing on reconnect, disclosed here so it is not
    reported as a new defect.
+
+---
+
+## 9. Build record (2026-11-07, branch `build-392`)
+
+Measured against the §5 pre-committed acceptance rule, at `bd18f5f`
+(HEAD, `serial.py` diff-empty against the design commit) then with the
+fix. All raw counts from unfiltered pytest output.
+
+**RED at HEAD** (new arms added, no fix): 5 failed, 45 passed across
+`tests/server/test_serial_discovery.py` + `tests/server/test_binding_flow.py`
+(50 collected). Failing arms and their assertion lines:
+
+- R1 — `AssertionError: an alias spelling of the connected port is never
+  opened` (the `opened == []` assertion, as §5 predicted).
+- R2 — `AssertionError: the node behind a symlink alias is never opened`.
+- G3 — `AssertionError: an alias spelling does not launder a foreign unit`.
+- R3 tty — `AssertionError: the alias-spelled path still finds its
+  enumeration row`.
+- R3 symlink — `assert None == 'SER-A'` (the false None recording itself).
+
+No R arm passed at HEAD; G1/G2 (all 44 pre-existing tests) green
+throughout; G4 green at HEAD ("identifies as today") and after — the
+precision pin behaves exactly as §5 describes. **SHIPS conditions met.**
+
+**One arm-class nuance, disclosed:** the acceptance-rule sentence reads
+"G1–G4 green before and after", but §5's own G3 description says the case
+"today … falls to identify" — G3 cannot be green before the change by its
+own mechanism analysis, and measured RED at HEAD confirms it (the port
+answers identify, so at HEAD the row confirms and the open fires). The
+sentence is read as G1/G2/G4 green before and after (measured: true), G3
+green after (measured: true); the specific arm description governed. No
+kill condition fired.
+
+**GREEN with the fix:** 50 passed, 0 failed (both modules).
+
+**Mechanism-kill controls** (each mutation `cp`-backed and restored,
+byte-identity confirmed by `diff` before the confirming run):
+
+| Control | Result | §5 prediction |
+|---|---|---|
+| stem clause commented | 3 failed / 47 passed: R1, G3, R3-tty | "R1 and R3's tty arm fail" — confirmed; G3 falls with it (same family: without the stem clause the alias row never reaches the trust-2 drop and identifies instead) |
+| realpath clause disabled | 2 failed / 48 passed: R2, R3-symlink | "R2 fails" — confirmed; the mint site's symlink twin rides the same clause and falls with it |
+| site 2 reverted to byte-compare (site 1 fixed) | 2 failed / 48 passed: R3-tty, R3-symlink; G3 GREEN | "R3 fails and G3 alone cannot detect it" — confirmed exactly; both arms are needed |
+| restore | 50 passed | — |
+
+**Gates** (worktree, `UV_PROJECT_ENVIRONMENT=venv`): `ruff check .` —
+"All checks passed!"; bare `uv run mypy` — "Success: no issues found in
+54 source files"; `sync-standards --check` — "Standards verified
+(committed lock and vendored tree agree)"; `benchweave-sdk --version` —
+"benchweave-sdk, version 0.24.0". Full suite, CI's parallel-lane
+invocation `pytest -q -m "not browser and not timing and not loop and not
+live_ftdi" -n auto`: **3075 passed, 6 skipped**; serial timing lane
+`pytest -q -m timing`: **4 passed**. Not run on this leg (CI-partitioned,
+untouched by this diff): the browser lane, the ubuntu-only loop lane, and
+the bench-only `live_ftdi` lane (its arms self-skip without hardware).
+
+**R2's UNDERPOWERED clause did not fire here:** the symlink arms ran
+(darwin, `os.symlink` available) — the residual is the CI Windows leg
+only, where the arm skips and the cu/tty arms carry the darwin-class
+proof as §5 already states.
+
+**Implementation as specified:** `_ports_name_same_node` (byte equality →
+darwin stem equality, both spellings prefixed → `realpath` equality) plus
+the `_darwin_node_stem` helper, no new imports (`os` was already
+imported), both call sites swapped (`_enumerated_serial_at`'s row lookup
+and the connected skip), both docstrings amended. No `sys.platform`
+sniffing; no refusal prefix moved; the trust-2 branch bytes untouched.
+Deferrals D1–D5 unchanged; no deferral trigger fired during the build.

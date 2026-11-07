@@ -1316,9 +1316,13 @@ def _enumerated_serial_at(
 ) -> str | None:
     """The USB serial a LIVE enumeration carries for ``path`` (None when
     the enumeration does not list the path or the port carries no iSerial)
-    — the mint-time recording's read, never an open."""
+    — the mint-time recording's read, never an open. The row lookup is
+    node-equivalent, not byte-equal (#392): a ``--device`` spelling that
+    differs from the enumeration's (the darwin ``cu.``/``tty.`` pair, a
+    by-id symlink) still finds its row, so the serial records known
+    instead of a false "unit has no iSerial"."""
     for port in enumerate_ports():
-        if _port_name(port) == path:
+        if _ports_name_same_node(_port_name(port), path):
             raw = getattr(port, "serial_number", None)
             return str(raw) if raw else None
     return None
@@ -1472,6 +1476,37 @@ def _port_name(port: Any) -> str:
     return str(getattr(port, "device", None) or port)
 
 
+_DARWIN_NODE_PREFIXES = ("/dev/cu.", "/dev/tty.")
+
+
+def _darwin_node_stem(path: str) -> str | None:
+    """The stem after a darwin dialin/callout prefix (None when the
+    spelling carries neither — Linux ``/dev/ttyUSB0`` and Windows ``COM3``
+    both lack the dot-terminated prefix)."""
+    for prefix in _DARWIN_NODE_PREFIXES:
+        if path.startswith(prefix):
+            return path[len(prefix) :]
+    return None
+
+
+def _ports_name_same_node(a: str, b: str) -> bool:
+    """Whether two port spellings name the same device NODE (#392): byte
+    equality, then the darwin ``cu.``/``tty.`` pair (two nodes of ONE
+    driver instance, one shared stem — BOTH spellings must carry a darwin
+    prefix), then symlink resolution (Linux by-id/by-path and any
+    operator-managed alias, either direction; ``realpath`` never raises on
+    a missing path — a test double resolves to itself and simply does not
+    match). NODE equivalence only: whether the occupant is the same UNIT
+    stays trust-2's serial reconciliation, which this predicate feeds but
+    never replaces."""
+    if a == b:
+        return True
+    stem_a = _darwin_node_stem(a)
+    if stem_a is not None and stem_a == _darwin_node_stem(b):
+        return True
+    return os.path.realpath(a) == os.path.realpath(b)
+
+
 def _identify_timeout_ms(plugin: LoadedPlugin) -> int:
     """The descriptor's identify bound; unbounded identify falls back to the
     strictest declared timeout (the session's lifecycle rule — derived, not
@@ -1605,6 +1640,10 @@ async def discover_serial_devices(
     and return the confirmed devices as _DEVICE_SUMMARY rows. The ONLY
     transmissions are the identify exchanges; the connected session's port
     is served from the session's established identity without re-probing.
+    The connected match is node-equivalent, not byte-equal (#392): the
+    spelling the session opened and the enumeration's spelling may differ
+    (the darwin ``cu.``/``tty.`` pair, a by-id symlink), and alias
+    spellings of the connected node serve without re-probing.
 
     The connected-era row reconciles against ``connected_serial`` (the
     MINT-TIME serial the session's factory recorded for the path it
@@ -1635,7 +1674,7 @@ async def discover_serial_devices(
         # The candidate's own USB serial, read from the enumeration (never
         # from a port open): None when the device descriptor has no iSerial.
         usb_serial = getattr(port, "serial_number", None)
-        if connected_device is not None and name == connected_device:
+        if connected_device is not None and _ports_name_same_node(name, connected_device):
             if connected_serial_known and (
                 str(usb_serial) if usb_serial else None
             ) != (str(connected_serial) if connected_serial else None):
