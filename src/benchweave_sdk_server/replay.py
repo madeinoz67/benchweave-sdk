@@ -513,12 +513,17 @@ def _load_stream_row(
         )
     bounds: tuple[int, str, int] | None = None
     if receive:
-        # Validate through the SHARED ladder (its ceiling at load time is the
-        # shared 64 KiB transfer ceiling; the host clamps again against its
-        # own descriptor-derived ceiling), then keep the transaction's own
-        # STRING spelling — the row's match identity compares against the
-        # live transaction's fields, not the ladder's terminator bytes.
-        _stream_receive_bounds(transaction, TRANSFER_CEILING)
+        # Validate through the SHARED ladder (at load time both ceilings are
+        # the shared 64 KiB transfer ceiling; the host clamps the frame
+        # ceiling again against its own descriptor), then keep the
+        # transaction's own STRING spelling — the row's match identity
+        # compares against the live transaction's fields, not the ladder's
+        # terminator bytes.
+        _stream_receive_bounds(
+            transaction,
+            frame_ceiling=TRANSFER_CEILING,
+            transfer_ceiling=TRANSFER_CEILING,
+        )
         bounds = (
             transaction["max_bytes"],
             transaction["termination"],
@@ -803,6 +808,9 @@ class ReplayHost(WriterBackedCaptureServices, MockHost):
         self._journal = journal
         self._grammar = journal.grammar
         self._ceiling = min(max_frame_bytes, TRANSFER_CEILING)
+        # The bulk-mode bound (issue #404): kept separate from the frame
+        # ceiling above.
+        self._transfer_ceiling = TRANSFER_CEILING
         self._rows = deque(journal.rows)
         self._cycle = deque(journal.cycle)
         self._rotate = journal.rotate
@@ -1060,7 +1068,11 @@ class ReplayHost(WriterBackedCaptureServices, MockHost):
         raw_bounds: tuple[int, bytes, int] | None = None
         identity_bounds: tuple[int, str, int] | None = None
         if kind in ("stream_receive", "stream_exchange"):
-            raw_bounds = _stream_receive_bounds(transaction, self._ceiling)
+            raw_bounds = _stream_receive_bounds(
+                transaction,
+                frame_ceiling=self._ceiling,
+                transfer_ceiling=self._transfer_ceiling,
+            )
             identity_bounds = (
                 transaction["max_bytes"],
                 transaction["termination"],

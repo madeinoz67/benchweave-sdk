@@ -1109,3 +1109,39 @@ def test_a_row_with_a_failure_and_a_response_is_refused(tmp_path: Path, plugin) 
     path = _write(tmp_path, journal)
     with pytest.raises(ValueError, match="replay_journal_row_shape:"):
         load_replay_journal(path, plugin)
+
+
+# --------------------------------------------------------------------------
+# Issue #404: a bulk row that loads must also replay
+# --------------------------------------------------------------------------
+
+
+def test_a_bulk_row_loads_and_replays_past_a_small_frame_bound(
+    tmp_path: Path, plugin
+) -> None:
+    """The load-time ladder uses the flat transfer ceiling, so a journal row
+    carrying an ``exact_bytes`` bulk receive loads; before the fix the
+    runtime host clamped the same row against the descriptor's frame bound
+    and refused it. Load and runtime now agree for bulk rows — the
+    terminator-mode disagreement stays deferred (D3)."""
+    from benchweave_sdk.testing import MockContext
+
+    payload = b"\xa5" * 1472
+    journal = _journal([
+        {"name": "bulk",
+         "transaction": {"kind": "stream_receive", "max_bytes": 1472,
+                         "termination": "lf", "exact_bytes": 1472},
+         "response": {"data": payload.hex()}},
+    ])
+    parsed = load_replay_journal(_write(tmp_path, journal), plugin)
+    host = ReplayHost(parsed, max_frame_bytes=23)
+    context = MockContext("op-bulk", deadline_monotonic=host.monotonic() + 5)
+    context.dispatched = True
+    reply = asyncio.run(
+        host.transfer(
+            {"kind": "stream_receive", "max_bytes": 1472,
+             "termination": "lf", "exact_bytes": 1472},
+            context,
+        )
+    )
+    assert reply == {"data": payload}

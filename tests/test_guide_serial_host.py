@@ -164,6 +164,25 @@ def test_an_incomplete_frame_is_never_returned_and_is_kept_for_the_next_receive(
     assert reply == {"data": b"3.3\r\n"}
 
 
+def test_an_exact_receive_is_transfer_scale_not_frame_scale() -> None:
+    """Issue #404: ``exact_bytes`` bounds a transfer, not a frame. A host that
+    declares a small honest ``max_frame_bytes`` still serves a larger exact
+    receive; the terminator-mode receive of the same size is a frame and
+    still refuses (both bounds apply there)."""
+    bulk = asyncio.run(
+        Host(FakePort(b"x" * 1472), max_frame_bytes=23).transfer(
+            _receive(max_bytes=1472, exact_bytes=1472), BenchContext("bulk", 1.0)
+        )
+    )
+    assert bulk == {"data": b"x" * 1472}
+    with pytest.raises(ValueError, match="max_bytes must be 1..23"):
+        asyncio.run(
+            Host(FakePort(b"x" * 1472 + b"\n"), max_frame_bytes=23).transfer(
+                _receive(max_bytes=1472), BenchContext("frame", 1.0)
+            )
+        )
+
+
 def test_a_line_longer_than_max_bytes_is_refused_and_discarded() -> None:
     host = Host(FakePort(b"123456\nOK\n"))
     with pytest.raises(ValueError, match="no terminator"):

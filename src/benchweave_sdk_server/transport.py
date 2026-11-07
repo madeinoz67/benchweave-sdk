@@ -244,6 +244,9 @@ class ByteStreamMockHost(WriterBackedCaptureServices, MockHost):
         # construction cannot mint a ceiling above the shared 64 KiB
         # transfer ceiling SerialCaptureServices clamps to.
         self._ceiling = min(max_frame_bytes, TRANSFER_CEILING)
+        # The bulk-mode bound (issue #404): a frame ceiling and a transfer
+        # ceiling, never one collapsed ceiling.
+        self._transfer_ceiling = TRANSFER_CEILING
         self._inbound = bytearray()
 
     @property
@@ -396,7 +399,11 @@ class ByteStreamMockHost(WriterBackedCaptureServices, MockHost):
         # so the corrected retry hits the row it should.
         bounds: tuple[int, bytes, int] = (0, b"", 0)
         if kind != "stream_send":
-            bounds = _stream_receive_bounds(transaction, self._ceiling)
+            bounds = _stream_receive_bounds(
+                transaction,
+                frame_ceiling=self._ceiling,
+                transfer_ceiling=self._transfer_ceiling,
+            )
         if kind != "stream_receive" and not isinstance(transaction["data"], bytes):
             raise ValueError("data must be bytes")
         self._check(context)
