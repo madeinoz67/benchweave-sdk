@@ -1003,7 +1003,8 @@ def test_adopted_project_first_upgrade_conflicts_honestly_on_managed_edits(
     if _s.platform == "win32":
         _proj = project / ".github/workflows/ci.yml"
         _tgt = target.get("template/.github/workflows/ci.yml") or b""
-        print("BW596B64PROJ=" + _b64.b64encode(_proj.read_bytes() if _proj.is_file() else b"").decode())
+        _pb = _proj.read_bytes() if _proj.is_file() else b""
+        print("BW596B64PROJ=" + _b64.b64encode(_pb).decode())
         print("BW596B64TGT=" + _b64.b64encode(_tgt).decode())
         print("BW596B64CONF=" + ",".join(sorted(conflicted)))
     assert conflicted == ["AI-GUIDE.md"]
