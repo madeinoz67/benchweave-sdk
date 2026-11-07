@@ -1490,3 +1490,24 @@ def test_upgrade_command_renders_each_skipped_link_once(
     rendered = capsys.readouterr().out
     assert rendered.count("tools/guide-link") == 1
     assert "a symlink is not upgraded through" in rendered
+
+
+def test_upgrade_notice_names_the_whole_reentry_checkpoint(tmp_path: Path) -> None:
+    """The notice is the only place an author is told what to do after an
+    upgrade, and it named step 2 of 4 (issue #572): no pin check, no derive,
+    no gates. It now names all four in order. Derive is named with its
+    trigger rather than as a step to run blind, because
+    ``migrate_ui_ledger_drift`` is the only state a version write cannot
+    repair."""
+    from benchweave_sdk.cli import _ui_staleness_notice
+
+    stale = tmp_path / "P-checkpoint"
+    _coherently_stale_ui(stale)
+    notice = _ui_staleness_notice(stale)
+    assert notice is not None
+    assert "benchweave-sdk doctor" in notice
+    assert "migrate-ui" in notice
+    assert "migrate_ui_ledger_drift" in notice
+    assert "derive-ui --force" in notice
+    assert "check-ui" in notice
+    assert "check-preset" in notice
