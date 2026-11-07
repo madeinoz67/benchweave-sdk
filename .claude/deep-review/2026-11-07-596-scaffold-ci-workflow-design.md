@@ -665,3 +665,64 @@ body row, the ruling wins and names the row.
    A2) closes the footgun the dev group would have removed: the extra is
    named on the spawn line, structurally, in the one file the author never
    has to write.
+
+## Build note — A0 and A7 landed (2026-11-07)
+
+Append-only. This records the implementation of §8's two remaining execution
+arms and the measurements taken while landing them. Measured under pytest
+9.1.1 in the build worktree (`origin/main` carries 9.2.0, so the merged-result
+re-run stays owed).
+
+**Carrier.** Both arms are one ubuntu-only step in `ci.yml`, immediately after
+the installed-wheel smoke (which builds `smoke-dist`, the `UV_FIND_LINKS`
+source): "Generated workflow — A0 green legs and A7 earned-[server] control".
+§2.7 said "same step" for the control; a separate adjacent step is the
+functional equivalent, because a `matrix.os` guard cannot live inside a shared
+`run:` block and duplicating the whole smoke step to carry it would be worse.
+The four scaffolded projects are base, ui, provider, and provider-stripped.
+
+**A0's RED baseline, re-measured against the pre-fix template** (`5af5292`,
+wheel built from that tree; denominator 3 arms × 2 job commands):
+
+| Arm | lint job | tests job |
+|---|---|---|
+| base | `uv sync --extra lint` → **exit 2**, `Extra \`lint\` is not defined` | `9 passed`, exit 0 |
+| ui | same → **exit 2** | `10 passed`, exit 0 |
+| provider | same → **exit 2** | `3 failed, 5 passed`, exit 1, `live_provider_backend_missing` ×3 |
+
+So the honest baseline is 3 red lint legs (all tooling class, never findings),
+one red tests leg (findings), and two green tests legs that must not regress —
+exactly ruling 3, not "both jobs fail".
+
+**A0 GREEN, post-fix template** (wheel built from the build head): 6/6
+commands exit 0; lint prints `All checks passed!` on all three arms; tests are
+9 / 10 / 8 passed. The step asserts those floors so an exit-5 "collected
+nothing" cannot pass as green.
+
+**A7 measured.** As-rendered provider: exit 0, 8 passed. Base and ui on their
+bare pins: exit 0, 9 and 10 passed (the conditional is narrow). Stripped pin
+(the `sed` mutation and nothing else): exit 1, `3 failed, 5 passed`,
+`live_provider_backend_missing` present — the design-time expectation holds
+exactly.
+
+**Step-logic mutation controls** (the extracted `run:` block executed
+verbatim, with only the repo-root scaffold binary substituted for `uv run`):
+
+- Neutralize the strip → the control runs the as-rendered (green) provider
+  project → step exits 1 with "the [server]-stripped provider suite PASSED …
+  narrow the generated test extra". This is the D1-detector direction, proven.
+- Undefined extra in a green leg → step exits 1 naming `exit 2 (tooling
+  class: uv usage/spawn/undefined extra)`, never "findings".
+- Undefined extra in the control's sync → step exits 1 naming the tooling
+  class rather than accepting the failure as the expected refusal.
+
+**Deviation found in the landed generator (not introduced here).** §2.1
+specified the single-line `uv run --extra lint ruff check .` form; the
+committed `template/.github/workflows/ci.yml` (and its fixtures) uses the
+two-step `uv sync --extra lint` then `uv run ruff check .` form, and A2 pins
+that shape. A0 runs the commands as the template actually ships them. Both
+forms are field-proven (the reference's own green run used sync-then-run);
+the record's §2.1 text is left as written and this note is the correction of
+record. The drift map and SRF-1 previously claimed the pin was executed by a
+`publish.yml` generated-tests smoke; that block was reverted by the maintainer
+corrections, and both documents now name this `ci.yml` step instead.

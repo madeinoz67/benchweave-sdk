@@ -210,6 +210,133 @@ jobs:
           case "$err" in *Traceback*)
             echo "::error::preview-ui refusal printed a traceback"; exit 1;; esac
 
+      - name: Generated workflow — A0 green legs and A7 earned-[server] control (issue #596)
+        # The design record's §8 execution arms, run at PR time because no
+        # release is scheduled (a proof parked at a release gate is parked
+        # indefinitely):
+        #   A0  a freshly generated project passes BOTH of its own workflow's
+        #       job commands. Denominator: 3 arms x 2 jobs. The baseline this
+        #       improves on was measured against the pre-#596 template: lint
+        #       failed on every arm as a TOOLING error (exit 2, no lint extra
+        #       to name), provider tests failed 5/8 with
+        #       live_provider_backend_missing, and base (9/9) and ui (10/10)
+        #       already passed — those two are the must-not-regress baseline,
+        #       not a red to manufacture.
+        #   A7  the provider arm's [server] pin is EARNED, proven by execution
+        #       in both directions. The stripped-pin leg is a STANDING
+        #       EXPECTED-FAILURE control (the R-5c planted-violation pattern):
+        #       it reds the day the stripped run goes green, which is the day
+        #       D1 lands and the template pin must narrow to the bare form.
+        # Ubuntu only: four scaffolded projects, each resolving its own
+        # environment. The ui lint leg also runs on every lane in the step
+        # above; here it completes A0's 3 x 2 denominator.
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          DIST="$PWD/smoke-dist"   # built by the installed-wheel smoke step above
+          ROOT="$RUNNER_TEMP/generated-workflow"
+          rm -rf "$ROOT"
+          mkdir -p "$ROOT"
+          uv run benchweave-sdk new "$ROOT/base" --package example_plugin
+          uv run benchweave-sdk new "$ROOT/ui" --package example_plugin --with-ui
+          uv run benchweave-sdk new "$ROOT/provider" --package example_plugin --provider-transport
+          uv run benchweave-sdk new "$ROOT/provider-stripped" --package example_plugin --provider-transport
+          # A7's one mutated variable, and nothing else. Pre-release, PyPI
+          # cannot serve the `==` pin, so UV_FIND_LINKS is the only resolver
+          # for the wheel built above — uv locks every extra on any sync.
+          sed 's/benchweave-sdk\[server\]==/benchweave-sdk==/' \
+            "$ROOT/provider-stripped/pyproject.toml" > "$ROOT/provider-stripped/pyproject.toml.tmp"
+          mv "$ROOT/provider-stripped/pyproject.toml.tmp" "$ROOT/provider-stripped/pyproject.toml"
+          grep -qF 'test = ["benchweave-sdk==' "$ROOT/provider-stripped/pyproject.toml" \
+            || { echo "::error::the [server] strip did not apply — the control would run the wrong project"; exit 1; }
+          export UV_FIND_LINKS="$DIST"
+
+          # Exit-code law (design record §8): 0 is green, 1 is findings, 2 is
+          # the TOOLING class (uv usage error, undefined extra, spawn failure)
+          # and never reads as "the check ran". Naming the class is the arm.
+          classify() {
+            case "$1" in
+              0) echo "green";;
+              1) echo "exit 1 (findings)";;
+              2) echo "exit 2 (tooling class: uv usage/spawn/undefined extra)";;
+              5) echo "exit 5 (pytest collected nothing)";;
+              *) echo "exit $1";;
+            esac
+          }
+
+          # Sets OUT and CODE without tripping errexit.
+          CODE=0
+          OUT=""
+          capture_in() {
+            local dir="$1"
+            shift
+            CODE=0
+            OUT=$( cd "$dir" && "$@" 2>&1 ) || CODE=$?
+          }
+
+          run_job() {
+            # $1 = project dir, $2 = extra, $3 = passed floor ("" for lint),
+            # rest = the workflow job's command, verbatim.
+            local dir="$1" extra="$2" floor="$3" passed
+            shift 3
+            capture_in "$dir" uv sync --extra "$extra"
+            if [ "$CODE" -ne 0 ]; then
+              printf '%s\n' "$OUT"
+              echo "::error::$dir: uv sync --extra $extra failed — $(classify "$CODE")"
+              exit 1
+            fi
+            capture_in "$dir" uv run "$@"
+            if [ "$CODE" -ne 0 ]; then
+              printf '%s\n' "$OUT"
+              echo "::error::$dir: the generated job ($*) is not green — $(classify "$CODE")"
+              exit 1
+            fi
+            if [ -n "$floor" ]; then
+              passed=$(printf '%s\n' "$OUT" | grep -oE '[0-9]+ passed' | tail -1 | grep -oE '^[0-9]+') || true
+              if [ -z "$passed" ] || [ "$passed" -lt "$floor" ]; then
+                printf '%s\n' "$OUT"
+                echo "::error::$dir: passed count ${passed:-none} is below the $floor floor (exit 5 or a vanished suite)"
+                exit 1
+              fi
+              echo "$dir: $* -> exit 0, $passed passed"
+            else
+              echo "$dir: $* -> exit 0"
+            fi
+          }
+
+          run_job "$ROOT/base" lint "" ruff check .
+          run_job "$ROOT/ui" lint "" ruff check .
+          run_job "$ROOT/provider" lint "" ruff check .
+          run_job "$ROOT/base" test 9 pytest -q
+          run_job "$ROOT/ui" test 10 pytest -q
+          run_job "$ROOT/provider" test 8 pytest -q
+
+          # A7 (i): the stripped-pin control MUST fail as findings with the
+          # backend refusal. Green here means the [server] pin stopped earning
+          # its place; exit 2 here means the control proved nothing.
+          capture_in "$ROOT/provider-stripped" uv sync --extra test
+          if [ "$CODE" -ne 0 ]; then
+            printf '%s\n' "$OUT"
+            echo "::error::provider-stripped: uv sync --extra test failed — $(classify "$CODE")"
+            exit 1
+          fi
+          capture_in "$ROOT/provider-stripped" uv run pytest -q
+          printf '%s\n' "$OUT"
+          if [ "$CODE" -eq 0 ]; then
+            echo "::error::the [server]-stripped provider suite PASSED. The template pin is no longer earned: drop the extras clause from the generated test extra in template/pyproject.toml.jinja (design record §2.2), regenerate the fixtures, and re-cut the record's A7."
+            exit 1
+          fi
+          if [ "$CODE" -ne 1 ]; then
+            echo "::error::the [server]-stripped provider suite failed as $(classify "$CODE"), not as findings — the control proves nothing outside exit 1"
+            exit 1
+          fi
+          if ! printf '%s\n' "$OUT" | grep -qF "live_provider_backend_missing"; then
+            echo "::error::the [server]-stripped provider suite failed without live_provider_backend_missing — the pin may be required for a different reason, or the refusal changed"
+            exit 1
+          fi
+          echo "provider-stripped: exit 1 with live_provider_backend_missing — the [server] pin is earned"
+
       - name: Server smoke — preview-ui over the installed wheel (publish's ubuntu arm, at PR time)
         # #308: publish.yml's ubuntu-only [server] smoke (spawn preview-ui,
         # poll the banners, SIGINT exits 0), mirrored here so its shape is
