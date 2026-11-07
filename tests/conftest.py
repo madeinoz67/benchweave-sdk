@@ -23,6 +23,15 @@ import pytest
 REPO = Path(__file__).resolve().parents[1]
 VENDORED_TREE = REPO / "src/benchweave_sdk/standards"
 PYTEST_CACHE = REPO / ".pytest_cache"
+# The running interpreter's environment. uv parks it INSIDE the checkout
+# (``venv/`` or ``.venv/``), and the import system writes lazy-module
+# bytecode caches there through the hooked ``open`` — measured, not
+# assumed: the #442 A2 run caught
+# ``venv/.../anyio/_core/__pycache__/_subprocesses...pyc`` from ten
+# mcp-shim tests. A named exemption, not a quiet widening: that path is
+# the interpreter's own state, and git ignores it, so it can never become
+# the leaked checkout state this guard surfaces.
+PYTHON_ENV = Path(sys.prefix).resolve()
 
 # Editable-install resilience (local macOS, observed 2026-11-06): a
 # file-provider daemon can set the macOS hidden flag on the worktree venv's
@@ -68,15 +77,18 @@ def _is_tree_path(candidate: object) -> bool:
 
 def _working_tree_violation(candidate: object) -> Path | None:
     """The resolved path when the write would land inside the repository
-    working tree (#442), else None. ``.pytest_cache`` is exempt: pytest's
-    own cache provider writes there, and that directory self-ignores in
-    git, so it cannot become the leaked state this guard surfaces."""
+    working tree (#442), else None. Two tool-owned directories are
+    exempt, both git-ignored and neither the leak class: ``.pytest_cache``
+    (pytest's own cache provider writes there) and ``PYTHON_ENV`` (the
+    interpreter's bytecode caches)."""
     resolved = _resolve(candidate)
     if resolved is None:
         return None
     if resolved != REPO and REPO not in resolved.parents:
         return None
     if resolved == PYTEST_CACHE or PYTEST_CACHE in resolved.parents:
+        return None
+    if resolved == PYTHON_ENV or PYTHON_ENV in resolved.parents:
         return None
     return resolved
 
@@ -103,7 +115,10 @@ def _the_committed_tree_is_never_written(
 
     The path scope is two predicates, in order: the vendored tree refuses
     first (its message is unchanged since #427), then anything resolved
-    under ``REPO`` except ``REPO/.pytest_cache`` (#442).
+    under ``REPO`` except two tool-owned, git-ignored directories —
+    ``REPO/.pytest_cache`` and ``PYTHON_ENV`` (the interpreter's own
+    environment; uv parks it inside the checkout, and lazy-module
+    bytecode caches are written there through the hooked ``open``).
 
     NOT CAUGHT, by the same exactness: ``os.replace``/``os.rename`` into
     either scope, ``os.open``/``os.fdown`` descriptors (including
@@ -111,12 +126,12 @@ def _the_committed_tree_is_never_written(
     subprocesses, and a symlink swap at either path. A test that
     re-patches these four hooks itself disarms the guard for its own
     duration. Nor does the widened scope see a file descriptor opened
-    before the test started, or a leak hidden under the
-    ``.pytest_cache`` exemption; import-system bytecode writes
-    (``__pycache__``) are C-level and never reach these hooks. The
-    vectors actually hooked are pinned by tests/test_tree_guard.py and
-    tests/server/test_tree_guard_reach.py; extending the hooked set means
-    extending those probes in the same change.
+    before the test started, or a leak hidden under either exemption
+    (which is why the list is two named tool directories, not a general
+    ignore rule). The vectors actually hooked are pinned by
+    tests/test_tree_guard.py and tests/server/test_tree_guard_reach.py;
+    extending the hooked set means extending those probes in the same
+    change.
     """
     refusal = (
         "write to the committed vendored tree attempted: {path} (#427 — "

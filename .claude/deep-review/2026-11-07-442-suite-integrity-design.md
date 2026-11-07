@@ -347,3 +347,41 @@ armed the arm must fail, and the failure must name
 4. **The reopen trigger for defect 1:** any CI red matching `fixture … not found` under
    `tests/server/`, on any OS or pytest version, reopens it with that transcript — this
    design's negative is bounded to the trees and orders in §1, and this machine.
+
+---
+
+## 10. Build note (2026-11-07) — measured deviation from §4's exemption list
+
+§7 is unchanged; the arms and the decision rule below are the pre-committed ones. This
+section records what the build measured and one scope correction it forced.
+
+**A2 found a false positive, and it corrects a claim in the guard's own docstring.** The
+first A2 run (CI marker shape, `-n auto`) was **10 failed, 3028 passed, 6 skipped**. All
+ten were `tests/server/test_mcp_shim.py`, and all ten named the same single path:
+
+```
+venv/lib/python3.13/site-packages/anyio/_core/__pycache__/_subprocesses.cpython-313-pytest-9.2.0.pyc.98478
+```
+
+That is CPython writing a lazy-import bytecode cache for a module imported inside a test.
+The #427 guard docstring claimed import-system bytecode writes were C-level and "never
+reach these hooks" — **false**: this one went through the hooked `open` builtin, so the
+guard saw it. The claim is corrected in the docstring rather than carried forward.
+
+**The deviation.** uv parks the interpreter environment *inside the checkout*
+(`UV_PROJECT_ENVIRONMENT=venv`, or uv's default `.venv/`), so §4's rule "refuse if under
+REPO and not under REPO/.pytest_cache" refuses the interpreter's own cache writes. The
+build adds a second named exemption, `PYTHON_ENV = Path(sys.prefix).resolve()` — derived
+from the interpreter, not a hard-coded directory name. It is the same category as
+`.pytest_cache`: tool-owned, git-ignored, outside the #442 leak class. The exemption list
+is two named tool directories, not a general ignore rule, and the guard's NOT-CAUGHT list
+names the exemption as a blind spot.
+
+**Numbers after the correction (this worktree, this machine):**
+
+| Run | Result |
+|---|---|
+| A2, CI marker shape, `-n auto` | **3038 passed, 6 skipped**, exit 0 (run I baseline 3033 + 6; +5 is the new A1 probe's parametrisations) |
+| Full suite, no marker filter, `-n auto` | **3071 passed, 9 skipped**, exit 0 |
+| A3 mutated (chdir removed), guard armed | **2 failed**, message names `…/captures/operator-action-token.json`; `captures/` left with 0 entries |
+| A3 causality control (predicate neutralised, test still mutated) | **2 passed** and `captures/operator-action-token.json` landed |
