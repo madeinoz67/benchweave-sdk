@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import threading
 import time
 from collections.abc import Callable
@@ -651,6 +652,68 @@ def test_the_factory_records_the_mint_time_serial(tmp_path: Path) -> None:
     assert fx["endpoint"].last_resolution == _B
     assert fx["endpoint"].last_serial == "SER-B"
     assert fx["endpoint"].last_serial_known is True
+
+
+def test_the_factory_records_the_serial_through_a_stem_alias(tmp_path: Path) -> None:
+    """#392 R3, the mint site (the darwin class): the operator's
+    ``--device`` spells the ``tty.`` peer while the enumeration lists the
+    ``cu.`` spelling. The mint-time lookup is node-equivalent, so the serial
+    records KNOWN — the byte-equal lookup recorded None/known (a false
+    "unit has no iSerial") for exactly this unit, and the next
+    connected-era scan would drop the live row as a chimera."""
+    from benchweave_sdk.scaffold import create_project
+    from benchweave_sdk_server.serial import SerialEndpoint, serial_plugin_session
+
+    project = tmp_path / "proj"
+    create_project(project, "example_plugin")
+    plugin = load_plugin_project(project)
+    port = LoopbackPort(replies={b"ID?\n": _MATCHING})
+    candidates = [UsbCandidate("/dev/cu.usbmodem-DEMO01", serial_number="SER-A")]
+    endpoint = SerialEndpoint("/dev/tty.usbmodem-DEMO01")
+    session = serial_plugin_session(
+        plugin,
+        endpoint,
+        open_port=lambda device, settings: port,
+        enumerate_ports=lambda: list(candidates),
+    )
+    asyncio.run(session.connect())
+    assert endpoint.last_serial == "SER-A", (
+        "the alias-spelled path still finds its enumeration row"
+    )
+    assert endpoint.last_serial_known is True
+
+
+def test_the_factory_records_the_serial_through_a_symlink_alias(
+    tmp_path: Path,
+) -> None:
+    """#392 R3, the mint site (the symlink class): the session opens a
+    by-id link while the enumeration lists the node it points at — same
+    row, same serial, recorded known."""
+    from benchweave_sdk.scaffold import create_project
+    from benchweave_sdk_server.serial import SerialEndpoint, serial_plugin_session
+
+    node = tmp_path / "node"
+    node.write_bytes(b"")
+    by_id = tmp_path / "usb-DEMO-if00-port0"
+    try:
+        os.symlink("node", by_id)
+    except OSError as exc:
+        pytest.skip(f"symlinks unavailable on this leg: {exc}")
+    project = tmp_path / "proj"
+    create_project(project, "example_plugin")
+    plugin = load_plugin_project(project)
+    port = LoopbackPort(replies={b"ID?\n": _MATCHING})
+    candidates = [UsbCandidate(str(node), serial_number="SER-A")]
+    endpoint = SerialEndpoint(str(by_id))
+    session = serial_plugin_session(
+        plugin,
+        endpoint,
+        open_port=lambda device, settings: port,
+        enumerate_ports=lambda: list(candidates),
+    )
+    asyncio.run(session.connect())
+    assert endpoint.last_serial == "SER-A"
+    assert endpoint.last_serial_known is True
 
 
 def test_a_connected_era_scan_refuses_the_reoccupied_connected_path(

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import threading
 from pathlib import Path
 from typing import Any
@@ -302,6 +303,172 @@ def test_an_unknown_mint_serial_serves_the_row_as_before(
         )
     )
     assert [row["usb_serial"] for row in devices] == ["SER-X"]
+
+
+def test_an_alias_spelling_of_the_connected_port_is_served_without_reprobing(
+    tmp_path: Path,
+) -> None:
+    """#392 R1 (the darwin stem class): the operator's ``--device`` spells
+    the ``tty.`` dialin node (copied from another tool) while pyserial on
+    darwin enumerates only the ``cu.`` callout peer — one driver instance,
+    one unit, two spellings of one node. The connected row serves from
+    session identity and the enumeration's spelling is never opened: the
+    sibling node of a live port is exactly what the no-re-probe rule
+    exists to protect."""
+    fx = _scan_fixture(tmp_path)
+    from benchweave_sdk_server.serial import SerialPortHooks, discover_serial_devices
+
+    identity = {"manufacturer": "SDK Example", "model": "demo"}
+    port = fx["ports"]["/dev/match-a"]
+    opened: list[str] = []
+    candidates = [
+        CandidatePort(
+            "/dev/cu.usbmodem-DEMO01", vid=0x1A86, pid=0x7523, serial_number="SER-A"
+        )
+    ]
+
+    def open_port(device: str, settings: dict[str, Any]) -> LoopbackPort:
+        opened.append(device)
+        return port
+
+    devices = asyncio.run(
+        discover_serial_devices(
+            fx["plugin"],
+            hooks=SerialPortHooks(
+                enumerate_ports=lambda: list(candidates), open_port=open_port
+            ),
+            connected_device="/dev/tty.usbmodem-DEMO01",
+            connected_identity=identity,
+            connected_serial="SER-A",
+            connected_serial_known=True,
+        )
+    )
+    assert [row["usb_serial"] for row in devices] == ["SER-A"]
+    assert opened == [], "an alias spelling of the connected port is never opened"
+
+
+def test_a_by_id_symlink_of_the_connected_node_is_served_without_reprobing(
+    tmp_path: Path,
+) -> None:
+    """#392 R2 (the symlink class): a Linux by-id link (or any
+    operator-managed symlink alias) and the node it points at are the same
+    device by the OS's own resolution, whichever side of the compare each
+    spelling sits on. The connected row serves without opening the node."""
+    node = tmp_path / "node"
+    node.write_bytes(b"")
+    by_id = tmp_path / "usb-DEMO-if00-port0"
+    try:
+        os.symlink("node", by_id)
+    except OSError as exc:
+        pytest.skip(f"symlinks unavailable on this leg: {exc}")
+    fx = _scan_fixture(tmp_path)
+    from benchweave_sdk_server.serial import SerialPortHooks, discover_serial_devices
+
+    identity = {"manufacturer": "SDK Example", "model": "demo"}
+    port = fx["ports"]["/dev/match-a"]
+    opened: list[str] = []
+    candidates = [
+        CandidatePort(str(node), vid=0x1A86, pid=0x7523, serial_number="SER-A")
+    ]
+
+    def open_port(device: str, settings: dict[str, Any]) -> LoopbackPort:
+        opened.append(device)
+        return port
+
+    devices = asyncio.run(
+        discover_serial_devices(
+            fx["plugin"],
+            hooks=SerialPortHooks(
+                enumerate_ports=lambda: list(candidates), open_port=open_port
+            ),
+            connected_device=str(by_id),
+            connected_identity=identity,
+            connected_serial="SER-A",
+            connected_serial_known=True,
+        )
+    )
+    assert [row["usb_serial"] for row in devices] == ["SER-A"]
+    assert opened == [], "the node behind a symlink alias is never opened"
+
+
+def test_an_alias_row_with_a_mismatched_live_serial_still_drops(
+    tmp_path: Path,
+) -> None:
+    """#392 G3 (the critical non-regression): alias equivalence is a NAME
+    judgment; unit identity stays trust-2's serial reconciliation. A stem
+    pair whose LIVE enumeration serial differs from the mint serial is the
+    re-occupied path — the row drops inside the skip branch exactly as the
+    byte-equal drop does, and nothing is opened. The port answers identify
+    correctly, so any row served here could only be the chimera trust-2
+    exists to refuse (and a site-1-only fix would serve exactly that row
+    off a falsely-None mint serial)."""
+    fx = _scan_fixture(tmp_path)
+    from benchweave_sdk_server.serial import SerialPortHooks, discover_serial_devices
+
+    identity = {"manufacturer": "SDK Example", "model": "demo"}
+    port = fx["ports"]["/dev/match-a"]
+    opened: list[str] = []
+    candidates = [
+        CandidatePort(
+            "/dev/cu.usbmodem-DEMO01", vid=0x1A86, pid=0x7523, serial_number="SER-X"
+        )
+    ]
+
+    def open_port(device: str, settings: dict[str, Any]) -> LoopbackPort:
+        opened.append(device)
+        return port
+
+    devices = asyncio.run(
+        discover_serial_devices(
+            fx["plugin"],
+            hooks=SerialPortHooks(
+                enumerate_ports=lambda: list(candidates), open_port=open_port
+            ),
+            connected_device="/dev/tty.usbmodem-DEMO01",
+            connected_identity=identity,
+            connected_serial="SER-A",
+            connected_serial_known=True,
+        )
+    )
+    assert devices == [], "an alias spelling does not launder a foreign unit"
+    assert opened == [], "the mismatched alias row is dropped before any open"
+
+
+def test_different_stems_are_not_the_same_node(tmp_path: Path) -> None:
+    """#392 G4 (equivalence precision): the stem clause equates only
+    byte-equal remainders — a different stem is a different driver instance
+    (a second device on the bench), never an alias, and it identifies as
+    today."""
+    fx = _scan_fixture(tmp_path)
+    from benchweave_sdk_server.serial import SerialPortHooks, discover_serial_devices
+
+    identity = {"manufacturer": "SDK Example", "model": "demo"}
+    port = fx["ports"]["/dev/match-a"]
+    opened: list[str] = []
+    candidates = [
+        CandidatePort(
+            "/dev/cu.usbmodem-DEMO02", vid=0x1A86, pid=0x7523, serial_number="SER-B"
+        )
+    ]
+
+    def open_port(device: str, settings: dict[str, Any]) -> LoopbackPort:
+        opened.append(device)
+        return port
+
+    devices = asyncio.run(
+        discover_serial_devices(
+            fx["plugin"],
+            hooks=SerialPortHooks(
+                enumerate_ports=lambda: list(candidates), open_port=open_port
+            ),
+            connected_device="/dev/tty.usbmodem-DEMO01",
+            connected_identity=identity,
+        )
+    )
+    assert opened == ["/dev/cu.usbmodem-DEMO02"], (
+        "a different stem identifies as today — the clause cannot swallow it"
+    )
+    assert [row["usb_serial"] for row in devices] == ["SER-B"]
 
 
 def test_a_candidate_without_a_usb_serial_serves_an_honest_null(tmp_path: Path) -> None:
