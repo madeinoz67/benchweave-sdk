@@ -155,6 +155,16 @@ the invariants below anchor there.
   `validation.py` (the descriptor lane's unknown-schema refusal and the
   provider lane's six prefixes). *The prefixes
   are an API even though they live in error text.*
+  The provider-kind slice (issues #568 and #570, bullet 4) adds
+  `unsupported_transaction_kind:` at the three section 8.1 field-set
+  refusals — `serial.py` (`SerialCaptureServices.transfer`),
+  `transport.py` and `replay.py` — because the seam forwards the
+  `ValueError` text to the wire verbatim (`seam.py`), so bare prose reached
+  the operator un-branchable. Anchor: `tests/server/test_serial_conformance.py`,
+  `tests/server/test_mock_bytestream_host.py` and `tests/server/test_replay.py`
+  each pin the prefix. Pure prepend: the old sentence stays byte-present
+  inside the message, so every existing `match=` arm in both repositories
+  keeps matching.
 - **[STD-5]** The stamps say *generated — do not edit*: a hand-edit to a vendored file is
   wrong no matter how good the edit is; the change belongs in the main repository's
   canonical corpus, re-exported and re-synced. Normative standards changes start main-side

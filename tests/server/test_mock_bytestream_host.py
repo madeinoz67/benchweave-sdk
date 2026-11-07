@@ -306,3 +306,15 @@ def test_frame_script_decodes_the_fixture_rows() -> None:
     assert rows[-1].response == b"STAT\x00\n"
     assert len(rows[4].response) == 1024
     assert rows[6].response == rows[8].response  # two captured poll cycles
+
+
+def test_stream_grammar_refusal_carries_a_machine_prefix() -> None:
+    """Same field-set refusal, same bare prose, and the seam forwards the text
+    to the wire verbatim — so the mock's refusal is un-branchable too (STD-4)."""
+
+    async def flow() -> None:
+        host = _host()
+        with pytest.raises(ValueError, match="^unsupported_transaction_kind:"):
+            await host.transfer({"kind": "i2c_transfer"}, _context())
+
+    asyncio.run(flow())

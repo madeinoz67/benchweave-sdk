@@ -835,6 +835,7 @@ class SerialCaptureServices(WriterBackedCaptureServices):
         kind = transaction.get("kind")
         if kind not in _FIELDS or set(transaction) != _FIELDS[kind]:
             raise ValueError(
+                "unsupported_transaction_kind: "
                 f"not a section 8.1 stream transaction: {sorted(transaction)}"
             )
         max_bytes, terminator, exact = 0, b"", 0

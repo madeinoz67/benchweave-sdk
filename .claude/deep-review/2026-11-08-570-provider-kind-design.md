@@ -275,3 +275,43 @@ TWO-1 and the drift-and-obligations CI map.
   checkout's own branch state was not audited — the pairing leg is the PR's.
 - The live-device leg's feasibility on a real bench is outside this
   repository's proof by design (owner-deferred; guide states it incomplete).
+
+---
+
+## Build record (2026-11-08, branch `build-568`)
+
+**Scope built: exactly the pre-committed slice.** The three section 8.1
+field-set refusals now carry the `unsupported_transaction_kind:` prefix:
+`serial.py` (`SerialCaptureServices.transfer`), `transport.py`, `replay.py`.
+
+**RED proven first.** All three arms failed at the base commit, each with
+the same message `Actual message: "not a section 8.1 stream transaction:
+['kind']"` — 3 failed in 0.30s.
+
+**GREEN.** 3 arms pass. No-churn control: six modules run FULL and unedited
+read `174 passed, 1 skipped`, with no existing `match=` arm needing its
+string changed — the prepend kept the old sentence byte-present, as this
+record predicted.
+
+**Mutation control.** Reverting the prefix at the `serial.py` site alone
+reddened exactly that arm (`1 failed`), then the `cp` backup restored the
+file byte-identically. The prefix, not the test, is what the arm measures.
+
+**Two deviations from this record, both disclosed.**
+
+1. **R-1 lives in `tests/server/test_serial_conformance.py`, not
+   `test_serial_link.py`.** `SerialCaptureServices` is the class that owns
+   the refusal, and that file already carries the only hardware-free
+   construction of it (`SerialLink(_ScriptedPort())` + the module's `_ctx`).
+   Writing the arm anywhere else would have meant re-inventing that
+   scaffolding. The site is still pinned directly, which was R-1's purpose.
+2. **The prepend is spelled as two adjacent literals**, not one long line:
+   a single-line prepend measures 108 characters against this repo's
+   100-character limit, so `ruff` E501 failed. Adjacent string literals
+   concatenate at compile time, so the emitted message is byte-identical to
+   a one-line prepend, and the old sentence remains byte-present inside it.
+   The no-churn control above is the evidence for that claim.
+
+**Also landed:** the STD-4 register in `docs/internal/invariants.md` names
+the new prefix with its three anchors, and the guide carries one sentence
+for plugin authors.

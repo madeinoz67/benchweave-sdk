@@ -875,3 +875,19 @@ def test_mutant_m3_ceiling_unchecked_fails_c10() -> None:
         _cell_c10(services)
     link = services.link
     link.close()
+
+
+def test_stream_grammar_refusal_carries_a_machine_prefix() -> None:
+    """The section 8.1 field-set refusal is bare prose, and the seam forwards
+    the ValueError text to the wire verbatim (``seam.py``), so a host cannot
+    branch on it. STD-4: a refusal is an API and carries a snake_case prefix.
+    This site is otherwise pinned only through the FTDI subclass's inheritance,
+    so it gets its own arm."""
+    services = SerialCaptureServices(
+        SerialLink(_ScriptedPort(), quiet_s=_QUIET_S), max_frame_bytes=256
+    )
+    try:
+        with pytest.raises(ValueError, match="^unsupported_transaction_kind:"):
+            asyncio.run(services.transfer({"kind": "i2c_transfer"}, _ctx()))
+    finally:
+        services.link.close()
