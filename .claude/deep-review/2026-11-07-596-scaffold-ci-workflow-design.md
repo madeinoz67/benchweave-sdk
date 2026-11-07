@@ -162,11 +162,12 @@ jobs:
         uses: astral-sh/setup-uv@v10
         with:
           python-version: "3.13"
+      - name: Install the lint extra
+        # ruff rides the project's own lint extra; without this step ruff
+        # cannot spawn (the first-run lesson, gateway issue #596).
+        run: uv sync --extra lint
       - name: Lint
-        # The extra rides the SAME command line that spawns ruff: a bare
-        # `uv run ruff` installs no extras and ruff cannot spawn (the
-        # first-run lesson, gateway issue #596 — exit 2, not findings).
-        run: uv run --extra lint ruff check .
+        run: uv run ruff check .
 
   tests:
     runs-on: ubuntu-latest
@@ -177,21 +178,26 @@ jobs:
         uses: astral-sh/setup-uv@v10
         with:
           python-version: "3.13"
+      - name: Install the test extra
+        # The SDK pin in pyproject.toml [project.optional-dependencies].test is
+        # the install source; no version is duplicated in this file.
+        run: uv sync --extra test
       - name: Tests
-        # The same law: the extra is named where the tool spawns.
-        run: uv run --extra test pytest -q
+        run: uv run pytest -q
 ```
 
 Where this follows the reference and where it deliberately does not:
 
-- **Adopted from the reference, as the load-bearing choice**: the extra named
-  on the same command line that spawns the tool, in BOTH jobs. This is the
-  field-proven fix shape (their RED→GREEN) and it makes the ordering failure
-  structurally hard: the extra and the spawn are one token apart, not two
-  steps apart. The tests job uses the single-line `uv run --extra test
-  pytest -q` rather than their sync-then-run pair — their green run proves
-  both forms work, but one law stated one way in both jobs is what the
-  structural arm (A2) can pin, and it is one step fewer.
+- **Adopted from the reference, as the load-bearing choice**: the extra is
+  installed by its own step, and that step runs BEFORE the step that spawns
+  the tool, in BOTH jobs. The law is ordering, not syntax: what makes the
+  first-run failure impossible is `sync_index < run_index`. A single
+  `uv run --extra X <tool>` line satisfies it too, but only because `uv run`
+  installs and spawns in one invocation — it is a second correct shape, not
+  the law itself, and an earlier draft of this section mis-stated it as
+  "the extra must be on the same command line". That wording is withdrawn:
+  it would redden this landed pair, which is correct. A2 pins
+  `installed < executed` for exactly this reason (§2.6.1).
 - **Action versions**: current majors (`checkout@v7`, `setup-uv@v10`, per this
   repo's own pinned `# v7.0.1` / `# v10.3.2` comments) rather than the
   reference's v4/v5 — those are that repository's age, not a choice. Still
@@ -312,13 +318,22 @@ pins `template/**` and the fixture tree to `eol=lf` (asserted by
    `.github/workflows/ci.yml` with `yaml.safe_load` (PyYAML is already a test
    dependency via copier — precedent `tests/test_scaffold_update.py`);
    assert: exactly jobs `{lint, tests}`; both `ubuntu-latest`; both carry
-   setup-uv with `python-version: "3.13"`; **in each job, the single run step
-   names the `--extra` token on the same command line that spawns the tool
-   (`uv run --extra lint ruff check .` / `uv run --extra test pytest -q`), and
-   no bare `uv run <tool>` step exists anywhere** — the ordering law as a
-   structural property, not a step-index coincidence; top-level
-   `permissions.contents == "read"`; triggers include `pull_request`; the raw
-   text contains no `${{`; the three arms' workflow files are byte-identical.
+   setup-uv with `python-version: "3.13"`; **in each job, the index of the
+   `uv sync --extra <extra>` step is strictly below the index of the step
+   that spawns the tool (`uv run ruff check .` / `uv run pytest -q`)**; then
+   top-level `permissions.contents == "read"`; triggers include
+   `pull_request`; the raw text contains no `${{`; the three arms' workflow
+   files are byte-identical.
+
+   Scope of that assertion, stated so it is not over-claimed: the LAW is
+   `install_index < spawn_index`, and the single-line `uv run --extra X
+   <tool>` form satisfies the law while failing this assertion, because it
+   has no sync step to index. The arm therefore pins the two-step
+   REALISATION, deliberately — the template ships that shape because it
+   makes the ordering visible to a human editing the file, and because it
+   is the reference's field-proven shape. Widening the arm to accept both
+   forms would weaken what it structurally proves, so it is left narrow and
+   named here.
 2. **Lint-set arm.** For each `fixture_arms()` arm, parse that arm's rendered
    `pyproject.toml` `[tool.ruff.lint].select` with `tomllib` and run
    `ruff check --select <those codes> --no-cache <arm>/src <arm>/tests`;
@@ -510,10 +525,16 @@ things"** (the reference's RED exited 2).
 - **A2 — workflow structure (new offline arm, §2.6.1), written RED-first.**
   Written before the template file exists: it must fail on the missing file,
   then pass once the template lands. It pins the ordering LAW as structure:
-  the `--extra` token and the tool spawn share one command line, and no bare
-  `uv run <tool>` step exists. Mutation controls pasted in the PR: strip
-  `--extra lint` from the workflow in a scratch copy → arm reds; reorder into
-  sync-then-bare-run in a scratch copy → arm reds; plant `${{` → arm reds.
+  the `uv sync --extra <extra>` step index sits strictly below the tool's
+  spawn step. Mutation controls pasted in the PR: delete the
+  `uv sync --extra lint` step in a scratch copy → arm reds; MOVE that step
+  to AFTER the tool step in a scratch copy → arm reds (this is the mutation
+  that tests the law rather than the shape — deleting the step only proves
+  the arm wants a step, moving it proves the arm wants the ORDER); plant
+  `${{` → arm reds. NOT a control, and withdrawn from an earlier draft:
+  "reorder into sync-then-bare-run" — that IS the landed shape, so under the
+  ordering law it must stay green, and a control that reddens a correct
+  workflow measures the arm's narrowness rather than the defect.
   KILL: the arm passing with the template file absent (vacuous arm), or any
   assertion red against the landed template.
 - **A3 — generated code passes the generated lint (new arm, §2.6.2).** RED
