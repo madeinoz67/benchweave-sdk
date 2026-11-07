@@ -774,8 +774,16 @@ specified the single-line `uv run --extra lint ruff check .` form; the
 committed `template/.github/workflows/ci.yml` (and its fixtures) uses the
 two-step `uv sync --extra lint` then `uv run ruff check .` form, and A2 pins
 that shape. A0 runs the commands as the template actually ships them. Both
-forms are field-proven (the reference's own green run used sync-then-run);
-the record's §2.1 text is left as written and this note is the correction of
-record. The drift map and SRF-1 previously claimed the pin was executed by a
-`publish.yml` generated-tests smoke; that block was reverted by the maintainer
-corrections, and both documents now name this `ci.yml` step instead.
+forms are field-proven (the reference's own green run used sync-then-run).
+
+§2.1 has since been CORRECTED IN PLACE rather than left as written, so this
+paragraph is a historical report, not a live deviation. Commit `7ebb906`
+rewrites §2.1's yaml quote to the landed bytes, restates the law as ordering
+(`sync_index < run_index`), withdraws the "same command line" wording by name,
+records the single-line form as a second shape that satisfies the law but
+fails A2's narrower assertion, and adds the withdrawn-control note to A2.
+Read §2.1 and §2.6.1 as current; read this paragraph as the record of what was
+found before the correction. The drift map and SRF-1 previously claimed the
+pin was executed by a `publish.yml` generated-tests smoke; that block was
+reverted by the maintainer corrections, and both documents now name this
+`ci.yml` step instead.
