@@ -377,3 +377,18 @@ imported), both call sites swapped (`_enumerated_serial_at`'s row lookup
 and the connected skip), both docstrings amended. No `sys.platform`
 sniffing; no refusal prefix moved; the trust-2 branch bytes untouched.
 Deferrals D1–D5 unchanged; no deferral trigger fired during the build.
+
+**Transition risk (designer's post-build disclosure; §8 risk 4 restated
+so it reaches the PR body):** a long-lived session minted BEFORE this
+fix, whose `--device` spelling did not byte-equal the enumeration's,
+carries a mistyped mint recording — `last_serial=None,
+last_serial_known=True` — for a unit that has a serial. Sessions whose
+spellings byte-equalled recorded correctly and are unaffected. After the
+fix, the aliased session's NEXT connected-era scan enters the skip
+through node equivalence and trust-2 reconciles the live serial against
+that `None`: a mismatch, and the connected row is DROPPED once (pre-fix,
+that same session re-probed and served the row after the offending
+re-open). It self-heals on the next reconnect — that mint records through
+the node-equivalent lookup. No migration is built: a one-off transition
+artifact of long-lived host state crossing the fix, disclosed so it is
+not reported as a new defect.
