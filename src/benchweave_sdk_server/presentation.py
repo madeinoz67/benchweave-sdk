@@ -558,10 +558,13 @@ def manifest_preset_assets(package_dir: Path) -> dict[str, dict[str, Any]]:
     The reload PRE-SWAP walk and direct calls are this prefix's live
     doors; at seam construction the walk is SHADOWED by
     ``HostPresentation``'s own ``check_ui``, which reads the same
-    documents first — drift answers ``preview_invalid_presentation:``
-    there and a symlinked component ``path_symlink_component:`` — so the
-    construction call site serves this prefix only for bytes that change
-    between those two calls.
+    documents first — drift answers ``preview_invalid_presentation:
+    digest_mismatch`` there, a symlinked component
+    ``path_symlink_component:``, and unparseable bytes a bare
+    ``DocumentError`` (a ``ValueError`` subclass but unprefixed —
+    pre-existing, carried as the disclosed row in the PR-6 fold record) —
+    so the construction call site serves this prefix only for bytes that
+    change between those two calls.
     """
     import json
 

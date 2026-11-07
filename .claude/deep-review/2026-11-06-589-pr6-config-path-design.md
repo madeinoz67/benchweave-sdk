@@ -885,3 +885,34 @@ fix: `tests/server/test_preset_homes.py` 15 passed (12 prior arms + F1–F3).
 Gates and the full battery ran serially from the worktree root with
 `UV_PROJECT_ENVIRONMENT=venv`; raw counts in the lane report. The generality
 gate's floors hold with counters risen naturally (no gate edit).
+
+### 11.7 Addendum (2026-11-07, later the same day): the lane-1 repros, read as evidence
+
+Lane 1's scratch repros (`/private/tmp/refute1_pr6/`, outside the branch by
+instruction) were read after the fold landed. `attack_reload_race.py`'s
+instrument patches `seam._session.close` with a signaling wrapper that sleeps
+50 ms — WIDENING the real window (the `await adapter.close(context)` inside
+`PluginSession.close`), not creating it, as the reviewer stated. The F2 arm's
+instrument is the SAME injection point held deterministically: it parks the
+seam's swap await (a patched `session.reload_plugin`) on an `asyncio.Event`
+with no sleep, and its scenario shape (single project grown in place to
+declare a new manifest id — their `midrace.json`, this fold's
+`migrated-capture.json` — with a valid `preset_put` of that id inside the
+window) is the repro's shape arrived at independently after the two-project
+draft failed to redden. `attack_window.py`'s W1-W7 probes are the evidence
+behind §11.3.4's mapping; the two files that carry it verbatim
+(`docs/internal/invariants.md` and the `manifest_preset_assets` docstring)
+were tightened after the fold to name the shadowing shapes exactly:
+`preview_invalid_presentation: digest_mismatch` for drift,
+`path_symlink_component:` for a symlinked component, and a bare
+`DocumentError` (a `ValueError` subclass but unprefixed, pre-existing) for
+unparseable bytes. The prefix is KEPT and the walk is NOT reordered ahead of
+`HostPresentation` (declined). Two probe observations sit outside this fold's
+findings and are named here only so they are not lost: W7 (a parseable,
+readable manifest whose bytes were tampered without re-pinning the envelope)
+constructs and serves, because the helper does not verify the manifest
+against the envelope pin — the SRF-2 load-time validation is the layer that
+owns envelope-pin agreement; and attack 5 (a preset pinning the corpus input
+`$id` while the target's schema asset bytes are a permissive custom schema)
+was a load-time disagreement probe. Both were adjudicated by the review wave,
+not by this fold.

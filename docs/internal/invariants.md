@@ -134,11 +134,12 @@ the invariants below anchor there.
   already-validated documents cannot be walked for preset assets — its
   live doors are the reload PRE-SWAP walk and direct helper calls; at
   seam construction it is SHADOWED by `HostPresentation`'s own `check_ui`
-  reading the same documents first (drift answers
-  `preview_invalid_presentation:` there, a symlinked component
-  `path_symlink_component:`, unparseable bytes a bare `DocumentError` —
-  the disclosed pre-existing row) — the silent-empty class D12 died
-  from, one lane over.
+  reading the same documents first, where drift surfaces as
+  `preview_invalid_presentation: digest_mismatch`, a symlinked component
+  as `path_symlink_component:`, and unparseable bytes as a bare
+  `DocumentError` — a `ValueError` subclass but unprefixed (pre-existing,
+  not this diff's change; the disclosed row in the PR-6 fold record) —
+  the silent-empty class D12 died from, one lane over.
   Every apply-lane refusal REUSES existing surfaces: invoke's I2/I4/I5
   codes, `_stageable`'s messages, the firmware gate's `conflict`, the
   digest-mismatch findings — anchor: `benchweave_sdk_server/seam.py`,
