@@ -997,6 +997,24 @@ def test_adopted_project_first_upgrade_conflicts_honestly_on_managed_edits(
     answers.write_bytes("".join(rendered).encode())
     _author_commit(project)
     conflicted, restored, _skipped = upgrade_project(project, target_ref=TARGET_TAG)
+    import hashlib as _h
+    import sys as _s
+
+    if _s.platform == "win32":
+        print("BW596-DIAG conflicted=", sorted(conflicted), "restored=", restored)
+        for _name in (".github/workflows/ci.yml", "AI-GUIDE.md"):
+            _proj = project / _name
+            _tgt = target.get("template/" + _name) or b""
+            _pb = _proj.read_bytes() if _proj.is_file() else b""
+            print(
+                "BW596-DIAG", _name,
+                "proj_exists=", _proj.is_file(),
+                "proj=", len(_pb), _h.sha256(_pb).hexdigest()[:12], repr(_pb[:60]),
+            )
+            print(
+                "BW596-DIAG", _name,
+                "tgt =", len(_tgt), _h.sha256(_tgt).hexdigest()[:12], repr(_tgt[:60]),
+            )
     assert conflicted == ["AI-GUIDE.md"]
     assert restored == []
     text = guide.read_text(encoding="utf-8")
