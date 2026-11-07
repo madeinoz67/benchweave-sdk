@@ -45,7 +45,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from benchweave_sdk.capture import capture_root as resolve_capture_root
-from benchweave_sdk.presentation import read_file, validate_preset
+from benchweave_sdk.presentation import read_file, resolve_preset_action, validate_preset
 from benchweave_sdk.testing import ConformanceError
 from benchweave_sdk.validation import validate_read_receipt
 
@@ -281,7 +281,7 @@ class StandaloneSeam:
         # inside the guarded serve/mcp bodies, never at the console entry's
         # module import.
         from .plots import ObservationRing
-        from .presentation import HostPresentation
+        from .presentation import HostPresentation, manifest_preset_assets
 
         # The presentation model is host state owned by the seam (the PRD
         # §6 diagram's named component): built once, read by every surface.
@@ -297,6 +297,14 @@ class StandaloneSeam:
         # staging order ``parameter_apply`` honors; staging performs no I/O
         # and a refused apply retains every staged value.
         self._staged: dict[str, Any] = {}
+        # The manifest preset rows (issue #589 PR-6, D12): the presentation's
+        # declared preset assets, walked once at construction through the
+        # same bounded reader the loader used — the ui home the scaffold's
+        # own generated guide documents. Read before the config pin so the
+        # construction-time collision check below can see both homes.
+        self._manifest_presets: dict[str, dict[str, Any]] = (
+            manifest_preset_assets(session.plugin.package_dir)
+        )
         # The preset digests, pinned once at construction (CON-1's posture
         # at host scale): listing and apply verify the bytes on disk
         # against this pin, so a preset tampered while the host runs
@@ -397,6 +405,15 @@ class StandaloneSeam:
     @property
     def transport_kind(self) -> str:
         return self._transport_kind
+
+    @property
+    def op_mutex(self) -> asyncio.Lock:
+        """The op-vs-reload mutex, shared with the authoring writers (issue
+        #589 PR-6 fold): ``preset_put`` reads the manifest rows and moves
+        the serving pins — the same state a reload swaps mid-flight — so
+        the authoring write serializes under the same lock every seam
+        handler does."""
+        return self._op_mutex
 
     @property
     def rehearsal(self) -> bool:
@@ -537,7 +554,15 @@ class StandaloneSeam:
             data["applied_count"] = len(result.get("applied", []))
         elif operation == "preset_apply":
             data["preset_id"] = result.get("preset_id")
-            data["applied_count"] = len(result.get("applied", []))
+            data["home"] = result.get("home")
+            if result.get("action_id") is not None:
+                data["action_id"] = result.get("action_id")
+            else:
+                # The parameter lane's own count only: the action lane
+                # applies through ONE dispatch and writes no parameters,
+                # so an ``applied_count`` there would assert a measurement
+                # the lane never made (issue #589 PR-6 fold).
+                data["applied_count"] = len(result.get("applied", []))
         elif operation == "invoke":
             # STATED verbatim from the descriptor's action row (issue #589
             # §3.2, the revised ruling): a watcher sees WHICH actions
@@ -1562,14 +1587,50 @@ class StandaloneSeam:
             self._staged.clear()
             return {"device_id": self._session.device_id, "applied": applied}
 
-    def _pin_presets(self) -> dict[str, str]:
-        """Digest every declared preset once, at construction."""
+    def _pin_presets(self, *, stems: set[str] | None = None) -> dict[str, str]:
+        """Digest every declared preset once, at construction (``stems`` is
+        None) or over the stems a reload's PRE-SWAP scan already cleared
+        (``stems`` given — issue #589 PR-6 fold). The two documented homes
+        share one id namespace: at construction a config file stem equal to
+        a manifest preset asset id refuses construction — the scaffold's
+        own one-authoritative-copy rule, made mechanical (issue #589 PR-6,
+        D12). The post-swap re-pin runs after the point of no return, so it
+        is incapable of refusing: no collision check (the pre-swap scan
+        already cleared exactly these stems), and a stem whose file
+        vanished or grew unreadable in the swap window is simply not
+        pinned. What that does not catch: a config preset DROPPED into the
+        window is likewise not pinned and stays unserved until the next
+        reload, whose pre-swap scan refuses the collision typed."""
         digests: dict[str, str] = {}
         presets_dir = self._session.plugin.package_dir / "config" / "presets"
         if presets_dir.is_dir():
-            for path in sorted(presets_dir.glob("*.json")):
-                digests[path.stem] = hashlib.sha256(read_file(path)).hexdigest()
+            if stems is None:
+                for path in sorted(presets_dir.glob("*.json")):
+                    digests[path.stem] = hashlib.sha256(read_file(path)).hexdigest()
+            else:
+                for stem in sorted(stems):
+                    try:
+                        raw = read_file(presets_dir / f"{stem}.json")
+                    except (OSError, ValueError):
+                        continue
+                    digests[stem] = hashlib.sha256(raw).hexdigest()
+        if stems is None:
+            conflict = sorted(set(digests) & set(self._manifest_presets))
+            if conflict:
+                raise ValueError(
+                    f"standalone_preset_home_conflict: preset id "
+                    f"{conflict[0]} exists in both homes "
+                    f"(config/presets/{conflict[0]}.json and the "
+                    f"presentation manifest's preset asset {conflict[0]}); "
+                    "keep one authoritative copy — delete a duplicate, or "
+                    "rename one of two distinct presets"
+                )
         return digests
+
+    def manifest_preset_ids(self) -> frozenset[str]:
+        """The ids the presentation manifest serves (issue #589 PR-6) —
+        the collision namespace the authoring write must respect."""
+        return frozenset(self._manifest_presets)
 
     def repin_preset(self, preset_id: str) -> str:
         """Re-pin one preset's serving digest after the host's OWN authorized
@@ -1577,6 +1638,14 @@ class StandaloneSeam:
         bytes the host did not write; this moves the pin WITH the host's
         write so the running host serves its authorized configuration
         without a reload, and returns the new digest."""
+        if preset_id in self._manifest_presets:
+            raise ValueError(
+                f"standalone_preset_home_conflict: preset id {preset_id} is "
+                "served from the presentation manifest's preset assets; an "
+                "authoring write would duplicate it in config/presets — "
+                "keep one authoritative copy: delete a duplicate, or "
+                "rename one of two distinct presets"
+            )
         path = (
             self._session.plugin.package_dir
             / "config"
@@ -1588,11 +1657,13 @@ class StandaloneSeam:
         return digest
 
     def _preset_rows(self, correlation: str) -> list[dict[str, Any]]:
-        """The plugin's declared presets under ``config/presets/`` — the
-        scaffold's documented configuration home — each row carrying the
-        CONSTRUCTION-pinned digest, verified against the bytes on disk
-        before listing (CON-1's posture at host scale). Local files only;
-        no device I/O."""
+        """The plugin's declared presets from BOTH documented homes (issue
+        #589 PR-6, D12): ``config/presets/`` rows carry the CONSTRUCTION-
+        pinned digest, and the presentation manifest's preset assets carry
+        the manifest's own sha256 pin — each verified against the bytes on
+        disk before listing (CON-1's posture at host scale). Local files
+        only; no device I/O. A plugin with no presets in either home keeps
+        an honest empty list."""
         rows: list[dict[str, Any]] = []
         for preset_id, digest in self._preset_digests.items():
             path = (
@@ -1636,39 +1707,108 @@ class StandaloneSeam:
                     "id": preset_id,
                     "title": str(document.get("title", preset_id)),
                     "sha256": digest,
+                    "home": "config",
+                }
+            )
+        for preset_id, row in self._manifest_presets.items():
+            try:
+                raw = read_file(row["path"])
+            except (OSError, ValueError) as exc:
+                raise self._fail(
+                    "invalid_request",
+                    f"unreadable preset document: {preset_id}: {exc}",
+                    correlation,
+                ) from exc
+            if hashlib.sha256(raw).hexdigest() != row["sha256"]:
+                raise self._fail(
+                    "invalid_request",
+                    f"preset bytes drifted from the manifest pin: {preset_id}",
+                    correlation,
+                    preset_id=preset_id,
+                    finding="digest_mismatch",
+                )
+            try:
+                document = json.loads(raw)
+            except ValueError as exc:
+                raise self._fail(
+                    "invalid_request",
+                    f"malformed preset document: {preset_id}: {exc}",
+                    correlation,
+                ) from exc
+            if not isinstance(document, dict):
+                raise self._fail(
+                    "invalid_request",
+                    f"preset document is not an object: {preset_id}",
+                    correlation,
+                )
+            rows.append(
+                {
+                    "id": preset_id,
+                    "title": str(document.get("title", preset_id)),
+                    "sha256": row["sha256"],
+                    "home": "ui",
                 }
             )
         return rows
 
-    def _preset_bytes(self, preset_id: str, correlation: str) -> bytes:
+    def _preset_bytes(
+        self, preset_id: str, correlation: str
+    ) -> tuple[bytes, str]:
+        """Resolve one preset's bytes from EITHER documented home (issue
+        #589 PR-6), returning the bytes and the home they came from. The
+        config lane re-verifies the construction pin; the ui lane verifies
+        the manifest's own asset pin. An id in neither home names both
+        homes searched — the diagnosis a silently empty list never gave."""
         digest = self._preset_digests.get(preset_id)
-        if digest is None:
-            raise self._fail(
-                "not_found", f"no such preset: {preset_id}", correlation
+        if digest is not None:
+            path = (
+                self._session.plugin.package_dir
+                / "config"
+                / "presets"
+                / f"{preset_id}.json"
             )
-        path = (
-            self._session.plugin.package_dir
-            / "config"
-            / "presets"
-            / f"{preset_id}.json"
+            try:
+                raw = read_file(path)
+            except (OSError, ValueError) as exc:
+                raise self._fail(
+                    "invalid_request",
+                    f"unreadable preset document: {preset_id}: {exc}",
+                    correlation,
+                ) from exc
+            if hashlib.sha256(raw).hexdigest() != digest:
+                raise self._fail(
+                    "invalid_request",
+                    f"preset bytes drifted since startup: {preset_id}",
+                    correlation,
+                    preset_id=preset_id,
+                    finding="digest_mismatch",
+                )
+            return raw, "config"
+        row = self._manifest_presets.get(preset_id)
+        if row is not None:
+            try:
+                raw = read_file(row["path"])
+            except (OSError, ValueError) as exc:
+                raise self._fail(
+                    "invalid_request",
+                    f"unreadable preset document: {preset_id}: {exc}",
+                    correlation,
+                ) from exc
+            if hashlib.sha256(raw).hexdigest() != row["sha256"]:
+                raise self._fail(
+                    "invalid_request",
+                    f"preset bytes drifted from the manifest pin: {preset_id}",
+                    correlation,
+                    preset_id=preset_id,
+                    finding="digest_mismatch",
+                )
+            return raw, "ui"
+        raise self._fail(
+            "not_found",
+            f"no such preset: {preset_id} (searched config/presets/ and "
+            "the presentation manifest's preset assets)",
+            correlation,
         )
-        try:
-            raw = read_file(path)
-        except (OSError, ValueError) as exc:
-            raise self._fail(
-                "invalid_request",
-                f"unreadable preset document: {preset_id}: {exc}",
-                correlation,
-            ) from exc
-        if hashlib.sha256(raw).hexdigest() != digest:
-            raise self._fail(
-                "invalid_request",
-                f"preset bytes drifted since startup: {preset_id}",
-                correlation,
-                preset_id=preset_id,
-                finding="digest_mismatch",
-            )
-        return raw
 
     async def _op_preset_list(
         self, arguments: dict[str, Any], correlation: str
@@ -1679,7 +1819,9 @@ class StandaloneSeam:
         self, arguments: dict[str, Any], correlation: str
     ) -> dict[str, Any]:
         # Under the op mutex for the WHOLE span (firmware gate,
-        # validation, the transient batch's write→read-back): the
+        # validation, the transient batch's write→read-back or the
+        # action lane's invoke dispatch — which is why the action lane
+        # calls the LOCK-FREE core, never the locked handler): the
         # batch never enters _staged, so without the mutex a reload
         # landing inside the span serves the write on the old adapter
         # and the read-back on the new one — a cross-adapter chimera
@@ -1707,7 +1849,7 @@ class StandaloneSeam:
                     correlation,
                 )
             preset_id = arguments["preset_id"]
-            raw = self._preset_bytes(preset_id, correlation)
+            raw, home = self._preset_bytes(preset_id, correlation)
             try:
                 preset = json.loads(raw)
             except ValueError as exc:
@@ -1719,9 +1861,22 @@ class StandaloneSeam:
             plugin = self._session.plugin
             try:
                 descriptor_raw = read_file(plugin.package_dir / "descriptor.json")
-                settings_raw = read_file(
-                    plugin.package_dir / "config" / "settings.schema.json"
-                )
+                if home == "ui":
+                    # The validation source the preset's own {id, sha256}
+                    # pin names: the declaring target's settings-schema
+                    # asset, resolved through the manifest walk (issue #589
+                    # PR-6 — the config lane keeps its fixed document).
+                    schema_path = self._manifest_presets[preset_id]["schema_path"]
+                    if schema_path is None:
+                        raise ValueError(
+                            "the target's settings-schema asset does not "
+                            "resolve in the manifest"
+                        )
+                    settings_raw = read_file(schema_path)
+                else:
+                    settings_raw = read_file(
+                        plugin.package_dir / "config" / "settings.schema.json"
+                    )
             except (OSError, ValueError) as exc:
                 raise self._fail(
                     "invalid_request",
@@ -1771,6 +1926,31 @@ class StandaloneSeam:
                     f"preset settings are not an object: {preset_id}",
                     correlation,
                 )
+            # The lane the document declares (issue #589 PR-6, D12+D13): a
+            # settings schema pinning a corpus action's input-schema $id
+            # makes the settings that action's INPUT — dispatch through the
+            # lock-free invoke core (the apply span already holds the op
+            # mutex; asyncio.Lock is not reentrant, so the LOCKED handler
+            # would hang). I1–I5 and the result gates run exactly as a
+            # hand-written invoke's do. A custom-$id schema applies no
+            # envelope — the parameter lane, exactly as before.
+            resolved = resolve_preset_action(raw, descriptor_raw=descriptor_raw)
+            if resolved is not None:
+                invoke_result = await self._invoke_core(
+                    {
+                        "device_id": self._session.device_id,
+                        "action_id": resolved,
+                        "input": settings,
+                    },
+                    correlation,
+                )
+                return {
+                    "device_id": self._session.device_id,
+                    "preset_id": preset_id,
+                    "home": home,
+                    "action_id": resolved,
+                    "invoke_result": invoke_result,
+                }
             for name, value in settings.items():
                 self._stageable(str(name), value, correlation)
             # Scoped: apply exactly the preset's settings through a transient
@@ -1782,6 +1962,7 @@ class StandaloneSeam:
             return {
                 "device_id": self._session.device_id,
                 "preset_id": preset_id,
+                "home": home,
                 "applied": applied,
             }
     # --- reload (I2c §4.2, SW-38 + Q11) --------------------------------------
@@ -1960,6 +2141,8 @@ class StandaloneSeam:
     ) -> dict[str, Any]:
         from datetime import UTC, datetime
 
+        from .presentation import manifest_preset_assets
+
         correlation = self._correlation(None)
         self._reload_guards(correlation)
         effective = self._reload_wrapper(loaded) if self._reload_wrapper else loaded
@@ -1971,6 +2154,24 @@ class StandaloneSeam:
         try:
             incoming_contracts = resolve_invoke_contracts(effective)
             check_action_budget_feasibility(effective)
+            # The preset-home collision check runs against the INCOMING
+            # plugin BEFORE the swap (issue #589 PR-6): a conflicted
+            # incoming plugin never becomes the served session.
+            incoming_presets = manifest_preset_assets(effective.package_dir)
+            incoming_stems: set[str] = set()
+            incoming_dir = effective.package_dir / "config" / "presets"
+            if incoming_dir.is_dir():
+                incoming_stems = {path.stem for path in incoming_dir.glob("*.json")}
+            overlap = sorted(incoming_stems & set(incoming_presets))
+            if overlap:
+                raise ValueError(
+                    f"standalone_preset_home_conflict: preset id "
+                    f"{overlap[0]} exists in both homes "
+                    f"(config/presets/{overlap[0]}.json and the "
+                    f"presentation manifest's preset asset {overlap[0]}); "
+                    "keep one authoritative copy — delete a duplicate, or "
+                    "rename one of two distinct presets"
+                )
         except ValueError as exc:
             raise self._fail(
                 "invalid_request",
@@ -1993,7 +2194,17 @@ class StandaloneSeam:
         self._invoke_contracts = incoming_contracts
         self._invoke_constraints = {}
         self._arm_dataset_admission(incoming_contracts)
-        self._preset_digests = self._pin_presets()
+        # The manifest preset rows and the config re-pin both REUSE the
+        # pre-swap walk (issue #589 PR-6 fold): nothing re-reads the
+        # presentation after the point of no return — a re-walk could
+        # refuse, and the swap has already happened — and the re-pin
+        # digests only the stems the pre-swap scan cleared, so the
+        # post-swap section is incapable of refusing and no surface can
+        # serve an id from both homes (a config preset landing inside the
+        # swap window is not pinned; the NEXT reload's pre-swap scan
+        # refuses the collision typed).
+        self._manifest_presets = incoming_presets
+        self._preset_digests = self._pin_presets(stems=incoming_stems)
         # The observation ring belongs to the PREVIOUS plugin version:
         # samples from the old code would launder into the new version's
         # plots, so the ring resets with the plugin.

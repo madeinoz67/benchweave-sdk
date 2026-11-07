@@ -262,25 +262,17 @@ _PRESET_ROW = _object(
         "id": {"type": "string", "minLength": 1},
         "title": {"type": "string"},
         "sha256": {"type": "string", "minLength": 64, "maxLength": 64},
+        # Issue #589 PR-6: which documented home serves the row — the
+        # config file stem or the presentation manifest's asset id. A
+        # plugin with presets in neither home lists none; an id may never
+        # appear in both (construction refuses the collision).
+        "home": {"type": "string", "enum": ["config", "ui"]},
     },
     ["id", "title", "sha256"],
 )
 
 _PRESET_LIST_RESULT = _object(
     {"presets": {"type": "array", "items": _PRESET_ROW}}, ["presets"]
-)
-
-_PRESET_APPLY_RESULT = _object(
-    {
-        "device_id": _IDENT,
-        "preset_id": {"type": "string", "minLength": 1},
-        "applied": {
-            "type": "array",
-            "items": _APPLIED_ROW,
-            "description": "One row per preset setting, from the read-back",
-        },
-    },
-    ["device_id", "preset_id", "applied"],
 )
 
 # --- capture (I3b): the flipped rows and fork F-2's three new rows ---------
@@ -847,6 +839,26 @@ _INVOKE_RESULT = _object(
     ["action_id", "result"],
 )
 
+#: Issue #589 PR-6: one lane fills one shape, never both — the parameter
+#: lane answers ``applied`` (the write/read-back rows), the action lane
+#: answers ``action_id`` + ``invoke_result`` (the closed invoke envelope
+#: the composition dispatched). ``home`` names the served document's home.
+_PRESET_APPLY_RESULT = _object(
+    {
+        "device_id": _IDENT,
+        "preset_id": {"type": "string", "minLength": 1},
+        "home": {"type": "string", "enum": ["config", "ui"]},
+        "applied": {
+            "type": "array",
+            "items": _APPLIED_ROW,
+            "description": "One row per preset setting, from the read-back",
+        },
+        "action_id": {"type": "string", "minLength": 1},
+        "invoke_result": _INVOKE_RESULT,
+    },
+    ["device_id", "preset_id"],
+)
+
 #: The reset receipt (the vendored runtime schema's reset result branch:
 #: ``acknowledged`` const true), with the device id the closed catalogue
 #: shape serves.
@@ -967,9 +979,11 @@ CATALOGUE: tuple[OperationSpec, ...] = (
     _spec(
         "preset_list",
         (
-            "List the plugin's declared configuration presets with their "
-            "content digests. Reads local plugin files only; no device I/O "
-            "(SW-43)."
+            "List the plugin's declared configuration presets from both "
+            "documented homes — config/presets files and the presentation "
+            "manifest's preset assets — each row carrying its home and the "
+            "content digest the serving home pinned. Reads local plugin "
+            "files only; no device I/O (SW-43)."
         ),
         _object({}, []),
         _PRESET_LIST_RESULT,
@@ -977,11 +991,15 @@ CATALOGUE: tuple[OperationSpec, ...] = (
     _spec(
         "preset_apply",
         (
-            "Apply one configuration preset: validated offline, firmware-gated "
-            "against the established device identity before any write, then "
-            "applied through the write/read-back path — exactly the preset's "
-            "own settings; previously staged values are neither applied nor "
-            "discarded (SW-43)."
+            "Apply one configuration preset through the lane its own "
+            "document declares: validated offline, firmware-gated against "
+            "the established device identity before any dispatch, then "
+            "either dispatched as the pinned configuration action's input "
+            "(a corpus action input-schema $id declares the action lane) or "
+            "applied through the write/read-back parameter lane (a custom "
+            "$id applies no envelope) — exactly the preset's own settings; "
+            "previously staged values are neither applied nor discarded "
+            "(SW-43)."
         ),
         _object(
             {"device_id": _IDENT, "preset_id": {"type": "string", "minLength": 1}},
@@ -1076,7 +1094,9 @@ CATALOGUE: tuple[OperationSpec, ...] = (
         (
             "Fetch the seam's events after a cursor: the state changes "
             "(connect, disconnect, stage, apply, preset, reload, "
-            "endpoint bind/unbind, invoke, device reset), the capture "
+            "endpoint bind/unbind, invoke, device reset) — a preset row "
+            "names its home and, on the action lane, the dispatched "
+            "action id — the capture "
             "lifecycle (started, progress, stopped), the link family (the "
             "serial link state machine: applied, refused and failed "
             "switches) and every refused seam operation — unknown, "

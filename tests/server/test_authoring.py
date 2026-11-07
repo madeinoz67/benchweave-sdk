@@ -9,6 +9,7 @@ relative paths, no symlink traversal.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import shutil
@@ -212,7 +213,7 @@ def test_preset_get_and_put_round_trip(tmp_path) -> None:
     original = authoring._preset_get(seam, "steady")
     assert original["document"]["id"] == "steady"
     edited = {**original["document"], "title": "Quieter setpoint"}
-    result = authoring._preset_put(seam, "steady", edited)
+    result = asyncio.run(authoring._preset_put(seam, "steady", edited))
     package = project / "src" / "setpoint_demo"
     assert result["sha256"] == _digest(
         package / "config" / "presets" / "steady.json"
@@ -225,7 +226,7 @@ def test_preset_put_rejects_an_invalid_document(tmp_path) -> None:
     seam, project = _setpoint_seam(tmp_path)
     before = _project_files(project)
     with pytest.raises(authoring.AuthoringError) as caught:
-        authoring._preset_put(seam, "steady", {"id": "steady", "settings": {}})
+        asyncio.run(authoring._preset_put(seam, "steady", {"id": "steady", "settings": {}}))
     assert caught.value.details.get("findings")
     assert _project_files(project) == before
 
@@ -257,7 +258,7 @@ def test_preset_put_commissioned_project_validates_without_a_firmware_source(
     seam, project = _commissioned_seam(tmp_path)
     original = authoring._preset_get(seam, "steady")
     edited = {**original["document"], "title": "Commissioned quiet"}
-    result = authoring._preset_put(seam, "steady", edited)
+    result = asyncio.run(authoring._preset_put(seam, "steady", edited))
     assert result["written"] == "config/presets/steady.json"
     package = project / "src" / "setpoint_demo"
     assert result["sha256"] == _digest(package / "config" / "presets" / "steady.json")
@@ -305,7 +306,7 @@ def test_preset_put_rejects_traversal_ids(tmp_path) -> None:
     seam, project = _setpoint_seam(tmp_path)
     for bad in ("../escape", "nested/name", "", ".", ".."):
         with pytest.raises(authoring.AuthoringError):
-            authoring._preset_put(seam, bad, {"settings": {}})
+            asyncio.run(authoring._preset_put(seam, bad, {"settings": {}}))
     assert not (project / "src" / "setpoint_demo" / ".." / "escape.json").exists()
 
 
@@ -319,7 +320,7 @@ def test_preset_put_re_pins_the_serving_digest(tmp_path) -> None:
     seam, _project = _setpoint_seam(tmp_path)
     original = authoring._preset_get(seam, "steady")
     edited = {**original["document"], "title": "Re-pinned"}
-    authoring._preset_put(seam, "steady", edited)
+    asyncio.run(authoring._preset_put(seam, "steady", edited))
     rows = asyncio.run(seam.call("preset_list", {}))["presets"]
     steady = next(row for row in rows if row["id"] == "steady")
     assert steady["title"] == "Re-pinned"

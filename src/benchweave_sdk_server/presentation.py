@@ -535,3 +535,78 @@ def load_host_presentation(plugin: Any) -> HostPresentation:
     return HostPresentation(
         package_dir=plugin.package_dir, has_presentation=plugin.has_presentation
     )
+
+
+def manifest_preset_assets(package_dir: Path) -> dict[str, dict[str, Any]]:
+    """The presentation's declared preset assets, keyed by asset id (issue
+    #589 PR-6, D12).
+
+    A light structural walk of the SAME three documents the loader
+    validated at plugin load — the envelope (resource root, manifest path),
+    the manifest (asset rows) and the binding catalogue (configuration
+    targets) — through the bounded reader, never a second validation. Each
+    row carries the asset's path resolved under the resource root, the
+    manifest's own sha256 pin, and the declaring target's settings-schema
+    asset id and action id; the FIRST target declaring an id wins (targets
+    are unique rows, and the load-time check validated every declared
+    preset against its target's schema). A package with no presentation
+    carries no manifest presets (``{}`` — the honest empty).
+
+    Refuses :class:`ValueError` (``standalone_presentation_unreadable:``)
+    when a document the load already validated cannot be walked — bytes
+    that drifted or a symlinked component appeared between load and here.
+    The reload PRE-SWAP walk and direct calls are this prefix's live
+    doors; at seam construction the walk is SHADOWED by
+    ``HostPresentation``'s own ``check_ui``, which reads the same
+    documents first — drift answers ``preview_invalid_presentation:
+    digest_mismatch`` there, a symlinked component
+    ``path_symlink_component:``, and unparseable bytes a bare
+    ``DocumentError`` (a ``ValueError`` subclass but unprefixed —
+    pre-existing, carried as the disclosed row in the PR-6 fold record) —
+    so the construction call site serves this prefix only for bytes that
+    change between those two calls.
+    """
+    import json
+
+    from benchweave_sdk.presentation import read_file
+
+    envelope_path = package_dir / "presentation.json"
+    if not envelope_path.is_file():
+        # No presentation documents: the honest empty, never a refusal
+        # (a plugin without a UI home is a legal state).
+        return {}
+    try:
+        envelope = json.loads(read_file(envelope_path))
+        root = package_dir / str(envelope["resource_root"])
+        manifest = json.loads(read_file(root / str(envelope["manifest"]["path"])))
+        catalogue = json.loads(read_file(package_dir / "binding-catalogue.json"))
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise ValueError(
+            f"standalone_presentation_unreadable: the presentation documents "
+            f"cannot be walked for preset assets: {exc}"
+        ) from exc
+    assets: dict[str, dict[str, Any]] = {}
+    for asset in manifest.get("assets", []) or []:
+        if isinstance(asset, dict) and isinstance(asset.get("id"), str):
+            assets[asset["id"]] = asset
+    rows: dict[str, dict[str, Any]] = {}
+    for target in catalogue.get("targets", []) or []:
+        if not isinstance(target, dict) or target.get("kind") != "configuration":
+            continue
+        schema_asset = assets.get(str(target.get("schema_asset_id", "")))
+        for preset_id in target.get("preset_asset_ids", []) or []:
+            asset = assets.get(str(preset_id))
+            if asset is None or str(preset_id) in rows:
+                continue
+            rows[str(preset_id)] = {
+                "path": root / str(asset["path"]),
+                "sha256": str(asset["sha256"]),
+                "schema_asset_id": str(target.get("schema_asset_id", "")),
+                "schema_path": (
+                    root / str(schema_asset["path"])
+                    if schema_asset is not None
+                    else None
+                ),
+                "action_id": str(target.get("action_id", "")),
+            }
+    return rows

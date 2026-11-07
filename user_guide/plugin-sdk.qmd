@@ -871,6 +871,19 @@ A switch is one bounded attempt:
 The host never retries a failed switch. A failed reopen leaves no serving link and raises `ConnectionError`. The adapter may then request the boot baud as its own explicit step. That is the adapter's move.
 
 `host_info` and `device_get` carry a `link` block on the serial transport: the current baud, the boot baud, and whether any switch is negotiable. The block is `null` on other transports and before a connection. The event stream carries the `link` family. Each event says what happened (`reconfigured`, `reconfigure_refused` or `reconfigure_failed`), both baud rates, and the operation id.
+
+### Presets and parameters on the standalone host {#preset-homes}
+
+The standalone host reads presets from two homes. One home is the package directory `config/presets`. Each file stem in that directory is one preset id. The other home is the presentation manifest. Each preset asset that a configuration target declares is one preset id. The scaffold documents both homes. A plugin with a UI keeps its presets under `ui/`. The host serves both homes, and each listed row says which home it came from in its `home` field.
+
+One id may not live in both homes. The host refuses to start when a `config/presets` file stem equals a manifest preset asset id. The refusal names the id and both homes. A reload gets the same refusal for the incoming plugin. The previous version stays loaded. An authorized `preset_put` write gets the same refusal before it writes any byte. Keep one authoritative copy of each preset.
+
+Each preset applies through the lane that its own document declares. The settings schema tells the lane. A settings schema that pins a corpus action input-schema `$id` makes the settings that action's input. The host dispatches the action through the invoke path. The answer carries the action id and the closed invoke result. A settings schema with a custom `$id` applies no action envelope. The host applies the settings through the parameter lane, one write and one read-back per setting. Both lanes run the offline validation and the firmware gate before any dispatch.
+
+Parameters and action inputs have different read surfaces. `parameter_read` serves the parameters that the descriptor declares with access `ro` or `rw`. Action-declared configuration, such as per-channel thresholds and the sample rate, is input of the `configure` action. Its read-back home is the `effective_configuration` output of that action. Use `invoke` for that read-back. The host never names these values. The descriptor and the pinned catalog hold them.
+
+A parameter with access `wo` is declared-valid per the descriptor schema, but this host cannot operate it. A write needs the read-back that SW-23 requires. A write-only parameter cannot produce that read-back, and a read of it is refused by definition. Do not declare a parameter `wo` when a bench must set it through this host.
+
 ### Capture retention and the library page (standalone host)
 
 The standalone host adds retention, a storage reserve and a library page over one capture root. A retention rules document states what the host keeps and what it removes. The document is a JSON file with an explicit path. Its top-level keys are `interval_s`, `orphan_grace_s`, `reserve_bytes` and `rules`, and every key is optional. Each rule has a unique, non-empty `id`. A rule can carry the match keys `source` (`ui`, `rest` or `mcp`) and `project` (an exact string). An absent match key matches anything.

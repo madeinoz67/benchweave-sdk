@@ -118,7 +118,33 @@ the invariants below anchor there.
   the exhaustion walk in `tests/server/test_format_path.py` pins the
   derivation both ways and drives every admitted format over every
   display surface) — anchor: `benchweave_sdk_server/catalogue.py`,
-  `benchweave_sdk_server/seam.py`.
+  `benchweave_sdk_server/seam.py`. The preset homes (issue #589 PR-6)
+  add two more, both `ValueError`: `standalone_preset_home_conflict:`,
+  refusing a preset id that exists in BOTH documented homes (a
+  `config/presets` file stem equal to a presentation-manifest preset
+  asset id) — the scaffold's one-authoritative-copy rule, mechanically
+  enforced — at seam construction and at reload against the INCOMING
+  plugin before the session swap (the `profile_contract_*`
+  construction/reload convention), and at the authoring `preset_put`
+  before any byte is written, where the same prefix rides `AuthoringError`
+  (a `ValueError` subclass carrying `code`, `authoring.py`) and the tool
+  wrapper translates it to a typed error result — the authoring door's
+  authority is that translation, not the construction convention; and
+  `standalone_presentation_unreadable:`, refusing a presentation whose
+  already-validated documents cannot be walked for preset assets — its
+  live doors are the reload PRE-SWAP walk and direct helper calls; at
+  seam construction it is SHADOWED by `HostPresentation`'s own `check_ui`
+  reading the same documents first, where drift surfaces as
+  `preview_invalid_presentation: digest_mismatch`, a symlinked component
+  as `path_symlink_component:`, and unparseable bytes as a bare
+  `DocumentError` — a `ValueError` subclass but unprefixed (pre-existing,
+  not this diff's change; the disclosed row in the PR-6 fold record) —
+  the silent-empty class D12 died from, one lane over.
+  Every apply-lane refusal REUSES existing surfaces: invoke's I2/I4/I5
+  codes, `_stageable`'s messages, the firmware gate's `conflict`, the
+  digest-mismatch findings — anchor: `benchweave_sdk_server/seam.py`,
+  `benchweave_sdk_server/presentation.py`,
+  `benchweave_sdk_server/authoring.py`.
   Known wound, disclosed: the provider
   pin's read inherits the SDK-wide bounded-file cap
   (`presentation.INPUT_BYTE_LIMIT`), so a corpus-valid contract above the cap
@@ -214,6 +240,16 @@ with permanent planted-violation arms R-5c). The generated plugin runtime has **
   `src/benchweave_sdk/standards/` — never against memory of what the standard says —
   `conformance.py`, `validation.py`, `fixtures.py`. *Confident recall of a standard is how
   a wrong rule ships.*
+- **[SRF draft]** (issue #589 PR-6; the maintainer assigns the final ID at landing) The
+  host serves a plugin's declared presets from BOTH documented homes — `config/presets`
+  and the presentation manifest's preset assets — and refuses an id duplicated across
+  them at construction, at reload before the swap, and at the authoring write: the
+  scaffold's one-authoritative-copy rule, mechanically enforced. A preset applies through
+  the lane its own document declares (a corpus action input-schema `$id` resolves to the
+  action lane; a custom `$id` applies no envelope and rides the parameter lane) —
+  anchors: `benchweave_sdk_server/seam.py` (`_preset_rows`, `_preset_bytes`,
+  `_op_preset_apply`), `benchweave_sdk_server/presentation.py`
+  (`manifest_preset_assets`), pinned by `tests/server/test_preset_homes.py`.
 - **[SRF-4]** (the I4a design record's new row; the maintainer assigns the final ID at
   landing) A processed value is never rendered without its definition id, its
   denominators (count, null_count, window) and the `host-computed` label — anchors:

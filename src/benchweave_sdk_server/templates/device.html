@@ -65,7 +65,7 @@
     </select>
     <button type="submit">Apply preset</button>
   </form>
-  <p class="hint">Applying validates the preset, checks the device firmware before any write, then writes and re-reads each setting.</p>
+  <p class="hint">Applying validates the preset and checks the device firmware first. A preset that declares a configuration action sends its settings to that action; every other preset writes and re-reads each setting.</p>
 </section>
 {% endif %}
 {% if has_presentation %}

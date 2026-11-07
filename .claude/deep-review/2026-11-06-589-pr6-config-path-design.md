@@ -612,3 +612,316 @@ is the runner, the host renders (otdp-decoder.schema.json:5, protocol-decoders.m
 — and the SDK's offline PD checks are still absent while the classref derivation silently
 skips unloadable decoder documents (classref.py:2950-2953): a silent-empty defect one lane
 over from D12, deferred with a named carrier.
+
+---
+
+## 10. Build record (2026-11-07, append-only; the frozen bytes above stay as committed)
+
+Head: `pr6-589-config`, built on `origin/pr4-589-format` (`975cbd5`). The mechanism
+shipped as §2 designs it — both homes served, rows carrying `home`, the collision typed
+at three doors, the lane split through the exported resolver composing the lock-free
+`_invoke_core`, the catalogue keys additive-optional, the guide row landed (§3's two D14
+carries and the homes/lane prose, STE register). What the real code corrected:
+
+1. **The prefixes, and their count.** Two prefixes minted, not one:
+   `standalone_preset_home_conflict:` (a `ValueError` at seam construction, at reload
+   against the incoming plugin BEFORE the swap, and at the authoring `preset_put` before
+   any byte is written) and `standalone_presentation_unreadable:` (a `ValueError` when
+   the manifest walk cannot read documents the load already validated — bytes drifted or
+   a symlinked component appeared). §6 said "grows ONE prefix"; the alternative to the
+   second was a bare-prose `ValueError` (a STD-4 break) or a silent `{}` (D12's own
+   defect class). A package with NO presentation returns `{}` without refusal — the
+   honest empty, distinct from an unwalkable one.
+2. **The collision check's reload site is NOT "the same call site, already re-pins"
+   (§5).** In the real `_complete_reload`, the `_pin_presets()` re-pin runs AFTER the
+   session swap — a refusal there leaves the conflicted plugin as the served session,
+   exactly what §2.1 forbids. The check is therefore hoisted into the PRE-swap block
+   beside `resolve_invoke_contracts`/`check_action_budget_feasibility`, whose existing
+   `except ValueError` wraps it as the typed "reload refused, the previous version
+   stays loaded" refusal. The post-swap re-pin still runs (defests + manifest rows).
+3. **"Manifest target" is "binding-catalogue target".** Configuration targets live in
+   `binding-catalogue.json` (`catalogue["targets"]`); the ui-manifest carries assets,
+   bindings and pages. The walk reads targets from the catalogue and asset rows from
+   the manifest — the mechanism §2.1 describes, the document names corrected.
+4. **The parameter lane's result gains `home`.** §2.2.5 said the parameter lane returns
+   its shape "unchanged", but §2.2.6 requires the EVENT row to carry `home`, and
+   `_event_data` derives "from the operation's own result — never a second source of
+   truth". The honest resolution: both lanes' results carry `home` (schema-declared,
+   optional; consumers unaffected), and the event row copies it. One lane still fills
+   one lane-shape — `applied` or `action_id`+`invoke_result`, never both.
+5. **A8 realized as schema-asset drift.** The load-time presentation check validates
+   every target-declared preset against the target's schema with firmware `None`, so a
+   PRISTINE ui-lane preset whose settings fail its pinned schema cannot pass a load —
+   the pristine-invalid case is unconstructible by design. The reachable drift is the
+   schema asset's bytes after construction; the arm tampers them and the SHARED
+   validator answers `invalid_request` with its findings (digest_mismatch naming
+   `preset.settings_schema.sha256`), nothing dispatched.
+6. **A9 realized on the config home.** A presentation target referencing an
+   undeclared action is itself a load refusal (`capability_mismatch` in the vendored
+   check), so a UI-lane A9 cannot exist either. The arm commissions a CONFIG-lane
+   preset pinning the corpus configure input `$id` against a descriptor that declares
+   invoke + contracts but not the configure action: the resolver still resolves the
+   corpus `$id` (it reads the SERVED corpus, not the pin), the lane composes
+   `_invoke_core`, and I2 refuses naming the action — the composition reusing the gate,
+   exactly §7's claim, from the other home.
+7. **The fixture pins the vendored corpus pair verbatim, with the corpus's own pin
+   ids.** A plugin-authored pin id (`urn:example:...`) on the vendored catalog trips
+   the #556 `pinned_id_shadow` refusal at load (the catalog's embedded action `$id`s
+   shadow the served corpus). The corpus examples' own convention — `urn:otdp:`-prefixed
+   pin ids, which the presentation's pinned-document merge skips by design — carries
+   the vendored pair into the invoke resolution without shadowing. The fixture's
+   descriptor also switches to `firmware_policy: "commissioned"` (no descriptor-side
+   list): the load-time preset check judges with firmware `None`, and a listed policy
+   refuses that arm.
+8. **A third collision door beyond §2's touch list.** `preset_put` (the authoring
+   writer) could create the dual-home state at runtime, falsifying the mechanical
+   enforcement §6's SRF draft row claims. The guard is one check in `_preset_put`
+   (before the write, raising `AuthoringError` carrying the prefix) plus a mirror in
+   `repin_preset` (the seam's own writer) and a public `manifest_preset_ids()`; the
+   arm pins refuse-and-nothing-written. §2.3's "no authoring-lane change" meant the
+   authoring HOME stays `config/presets` — it stays.
+9. **`manifest_preset_assets(package_dir)` as §2.1 wrote it**, reading the three
+   documents the loader validated (envelope → manifest under the resource root →
+   binding catalogue) through the bounded reader. The row gains `schema_path` (the
+   target's settings-schema asset resolved) — §2.2.3's "resolved through the same
+   manifest helper" needs the bytes' path, not only the id.
+
+The adapter fixture gained `INVOKE_ARGUMENTS` (the verbatim invoke dispatch arguments,
+beside the verb `CALLS` list) — verb names alone cannot prove A6's verbatim claim.
+
+---
+
+## 11. Fold record (2026-11-07, append-only; the frozen bytes above stay as committed)
+
+Three independent review lanes ran against head `91e5a25`; this section is the
+single fold wave answering every finding. New head after the fold: the commits
+atop `91e5a25` on `pr6-589-config` (this section travels with them).
+
+### 11.1 The HIGH — the swap window and the unserialized authoring write
+
+**Mechanism (reviewer-observed, reproduced deterministically).**
+`_complete_reload` awaits mid-swap (`seam.py:2149` → `session.py:1278`,
+`await self.close()` inside `reload_plugin`), while the authoring `preset_put`
+(`authoring.py`, synchronous, no lock) can land in that window: its collision
+guard reads the STALE pre-swap `self._manifest_presets`, writes
+`config/presets/<colliding-id>.json`, and `repin_preset` pins it against the
+same stale rows. After the swap, the re-walk (`seam.py:2164`) plus
+`self._preset_digests = self._pin_presets()` (`seam.py:2167`, OUTSIDE the
+pre-swap `try`) re-ran the collision check over a FRESH glob — the interleaved
+file is now in it — and raised the raw `ValueError` AFTER the session swap:
+the `except SeamError` in `reload_plugin` never runs (no `refused` event,
+`reload_state` stays `None`), the session IS the new plugin,
+`_manifest_presets` IS the new walk while `_preset_digests` keeps the stale
+pin set plus the repinned id — and `preset_list` then serves that id from BOTH
+homes with different sha256s, the exact state the prefix exists to forbid.
+
+**Fix, both halves as adjudicated:**
+
+1. **The post-swap section is now incapable of refusing.** The re-walk is
+   DELETED — `self._manifest_presets = incoming_presets` reuses the pre-swap
+   walk (the served plugin IS the walked plugin; same object, same
+   `package_dir`) — and `_pin_presets(stems=incoming_stems)` pins only the
+   stems the pre-swap scan already cleared: no collision check on that path
+   (the scan cleared exactly those stems), and a stem whose file vanished or
+   grew unreadable in the window is simply not pinned. What that does not
+   catch, stated: a config preset DROPPED into the window (by an external
+   filesystem writer) is likewise not pinned and stays unserved until the
+   NEXT reload, whose pre-swap scan refuses the collision typed.
+2. **The authoring write is serialized.** `StandaloneSeam.op_mutex` exposes
+   the op-vs-reload lock; `_preset_put` is now `async` and holds that mutex
+   across its whole span (guard → validation → write → re-pin), so it cannot
+   interleave with the swap; after a reload it waits, then reads the
+   POST-swap manifest rows and refuses typed with nothing written.
+
+**Arms (in `tests/server/test_preset_homes.py`, appended after the authoring
+arm):**
+
+- **F1** (`test_f1_swap_window_collision_neither_escapes_nor_serves_both_homes`):
+  a deterministic injection — the session's `reload_plugin` (the swap call the
+  seam awaits) writes the colliding config preset as the swap begins, exactly
+  between the pre-swap scan and the post-swap re-pin. RED on `91e5a25`: the
+  raw `ValueError: standalone_preset_home_conflict: …` escaped from
+  `seam.py:2167`. GREEN after: status `reloaded`, `reload_state` set, the id
+  served exactly once (`home: "ui"`), and the FOLLOW-UP reload refuses typed
+  (the window-written file is not silently accepted forever).
+- **F2** (`test_f2_preset_put_serializes_against_the_reload_swap`): the
+  migration shape — the on-disk presentation is rewritten to declare a NEW
+  preset asset id (`migrated-capture.json`, a second `_build`'s digest-chained
+  presentation bytes over the same descriptor; the fixture builders gained a
+  `preset_id` parameter), the reload parks INSIDE the window, and a valid
+  `preset_put` of the new id runs concurrently. RED on `91e5a25`: the put
+  SUCCEEDED against the stale guard, the file landed, and the post-swap
+  `_pin_presets()` raised the raw conflict (`seam.py:2167`) after the swap.
+  GREEN after: the put waits for the reload, refuses
+  `standalone_preset_home_conflict` with nothing written, and the list serves
+  the migrated id once from `ui` beside the config-home `seed` row. A
+  mutation check (the `async with seam.op_mutex` neutralized, `cp`-backed)
+  reddens F2 with the put landing — the mutex is the load-bearing half.
+  F2's first draft (two projects via distinct package dirs) PASSED on
+  `91e5a25` — the post-swap glob never sees a write into a different
+  package — and was rebuilt as the single-project migration above.
+- **F3** (`test_f3_event_row_counts_only_what_a_lane_measures`): see 11.3.
+
+The pre-existing `self._presentation = self._presentation.__class__(…)` at
+`seam.py:2150` (unchanged by PR-6, present before it) also runs `check_ui`
+post-swap and can raise; it is the same family as the disclosed row in 11.6
+and is carried there, not fixed here.
+
+### 11.2 MEDIUM — record corrections (the code is right; the record overstated)
+
+**The `applied` demotion is a breaking change for schema-promised consumers,
+not "additive-optional … consumers unaffected"** (§6 SRF(i) and build record
+item 4 both say so; item 4's phrasing "consumers unaffected" is the error).
+`_PRESET_APPLY_RESULT` previously REQUIRED `applied`; a consumer written
+against that advertised schema was promised `applied` always, and action-lane
+results omit it. The demotion itself is CORRECT (the action lane has no
+applied rows; requiring it would force a fabricated empty array) — but the
+honest classification is: an additive-optional REQUIRING set change that
+breaks closed-schema consumers keyed on `applied`, the same class PR-3's R-D
+named. Consumers must branch on `action_id`/`invoke_result` presence. The
+frozen sections stand as committed; this paragraph is the correction of
+record.
+
+**The STD-4 parenthetical** (`docs/internal/invariants.md`): the entry cited
+the `profile_contract_*` construction/reload convention while listing the
+authoring `preset_put` door in the same breath. That convention is pinned to
+construction/reload (`invoke_contracts.py`); the authority covering the
+authoring site is `AuthoringError` — a `ValueError` subclass carrying `code`
+(`authoring.py:50`) — translated to a typed error result by the tool wrapper.
+The parenthetical now says so; the code was already correct.
+
+### 11.3 LOW — dispositions
+
+1. **`templates/device.html` apply hint** claimed every apply "writes and
+   re-reads each setting" — false for action-lane presets (one `invoke`, zero
+   parameter writes). Replaced with a two-sentence hint naming both lanes.
+   Host UI prose, not scaffold output: no golden fixture moves (grep: no test
+   pins the sentence).
+2. **`events_get`'s catalogue description** now carries the §2.2.6-promised
+   amendment: "a preset row names its home and, on the action lane, the
+   dispatched action id". The family enumeration test
+   (`test_events.py::test_events_get_description_names_every_published_family`)
+   stays green — the family words are unchanged.
+3. **`applied_count` on action-lane event rows** made honest by omission: the
+   parameter lane keeps `applied_count` (the count it measures); the action
+   lane carries `action_id` and NO `applied_count` — a zero there asserted a
+   measurement the lane never made (one dispatch, zero write/read-back rows),
+   which is worse than absence because a watcher reading that field alone
+   reads "nothing happened". Pinned by **F3** (action lane: `action_id`
+   present, `applied_count` absent; parameter lane over the setpoint fixture:
+   `applied_count == 1`, `action_id` absent). RED on `91e5a25`: the action
+   lane's row carried `applied_count`.
+4. **`standalone_presentation_unreadable:` documented surface corrected**
+   (invariants STD-4 + the helper docstring in `presentation.py`): it does
+   NOT fire on construction drift — `HostPresentation`'s `check_ui` reads the
+   same documents first (drift answers `preview_invalid_presentation:`, a
+   symlinked component `path_symlink_component:`, unparseable bytes a bare
+   `DocumentError`). Its live doors are the reload PRE-SWAP walk and direct
+   helper calls; the construction call site serves it only for bytes that
+   change between those two calls. The prefix itself STAYS (an earlier
+   deletion decision was reversed).
+5. **§2.3's dangling "(§7)" deferral pointer**: this record's §7 is the
+   acceptance section and carries no authoring deferral — §4 carries the D15
+   offline-PD deferral and §1.2 defers the display-rate with its own carrier.
+   The posture "runtime `preset_put` writes only the config home" is carried
+   HERE (this section) plus the parent record's §7 PR stack (rev 7), where a
+   ui-home authoring-write slice is an unassigned row on the same issue; the
+   collision guard PR-6 added (build item 8) enforces the one-copy rule at
+   that door without widening the write home.
+6. **Drift-obligations row 14** now names the operator-facing templates and
+   the events description's preset sentence in the move-as-one-motion list,
+   so the next lane-semantics slice cannot miss them (this fold fixed exactly
+   that miss).
+7. **The collision refusal remedy wording** (all four messages) amended from
+   "keep one authoritative copy" to "keep one authoritative copy — delete a
+   duplicate, or rename one of two distinct presets": the old wording
+   presumed duplication, but the migration case is id-equality between two
+   DIFFERENT presets, whose honest fix is a rename. Short, true, both cases.
+
+### 11.4 ACCEPT with recorded note (no behaviour change)
+
+1. **The generated AI-GUIDE** teaches "keep one authoritative copy" as
+   ADVICE without the load-refusal consequence. Noted; the scaffold is SRF-1
+   pinned and unchanged by design. The guide's operator-facing counterpart
+   (`user_guide/plugin-sdk.qmd` §preset-homes, PR-6's rows) DOES state the
+   refusals, so the consequence is documented where prose moves are cheap.
+2. **`manifest_preset_assets` resolves first-wins silently** when two
+   configuration targets declare the SAME preset asset id, making the
+   target-schema association binding-catalogue-order-dependent (the preset
+   validates at load against EVERY declaring target's schema —
+   `session.py`'s load-time check — so apply-time is a subset; the
+   order-dependence is which target's `schema_asset_id`/`action_id` ride the
+   served row). Accepted as disclosed behaviour, recorded here; if a real
+   plugin ever declares one preset under two configuration targets, THAT is
+   evidence to reopen, not to widen the walk.
+3. **`repin_preset`'s guard raises a bare `ValueError`** that the authoring
+   tool's `except AuthoringError` would not catch if it fired post-write —
+   unreachable in-process today because no `await` sits between the put's own
+   guard and the write+repin inside the mutex-held span. Recorded as
+   defence-in-depth only; not widened to `AuthoringError` (the seam is not an
+   authoring module and the value would be cosmetic at this door).
+
+### 11.5 Explicitly NOT this slice's work
+
+A pre-existing STD-4 gap, recorded as its own row with a named carrier: a
+bare unprefixed `DocumentError` (the vendored contracts module's parse
+failure) escapes `StandaloneSeam.__init__` when presentation bytes are
+unparseable — `HostPresentation`'s `check_ui`/`load_validated_preview_inputs`
+raise it before any seam-level translation. It PRE-DATES PR-6 (the seam
+construction path and its call site are PR-6 context, not PR-6 hunks), is not
+caused by PR-6, and the correct motion is to type the layer that FIRES — wrap
+the `HostPresentation` construction call site in `seam.py` (`__init__` and
+`_complete_reload:2150`, the same wrapper serving both) with a typed
+translation. Carrier: a sibling SDK row on gateway issue #589, alongside the
+D15 offline-PD slice; NOT fixed here.
+
+### 11.6 Verification (this fold)
+
+RED on `91e5a25` (raw, quoted in the lane report): F1 and F2 each end in
+`ValueError: standalone_preset_home_conflict: …` escaping from
+`src/benchweave_sdk_server/seam.py:2167`; F3 in
+`AssertionError: assert 'applied_count' not in {…action_id…}`. GREEN after the
+fix: `tests/server/test_preset_homes.py` 15 passed (12 prior arms + F1–F3).
+Gates and the full battery ran serially from the worktree root with
+`UV_PROJECT_ENVIRONMENT=venv`; raw counts in the lane report. The generality
+gate's floors hold with counters risen naturally (no gate edit).
+
+### 11.7 Addendum (2026-11-07, later the same day): the lane-1 repros, read as evidence
+
+Lane 1's scratch repros (`/private/tmp/refute1_pr6/`, outside the branch by
+instruction) were read after the fold landed. `attack_reload_race.py`'s
+instrument patches `seam._session.close` with a signaling wrapper that sleeps
+50 ms — WIDENING the real window (the `await adapter.close(context)` inside
+`PluginSession.close`), not creating it, as the reviewer stated. The F2 arm's
+instrument is the SAME injection point held deterministically: it parks the
+seam's swap await (a patched `session.reload_plugin`) on an `asyncio.Event`
+with no sleep, and its scenario shape (single project grown in place to
+declare a new manifest id — their `midrace.json`, this fold's
+`migrated-capture.json` — with a valid `preset_put` of that id inside the
+window) is the repro's shape arrived at independently after the two-project
+draft failed to redden. `attack_window.py`'s W1-W7 probes are the evidence
+behind §11.3.4's mapping; the two files that carry it verbatim
+(`docs/internal/invariants.md` and the `manifest_preset_assets` docstring)
+were tightened after the fold to name the shadowing shapes exactly:
+`preview_invalid_presentation: digest_mismatch` for drift,
+`path_symlink_component:` for a symlinked component, and a bare
+`DocumentError` (a `ValueError` subclass but unprefixed, pre-existing) for
+unparseable bytes. The prefix is KEPT and the walk is NOT reordered ahead of
+`HostPresentation` (declined). Two probe observations from that script sit
+outside this fold's findings: W7's tamper (preset bytes changed, the
+manifest's own asset pin updated, the envelope's manifest pin left stale)
+REFUSES at construction with `preview_invalid_presentation:
+digest_mismatch: manifest.json` — re-derived by running it (2026-11-07,
+head 6567d3d): the vendored plugin-ui `_resource` check
+(`standards/plugin-ui/contracts.py`) verifies the envelope's manifest pin
+inside `HostPresentation`'s `check_ui`, before the helper walks, so the
+helper's own non-verification (the script's NOTE) is true in isolation
+and unreachable at construction — lane 1's defended-surface claim was
+correct and the envelope pin covers the WHOLE manifest document. The
+boundary that remains is the pin's SCOPE: a fully self-consistent re-pin
+(envelope + manifest + asset) between load and construction constructs
+and serves — indistinguishable from files edited before load, the
+envelope anchored by the load-time validation, not re-anchored at
+construction (the config home's identical posture). Attack 5 (a preset
+pinning the corpus input $id over permissive schema bytes) was adjudicated
+by the review wave: refused at load.
