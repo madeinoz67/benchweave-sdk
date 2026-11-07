@@ -174,9 +174,10 @@ No new module, no new abstraction, no new prefix.
 |---|---|---|---|
 | D1 | The issue's full split: let `max_bytes` exceed `max_frame_bytes` in **terminator** mode | Measured **zero** benefit (leg1/leg2 = 1.00×) and genuinely breaking: a plugin declaring `max_frame_bytes: 23` could then be handed a 64 KiB multi-frame run as one "frame" | A real plugin project's capture path must move a **terminator-delimited** multi-frame burst in one call and cannot compute `exact_bytes` (e.g. no length prefix) |
 | D2 | Unifying the three descriptor fallbacks (`transport_ceiling` 4096, `mock_exchanges` 128, `scenarios._frame_bound` 128) | Pre-existing divergence, not caused by this defect; changing it changes the mock's scripted `max_bytes` | A parity arm finds a host disagreement traceable to the fallback |
-| D3 | Full ladder unification across load/runtime and all four hosts | This slice makes the replay load/runtime pair agree; a single ladder object is a larger refactor | A fifth host appears |
+| D3 | Full ladder unification across load/runtime and all four hosts | This slice makes the replay load/runtime pair agree **for bulk rows only**; terminator-mode rows still load against the flat 64 KiB ladder and then refuse at runtime against a small descriptor. A single ladder object is a larger refactor | A fifth host appears, **or** a plugin author's descriptor edit plus a journal replay reaches the terminator-mode load-then-refuse path (refute lane 2, 2026-11-07: the provider pin names `reference-provider.json`, not the descriptor's `max_frame_bytes`, so this is not limited to hand-edited journals) |
 | D4 | The unprefixed refusals in `_stream_receive_bounds` (`max_bytes must be 1..N`, `termination must be …`, `exact_bytes must be …`) | A **pre-existing STD-4 deviation** — STD-4 requires a `snake_case:` prefix. Fixing it is a refusal-text change on a landed surface, forbidden in this slice | Maintainer ruling (see §8) |
 | D5 | Rewriting the guide's capture narrative beyond the example's ladder | Docs scope; the example's correctness is what the slice owes | A guide reader reports the old semantics |
+| D6 | The ring-safety soak that R2 named as its falsifier (a live-wire bulk drain showing `dropped_bytes > 0`) | Not shipped: the shipped A4 measures a **preloaded** feed sized under the 512 KiB ring, so overflow is impossible by construction and the arm cannot falsify anything. The failure shape it would catch is corruption-as-data — overflow drops the **oldest** bytes, so a later `take(exact)` pops a window whose head was dropped and delivers it as a valid receive. Pre-existing at the default pairing, not introduced here | A capture run reports bytes-in that do not match bytes-out, or the ring/ceiling pairing is changed away from the default |
 
 ## 4. Precedent
 
@@ -403,3 +404,53 @@ promise at the top of this repository's README.
 3. **The semantics gap.** The vendored corpus defines `max_frame_bytes` only as
    `integer >= 1`. If the meaning should be normative, that is a main-repository corpus
    prose change, which makes the next touch of this surface Tier 3.
+
+## 12. Addendum — 2026-11-07, post-refute fold
+
+Three independent refute lanes ran against the build commit `9fa43ee`. All three found the
+mode-scoped mechanism correct; the fold commit is `7a39e93`, appended atop the reviewed SHA.
+This addendum records what the lanes established, and the two corrections made to this record
+after it was frozen.
+
+**Corrected here, with the earlier text noted:** D3's reason cell said the slice makes the
+replay load/runtime pair agree, unscoped. It agrees for **bulk rows only**; terminator rows
+still load against the flat 64 KiB ladder and refuse at runtime against a small descriptor.
+Lane 2 additionally showed that path is reachable by an ordinary descriptor edit plus a journal
+replay, not only by hand-edited journals, so D3's reopen trigger was widened accordingly. A
+new D6 row records the ring-safety soak that R2 named as its falsifier and never shipped.
+
+**Established by measurement, and carried into the code by the fold:**
+
+- **The refusal surface moved only where intended.** A 3,400-comparison differential (pre-change
+  ladder versus HEAD, 8 host shapes) found 516 divergences, every one carrying a valid positive
+  integer `exact_bytes`: 95 refuse-to-accept plus 421 message-only. Terminator mode and every
+  malformed `exact_bytes` shape are byte-identical. All in-repo pins of the old text are
+  terminator-mode and unchanged.
+- **The author-facing question is answered against the change being breaking.** Nothing in this
+  repository could have relied on the old refusal for a bulk receive, and nothing here now
+  teaches an author to ship a receive the SDK refuses: the guide's ladder moved in the same
+  slice and is executed by `tests/test_guide_serial_host.py`.
+- **`TRANSFER_CEILING` is a sizing policy, not a transport property.** It traces to #393's
+  sizing review (`session.py`), and the vendored corpus says nothing about stream `max_bytes`
+  at all. The guide prose was corrected to attribute the bound to the host's configured ceiling
+  with 64 KiB named as the default.
+- **Parity is now statable above the default.** Before the fold, the mock and replay host could
+  not express any transfer ceiling, so bulk-mode parity held only while `tc == TRANSFER_CEILING`
+  exactly; for every descriptor at or below 64 KiB the change had narrowed agreement from
+  "matching minima" to that single point. Both hosts now take `transfer_ceiling`, and a
+  dual-host arm pins agreement at a shared 131072.
+- **`SerialLink` refuses a pairing it cannot serve.** `transfer_ceiling > ring_capacity` was
+  constructor-legal and made a ladder-legal bulk receive unable to complete, because the
+  overflow dropper caps the ring while discarding the oldest bytes. That is now a typed refusal,
+  and the five in-tree small-ring cells pass a matching ceiling.
+- **A5's control did not exercise what its name claimed.** A valid `exact_bytes` makes a receive
+  bulk mode, so the arm advertised as the terminator-mode control counted nothing in terminator
+  mode. It is renamed as the bulk control and a genuine terminator drain arm was added; under a
+  terminator-exclusion mutation the new arm reddens on both hosts while the old control stays
+  green, which is the mislabel demonstrated rather than asserted.
+
+**Residual, stated plainly:** the fold's parity arms and lane 2's boundary grid compare the
+pre-change behaviour by ladder-call emulation of the parent argument shape, not by running a
+checked-out parent commit. The parent expressions come from the diff's unchanged `self._ceiling`
+lines and §1 of this record independently confirms they were not computed elsewhere, but it is
+emulation and should not be described as a parent run.

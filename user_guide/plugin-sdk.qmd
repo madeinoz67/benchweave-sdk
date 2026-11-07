@@ -675,8 +675,9 @@ from typing import Any
 from benchweave_sdk.capture import StandaloneCaptureWriter
 
 _TERMINATORS = {"lf": b"\n", "crlf": b"\r\n"}
-#: The transport's transfer ceiling. An exact_bytes receive is a transfer,
-#: not a frame, so only this bound applies to it.
+#: The host's configured transfer ceiling. An exact_bytes receive is a
+#: transfer, not a frame, so only this bound applies to it. 64 KiB is the
+#: default.
 _TRANSFER_CEILING = 64 * 1024
 _RECEIVE = {"max_bytes", "termination", "exact_bytes"}
 _FIELDS = {
