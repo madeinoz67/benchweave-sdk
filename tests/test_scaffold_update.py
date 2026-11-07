@@ -1058,15 +1058,20 @@ def test_upgrade_collapses_a_conflict_block_whose_sides_are_identical(
         """copier's own post-merge index write: stages 1/2/3 for a conflicted
         file (see its ``update-index --index-info`` block)."""
         sha = _git_out(Path(destination), "hash-object", "-w", "--", relative)
+        # Bytes, not text=True: text mode translates \n to \r\n on Windows
+        # stdin, so git's --index-info parser reads the path as
+        # "AI-GUIDE.md\r", matches nothing, and stages no conflict entries —
+        # silently, with exit 0. The arm then observed every path as untracked
+        # on that lane and could not tell a failed staging from a clean merge.
+        payload = (
+            f"0 {'0' * 40}\t{relative}\n"
+            f"100644 {sha} 1\t{relative}\n"
+            f"100644 {sha} 2\t{relative}\n"
+            f"100644 {sha} 3\t{relative}\n"
+        ).encode()
         subprocess.run(
             ["git", "-C", destination, "update-index", "--index-info"],
-            input=(
-                f"0 {'0' * 40}\t{relative}\n"
-                f"100644 {sha} 1\t{relative}\n"
-                f"100644 {sha} 2\t{relative}\n"
-                f"100644 {sha} 3\t{relative}\n"
-            ),
-            text=True,
+            input=payload,
             check=True,
             capture_output=True,
         )
