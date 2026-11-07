@@ -419,7 +419,7 @@ The second family is `classref_*`, from the resolution walk. The ledger motion r
 
 When all three documents and the ledger already carry the active versions, the command is a no-op. It exits 0. This makes it safe in scripts and CI.
 
-Two surfaces point at the command. `check-ui` adds a remediation line when a finding has code `unsupported_version` on one of the three documents. `upgrade` prints a notice when the artifacts are behind the active version. The notice tells you to run `migrate-ui` after you commit the upgrade.
+Two surfaces point at the command. `check-ui` adds a remediation line when a finding has code `unsupported_version` on one of the three documents. `upgrade` prints a notice when the artifacts are behind the active version. The notice names the four steps of the upgrade checkpoint.
 
 Migration is not re-derivation. `migrate-ui` keeps your manifest content. It does not derive pages or plots from the descriptor. For that path, use `benchweave-sdk derive-ui`. A class-conformant project also carries `ui/class-reference.json`. The command re-stamps this file's `contract_version` and `reference_version` stamps to the active class-reference version. It also re-stamps each `composed_classes[].validated_against` record. It does this only after it resolves each named class from its pin and validates the document under the active version. The class urn keeps its own version. The command never writes content. Author overlays survive in `ui/manifest.overrides.json`.
 
