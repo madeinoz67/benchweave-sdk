@@ -69,6 +69,7 @@ plugins/
         ├── CLAUDE.md                   # Agent notes; root dev tooling
         ├── AGENTS.md                   # SDK-managed agent guide; CLAUDE.md imports it
         ├── .claude/skills/             # Five SDK-managed workflow skills
+        ├── .github/workflows/ci.yml    # Lint and tests on every push and PR
         ├── src/benchweave_acme_model100/
         │   ├── __init__.py
         │   ├── adapter.py
@@ -81,6 +82,8 @@ plugins/
         │       └── drive-device/SKILL.md
         └── tests/test_plugin.py
 ```
+
+The project also contains a GitHub Actions workflow at `.github/workflows/ci.yml`. The workflow runs the lint check and the tests on every push to main and on every pull request. The lint job installs the project's `lint` extra first, because ruff comes from that extra. The lint set is the minimal starter set that the generated `pyproject.toml` selects.
 
 The root also carries `AGENTS.md`, the SDK-managed agent guide: `CLAUDE.md` imports it, and `benchweave-sdk upgrade` refreshes it together with the five workflow skills under `.claude/skills/` (`benchweave-plugin-workflow`, `benchweave-descriptor`, `benchweave-plugin-ui`, `benchweave-adapter-testing`, `benchweave-capture`). They are repo-level dev tooling outside `src/<python_package>/`; they never enter the plugin wheel. The seeded package skills inside `src/<python_package>/skills/` are different content and do ship in the wheel. If you edit a managed file, the upgrade writes conflict markers; resolve both sides, then commit. A project made before these files existed adds the `@AGENTS.md` import line to its `CLAUDE.md` by hand.
 

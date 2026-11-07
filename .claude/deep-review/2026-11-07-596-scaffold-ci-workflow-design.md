@@ -170,6 +170,12 @@ Decisions inside that shape, each justified:
   see §4.3). Major tags (`checkout@v7`, `setup-uv@v10`, current majors per this
   repo's pins at `ci.yml:37,42`) keep update churn near zero. Trade-off and its
   falsifier are in Risk R2.
+  **Maintainer ruling 2026-11-07: major tags ACCEPTED, and this is a decided
+  trade-off, not an open question.** Generated projects are author-owned; both
+  actions are first-party (`actions/checkout`, `astral-sh/setup-uv`); SHA
+  pinning would make every `copier update` carry churn for a threat the author
+  does not control. The falsifier stays Risk R2 (a v-major breaking change
+  reding every generated repo at once), and D5 is the reversal switch.
 - **`permissions: contents: read`** — least privilege, mirrors the SDK's own
   workflow (`ci.yml:8-9`).
 - **Triggers `push: branches: [main]` + `pull_request`** — the SDK's own shape;
@@ -374,11 +380,11 @@ changes in `src/` (the template is content; the closure fix is declarative).
 
 | # | Deferred | Carrier |
 |---|---|---|
-| D1 | The deep closure fix — let the scripted `driver_factory` path skip `_require_backend()` so the shipped double needs no pyftdi | The in-flight #589 lane owns `ftdi.py` (this checkout is its branch); if it does not land there, a follow-up gateway issue. If it lands, the provider test extra drops `[server]` (template edit + fixture regen) |
+| D1 | The deep closure fix — let the scripted `driver_factory` path skip `_require_backend()` so the shipped double needs no pyftdi | **Gateway issue #597** (filed 2026-11-07, body names #596 as its carrier and states the reopen trigger). The carrier named here at design time — "the in-flight #589 lane owns `ftdi.py`" — was FALSE by build time: #589 completed all seven slices, `main` is its last merge commit, and no lane owns `ftdi.py`. When #597 lands, the provider test extra drops `[server]` (template edit + fixture regen) |
 | D2 | A narrower SDK extra (e.g. `[ftdi]`) so the provider closure avoids the web stack | SDK packaging issue; needs a public-extra ruling (a new extra name is API) |
 | D3 | `--locked` / committed-`uv.lock` posture for generated CI | Guide editorial pass (the guide already teaches retaining the lock); workflow changes only when a lock-shipping decision is made |
 | D4 | Generated-CI extras: concurrency cancel, junitxml artifact upload, OS matrix | Template issue, when a consumer exists |
-| D5 | SHA-pinning actions in the generated workflow | Maintainer ruling on the §2.1 trade-off |
+| D5 | SHA-pinning actions in the generated workflow | **Maintainer ruling 2026-11-07: ACCEPTED as a trade-off**, recorded in §2.1 — not an open question. Reversal switch if a v-major breaking change reds generated repos at once |
 | D6 | Migrating the stopgap workflow on the real plugin project to the template's | Operational, author-side; next `copier update` |
 
 ## 7. Invariant impacts
@@ -494,3 +500,28 @@ No new jobs, no new markers.
 - No production code in `src/` changes. If review wants the ftdi fix instead
   of the `[server]` pin, that is D1 promoted — a different, larger increment
   that collides with the in-flight #589 lane by design.
+
+## 11. Build notes (2026-11-07) — deviations found on contact with the code
+
+1. **§2.7's ci.yml lane needed a wheel, not just the two lines.** The record
+   assumed `uv sync --extra lint` in the generated project resolves only the
+   lint extra. It does not: **uv locks every extra on any sync**, so the
+   `test` extra's `benchweave-sdk=={{ sdk_version }}` pin is resolved too.
+   Measured: with the pin rewritten to `99.99.99`, `uv sync --extra lint
+   --dry-run` refuses — "there is no version of benchweave-sdk==99.99.99 …
+   your project's requirements are unsatisfiable". Unmitigated, that reds
+   `main` for the whole window between a version-bump commit and the release
+   that publishes it. The step therefore builds this checkout's wheel and
+   exports `UV_FIND_LINKS` before syncing — the record's own A5 mechanism,
+   applied one lane earlier. The generated **workflow** is unaffected: a
+   generated project's pin always names an already-published SDK version.
+2. **D1's carrier was wrong** (see the deferral table): #589 completed before
+   this build; #597 now carries the reopen trigger.
+3. **The A3 arm asserts the `lint` extra exists**, one line beyond §2.6.2's
+   literal text. Without it the generated workflow's `uv sync --extra lint`
+   fails at run time and nothing offline notices; with it, the arm reds at PR
+   time instead.
+4. **§2.1's `ci.yml:37,42` citation still names the right majors** after a
+   dependabot merge moved `astral-sh/setup-uv` to its `v10.3.3` SHA: the
+   generated workflow carries majors (`@v7`, `@v10`), and the bump did not
+   change either major.
