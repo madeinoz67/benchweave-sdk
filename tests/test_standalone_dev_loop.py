@@ -564,6 +564,17 @@ def test_the_scaffold_renders_from_the_packaged_template(loop: LoopRun) -> None:
         assert (loop.package / member).is_file(), member
     assert (loop.project / "pyproject.toml").is_file()
 
+    # Gateway issue #596: a dot-DIRECTORY must survive the wheel. `.claude/`
+    # rode the force-include by assumption until this arm, and the scaffold's
+    # new `.github/workflows/ci.yml` joins it. If hatchling's directory
+    # force-include skipped dot-members, every git checkout and CI lane would
+    # still render the tree while an installed-SDK user silently received
+    # neither — the PKG-1 "hides exactly where it matters" class.
+    assert (
+        loop.project / ".claude" / "skills" / "benchweave-plugin-workflow" / "SKILL.md"
+    ).is_file()
+    assert (loop.project / ".github" / "workflows" / "ci.yml").is_file()
+
 
 def test_derive_ui_writes_the_derived_set(loop: LoopRun) -> None:
     """``derive-ui`` exits 0 from the installed script and writes the whole
