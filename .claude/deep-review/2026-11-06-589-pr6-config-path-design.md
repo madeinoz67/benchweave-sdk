@@ -907,12 +907,21 @@ were tightened after the fold to name the shadowing shapes exactly:
 `path_symlink_component:` for a symlinked component, and a bare
 `DocumentError` (a `ValueError` subclass but unprefixed, pre-existing) for
 unparseable bytes. The prefix is KEPT and the walk is NOT reordered ahead of
-`HostPresentation` (declined). Two probe observations sit outside this fold's
-findings and are named here only so they are not lost: W7 (a parseable,
-readable manifest whose bytes were tampered without re-pinning the envelope)
-constructs and serves, because the helper does not verify the manifest
-against the envelope pin — the SRF-2 load-time validation is the layer that
-owns envelope-pin agreement; and attack 5 (a preset pinning the corpus input
-`$id` while the target's schema asset bytes are a permissive custom schema)
-was a load-time disagreement probe. Both were adjudicated by the review wave,
-not by this fold.
+`HostPresentation` (declined). Two probe observations from that script sit
+outside this fold's findings: W7's tamper (preset bytes changed, the
+manifest's own asset pin updated, the envelope's manifest pin left stale)
+REFUSES at construction with `preview_invalid_presentation:
+digest_mismatch: manifest.json` — re-derived by running it (2026-11-07,
+head 6567d3d): the vendored plugin-ui `_resource` check
+(`standards/plugin-ui/contracts.py`) verifies the envelope's manifest pin
+inside `HostPresentation`'s `check_ui`, before the helper walks, so the
+helper's own non-verification (the script's NOTE) is true in isolation
+and unreachable at construction — lane 1's defended-surface claim was
+correct and the envelope pin covers the WHOLE manifest document. The
+boundary that remains is the pin's SCOPE: a fully self-consistent re-pin
+(envelope + manifest + asset) between load and construction constructs
+and serves — indistinguishable from files edited before load, the
+envelope anchored by the load-time validation, not re-anchored at
+construction (the config home's identical posture). Attack 5 (a preset
+pinning the corpus input $id over permissive schema bytes) was adjudicated
+by the review wave: refused at load.
