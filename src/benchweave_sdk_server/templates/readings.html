@@ -16,9 +16,13 @@
     {% for row in readings %}
     <tr>
       <th scope="row">{{ row.name }}</th>
+      {% if row.refusal %}
+      <td class="value refused" colspan="3">refused — {{ row.refusal.code }}: {{ row.refusal.message }}{% if row.refusal.adapter %} (device answered {{ row.refusal.adapter.code }} / {{ row.refusal.adapter.dispatch_state }}){% endif %}</td>
+      {% else %}
       <td class="value">{{ row.value }}</td>
       <td>{{ row.unit if row.unit else "" }}</td>
       <td>{{ row.quality }}</td>
+      {% endif %}
     </tr>
     {% endfor %}
   </tbody>
