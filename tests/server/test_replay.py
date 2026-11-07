@@ -1145,3 +1145,35 @@ def test_a_bulk_row_loads_and_replays_past_a_small_frame_bound(
         )
     )
     assert reply == {"data": payload}
+
+
+def test_the_replay_hosts_transfer_ceiling_is_configuration(
+    tmp_path: Path, plugin
+) -> None:
+    """The #404 fold: ReplayHost hardwired the 64 KiB bulk bound, so the
+    runtime bulk ladder could not follow host configuration. With a
+    configured ceiling of 4096 a bulk receive above it refuses naming the
+    CONFIGURED ceiling (before the fold the same receive passed the
+    64 KiB ladder and died on the row's bounds mismatch instead). Rows
+    above 64 KiB still refuse at load — the flat load-time ladder is the
+    recorded D3 deferral."""
+    from benchweave_sdk.testing import MockContext
+
+    journal = _journal([
+        {"name": "bulk",
+         "transaction": {"kind": "stream_receive", "max_bytes": 1472,
+                         "termination": "lf", "exact_bytes": 1472},
+         "response": {"data": (b"\xa5" * 1472).hex()}},
+    ])
+    parsed = load_replay_journal(_write(tmp_path, journal), plugin)
+    host = ReplayHost(parsed, max_frame_bytes=23, transfer_ceiling=4096)
+    context = MockContext("op-narrow", deadline_monotonic=host.monotonic() + 5)
+    context.dispatched = True
+    with pytest.raises(ValueError, match="max_bytes must be 1..4096"):
+        asyncio.run(
+            host.transfer(
+                {"kind": "stream_receive", "max_bytes": 8000,
+                 "termination": "lf", "exact_bytes": 8000},
+                context,
+            )
+        )

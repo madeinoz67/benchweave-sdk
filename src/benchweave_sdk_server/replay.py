@@ -783,8 +783,13 @@ class ReplayHost(WriterBackedCaptureServices, MockHost):
         sustains reads). A journal with no derivable unit plays once
         regardless.
     max_frame_bytes
-        The descriptor-derived receive ceiling (A02: the plugin's declared
-        bound is the bound, clamped by the shared transfer ceiling).
+        The descriptor-derived frame-mode receive ceiling (A02: the
+        plugin's declared bound is the bound), clamped by
+        ``transfer_ceiling``.
+    transfer_ceiling
+        The bulk-mode receive ceiling (#404): a host paired with a serial
+        link takes the link's ``transfer_ceiling`` here, so mock/replay/
+        serial parity stays statable above the 64 KiB default.
     capture_root, capture_max_bytes
         The capture configuration threaded through
         :class:`WriterBackedCaptureServices`.
@@ -796,6 +801,7 @@ class ReplayHost(WriterBackedCaptureServices, MockHost):
         *,
         cycles: int | None = None,
         max_frame_bytes: int = 4096,
+        transfer_ceiling: int = TRANSFER_CEILING,
         capture_root: Any = None,
         capture_max_bytes: int | None = None,
     ) -> None:
@@ -805,12 +811,20 @@ class ReplayHost(WriterBackedCaptureServices, MockHost):
         MockHost.__init__(self, [])
         if cycles is not None and cycles < 1:
             raise ValueError("standalone_transport_cycles: cycles must be >= 1 or None")
+        if (
+            not isinstance(transfer_ceiling, int)
+            or isinstance(transfer_ceiling, bool)
+            or transfer_ceiling < 1
+        ):
+            raise ValueError(
+                "standalone_transport_transfer_ceiling: must be a positive integer"
+            )
         self._journal = journal
         self._grammar = journal.grammar
-        self._ceiling = min(max_frame_bytes, TRANSFER_CEILING)
-        # The bulk-mode bound (issue #404): kept separate from the frame
-        # ceiling above.
-        self._transfer_ceiling = TRANSFER_CEILING
+        self._ceiling = min(max_frame_bytes, transfer_ceiling)
+        # The bulk-mode bound (issue #404): the configured transfer
+        # ceiling, kept separate from the frame ceiling above.
+        self._transfer_ceiling = transfer_ceiling
         self._rows = deque(journal.rows)
         self._cycle = deque(journal.cycle)
         self._rotate = journal.rotate

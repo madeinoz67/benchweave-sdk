@@ -183,6 +183,18 @@ def test_an_exact_receive_is_transfer_scale_not_frame_scale() -> None:
         )
 
 
+def test_a_frame_mode_receive_above_the_transfer_ceiling_refuses_naming_it() -> None:
+    """The #404 fold: the guide's frame-mode bound tightened from
+    ``max_frame_bytes`` alone to ``min(_TRANSFER_CEILING, max_frame_bytes)``.
+    A host declaring ``max_frame_bytes`` above 64 KiB now refuses a
+    frame-mode receive between 65537 and that declaration — it accepted
+    such a receive before #404. This arm executes the shipped guide text
+    and pins the tightening no arm covered."""
+    host = Host(FakePort(b"y" * 66000 + b"\n"), max_frame_bytes=70000)
+    with pytest.raises(ValueError, match="max_bytes must be 1..65536"):
+        asyncio.run(host.transfer(_receive(max_bytes=66000), BenchContext("over", 1.0)))
+
+
 def test_a_line_longer_than_max_bytes_is_refused_and_discarded() -> None:
     host = Host(FakePort(b"123456\nOK\n"))
     with pytest.raises(ValueError, match="no terminator"):

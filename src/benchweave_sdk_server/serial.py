@@ -178,8 +178,9 @@ class SerialLink:
         rate (200 kB/s), so a stalled consumer keeps more than
         a full negotiation window of the wire while the parser catches up.
         The services clamp the per-receive ceiling with the descriptor's
-        ``max_frame_bytes`` — the plugin's own declared bound governs
-        (A02 posture).
+        ``max_frame_bytes`` — the declaration governs only up to the
+        link's transfer ceiling (64 KiB by default): a larger declaration
+        silently clamps to it (A02 posture).
     """
 
     def __init__(
@@ -219,6 +220,18 @@ class SerialLink:
         ):
             raise ValueError(
                 "standalone_serial_link_quiet_s: must be a finite nonnegative number of seconds"
+            )
+        # The #404 fold's pairing rule: a bulk receive may ask for up to
+        # transfer_ceiling bytes in ONE take, and a take only completes once
+        # that many bytes sit in the ring together — the overflow dropper
+        # caps the ring at ring_capacity (discarding the oldest bytes), so a
+        # ceiling above the ring can never be served: the caller would wait
+        # out the deadline on bytes that were already dropped.
+        if transfer_ceiling > ring_capacity:
+            raise ValueError(
+                "standalone_serial_link_transfer_ceiling_above_ring: "
+                "transfer_ceiling must not exceed ring_capacity — the ring "
+                "cannot hold one ceiling-sized bulk receive"
             )
         self._transport = transport
         self._ring_capacity = ring_capacity

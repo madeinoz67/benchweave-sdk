@@ -96,6 +96,21 @@ def test_constructor_configures_the_fork_constants_and_refuses_bad_values() -> N
         _link(port, quiet_s=-0.5)
 
 
+def test_constructor_refuses_a_ceiling_the_ring_cannot_serve() -> None:
+    """The #404 fold's pairing rule: ``transfer_ceiling`` above
+    ``ring_capacity`` is unservable — a ladder-legal bulk receive at the
+    ceiling can never complete, because the overflow dropper caps the ring
+    at ``ring_capacity`` while discarding the oldest bytes, so the caller
+    gets a ``TimeoutError`` after data has already been lost. Equality is
+    servable: the ring holds exactly ``ring_capacity`` bytes."""
+    with pytest.raises(
+        ValueError, match="standalone_serial_link_transfer_ceiling_above_ring"
+    ):
+        _link(LoopbackPort(), ring_capacity=32768, transfer_ceiling=65536)
+    link = _link(LoopbackPort(), ring_capacity=16, transfer_ceiling=16)
+    link.close()
+
+
 def test_take_returns_only_a_complete_terminated_frame() -> None:
     port = LoopbackPort(b"3.3\n0.1\n")
     link = _link(port)
@@ -204,7 +219,9 @@ def test_concurrent_waiters_all_wake_on_a_fault() -> None:
 
 def test_overflow_drops_the_oldest_bytes_and_keeps_the_newest_tail() -> None:
     port = LoopbackPort()
-    link = _link(port, ring_capacity=16)
+    # transfer_ceiling matches the ring: the pairing rule (the #404 fold)
+    # refuses a ceiling the ring cannot serve.
+    link = _link(port, ring_capacity=16, transfer_ceiling=16)
     port.inbound += b"0123456789ABCDEFGHIJ"  # 20 bytes into a 16-byte ring
     deadline = time.monotonic() + 5
     while link.ring_length() < 16 and time.monotonic() < deadline:
@@ -220,7 +237,7 @@ def test_overflow_counts_the_dropped_bytes() -> None:
     loss diagnosable after the fact. Diagnostics only: surfaced nowhere
     yet, by design."""
     port = LoopbackPort()
-    link = _link(port, ring_capacity=8)
+    link = _link(port, ring_capacity=8, transfer_ceiling=8)
     port.inbound += b"012345678901234"  # 15 bytes into an 8-byte ring
     deadline = time.monotonic() + 5
     while link.ring_length() < 8 and time.monotonic() < deadline:

@@ -662,7 +662,11 @@ def test_c13_crlf_terminator_contract(backend: Any) -> None:
 def test_c11_ring_overflow_gap_visibility() -> None:
     # In-process: a 20-byte burst into a 16-byte ring.
     port = _ScriptedPort()
-    link = SerialLink(port, ring_capacity=16, quiet_s=_QUIET_S)
+    # transfer_ceiling matches the ring: the pairing rule (the #404 fold)
+    # refuses a ceiling the ring cannot serve.
+    link = SerialLink(
+        port, ring_capacity=16, transfer_ceiling=16, quiet_s=_QUIET_S
+    )
     try:
         _cell_c11(link, port.deliver)
     finally:
@@ -670,7 +674,9 @@ def test_c11_ring_overflow_gap_visibility() -> None:
     # pty (posix): the same cell over the real pyserial read path — one
     # reader per port, so the small ring is the BACKEND's link.
     if hasattr(os, "openpty"):
-        box, slave_fd = _build_pty({"ring_capacity": 16, "quiet_s": _QUIET_S})
+        box, slave_fd = _build_pty(
+            {"ring_capacity": 16, "transfer_ceiling": 16, "quiet_s": _QUIET_S}
+        )
         try:
             _cell_c11(box.link, box.far.deliver)
         finally:
@@ -772,7 +778,9 @@ class _MutantServicesCeilingUnchecked(SerialCaptureServices):
 
 def test_mutant_m1_ring_drops_newest_fails_c11() -> None:
     port = _ScriptedPort()
-    link = _MutantLinkDropsNewest(port, ring_capacity=16, quiet_s=_QUIET_S)
+    link = _MutantLinkDropsNewest(
+        port, ring_capacity=16, transfer_ceiling=16, quiet_s=_QUIET_S
+    )
     try:
         with pytest.raises(AssertionError, match="newest tail must survive"):
             _cell_c11(link, port.deliver)

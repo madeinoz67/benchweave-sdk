@@ -178,8 +178,13 @@ class ByteStreamMockHost(WriterBackedCaptureServices, MockHost):
     cycles, establishment
         :class:`LoopingMockHost`'s exact recycle parameters.
     max_frame_bytes
-        The descriptor's own frame bound — the receive ceiling (A02: the
-        plugin's declared bound is the bound).
+        The descriptor's own frame bound — the frame-mode receive ceiling
+        (A02: the plugin's declared bound is the bound), clamped by
+        ``transfer_ceiling``.
+    transfer_ceiling
+        The bulk-mode receive ceiling (#404): a host paired with a serial
+        link takes the link's ``transfer_ceiling`` here, so mock/serial
+        parity stays statable above the 64 KiB default.
     capture_root, capture_max_bytes
         The capture configuration threaded through
         :class:`WriterBackedCaptureServices`.
@@ -194,6 +199,7 @@ class ByteStreamMockHost(WriterBackedCaptureServices, MockHost):
         cycle: list[FrameRow] | None = None,
         cycle_rotate: int = 0,
         max_frame_bytes: int = 128,
+        transfer_ceiling: int = TRANSFER_CEILING,
         capture_root: Any = None,
         capture_max_bytes: int | None = None,
     ) -> None:
@@ -214,6 +220,14 @@ class ByteStreamMockHost(WriterBackedCaptureServices, MockHost):
         ):
             raise ValueError(
                 "standalone_transport_frame: max_frame_bytes must be a positive integer"
+            )
+        if (
+            not isinstance(transfer_ceiling, int)
+            or isinstance(transfer_ceiling, bool)
+            or transfer_ceiling < 1
+        ):
+            raise ValueError(
+                "standalone_transport_transfer_ceiling: must be a positive integer"
             )
         original = list(rows)
         if cycle is not None:
@@ -240,13 +254,14 @@ class ByteStreamMockHost(WriterBackedCaptureServices, MockHost):
         # once per cycle and a drain quiets — never re-releasing per
         # receive (the measured hot spin).
         self._armed = True
-        # The backend's own clamp (fold-refute NIT): a direct
-        # construction cannot mint a ceiling above the shared 64 KiB
-        # transfer ceiling SerialCaptureServices clamps to.
-        self._ceiling = min(max_frame_bytes, TRANSFER_CEILING)
-        # The bulk-mode bound (issue #404): a frame ceiling and a transfer
-        # ceiling, never one collapsed ceiling.
-        self._transfer_ceiling = TRANSFER_CEILING
+        # The frame ceiling: the descriptor's declared bound, clamped by
+        # the configured transfer ceiling — a direct construction cannot
+        # mint a frame ceiling above the transfer ceiling that bounds it.
+        self._ceiling = min(max_frame_bytes, transfer_ceiling)
+        # The bulk-mode bound (issue #404): the configured transfer
+        # ceiling, taken raw — a frame ceiling and a transfer ceiling,
+        # never one collapsed ceiling.
+        self._transfer_ceiling = transfer_ceiling
         self._inbound = bytearray()
 
     @property
