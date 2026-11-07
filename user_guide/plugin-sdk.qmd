@@ -645,6 +645,8 @@ Each capture event is one directory. The directory holds `manifest.json`, a `sta
 
 The manifest's `sha256`, `byte_length` and `artifact_id` (`art-<sha256>`) are computed over the real published bytes. Standalone extras live under `x-standalone-*` keys. The finalise format must be in the constructor's declared set. The set comes from `formats=`, and it holds the two core formats by default. An empty set refuses everything. The writer refuses a capture that appended nothing. It does not publish an empty capture. It also refuses a `waveform_f64le` capture whose byte length is not `sample_count` × 8, as the gateway refuses that too. An abort deletes only `staging/` and the in-flight primary. A published capture and `renderings/` survive an unconditional `finally`-cleanup abort.
 
+The x axis of a plotted capture depends on the format. For `waveform_f64le`, x is seconds from the capture start. The manifest fields `sample_count`, `sample_interval_s` and `unit` give this axis. For `raw_binary`, x is the 0-based sample index. One byte is one sample, and the manifest field `byte_length` gives the index range. A `raw_binary` manifest carries no timing fields. This is the standard's own shape: the timing fields are mandatory only for `waveform_f64le`.
+
 Standalone does not apply the gateway's two host-side admission checks: the descriptor's `capture_limits` (G2) and the host's storage quota (G3). A capture that finalises standalone can still be refused by a gateway.
 
 There is no automatic import of standalone captures into the gateway. Ingest is a separate, deliberate path.
@@ -907,13 +909,15 @@ The host serves the capture library at `GET /captures`. The table shows the capt
 
 ### Analyse captures (standalone host)
 
-The standalone host serves the Analyse page at `GET /analyse`. The page works on the published waveform captures under the host's capture root. You select captures, set a time window, and read the statistics that the host computes under definition `benchweave-analysis/1`. Every statistics block states its denominators: the sample count, the null count and the window.
+The standalone host serves the Analyse page at `GET /analyse`. The page works on the published captures under the host's capture root. The host admits two capture formats: `waveform_f64le` and `raw_binary`. You select captures, set an analysis window, and read the statistics that the host computes under definition `benchweave-analysis/1`. Every statistics block states its denominators: the sample count, the null count and the window.
 
-The Captures list offers one check box per capture, and it lists only captures with state `published` and format `waveform_f64le`. No other capture can enter an analysis.
+Each capture plots on its own x axis. For `waveform_f64le`, the axis is seconds from the capture start. For `raw_binary`, the axis is the 0-based sample index.
+
+The Captures list offers one check box per capture, and it lists only captures with state `published` and a format the host admits. A capture with a format outside that set cannot enter an analysis.
 
 Select one or more check boxes, then select `Analyse`. The page shows one plot and one statistics table per capture. The statistics recompute each time you submit the form. The table rows are `count`, `null_count`, `min`, `mean`, `max`, `rms` and `peak-to-peak`. A line under each table names the capture's manifest sha256.
 
-Set the window with the two fields `Window start (s)` and `Window end (s)`. Both times are seconds from the capture's own start. The window is inclusive. An empty field leaves that end unbounded.
+Set the window with the two fields `Window start` and `Window end`. For a `waveform_f64le` capture, both values are seconds from the capture start. For a `raw_binary` capture, both values are sample indexes. The window is inclusive. An empty field leaves that end unbounded.
 
 Both values must be finite numbers, and the start must not exceed the end. A window that breaks these rules refuses with the `standalone_report_window_invalid:` prefix. The page shows the refusal in a `Refused` notice.
 
@@ -925,13 +929,13 @@ The marker editor works on one capture at a time. Select exactly one capture to 
 
 A label is one uppercase letter `A` to `Z`. One marker exists per label, and a save with a repeated label replaces the earlier row. The note is free text. The editor pads empty rows to three, and it shows at most 26 rows.
 
-The time is seconds from the capture's own start. It must lie inside the capture's displayable span, from `0` to `(sample_count - 1) × sample_interval_s`. A marker outside that span refuses with the `standalone_report_marker_invalid:` prefix.
+The time is in the capture's own x units. For `waveform_f64le`, the units are seconds and the span runs from `0` to `(sample_count - 1) × sample_interval_s`. For `raw_binary`, the units are sample indexes and the span runs from `0` to `byte_length - 1`. A marker outside that span refuses with the `standalone_report_marker_invalid:` prefix.
 
 Click a plot to write a time into a marker row. The click fills the row you last touched, or the first row with an empty time. A drag never places a marker. The drag brush owns drags. The marker time fields alone are the complete path without script.
 
 Select `Save markers` to store the rows. The save rewrites the capture's `analysis.json` overlay, format `standalone-analysis/1`. The save replaces the whole overlay with the editor's rows, stored sorted by label. Empty rows store no marker. Your unsaved rows also ride the export. When you export, the editor's current rows become the report's markers for that capture.
 
-Power modes pair the set's voltage captures and current captures into rails. The pairing uses the units only, never the capture names. A capture with unit `A`, `mA`, `uA` or `nA` is a current side. A capture with unit `V`, `mV`, `uV` or `kV` is a voltage side. Letter case does not matter, and `µ` reads as `u`.
+Power modes pair the set's voltage captures and current captures into rails. The pairing uses the units only, never the capture names. A capture with unit `A`, `mA`, `uA` or `nA` is a current side. A capture with unit `V`, `mV`, `uV` or `kV` is a voltage side. Letter case does not matter, and `µ` reads as `u`. A `raw_binary` capture has no unit. It is neither a current side nor a voltage side, and it forms no rail.
 
 Without explicit rails, the first voltage side and the first current side of your selection form rail 1. The next pair forms rail 2, and so on. A current side without a voltage partner keeps its own rail, with rows for the current side only. A voltage side without a current partner forms nothing.
 
@@ -967,8 +971,8 @@ The document holds these sections:
 - one window statistics block and one edge timing block per capture;
 - the power section, when a power mode was selected;
 - the assertions table, when the export carried assertion rows from the REST or MCP surface;
-- the markers table, with every stored row and an in-window yes or no;
-- one sources block per capture, with the unit, the sample count, the interval, the byte length, the start time, the full manifest sha256, the device, the firmware, the plugin, the descriptor sha256, the operator, the project and the notes;
+- the markers table, with every stored row, its time in the capture's own x units, and an in-window yes or no;
+- one sources block per capture, with the format, the y label, the x label, the sample count, the interval (the absence mark for an index-axis capture), the byte length, the start time, the full manifest sha256, the device, the firmware, the plugin, the descriptor sha256, the operator, the project and the notes;
 - the footer, with the SDK version, the renderer pin and the re-derivable statement.
 
 Each edge timing block uses definition `benchweave-edge/1`. The baseline is the mean of the first 15 % of the window's non-null samples. The final value is the mean of the last 15 %. Each side counts at least 1 sample. A window with fewer than 3 samples, or a flat step, reads `detected: no`.
@@ -993,7 +997,7 @@ Before any number renders, the export reads each primary file again and recomput
 
 The document holds no clock value, so the same inputs give the same bytes. The JSON file beside the document records the export time, the parameters and the digests. The parameters are a replayable export input. Feed them back to reproduce the document with the same bytes.
 
-Two limits protect the report's shape. The report draws at most two distinct units. A larger set refuses with the `standalone_report_units_unsupported:` prefix. Split the export in that case.
+Two limits protect the report's shape. The report draws at most two distinct y labels. A `waveform_f64le` capture contributes its unit, and a `raw_binary` capture contributes the label `byte value`. A larger set refuses with the `standalone_report_units_unsupported:` prefix. Split the export in that case.
 
 A window that holds more than 2000000 samples for a plot refuses with the `standalone_report_window_too_large:` prefix. Narrow the window in that case. One export names at most 16 captures.
 

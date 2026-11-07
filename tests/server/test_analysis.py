@@ -289,10 +289,66 @@ def test_unparseable_manifest_refuses(tmp_path: Path) -> None:
         load_series_set(tmp_path, ["fx-mangled"])
 
 
-def test_non_waveform_format_refuses(tmp_path: Path) -> None:
-    write_capture(tmp_path, "fx-raw", values=(1.0,), fmt="raw_binary")
+def test_raw_binary_loads_on_the_index_axis(tmp_path: Path) -> None:
+    """PR-4 (issue #589): raw_binary is an ADMITTED format — the loader
+    derives its grid from the manifest's own byte_length (1 byte per
+    sample, step 1, no invented timing) instead of refusing it."""
+    payload = bytes((0, 1, 2, 253))
+    event = tmp_path / "fx-raw"
+    event.mkdir(parents=True)
+    (event / "fx-raw.bin").write_bytes(payload)
+    digest = hashlib.sha256(payload).hexdigest()
+    (event / "manifest.json").write_text(
+        json.dumps(
+            {
+                "capture_id": "fx-raw",
+                "format": "raw_binary",
+                "artifact_id": "art-" + digest,
+                "byte_length": len(payload),
+                "sha256": digest,
+                "started_at": "2026-11-07T09:00:00+00:00",
+            },
+            sort_keys=True,
+        )
+    )
+    source = load_series_set(tmp_path, ["fx-raw"])[0]
+    assert source.spec.format == "raw_binary"
+    assert source.axis == "index"
+    assert source.unit is None
+    assert source.sample_count == 4
+    assert source.sample_interval_s == 1.0  # the grid STEP, never seconds
+    assert source.x_label == "sample index"
+    assert source.y_label == "byte value"
+    assert [value for _, value in series_samples(source)] == [0.0, 1.0, 2.0, 253.0]
+
+
+def test_unknown_format_refuses_naming_the_admitted_set(tmp_path: Path) -> None:
+    """The loader's refusal for a format outside the registry names the
+    ADMITTED set — after PR-4 the old text ('analysis serves waveform_f64le
+    primaries') would state a falsehood."""
+    event = tmp_path / "fx-csv"
+    event.mkdir(parents=True)
+    (event / "fx-csv.csv").write_bytes(b"a,b\n")
+    (event / "manifest.json").write_text(
+        json.dumps(
+            {
+                "capture_id": "fx-csv",
+                "format": "csv",
+                "artifact_id": "art-csv",
+                "byte_length": 4,
+                "sha256": "c" * 64,
+                "started_at": "2026-11-07T09:00:00+00:00",
+            },
+            sort_keys=True,
+        )
+    )
     with pytest.raises(ValueError, match="standalone_report_format_unsupported"):
-        load_series_set(tmp_path, ["fx-raw"])
+        load_series_set(tmp_path, ["fx-csv"])
+    try:
+        load_series_set(tmp_path, ["fx-csv"])
+    except ValueError as exc:
+        message = str(exc)
+        assert "waveform_f64le" in message and "raw_binary" in message, message
 
 
 def test_primary_length_mismatch_refuses(tmp_path: Path) -> None:

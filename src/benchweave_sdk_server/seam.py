@@ -152,8 +152,9 @@ _STATE_EVENT_OPS: frozenset[str] = frozenset(
 _SURFACE: ContextVar[str | None] = ContextVar("bws_dispatch_surface", default=None)
 
 #: Bytes per sample by capture format (ruling 2: the count bound is
-#: samples × bytes-per-sample).
-_BYTES_PER_SAMPLE: dict[str, int] = {"waveform_f64le": 8, "raw_binary": 1}
+#: samples × bytes-per-sample) — the format REGISTRY is the single source
+#: (``catalogue._FORMAT_SPECS``, issue #589 PR-4); the seam-side dict it
+#: replaced is deleted.
 
 #: The capture watchdog's poll quantum (s): the loop wakes on adapter-task
 #: completion, a stop request, or this timeout — whichever comes first.
@@ -196,9 +197,12 @@ def _disk_free_bytes(root: Path) -> int:
 #: count — the catalogue's own authored maximum (10M), not a second number.
 _RAW_SAMPLE_CEILING = 10_000_000
 
-#: The primary-artifact extensions by manifest format (the manifest's
-#: ``format`` field stays the source of truth; the filename is derived).
-_PRIMARY_SUFFIXES = {"waveform_f64le": ".f64", "raw_binary": ".bin"}
+#: The primary-artifact extension by manifest format — the registry's
+#: ``FormatSpec.suffix`` (the manifest's ``format`` field stays the source
+#: of truth; the filename is derived). The ``.data`` fallback serves the
+#: unknown-format artifact_read path, whose charter is raw bytes of ANY
+#: format.
+_PRIMARY_FALLBACK_SUFFIX = ".data"
 
 #: A well-formed persisted report id (content-addressed, the export's own
 #: shape): the download route's whole traversal defense.
@@ -2263,7 +2267,22 @@ class StandaloneSeam:
             )
         capture_services = cast("_CaptureCapable", services)
         fmt = str(arguments.get("format", "raw_binary"))
-        bytes_per_sample = _BYTES_PER_SAMPLE.get(fmt, 1)
+        # The write-side mirror (issue #589 PR-4): the served schema's enum
+        # DERIVES from the registry, but a direct handler call (the A-F8
+        # settle_pct posture) must not slip an unknown format past
+        # admission and publish a capture every display surface refuses —
+        # the silently-defaulting bytes-per-sample lookup it replaces did
+        # exactly that.
+        spec = catalogue._FORMAT_SPECS.get(fmt)
+        if spec is None:
+            raise self._fail(
+                "invalid_request",
+                f"standalone_capture_format_unknown: {fmt!r} is not one of "
+                f"{', '.join(catalogue._FORMAT_SPECS)}; the host admits only "
+                "the formats it can render",
+                correlation,
+            )
+        bytes_per_sample = spec.bytes_per_sample
         limits = self._capture_limits()
         if "count" in arguments:
             count = int(arguments["count"])
@@ -2704,18 +2723,34 @@ class StandaloneSeam:
                 correlation,
             ) from exc
         fmt = str(manifest.get("format", ""))
-        if fmt != "waveform_f64le":
+        spec = catalogue._FORMAT_SPECS.get(fmt)
+        if spec is None:
+            # The read door joins capture_start's prefix (STD-4, the fold
+            # adjudication): same trigger class — a format outside the
+            # registry — one name for both doors of the operation family.
             raise self._fail(
                 "invalid_request",
-                f"capture_series serves waveform_f64le primaries; use "
+                f"standalone_capture_format_unknown: capture_series serves "
+                f"{', '.join(catalogue._FORMAT_SPECS)} primaries; use "
                 f"artifact_read for a {fmt or 'unknown'} capture",
                 correlation,
             )
-        count = int(manifest.get("sample_count", 0))
-        interval = float(manifest.get("sample_interval_s", 0.0))
-        suffix = _PRIMARY_SUFFIXES.get(fmt, ".data")
-        payload = (event / f"{capture_id}{suffix}").read_bytes()[: count * 8]
-        values = struct.unpack(f"<{len(payload) // 8}d", payload)
+        if spec.axis == "time":
+            count = int(manifest.get("sample_count", 0))
+            interval = float(manifest.get("sample_interval_s", 0.0))
+        else:
+            # The index branch (issue #589 PR-4): the grid is the byte
+            # count, one byte per sample, step 1 — x is the 0-based sample
+            # index, never a fabricated time base.
+            count = int(manifest.get("byte_length", 0))
+            interval = 1.0
+        payload = (event / f"{capture_id}{spec.suffix}").read_bytes()[
+            : count * spec.bytes_per_sample
+        ]
+        values = struct.unpack(
+            f"<{len(payload) // spec.bytes_per_sample}{spec.struct_code}",
+            payload,
+        )
         points = [
             (index * interval, value) for index, value in enumerate(values)
         ]
@@ -2914,7 +2949,8 @@ class StandaloneSeam:
                 correlation,
             )
         serve = min(length, byte_length - offset)
-        suffix = _PRIMARY_SUFFIXES.get(str(manifest.get("format", "")), ".data")
+        spec = catalogue._FORMAT_SPECS.get(str(manifest.get("format", "")))
+        suffix = spec.suffix if spec is not None else _PRIMARY_FALLBACK_SUFFIX
         with (event / f"{capture_id}{suffix}").open("rb") as primary:
             primary.seek(offset)
             data = primary.read(serve)
@@ -3339,6 +3375,8 @@ class StandaloneSeam:
                     {
                         "capture_id": source.capture_id,
                         "unit": source.unit,
+                        "x_label": source.x_label,
+                        "y_label": source.y_label,
                         "stats": stats,
                         "points": points,
                         "sha256": source.manifest_sha256,

@@ -198,26 +198,32 @@ def _figure_entry(entry: dict[str, Any]) -> dict[str, Any]:
     """One ``analysis_view`` entry shaped for the analyse templates: the
     wrapper-shaped figure (the vendored hydrator's own markup — decimated
     columns through the landed helper, NaN gaps served as null) and the
-    pre-formatted statistics rows (templates stay dumb)."""
+    pre-formatted statistics rows (templates stay dumb).
+
+    The axis labels come from the entry's ``x_label``/``y_label``
+    (issue #589 PR-4) — ``"s"`` on an index-axis figure would be the
+    fabricated time base the format path exists to kill."""
     from .plots import PLOT_COLUMNS, decimate_minmax
     from .report import format_number
 
     capture_id = str(entry["capture_id"])
-    unit = str(entry["unit"])
+    x_label = str(entry["x_label"])
+    y_label = str(entry["y_label"])
     stats = entry["stats"]
     reduced = decimate_minmax(list(entry["points"]), columns=PLOT_COLUMNS)
     x_values = [t for t, _ in reduced]
     y_values = [None if math.isnan(value) else value for _, value in reduced]
     payload = json.dumps(
-        {"channels": [{"id": capture_id, "x": x_values, "y": y_values}], "x_unit": "s"}
+        {"channels": [{"id": capture_id, "x": x_values, "y": y_values}],
+         "x_unit": x_label}
     )
-    title = str(escape(f"{capture_id} ({unit})"))
+    title = str(escape(f"{capture_id} ({y_label})"))
     # Fold row 3 + B-F2: EVERY attribute slot escapes what it interpolates
     # — the slug and the unit get the same treatment as the title (the
     # figure block is built inside Markup, so autoescape does not apply;
     # a hostile plugin unit cannot break out of data-bw-axes).
     slug = str(escape(f"analyse-{capture_id}"))
-    axes = str(escape(f"s;{unit}"))
+    axes = str(escape(f"{x_label};{y_label}"))
     figure = Markup(
         f'<div class="bw-plot-host" data-bw-plot-host '
         f'data-bw-plot-slug="{slug}">\n'
@@ -230,7 +236,9 @@ def _figure_entry(entry: dict[str, Any]) -> dict[str, Any]:
     )
     return {
         "capture_id": capture_id,
-        "unit": unit,
+        # The template's per-series label slot carries the honest y label
+        # (the unit for time formats, the spec's own for index formats).
+        "unit": y_label,
         "sha256": str(entry["sha256"]),
         "figure": figure,
         "count": stats.count,
@@ -1896,21 +1904,37 @@ def _add_html_routes(
         power_fields: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """The analyse page's shared render context: the picker rows over
-        the landed capture_list (published waveform captures only — the
-        picker never offers a row the analysis would refuse), the current
-        selection, the computed entries (or the rendered refusal), and
-        the single-capture marker editor's rows (I4b.1 AR-8)."""
+        the landed capture_list (published captures of every ADMITTED
+        format — registry membership, issue #589 PR-4; the picker never
+        offers a row the analysis would refuse, and a hand-edited
+        unknown-format capture stays excluded), the current selection,
+        the computed entries (or the rendered refusal), and the
+        single-capture marker editor's rows (I4b.1 AR-8)."""
         rows = (await seam.call("capture_list", {}))["captures"]
         picker = [
             row
             for row in rows
             if row.get("state") == "published"
-            and row.get("format") == "waveform_f64le"
+            and row.get("format") in catalogue._FORMAT_SPECS
         ]
         picker_ids = {str(row["capture_id"]) for row in picker}
         marker_capture = (
             selected[0] if len(selected) == 1 and selected[0] in picker_ids else None
         )
+        # The editor's t-unit is the capture's own axis (issue #589 PR-4):
+        # seconds for time-axis captures, the 0-based sample index for
+        # index-axis ones — the editor must not print "(s)" over an index.
+        marker_axis = "s"
+        if marker_capture is not None:
+            marker_row = next(
+                (row for row in picker if str(row["capture_id"]) == marker_capture),
+                None,
+            )
+            marker_spec = catalogue._FORMAT_SPECS.get(
+                str(marker_row.get("format")) if marker_row else ""
+            )
+            if marker_spec is not None and marker_spec.axis == "index":
+                marker_axis = "sample index"
         entries: list[dict[str, Any]] = []
         power: dict[str, Any] | None = None
         error: dict[str, Any] | None = None
@@ -1945,6 +1969,7 @@ def _add_html_routes(
             "power_capacity": power_form["capacity_ah"],
             "power_threshold": power_form["threshold"],
             "marker_capture": marker_capture,
+            "marker_axis": marker_axis,
             "marker_rows": _marker_editor_rows(marker_capture, marker_rows or []),
         }
 

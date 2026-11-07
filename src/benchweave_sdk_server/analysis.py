@@ -45,6 +45,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .catalogue import _FORMAT_SPECS, FormatSpec
+
 #: The definition id printed on every report and carried by every stats
 #: object: the numbers mean exactly this computation, nothing else.
 ANALYSIS_DEFINITION = "benchweave-analysis/1"
@@ -109,16 +111,44 @@ class SeriesSource:
 
     The samples themselves are NOT held — :func:`series_samples` streams
     them from the primary in chunks.
+
+    ``axis`` is the format's own (``"time"`` or ``"index"``): ``unit`` is
+    ``None`` exactly when the axis is index (a byte plane has no unit),
+    and ``sample_interval_s`` is then the grid STEP (1.0) — never a
+    seconds claim; every renderer's axis label comes from ``x_label`` /
+    ``y_label``, never from the number (issue #589 PR-4).
     """
 
     capture_id: str
-    unit: str
+    unit: str | None
     sample_interval_s: float
     sample_count: int
     manifest_sha256: str
     manifest: dict[str, Any]
     metadata: dict[str, Any]
     primary: Path
+    spec: FormatSpec
+    axis: str
+
+    @property
+    def x_label(self) -> str:
+        """The honest x-axis label: ``s`` for time, the sample index
+        otherwise — no renderer invents its own."""
+        return "s" if self.spec.axis == "time" else "sample index"
+
+    @property
+    def y_label(self) -> str:
+        """The honest y-axis label: the capture's unit for time formats,
+        the spec's own label for index formats."""
+        if self.spec.axis == "index":
+            return self.spec.index_y_label or "value"
+        assert self.unit is not None
+        return self.unit
+
+    def unpack(self, chunk: bytes) -> tuple[float, ...]:
+        """Decode one primary chunk with the format's own struct code."""
+        count = len(chunk) // self.spec.bytes_per_sample
+        return struct.unpack_from(f"<{count}{self.spec.struct_code}", chunk)
 
 
 @dataclass(frozen=True)
@@ -220,9 +250,10 @@ def load_series_set(root: Path, capture_ids: list[str] | tuple[str, ...]) -> lis
     """Load 1..n published captures as analysis series sources.
 
     Refuses (``standalone_report_*`` prefix, mapped by the seam) for an
-    unknown id, an unparseable manifest, a non-waveform format, a primary
-    whose length contradicts the manifest's sample_count, and a waveform
-    manifest missing its corpus-mandated fields.
+    unknown id, an unparseable manifest, a format outside the registry, a
+    primary whose length contradicts the manifest's own count field, and
+    a manifest missing the fields its format's branch requires (the
+    timing trio for waveform_f64le, byte_length for every format).
     """
     sources: list[SeriesSource] = []
     for capture_id in capture_ids:
@@ -246,49 +277,72 @@ def _load_one(root: Path, capture_id: str) -> SeriesSource:
             f"standalone_report_manifest_unreadable: {capture_id} (not an object)"
         )
     fmt = manifest.get("format")
-    if fmt != "waveform_f64le":
+    spec = _FORMAT_SPECS.get(fmt) if isinstance(fmt, str) else None
+    if spec is None:
         raise AnalysisRefusal(
             "standalone_report_format_unsupported: "
-            f"{capture_id} ({fmt or 'unknown'}); analysis serves waveform_f64le "
-            "primaries"
+            f"{capture_id} ({fmt or 'unknown'}); analysis serves "
+            f"{', '.join(_FORMAT_SPECS)} primaries"
         )
-    count = manifest.get("sample_count")
-    interval = manifest.get("sample_interval_s")
-    unit = manifest.get("unit")
-    if (
-        type(count) is not int
-        or count < 1
-        or isinstance(interval, bool)
-        or not isinstance(interval, (int, float))
-        or not interval > 0
-        or not math.isfinite(interval)
-        or not isinstance(unit, str)
-        or not unit
-    ):
-        raise AnalysisRefusal(
-            f"standalone_report_manifest_incomplete: {capture_id} (a waveform "
-            "manifest requires sample_count >= 1, a positive finite "
-            "sample_interval_s and a non-empty unit)"
-        )
-    primary = event / f"{capture_id}.f64"
+    if spec.axis == "time":
+        # Byte-for-byte the pre-PR-4 validation: the corpus's waveform
+        # branch requires the timing trio.
+        count = manifest.get("sample_count")
+        interval = manifest.get("sample_interval_s")
+        unit = manifest.get("unit")
+        if (
+            type(count) is not int
+            or count < 1
+            or isinstance(interval, bool)
+            or not isinstance(interval, (int, float))
+            or not interval > 0
+            or not math.isfinite(interval)
+            or not isinstance(unit, str)
+            or not unit
+        ):
+            raise AnalysisRefusal(
+                f"standalone_report_manifest_incomplete: {capture_id} (a waveform "
+                "manifest requires sample_count >= 1, a positive finite "
+                "sample_interval_s and a non-empty unit)"
+            )
+        interval_s = float(interval)
+        unit_value: str | None = str(unit)
+    else:
+        # The index branch: the grid derives from the manifest's own
+        # byte_length (1 byte per sample, step 1) — the timing trio is
+        # the waveform branch's requirement, not this one's (the vendored
+        # captureManifest's own conditional).
+        count = manifest.get("byte_length")
+        if type(count) is not int or count < 1:
+            raise AnalysisRefusal(
+                f"standalone_report_manifest_incomplete: {capture_id} (a "
+                "raw_binary manifest requires byte_length >= 1 — a published "
+                "capture cannot be empty)"
+            )
+        interval_s = 1.0  # the grid STEP, never a seconds claim
+        unit_value = None
+    primary = event / f"{capture_id}{spec.suffix}"
     if not primary.is_file():
         raise AnalysisRefusal(f"standalone_report_primary_missing: {capture_id}")
     actual_length = primary.stat().st_size
-    if actual_length != count * 8:
+    if actual_length != count * spec.bytes_per_sample:
         raise AnalysisRefusal(
             f"standalone_report_primary_length: {capture_id} declares "
-            f"sample_count {count} ({count * 8} bytes) but the primary holds "
-            f"{actual_length} bytes"
+            f"{'sample_count' if spec.axis == 'time' else 'byte_length'} "
+            f"{count} ({count * spec.bytes_per_sample} bytes) but the primary "
+            f"holds {actual_length} bytes"
         )
     return SeriesSource(
         capture_id=capture_id,
-        unit=str(unit),
-        sample_interval_s=float(interval),
+        unit=unit_value,
+        sample_interval_s=interval_s,
         sample_count=count,
         manifest_sha256=str(manifest.get("sha256", "")),
         manifest=manifest,
         metadata=_read_metadata(event),
         primary=primary,
+        spec=spec,
+        axis=spec.axis,
     )
 
 
@@ -296,13 +350,14 @@ def series_samples(source: SeriesSource) -> Iterator[tuple[float, float]]:
     """The source's ``(t, value)`` samples in acquisition order, read in
     chunks — never the decimated series, never a materialised list."""
     interval = source.sample_interval_s
+    stride = source.spec.bytes_per_sample
     with source.primary.open("rb") as stream:
         index = 0
         while True:
-            chunk = stream.read(_CHUNK_SAMPLES * 8)
+            chunk = stream.read(_CHUNK_SAMPLES * stride)
             if not chunk:
                 return
-            for value in struct.unpack_from(f"<{len(chunk) // 8}d", chunk):
+            for value in source.unpack(chunk):
                 yield index * interval, value
                 index += 1
 
@@ -361,14 +416,15 @@ def scan_series(
 
     def hashed() -> Iterator[tuple[float, float]]:
         interval = source.sample_interval_s
+        stride = source.spec.bytes_per_sample
         with source.primary.open("rb") as stream:
             index = 0
             while True:
-                chunk = stream.read(_CHUNK_SAMPLES * 8)
+                chunk = stream.read(_CHUNK_SAMPLES * stride)
                 if not chunk:
                     return
                 hasher.update(chunk)
-                for value in struct.unpack_from(f"<{len(chunk) // 8}d", chunk):
+                for value in source.unpack(chunk):
                     yield index * interval, value
                     index += 1
 
@@ -405,14 +461,15 @@ def windowed_points(
     hasher = hashlib.sha256()
     points: list[tuple[float, float]] = []
     interval = source.sample_interval_s
+    stride = source.spec.bytes_per_sample
     with source.primary.open("rb") as stream:
         index = 0
         while True:
-            chunk = stream.read(_CHUNK_SAMPLES * 8)
+            chunk = stream.read(_CHUNK_SAMPLES * stride)
             if not chunk:
                 break
             hasher.update(chunk)
-            for value in struct.unpack_from(f"<{len(chunk) // 8}d", chunk):
+            for value in source.unpack(chunk):
                 t = index * interval
                 index += 1
                 if lo is not None and t < lo:
@@ -688,27 +745,42 @@ def resolve_markers(
     manifest: dict[str, Any], rows: Iterable[dict[str, Any]]
 ) -> list[dict[str, Any]]:
     """Validate and normalise incoming marker rows against the capture's
-    own time base: labels are single uppercase A-Z (one row per label,
-    the LAST duplicate wins — the fork's ``placeMarker`` semantics), ``t``
-    is finite and lies inside ``[0, (sample_count - 1) *
-    sample_interval_s]`` (a marker that names no point the capture can
+    own grid — derived per format (issue #589 PR-4): the timing trio for
+    ``waveform_f64le``, ``byte_length`` with step 1 for ``raw_binary``
+    (``t`` is then the 0-based sample index). Labels are single uppercase
+    A-Z (one row per label, the LAST duplicate wins — the fork's
+    ``placeMarker`` semantics), ``t`` is finite and lies inside the
+    displayable span (a marker that names no point the capture can
     display refuses), and the stored rows are sorted by label so
     re-export is stable. ``note`` is free text (no invented cap) and
     escapes at render, never here."""
-    count = manifest.get("sample_count")
-    interval = manifest.get("sample_interval_s")
-    if (
-        type(count) is not int
-        or count < 1
-        or isinstance(interval, bool)
-        or not isinstance(interval, (int, float))
-        or not interval > 0
-        or not math.isfinite(float(interval))
-    ):
-        raise AnalysisRefusal(
-            "standalone_report_marker_invalid: the capture's manifest "
-            "declares no usable sample grid (sample_count/sample_interval_s)"
-        )
+    fmt = manifest.get("format")
+    spec = _FORMAT_SPECS.get(fmt) if isinstance(fmt, str) else None
+    interval: Any = 1.0
+    if spec is not None and spec.axis == "index":
+        count = manifest.get("byte_length")
+        span_note = "(byte_length - 1; 0-based sample index)"
+        if type(count) is not int or count < 1:
+            raise AnalysisRefusal(
+                "standalone_report_marker_invalid: the capture's manifest "
+                "declares no usable sample grid (byte_length)"
+            )
+    else:
+        count = manifest.get("sample_count")
+        interval = manifest.get("sample_interval_s")
+        span_note = "((sample_count - 1) x sample_interval_s)"
+        if (
+            type(count) is not int
+            or count < 1
+            or isinstance(interval, bool)
+            or not isinstance(interval, (int, float))
+            or not interval > 0
+            or not math.isfinite(float(interval))
+        ):
+            raise AnalysisRefusal(
+                "standalone_report_marker_invalid: the capture's manifest "
+                "declares no usable sample grid (sample_count/sample_interval_s)"
+            )
     span = (count - 1) * float(interval)
     resolved: dict[str, dict[str, Any]] = {}
     for row in rows:
@@ -736,8 +808,8 @@ def resolve_markers(
         if not 0.0 <= float(t) <= span:
             raise AnalysisRefusal(
                 f"standalone_report_marker_invalid: marker {label} names t "
-                f"{float(t)} outside the capture's displayable time base "
-                f"[0, {span}] ((sample_count - 1) x sample_interval_s)"
+                f"{float(t)} outside the capture's displayable span "
+                f"[0, {span}] {span_note}"
             )
         note = row.get("note", "")
         if not isinstance(note, str):
@@ -789,14 +861,15 @@ def decimated_extent(source: SeriesSource, columns: int) -> list[tuple[float, fl
         # The identity branch (at or below the budget, decimate_minmax
         # returns the whole bounded list).
         points: list[tuple[float, float]] = []
+        stride = source.spec.bytes_per_sample
         with source.primary.open("rb") as stream:
             index = 0
             while True:
-                chunk = stream.read(_CHUNK_SAMPLES * 8)
+                chunk = stream.read(_CHUNK_SAMPLES * stride)
                 if not chunk:
                     break
                 hasher.update(chunk)
-                for value in struct.unpack_from(f"<{len(chunk) // 8}d", chunk):
+                for value in source.unpack(chunk):
                     points.append((index * interval, value))
                     index += 1
         verify()
@@ -829,12 +902,13 @@ def decimated_extent(source: SeriesSource, columns: int) -> list[tuple[float, fl
 
     with source.primary.open("rb") as stream:
         index = 0
+        stride = source.spec.bytes_per_sample
         while True:
-            chunk = stream.read(_CHUNK_SAMPLES * 8)
+            chunk = stream.read(_CHUNK_SAMPLES * stride)
             if not chunk:
                 break
             hasher.update(chunk)
-            for value in struct.unpack_from(f"<{len(chunk) // 8}d", chunk):
+            for value in source.unpack(chunk):
                 point = (index * interval, value)
                 index += 1
                 column = min(columns - 1, int((point[0] - first_x) / width))
@@ -857,14 +931,18 @@ def decimated_extent(source: SeriesSource, columns: int) -> list[tuple[float, fl
     return reduced
 
 
-def unit_kind(unit: str) -> str:
+def unit_kind(unit: str | None) -> str:
     """Classify one unit string as ``current``/``voltage``/``other``.
 
     The fork's own vocabulary, verbatim: lowercase, µ/μ→u, exact set
     membership — no stripping, no prefix matching (``W`` and ``Ω``
     classify ``other`` and stay unpairable). This is the ONLY thing that
-    decides a series' rail role (Q8's ruling: never names).
+    decides a series' rail role (Q8's ruling: never names). ``None`` (an
+    index-axis byte plane, issue #589 PR-4) classifies ``other`` — a raw
+    byte stream can never form a power rail.
     """
+    if unit is None:
+        return "other"
     normalized = unit.lower().replace("µ", "u").replace("μ", "u")
     if normalized in _CURRENT_UNITS:
         return "current"
@@ -1299,6 +1377,9 @@ def _rail_row(
             uncertainty="unknown",
         )
         reason = "power_unavailable: no voltage series"
+    # A rail's members passed unit classification (unit_kind(None) is
+    # "other"), so a current source here always carries a unit string.
+    assert i.unit is not None
     return PowerRail(
         definition=POWER_DEFINITION,
         v_id=v.capture_id if v is not None else None,
