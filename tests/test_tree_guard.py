@@ -71,8 +71,9 @@ def test_every_hooked_write_vector_trips_the_working_tree_guard(vector: str) -> 
     repository working tree. The historical leak was
     ``captures/operator-action-token.json`` under the checkout root — no
     vendored-tree predicate covers that path, so the old guard was silent
-    on it. The exemption (``.pytest_cache``) is named in the guard's
-    docstring; this probe is outside it, as any real leak would be."""
+    on it. The two exemptions (``.pytest_cache`` and the interpreter
+    environment) are named in the guard's docstring; this probe is outside
+    both, as any real leak would be."""
     target = _working_tree_target()
     try:
         with pytest.raises(AssertionError, match="repository working tree"):
