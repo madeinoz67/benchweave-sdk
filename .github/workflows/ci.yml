@@ -122,6 +122,18 @@ jobs:
             --descriptor "$RUNNER_TEMP/ci-demo/src/ci_demo/descriptor.json" \
             --resources "$RUNNER_TEMP/ci-demo/src/ci_demo" \
             --catalogue "$RUNNER_TEMP/ci-demo/src/ci_demo/binding-catalogue.json"
+          # #596: run the generated workflow's exact lint path against the
+          # freshly scaffolded project. UV_FIND_LINKS supplies THIS checkout's
+          # wheel for the generated test extra's `==` pin, because uv locks
+          # every extra on any sync (measured: `uv sync --extra lint` refuses
+          # when the test extra's pin is unresolvable). Without it this step
+          # would red main for the whole version-bump window, where the pin
+          # names a version PyPI cannot serve until the release publishes.
+          uv build --wheel --out-dir "$RUNNER_TEMP/ci-dist"
+          export UV_FIND_LINKS="$RUNNER_TEMP/ci-dist"
+          cd "$RUNNER_TEMP/ci-demo"
+          uv sync --extra lint
+          uv run ruff check .
 
       - name: Installed-wheel smoke (the publish workflow's block, at PR time)
         # publish.yml's smoke lane runs only at release, so a mistake in it

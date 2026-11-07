@@ -150,6 +150,36 @@ jobs:
           kill -INT "$PID"
           wait "$PID"
 
+      - name: Generated-project tests — ui and provider, over the built wheel (ubuntu only)
+        # #596 A5: the generated workflow's tests arm, executed against the
+        # wheel that is about to ship. PyPI does not carry this version before
+        # the publish job runs, so UV_FIND_LINKS is the only resolver for the
+        # generated test extra's `==` pin — and it resolves to exactly the
+        # artifact under test. This is the one place the tests job's full
+        # dependency closure runs against a real pin: the provider shape's
+        # `benchweave-sdk[server]` pull is what §2.2's conditional exists for.
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv venv "$RUNNER_TEMP/gen-sdk"
+          GBIN="$RUNNER_TEMP/gen-sdk/bin"
+          WHEEL="$(ls dist/*.whl)"
+          uv pip install --python "$RUNNER_TEMP/gen-sdk" "${WHEEL}[scaffold]"
+          export UV_FIND_LINKS="$PWD/dist"
+          for shape in ui provider; do
+            case "$shape" in
+              ui) flags=(--with-ui) ;;
+              provider) flags=(--provider-transport) ;;
+            esac
+            dest="$RUNNER_TEMP/generated-$shape"
+            "$GBIN/benchweave-sdk" new "$dest" "${flags[@]}"
+            cd "$dest"
+            uv sync --extra test
+            uv run pytest -q
+            cd - >/dev/null
+          done
+
   publish:
     name: Publish to PyPI (Trusted Publishing)
     needs: smoke
