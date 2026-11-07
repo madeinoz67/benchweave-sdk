@@ -187,11 +187,17 @@ def _ui_staleness_notice(project: Path) -> str | None:
     if not stale:
         return None
     return (
-        f"plugin-ui contract artifacts at {', '.join(sorted(stale))} (active {active}): "
-        f"run 'benchweave-sdk migrate-ui {package_dir / 'presentation.json'} "
+        f"plugin-ui contract artifacts at {', '.join(sorted(stale))} (active {active}). "
+        "The upgrade checkpoint has four steps, in this order. "
+        "1 pin: run 'benchweave-sdk doctor' to compare the pin with the installed SDK. "
+        f"2 migrate: run 'benchweave-sdk migrate-ui {package_dir / 'presentation.json'} "
         f"--descriptor {package_dir / 'descriptor.json'} --resources {package_dir} "
-        f"--catalogue {package_dir / 'binding-catalogue.json'}' after committing this "
-        "upgrade."
+        f"--catalogue {package_dir / 'binding-catalogue.json'}'. "
+        "3 derive: only when the migrate refuses with migrate_ui_ledger_drift: a version "
+        "write cannot repair ledger drift, so run 'benchweave-sdk derive-ui --force' and "
+        "then run the migrate again. "
+        "4 gates: run 'benchweave-sdk check', 'check-ui' and 'check-preset'. "
+        "Run all four steps after committing this upgrade."
     )
 
 

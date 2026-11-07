@@ -59,6 +59,15 @@ Moving a project to a newer template: `benchweave-sdk upgrade` (from the project
 
 The `upgrade` command reads and writes only two sets of files: the files that git tracks, and the files that the update itself changed. The command does not read ignore rules. The command never reads through a symlink. It never writes through a symlink. On Windows, the command also never reads through a junction. It never writes through a junction. The command does not touch ignored and untracked directories, such as a project virtualenv. It produces no output for them. If a tracked file is a symlink, the command skips the file and prints one notice line.
 
+After you commit an upgrade, do the four steps of the **upgrade checkpoint**, in this order:
+
+1. **Pin.** Run `benchweave-sdk doctor` to compare the project pin with the installed SDK.
+2. **Migrate.** Run `benchweave-sdk migrate-ui` to re-stamp the plugin-ui contract artifacts to the active version.
+3. **Derive.** If the migrate refuses with `migrate_ui_ledger_drift:`, run `benchweave-sdk derive-ui --force`, and then run the migrate step again. A version write cannot repair ledger drift.
+4. **Gates.** Run `benchweave-sdk check`, `check-ui` and `check-preset`. All three checks must pass.
+
+The section "Contract-version migration (`migrate-ui`)" gives the command arguments and the full list of the `migrate_ui_*` refusal codes.
+
 Replace `acme/model100` with your manufacturer and device or plugin name. The destination controls the directory hierarchy. The `--package` option controls the Python import package. The SDK creates missing parent directories and refuses to overwrite an existing project. A destination that you reach through a symlinked directory is canonicalized before any write. On macOS, `/tmp/...` is such a symlink. Messages report the real path.
 
 ```text
@@ -410,7 +419,7 @@ The second family is `classref_*`, from the resolution walk. The ledger motion r
 
 When all three documents and the ledger already carry the active versions, the command is a no-op. It exits 0. This makes it safe in scripts and CI.
 
-Two surfaces point at the command. `check-ui` adds a remediation line when a finding has code `unsupported_version` on one of the three documents. `upgrade` prints a notice when the artifacts are behind the active version. The notice tells you to run `migrate-ui` after you commit the upgrade.
+Two surfaces point at the command. `check-ui` adds a remediation line when a finding has code `unsupported_version` on one of the three documents. `upgrade` prints a notice when the artifacts are behind the active version. The notice names the four steps of the upgrade checkpoint.
 
 Migration is not re-derivation. `migrate-ui` keeps your manifest content. It does not derive pages or plots from the descriptor. For that path, use `benchweave-sdk derive-ui`. A class-conformant project also carries `ui/class-reference.json`. The command re-stamps this file's `contract_version` and `reference_version` stamps to the active class-reference version. It also re-stamps each `composed_classes[].validated_against` record. It does this only after it resolves each named class from its pin and validates the document under the active version. The class urn keeps its own version. The command never writes content. Author overlays survive in `ui/manifest.overrides.json`.
 
