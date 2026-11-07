@@ -13,8 +13,9 @@ or hardware.
 ## Derive the presentation set
 
 A class-conformant descriptor derives its presentation set. Derive the set
-with `derive-ui` before you extend it. The `new --with-ui` scaffold derives
-the set already.
+with `derive-ui` before you extend it. The `new --with-ui` scaffold writes a
+minimal page, because the descriptor it writes claims no device class. Claim
+a class in the descriptor, then run `derive-ui` to derive the full set.
 
 The derivation shows the `cannot_derive` items. The items name what the
 derivation cannot decide. You decide them as the author. The AI-GUIDE names
