@@ -217,7 +217,31 @@ root `AGENTS.md` plus `.claude/skills/benchweave-*/SKILL.md` — all outside
 installed SDK's stamp, R-5d), conflict-marked when author-edited, and their
 factual claims (cited refusal codes, subcommands, guide headings) reconciled
 against SDK source and the user guide by `tests/test_agent_assets.py` (R-5b,
-with permanent planted-violation arms R-5c). The generated plugin runtime has **no dependency on this SDK**. *A defect
+with permanent planted-violation arms R-5c). Since gateway issue #596 the
+interface also carries the generated `.github/workflows/ci.yml` (jobs `lint` and
+`tests`; expression-free and byte-identical across every arm — rendered by
+verbatim copy, never jinja), the `lint` extra carrying the explicitly-selected
+minimal ruff set, and an arm-conditional `test` extra. **Each arm's generated
+`test` extra must install everything that arm's generated suite imports** — the
+provider arm pins `benchweave-sdk[server]` because its shipped-double tests
+import `benchweave_sdk_server.ftdi`, whose backend import is unconditional. That
+pin is EXECUTED at PR time by this repository's `ci.yml` generated-workflow
+step (ubuntu-only, every push, against the wheel under test via
+`UV_FIND_LINKS`): a fresh scaffold of each arm must pass BOTH job commands its
+own workflow ships (3 arms × 2 jobs), and the provider arm as rendered must be
+green with ≥8 passed. The pin is EARNED, not assumed: the same provider project
+with `[server]` stripped from its pin — the one mutated variable — must fail as
+findings (exit 1) with `live_provider_backend_missing`, and that stripped-pin
+leg is a STANDING expected-failure control which reds the day the stripped run
+goes green (the day the deep `verify_ftdi_plugin` fix lands), signalling that
+the pin must narrow to the bare form. What the control does not catch: WHICH
+dependency inside `[server]` the suite needs — a narrower extra (D2) could
+suffice, and no offline import-graph arm exists, so executing the suite is the
+honest pin. Pinned offline by
+`tests/test_scaffold_copier.py::test_the_generated_workflow_carries_the_lint_and_test_jobs`
+and `::test_each_arm_passes_the_lint_set_its_pyproject_declares`, and end-to-end
+by `tests/test_standalone_dev_loop.py`, whose installed-wheel scaffold asserts a
+dot-directory survives the wheel. The generated plugin runtime has **no dependency on this SDK**. *A defect
   here multiplies across every plugin authored from the scaffold, and downstream repos
   diff generated output, so shape changes are interface changes.*
 - **[SRF-2]** **Host-loader ↔ check-ui agreement** (amended at 0.7.0, issue #308): the

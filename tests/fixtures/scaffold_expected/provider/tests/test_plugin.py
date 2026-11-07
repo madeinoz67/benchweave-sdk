@@ -1,5 +1,4 @@
 import asyncio
-import base64
 import json
 from importlib.resources import files
 from pathlib import Path
@@ -8,7 +7,6 @@ from benchweave_sdk.validation import validate_descriptor, verify_provider_pin
 from benchweave_sdk_server.ftdi import ScriptedFtdiDriver, ftdi_plugin_session
 from benchweave_sdk_server.session import load_plugin_project
 from example_plugin.adapter import create_plugin
-from example_plugin import protocol as proto
 
 
 def _corpus():

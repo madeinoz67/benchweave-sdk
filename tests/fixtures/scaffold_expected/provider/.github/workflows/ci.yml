@@ -1,0 +1,42 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10
+        with:
+          python-version: "3.13"
+      - name: Install the lint extra
+        # ruff rides the project's own lint extra; without this step ruff
+        # cannot spawn (the first-run lesson, gateway issue #596).
+        run: uv sync --extra lint
+      - name: Lint
+        run: uv run ruff check .
+
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10
+        with:
+          python-version: "3.13"
+      - name: Install the test extra
+        # The SDK pin in pyproject.toml [project.optional-dependencies].test is
+        # the install source; no version is duplicated in this file.
+        run: uv sync --extra test
+      - name: Tests
+        run: uv run pytest -q

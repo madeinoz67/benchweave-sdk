@@ -7,6 +7,28 @@ version = "0.1.0"
 requires-python = ">=3.13"
 dependencies = []
 [project.optional-dependencies]
+{%- if provider_transport %}
+# The generated suite's shipped driver double drives the ftdi session builder,
+# which imports the pyftdi backend (benchweave-sdk's server extra) even on the
+# scripted path; the serial default's suite needs neither.
+test = ["benchweave-sdk[server]=={{ sdk_version }}", "pytest>=8.0"]
+{%- else %}
 test = ["benchweave-sdk=={{ sdk_version }}", "pytest>=8.0"]
+{%- endif %}
+lint = ["ruff>=0.6"]
 [tool.hatch.build.targets.wheel]
 packages = ["src/{{ package_name }}"]
+[tool.ruff]
+# Both keys below are INERT while the select below stays narrow: E501 and the
+# pyupgrade rules are not selected. They are carried so that an author who
+# widens the select to full E does not birth red on scaffold bytes -- every
+# arm's rendered code carries lines longer than ruff's default 88 and none
+# longer than 100. Do not remove them, and do not lower line-length below 100.
+# They live under [tool.ruff]: ruff treats them as unknown keys in
+# [tool.ruff.lint] and exits 2, the tooling class, not a findings exit.
+line-length = 100
+target-version = "py313"
+[tool.ruff.lint]
+# The minimal starter set: ruff's defaults, selected explicitly so a ruff
+# upgrade cannot silently widen the gate.
+select = ["E4", "E7", "E9", "F"]

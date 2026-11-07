@@ -1004,6 +1004,105 @@ def test_adopted_project_first_upgrade_conflicts_honestly_on_managed_edits(
     assert "AUTHOR-customised guide" in text, "the author's line survives the add/add conflict"
 
 
+def test_upgrade_collapses_a_conflict_block_whose_sides_are_identical(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue #596: copier's inline 3-way merge can leave an add/add block
+    whose two sides are byte-identical — measured on the Windows runner, where
+    the newly added ``.github/workflows/ci.yml`` member arrived in the project
+    with such a block. Both sides are the same bytes, so there is nothing to
+    resolve: the block must be collapsed to that common content and the file
+    must NOT be reported. A genuine conflict in the same update still is, with
+    both sides intact; a file carrying one identical and one differing block
+    is left exactly as copier wrote it (no partial rewrite of author bytes).
+    """
+    from benchweave_sdk import scaffold_update
+
+    project = tmp_path / "P-spurious-block"
+    project.mkdir()
+    (project / ".copier-answers.yml").write_bytes(
+        b"# Changes here will be overwritten by Copier\n_commit: v0.9.1\n"
+    )
+    (project / "keep.txt").write_bytes(b"author content\n")
+    _author_commit(project)
+
+    workflow = b"name: ci\non:\n  pull_request:\n"
+    spurious = (
+        b"<<<<<<< before updating\n"
+        + workflow
+        + b"=======\n"
+        + workflow
+        + b">>>>>>> after updating\n"
+    )
+    genuine = (
+        b"<<<<<<< before updating\n"
+        b"# AUTHOR-customised guide\n"
+        b"=======\n"
+        b"# Build a BenchWeave device plugin with AI\n"
+        b">>>>>>> after updating\n"
+    )
+    mixed = (
+        b"<<<<<<< before updating\n"
+        b"same\n"
+        b"=======\n"
+        b"same\n"
+        b">>>>>>> after updating\n"
+        b"<<<<<<< before updating\n"
+        b"# AUTHOR note\n"
+        b"=======\n"
+        b"# template note\n"
+        b">>>>>>> after updating\n"
+    )
+
+    def stage_as_conflicted(destination: str, relative: str) -> None:
+        """copier's own post-merge index write: stages 1/2/3 for a conflicted
+        file (see its ``update-index --index-info`` block)."""
+        sha = _git_out(Path(destination), "hash-object", "-w", "--", relative)
+        # Bytes, not text=True: text mode translates \n to \r\n on Windows
+        # stdin, so git's --index-info parser reads the path as
+        # "AI-GUIDE.md\r", matches nothing, and stages no conflict entries —
+        # silently, with exit 0. The arm then observed every path as untracked
+        # on that lane and could not tell a failed staging from a clean merge.
+        payload = (
+            f"0 {'0' * 40}\t{relative}\n"
+            f"100644 {sha} 1\t{relative}\n"
+            f"100644 {sha} 2\t{relative}\n"
+            f"100644 {sha} 3\t{relative}\n"
+        ).encode()
+        subprocess.run(
+            ["git", "-C", destination, "update-index", "--index-info"],
+            input=payload,
+            check=True,
+            capture_output=True,
+        )
+
+    def fake_update(destination: str, **_kwargs: object) -> None:
+        root = Path(destination)
+        (root / ".github" / "workflows").mkdir(parents=True, exist_ok=True)
+        (root / ".github" / "workflows" / "ci.yml").write_bytes(spurious)
+        (root / "AI-GUIDE.md").write_bytes(genuine)
+        (root / "MIXED.md").write_bytes(mixed)
+        for relative in (".github/workflows/ci.yml", "AI-GUIDE.md", "MIXED.md"):
+            stage_as_conflicted(destination, relative)
+
+    monkeypatch.setattr(scaffold_update, "_load_run_update", lambda: fake_update)
+    conflicted, restored, skipped = scaffold_update.upgrade_project(project)
+
+    assert conflicted == ["AI-GUIDE.md", "MIXED.md"]
+    assert restored == [] and skipped == []
+    assert (project / ".github" / "workflows" / "ci.yml").read_bytes() == workflow
+    assert (project / "MIXED.md").read_bytes() == mixed
+    text = (project / "AI-GUIDE.md").read_text(encoding="utf-8")
+    assert "<<<<<<< before updating" in text
+    assert "AUTHOR-customised guide" in text, "the author's line survives the conflict"
+    assert (project / "keep.txt").read_bytes() == b"author content\n"
+    status = _git_out(project, "status", "--porcelain", "--untracked-files=all")
+    assert (
+        "?? .github/workflows/ci.yml" in status
+    ), f"the collapsed file must not stay unmerged: {status!r}"
+    assert "UU AI-GUIDE.md" in status and "UU MIXED.md" in status
+
+
 def test_upgrade_help_discloses_the_adopted_project_shape() -> None:
     """A-F1: the help must not claim conflicts only happen where author and
     template both changed a file — an adopted project's first upgrade

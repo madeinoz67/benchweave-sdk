@@ -31,9 +31,14 @@ any of the three drifting reddens exactly the arm that drifted.
 
 from __future__ import annotations
 
+import subprocess
+import sys
+import tomllib
 from pathlib import Path
+from typing import Any
 
 import pytest
+import yaml
 
 from benchweave_sdk import __version__
 from benchweave_sdk.presentation import create_ui_resources
@@ -194,6 +199,122 @@ def test_new_project_tree_matches_fixture_provider(tmp_path: Path) -> None:
     assert "src/example_plugin/vectors.json" in provider_files
     assert "src/example_plugin/vectors.json" in base_files
     assert "src/example_plugin/ftdi-control-provider.json" not in base_files
+
+
+def _workflow_path(arm: Path) -> Path:
+    return arm / ".github" / "workflows" / "ci.yml"
+
+
+def _step_index(steps: list[dict[str, Any]], exact_run: str) -> int:
+    """The index of the step whose `run` is EXACTLY `exact_run`.
+
+    Exact, not substring: `ruff check .` and `pytest -q` are short enough that
+    a substring match would let a materially different command (a `|| true`
+    suffix, a path argument) satisfy the ordering assertion.
+    """
+    matches = [
+        index
+        for index, step in enumerate(steps)
+        if str(step.get("run", "")).strip() == exact_run
+    ]
+    assert len(matches) == 1, f"expected one step running {exact_run!r}, found {matches}"
+    return matches[0]
+
+
+def test_the_generated_workflow_carries_the_lint_and_test_jobs() -> None:
+    """A2 (#596, design record §2.6.1): the render ships a CI workflow whose
+    two jobs install their extra BEFORE the command that needs it, and whose
+    bytes are identical across every arm and free of GitHub expression syntax.
+
+    Written while the template still had no `.github/` — the RED run reds on
+    the missing file itself, so the arm cannot pass vacuously. The ordering
+    assertion is the issue's own lesson made structural: ruff cannot spawn
+    until the lint extra is installed, so the sync step index must be strictly
+    below the run step index in each job.
+    """
+    arms = fixture_arms()
+    rendered = {arm: _workflow_path(FIXTURES / arm) for arm in arms}
+    for arm, path in rendered.items():
+        assert path.is_file(), f"{arm}: the scaffold renders no .github/workflows/ci.yml ({path})"
+    texts = {arm: path.read_text(encoding="utf-8") for arm, path in rendered.items()}
+    assert len(set(texts.values())) == 1, "the workflow must be byte-identical across every arm"
+
+    text = texts[arms[0]]
+    # Expression-free (§2.1): the file is copied verbatim today, and this pins
+    # the property that would let it stay correct if it ever became a `.jinja`
+    # member — a jinja render would eat an unescaped `${{ ... }}`.
+    assert "${{" not in text, "the generated workflow must carry no GitHub expression syntax"
+
+    document = yaml.safe_load(text)
+    # YAML 1.1 resolves the bare key `on` to the boolean True; accept either.
+    triggers = document.get("on", document.get(True))
+    assert triggers is not None and "pull_request" in triggers, triggers
+    assert document["permissions"]["contents"] == "read", document["permissions"]
+
+    jobs = document["jobs"]
+    assert set(jobs) == {"lint", "tests"}, sorted(jobs)
+    for name, extra, command in (
+        ("lint", "lint", "uv run ruff check ."),
+        ("tests", "test", "uv run pytest -q"),
+    ):
+        job = jobs[name]
+        assert job["runs-on"] == "ubuntu-latest", (name, job.get("runs-on"))
+        setup = [
+            step
+            for step in job["steps"]
+            if str(step.get("uses", "")).startswith("astral-sh/setup-uv@")
+        ]
+        assert setup, f"{name}: no astral-sh/setup-uv step"
+        assert setup[0]["with"]["python-version"] == "3.13", setup[0]
+        installed = _step_index(job["steps"], f"uv sync --extra {extra}")
+        executed = _step_index(job["steps"], command)
+        assert installed < executed, (
+            f"{name}: `uv sync --extra {extra}` must run before `{command}` "
+            "(the first-run lesson, gateway issue #596)"
+        )
+
+
+def test_each_arm_passes_the_lint_set_its_pyproject_declares() -> None:
+    """A3 (#596, design record §2.6.2): the generated code passes the
+    generated lint, for every arm.
+
+    The select list is READ from that arm's rendered `pyproject.toml` — the
+    machine source the generated CI actually runs — and never restated here,
+    so an arm cannot drift from the gate it ships. The RED control was
+    in-tree: the provider arm carried two F401s, so this arm failed before
+    §2.3 removed them.
+
+    Also asserts the `lint` extra exists: the generated workflow's
+    `uv sync --extra lint` would fail at run time without it, and nothing
+    offline would otherwise notice.
+    """
+    ruff = [sys.executable, "-m", "ruff"]
+    for arm in fixture_arms():
+        root = FIXTURES / arm
+        document = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+        extras = document["project"]["optional-dependencies"]
+        assert "lint" in extras, f"{arm}: no `lint` extra, so `uv sync --extra lint` fails"
+        select = document.get("tool", {}).get("ruff", {}).get("lint", {}).get("select")
+        assert select, f"{arm}/pyproject.toml declares no [tool.ruff.lint].select"
+        result = subprocess.run(
+            [
+                *ruff,
+                "check",
+                "--select",
+                ",".join(select),
+                "--no-cache",
+                str(root / "src"),
+                str(root / "tests"),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+        assert result.returncode == 0, (
+            f"{arm}: the generated lint rejects the generated code\n"
+            f"{result.stdout}{result.stderr}"
+        )
 
 
 def _answers_of(project: Path) -> dict[str, str]:

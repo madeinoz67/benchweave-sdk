@@ -19,6 +19,11 @@ evidence. wire.py carries the
 wire-discipline helpers (see "Wire discipline" below). The skills are
 distributable content inside the package.
 
+The project also contains a GitHub Actions workflow at .github/workflows/ci.yml.
+The workflow runs the lint check and the tests on every push to main and on
+every pull request. The lint job installs the lint extra first, because ruff
+comes from that extra.
+
 With --with-ui, the SDK also generates UI-GUIDE.md at the project root and
 presentation.json, binding-catalogue.json and ui/manifest.json inside src/<package>/.
 Add optional settings schemas under src/<package>/ui/settings/, complete presets

@@ -25,7 +25,14 @@ rubric's G5 gate is the obligation; this file is the detail behind it.
    too). Downstream
    plugin repositories diff generated output; treat the change as an interface change and
    say so in the PR. The generated tree's provenance file `.copier-answers.yml` is part of
-   that interface (SRF-1).
+   that interface (SRF-1). Since gateway issue #596 the same obligation covers the
+   generated `.github/workflows/ci.yml` (two jobs, expression-free, byte-identical across
+   arms) and the generated `pyproject.toml`'s `lint` extra plus the arm-conditional `test`
+   extra. Two consequences that are easy to miss: the AI-GUIDE layout text carried in
+   `template/AI-GUIDE.md.jinja` (generated docs) moves in the same commit, and the gateway
+   pins the rendered file set — `tests/sdk/test_scaffold_skills.py::PINNED_FILE_SET` must
+   gain `.github/workflows/ci.yml` in the pointer PR, or the gateway's `sdk` lane reds at
+   the bump (that red IS the pin working).
 
 3. **Standards bundle/lock format changes** 🪝 → the compatibility notes in
    `standards-lock.json`; when the export format itself moves, the main repository's
@@ -76,7 +83,9 @@ rubric's G5 gate is the obligation; this file is the detail behind it.
 8. **The two-repo landing order** → this repository's commit is pushed BEFORE the main
    repository's pointer commit advances (invariants TWO-1). A PR here that expects a
    main-side counterpart (corpus change, renderer rebuild, pointer) must say which
-   main-side change pairs with it.
+   main-side change pairs with it. Gateway issue #596's pairing is named in obligation 2:
+   `tests/sdk/test_scaffold_skills.py::PINNED_FILE_SET` gains
+   `.github/workflows/ci.yml` in the same pointer PR.
 
 9. **Agent-asset factual claims** (issue #347 WS3) → every refusal code, subcommand and
    guide heading cited by the managed agent assets (`template/AGENTS.md.jinja`,
@@ -168,9 +177,9 @@ rubric's G5 gate is the obligation; this file is the detail behind it.
 
 | Job | What it catches |
 |---|---|
-| `sdk` | ubuntu, macOS and Windows; deliberately NO submodules (the self-containment proof); `uv sync --locked --extra test --extra server --extra scaffold` (the copier template lane, WS2; the folded server host, #309); `ruff check .`; `mypy src`; `pytest -q` (the behavioral suite, marker-partitioned: `browser` runs in its own job, `timing` runs serially after the `-n auto` leg, the `loop` module — the standalone dev loop, #556 — runs serially on ubuntu only, design record §13, and `live_ftdi` — arms that open a real FTDI-class device, #589 — is deselected in CI and runs only on a live bench via `-m live_ftdi`; including the R-2 byte-parity arms, the R-4/R-5d update lane in `tests/test_scaffold_update.py` — full checkout history via fetch-depth 0, offline against a throwaway tagged template repo — and the R-5b/R-5c agent-asset drift module `tests/test_agent_assets.py`); `sync-standards --check` (lock ↔ tree ↔ stamps on the committed state); `benchweave-sdk --version` entry-point smoke; a scaffold-and-check run; the publish workflow's installed-wheel smoke (installs `[scaffold]`) |
+| `sdk` | ubuntu, macOS and Windows; deliberately NO submodules (the self-containment proof); `uv sync --locked --extra test --extra server --extra scaffold` (the copier template lane, WS2; the folded server host, #309); `ruff check .`; `mypy src`; `pytest -q` (the behavioral suite, marker-partitioned: `browser` runs in its own job, `timing` runs serially after the `-n auto` leg, the `loop` module — the standalone dev loop, #556 — runs serially on ubuntu only, design record §13, and `live_ftdi` — arms that open a real FTDI-class device, #589 — is deselected in CI and runs only on a live bench via `-m live_ftdi`; including the R-2 byte-parity arms, the R-4/R-5d update lane in `tests/test_scaffold_update.py` — full checkout history via fetch-depth 0, offline against a throwaway tagged template repo — and the R-5b/R-5c agent-asset drift module `tests/test_agent_assets.py`); `sync-standards --check` (lock ↔ tree ↔ stamps on the committed state); `benchweave-sdk --version` entry-point smoke; a scaffold-and-check run, which since #596 also runs the GENERATED workflow's lint path against the freshly scaffolded project (`uv sync --extra lint`, `uv run ruff check .` — find-links supplies this checkout's wheel, because uv locks every extra on any sync); the publish workflow's installed-wheel smoke (installs `[scaffold]`); and, ubuntu only, the generated-workflow step (§8's A0 + A7): both of the generated workflow's job commands run against fresh base, ui and provider scaffolds (3 arms × 2 jobs, floors 9/10/8 passed), and a STANDING expected-failure control runs the same provider project with `[server]` stripped from its pin — it must exit 1 with `live_provider_backend_missing`, and it reds the day that stripped run goes green (which is when the pin must narrow). Exit 2 is the tooling class everywhere in that step and is never accepted as findings |
 | `docs` | this repository's `docs.yml`: the docs site builds from this repository's content |
-| `publish` | release integrity — tag, wheel, stamp verification |
+| `publish` | release integrity — tag, wheel, stamp verification. Since #596 it carries NO generated-tests smoke: that arm moved to `ci.yml`'s generated-workflow step at PR time (maintainer correction, 2026-11-07 — no release is scheduled, and a proof parked at a release gate is parked indefinitely) |
 
 What CI does **not** catch: every numbered obligation above that names a doc, the user
 guide, the README, or a main-side suite run — those are the reviewer's, which is why G5
