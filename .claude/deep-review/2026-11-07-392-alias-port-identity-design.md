@@ -137,10 +137,23 @@ worst-case; accepted with the following bounds.
   pre-fix path. The rules can only ADD skips for spellings the OS itself
   says name the same node (symlinks) or the same driver instance (stem
   pairs); they cannot remove a skip today's byte rule already makes.
-- **Realpath over-match is not a two-device collapse.** Two paths whose
-  realpaths are equal ARE the same node by the OS's own resolution — the
-  "second device" would be unreachable through that spelling anyway
-  (opening it opens the same node).
+- **Realpath over-match is not a two-device collapse — for a STATIC
+  symlink.** Two paths whose realpaths are equal ARE the same node by the
+  OS's own resolution — the "second device" would be unreachable through
+  that spelling anyway (opening it opens the same node).
+- **That defence does not survive alias MUTATION** (refute F1, executed).
+  The predicate is evaluated at two different instants — once at mint and
+  again at scan — so its answer is a function of MUTABLE filesystem state,
+  not of a fixed name. An operator-managed alias repointed between the two
+  makes `realpath` equate the mint node with a DIFFERENT node at scan time;
+  trust-2 then reads the two serials as a mismatch and drops the new node's
+  row, silently. Measured on the fix: rows `[(ttyUSB-A, SER-A)]` against
+  `[(ttyUSB-A, SER-A), (ttyUSB-B, SER-B)]` at base — one row hidden, no log
+  line, while the same scan re-opens the original node by identify (equal to
+  base there, not a regression). Reachable only through a mutable alias, the
+  class §2.2 deliberately embraces; udev `by-id` links do not repoint across
+  serials. This is the SAME disclosed failure mode, now with its trigger
+  named rather than argued away.
 
 What the code does when uncertain: nothing new — identify, as today.
 
@@ -172,7 +185,7 @@ the main gateway repo's `.claude/deep-review/README.md`):
 | D1 | The FTDI lane's byte-identical shape: `discover_ftdi_devices`' `connected_url` compare (`ftdi.py:1970`) has the same byte-equality posture over `ftdi://` URL spellings (index/serial/description forms). | This record's deferral table; NOT filed as a new gateway issue (it may be empty — the #589 canonical-URL fold may already normalize). | A fixture or operator trace showing a connected-era FTDI scan opening a candidate whose URL is a re-spelling of `connected_url`. Disclosed weak form: subject inspectable (the trace), firing needs someone to look. |
 | D2 | Windows `\\.\COM10` vs `COM10` spelling (documented Windows arcana for ports ≥ 10; pyserial accepts both, byte-compare misses). Not covered: adding a fourth clause without any Windows-hardware evidence would be the heuristic-without-evidence this design refuses. | This record's deferral table. | An operator report or a Windows CI-able fixture exhibiting that spelling class re-probing. |
 | D3 | Live-bench verification of the darwin stem pairing and by-id resolution against real adapters (the platform invariants in §2 are argued from OS structure plus this machine's `/dev`; no hardware CI exists here). | This record's deferral table; a `live_*`-marker arm is the natural vehicle if taken (CI-deselected, bench-run — the `live_ftdi` precedent, `ci.yml`). | A live bench scan trace showing either (a) a skip that omitted a genuinely different device, or (b) an open of an alias-spelled connected port. Either outcome is decidable from the trace. |
-| D4 | Row-shape/dedup policy IF any platform ever enumerates BOTH spellings of one node (darwin does not — §2.1; the fix serves one row there, same as today's byte arm). | This record's deferral table. | A pyserial release or platform whose `comports()` yields both spellings for one device — observable as a duplicated `port_path` pair in one scan's rows. |
+| D4 | **BOTH-spellings platform, and its consequence is an IDENTITY SWAP, not a row-shape question** (refute F2, executed). If one scan enumerates `cu.X` and `tty.X` together, the two sites COMPOUND: `_enumerated_serial_at`'s first match records the FOREIGN row's serial at mint, and the scan then SERVES the chimera — foreign serial over the session's identity, trust-2 reconciles `SER-B == SER-B` so nothing fires — while DROPPING the connected unit's own row. Measured: mint recorded `SER-B` for a session opened on `SER-A`, scan rows `[(/dev/tty.usbmodem-DEMO01, SER-B)]`, `opened=[]`. Unreachable on today's platforms (§2.1: darwin enumerates cu-only), which is why it stays a deferral. | This record's deferral table. | A pyserial release or platform whose `comports()` yields both spellings for one device — observable as a duplicated `port_path` pair in one scan's rows. On that trigger this is an identity defect, not a dedup policy choice. |
 | D5 | A user-guide note on alias spellings in discovery (no `cu/tty`/`by-id` mention exists in `user_guide/plugin-sdk.qmd` today — grep-verified; behaviour is host-side and self-explaining in the row's `port_path`). | This record's deferral table. | Disclosed weak/judgement form: an operator question on the tracker about which spelling to pass as `--device`. |
 
 ## 5. The measurable proof — acceptance rule pre-committed
@@ -301,7 +314,9 @@ are the OS's own built-ins, not this install's bench devices.
 3. **realpath cost/behaviour drift across platforms** (e.g. a future
    platform resolving `/dev` itself): bounded — worst case the clause
    under- or over-matches exactly the symlink class, G4 plus R2 pin the
-   observed behaviour.
+   observed behaviour. **Includes mutation:** the clause's answer changes
+   if the alias is repointed between mint and scan (§3, refute F1), which
+   is the one shape where this risk turns into a hidden row.
 4. **The `None`-serial conflation's history:** rows recorded before this
    fix (long-lived sessions) carry `None`/known mint serials for aliased
    spellings; after the fix their NEXT mint records correctly. A scan in
