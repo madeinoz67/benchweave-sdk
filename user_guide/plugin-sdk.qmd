@@ -658,7 +658,7 @@ There is no automatic import of standalone captures into the gateway. Ingest is 
 
 The writer is three of the ten members. A bench script that drives an adapter without a gateway needs the other seven as well: clocks, evidence, the transport, and the two host-lifecycle members. The example below is one complete `CaptureServices` object for a device on a serial port. A contributor fork of the ADC board wrote a serial host for the same purpose, and this example is adapted from it.
 
-It implements the three scoped stream transactions of OTDP §8.1 exactly. It adds one behaviour that the spec leaves unspecified: the quiet-line answer below. The transactions are `stream_send`, `stream_receive` and `stream_exchange`. In them, `exact_bytes` takes precedence over `termination`. Only `lf` and `crlf` terminators exist here, because serial has no `eom`. Unspecified fields are refused. An incomplete frame is never returned as complete.
+It implements the three scoped stream transactions of OTDP §8.1 exactly. It adds one behaviour that the spec leaves unspecified: the quiet-line answer below. The transactions are `stream_send`, `stream_receive` and `stream_exchange`. In them, `exact_bytes` takes precedence over `termination`. `max_bytes` has two bounds. A terminator-mode receive is one frame, so `max_frame_bytes` limits it. An `exact_bytes` receive is a transfer, not a frame. Only the transfer ceiling limits it. The host configuration sets this ceiling. The default is 64 KiB. Only `lf` and `crlf` terminators exist here, because serial has no `eom`. Unspecified fields are refused. An incomplete frame is never returned as complete.
 
 A receive that sees no bytes at all for a short quiet window answers `{"data": b""}`. Nothing was offered. Adapters read that as a quiet line, not as an error. The DPS-150 plugin's telemetry drain ends on exactly that answer. Once a frame starts, it is only ever returned whole. Bytes already read when a deadline expires stay buffered for the next receive, so a slow reply is not lost.
 
@@ -675,6 +675,10 @@ from typing import Any
 from benchweave_sdk.capture import StandaloneCaptureWriter
 
 _TERMINATORS = {"lf": b"\n", "crlf": b"\r\n"}
+#: The host's configured transfer ceiling. An exact_bytes receive is a
+#: transfer, not a frame, so only this bound applies to it. 64 KiB is the
+#: default.
+_TRANSFER_CEILING = 64 * 1024
 _RECEIVE = {"max_bytes", "termination", "exact_bytes"}
 _FIELDS = {
     "stream_send": {"kind", "data"},
@@ -766,9 +770,15 @@ class SerialStandaloneHost:
 
     def _receive_bounds(self, t: dict[str, Any]) -> tuple[int, bytes, int]:
         max_bytes, termination, exact = t["max_bytes"], t["termination"], t["exact_bytes"]
+        # A terminator-mode receive is one frame: the declared frame bound
+        # applies, clamped by the transport's transfer ceiling. An
+        # exact_bytes receive is a transfer, not a frame: only the transfer
+        # ceiling applies.
+        bulk = isinstance(exact, int) and not isinstance(exact, bool) and exact > 0
+        ceiling = _TRANSFER_CEILING if bulk else min(_TRANSFER_CEILING, self._max_frame)
         if not isinstance(max_bytes, int) or isinstance(max_bytes, bool) \
-                or not 1 <= max_bytes <= self._max_frame:
-            raise ValueError(f"max_bytes must be 1..{self._max_frame}")
+                or not 1 <= max_bytes <= ceiling:
+            raise ValueError(f"max_bytes must be 1..{ceiling}")
         if termination not in _TERMINATORS:  # serial does not support "eom"
             raise ValueError("termination must be 'lf' or 'crlf' on a serial port")
         if exact is not None and (not isinstance(exact, int) or isinstance(exact, bool)

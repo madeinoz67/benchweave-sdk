@@ -538,6 +538,19 @@ def _cell_c10(backend: Any) -> None:
         refused = str(exc)
     assert refused is not None, "max_bytes above the ceiling must refuse"
     assert "1..256" in refused, f"the refusal must name the ceiling: {refused!r}"
+    # Mode-scoped (issue #404): the frame bound does not apply to a bulk
+    # receive, so this arm must name the TRANSFER ceiling instead.
+    bulk_refused = None
+    try:
+        _rx(services, _ctx_marked(), max_bytes=70_000, exact_bytes=70_000)
+    except ValueError as exc:
+        bulk_refused = str(exc)
+    assert bulk_refused is not None, (
+        "a bulk max_bytes above the transfer ceiling must refuse"
+    )
+    assert "1..65536" in bulk_refused, (
+        f"the bulk refusal must name the transfer ceiling: {bulk_refused!r}"
+    )
     # The at-boundary arm needs deliverable bytes (the services must be a
     # backend's); on a bare services the arm is skipped (disclosed).
     backend_ok = backend if isinstance(backend, _Backend) else None
@@ -649,7 +662,11 @@ def test_c13_crlf_terminator_contract(backend: Any) -> None:
 def test_c11_ring_overflow_gap_visibility() -> None:
     # In-process: a 20-byte burst into a 16-byte ring.
     port = _ScriptedPort()
-    link = SerialLink(port, ring_capacity=16, quiet_s=_QUIET_S)
+    # transfer_ceiling matches the ring: the pairing rule (the #404 fold)
+    # refuses a ceiling the ring cannot serve.
+    link = SerialLink(
+        port, ring_capacity=16, transfer_ceiling=16, quiet_s=_QUIET_S
+    )
     try:
         _cell_c11(link, port.deliver)
     finally:
@@ -657,7 +674,9 @@ def test_c11_ring_overflow_gap_visibility() -> None:
     # pty (posix): the same cell over the real pyserial read path — one
     # reader per port, so the small ring is the BACKEND's link.
     if hasattr(os, "openpty"):
-        box, slave_fd = _build_pty({"ring_capacity": 16, "quiet_s": _QUIET_S})
+        box, slave_fd = _build_pty(
+            {"ring_capacity": 16, "transfer_ceiling": 16, "quiet_s": _QUIET_S}
+        )
         try:
             _cell_c11(box.link, box.far.deliver)
         finally:
@@ -759,7 +778,9 @@ class _MutantServicesCeilingUnchecked(SerialCaptureServices):
 
 def test_mutant_m1_ring_drops_newest_fails_c11() -> None:
     port = _ScriptedPort()
-    link = _MutantLinkDropsNewest(port, ring_capacity=16, quiet_s=_QUIET_S)
+    link = _MutantLinkDropsNewest(
+        port, ring_capacity=16, transfer_ceiling=16, quiet_s=_QUIET_S
+    )
     try:
         with pytest.raises(AssertionError, match="newest tail must survive"):
             _cell_c11(link, port.deliver)

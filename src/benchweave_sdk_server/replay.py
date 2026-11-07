@@ -513,12 +513,17 @@ def _load_stream_row(
         )
     bounds: tuple[int, str, int] | None = None
     if receive:
-        # Validate through the SHARED ladder (its ceiling at load time is the
-        # shared 64 KiB transfer ceiling; the host clamps again against its
-        # own descriptor-derived ceiling), then keep the transaction's own
-        # STRING spelling — the row's match identity compares against the
-        # live transaction's fields, not the ladder's terminator bytes.
-        _stream_receive_bounds(transaction, TRANSFER_CEILING)
+        # Validate through the SHARED ladder (at load time both ceilings are
+        # the shared 64 KiB transfer ceiling; the host clamps the frame
+        # ceiling again against its own descriptor), then keep the
+        # transaction's own STRING spelling — the row's match identity
+        # compares against the live transaction's fields, not the ladder's
+        # terminator bytes.
+        _stream_receive_bounds(
+            transaction,
+            frame_ceiling=TRANSFER_CEILING,
+            transfer_ceiling=TRANSFER_CEILING,
+        )
         bounds = (
             transaction["max_bytes"],
             transaction["termination"],
@@ -778,8 +783,13 @@ class ReplayHost(WriterBackedCaptureServices, MockHost):
         sustains reads). A journal with no derivable unit plays once
         regardless.
     max_frame_bytes
-        The descriptor-derived receive ceiling (A02: the plugin's declared
-        bound is the bound, clamped by the shared transfer ceiling).
+        The descriptor-derived frame-mode receive ceiling (A02: the
+        plugin's declared bound is the bound), clamped by
+        ``transfer_ceiling``.
+    transfer_ceiling
+        The bulk-mode receive ceiling (#404): a host paired with a serial
+        link takes the link's ``transfer_ceiling`` here, so mock/replay/
+        serial parity stays statable above the 64 KiB default.
     capture_root, capture_max_bytes
         The capture configuration threaded through
         :class:`WriterBackedCaptureServices`.
@@ -791,6 +801,7 @@ class ReplayHost(WriterBackedCaptureServices, MockHost):
         *,
         cycles: int | None = None,
         max_frame_bytes: int = 4096,
+        transfer_ceiling: int = TRANSFER_CEILING,
         capture_root: Any = None,
         capture_max_bytes: int | None = None,
     ) -> None:
@@ -800,9 +811,20 @@ class ReplayHost(WriterBackedCaptureServices, MockHost):
         MockHost.__init__(self, [])
         if cycles is not None and cycles < 1:
             raise ValueError("standalone_transport_cycles: cycles must be >= 1 or None")
+        if (
+            not isinstance(transfer_ceiling, int)
+            or isinstance(transfer_ceiling, bool)
+            or transfer_ceiling < 1
+        ):
+            raise ValueError(
+                "standalone_transport_transfer_ceiling: must be a positive integer"
+            )
         self._journal = journal
         self._grammar = journal.grammar
-        self._ceiling = min(max_frame_bytes, TRANSFER_CEILING)
+        self._ceiling = min(max_frame_bytes, transfer_ceiling)
+        # The bulk-mode bound (issue #404): the configured transfer
+        # ceiling, kept separate from the frame ceiling above.
+        self._transfer_ceiling = transfer_ceiling
         self._rows = deque(journal.rows)
         self._cycle = deque(journal.cycle)
         self._rotate = journal.rotate
@@ -1060,7 +1082,11 @@ class ReplayHost(WriterBackedCaptureServices, MockHost):
         raw_bounds: tuple[int, bytes, int] | None = None
         identity_bounds: tuple[int, str, int] | None = None
         if kind in ("stream_receive", "stream_exchange"):
-            raw_bounds = _stream_receive_bounds(transaction, self._ceiling)
+            raw_bounds = _stream_receive_bounds(
+                transaction,
+                frame_ceiling=self._ceiling,
+                transfer_ceiling=self._transfer_ceiling,
+            )
             identity_bounds = (
                 transaction["max_bytes"],
                 transaction["termination"],

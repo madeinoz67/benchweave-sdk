@@ -438,7 +438,9 @@ def test_d3_served_stream_outcomes_equal_the_computed_ladder() -> None:
         transaction["data"] = bytes.fromhex(transaction["data"])
         served = asyncio.run(session.services.transfer(transaction, context))
         # The ladder's computation over the recorded bytes and bounds.
-        max_bytes, terminator, exact = _stream_receive_bounds(transaction, 4096)
+        max_bytes, terminator, exact = _stream_receive_bounds(
+            transaction, frame_ceiling=4096, transfer_ceiling=4096
+        )
         recorded = bytes.fromhex(row["response"]["data"])
         if exact:
             computed = recorded  # exact precedence: the frame is the count

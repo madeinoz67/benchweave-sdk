@@ -26,7 +26,11 @@ from typing import Any
 import pytest
 
 from benchweave_sdk_server.serial import SerialCaptureServices, SerialLink
-from benchweave_sdk_server.session import FrameRow, HostOperationContext
+from benchweave_sdk_server.session import (
+    TRANSFER_CEILING,
+    FrameRow,
+    HostOperationContext,
+)
 from benchweave_sdk_server.transport import ByteStreamMockHost
 
 _MAX_FRAME = 128
@@ -69,9 +73,17 @@ class _MockLeg:
     name = "bytestream_mock"
 
     def __init__(
-        self, rows: list[FrameRow], *, max_frame_bytes: int = _MAX_FRAME
+        self,
+        rows: list[FrameRow],
+        *,
+        max_frame_bytes: int = _MAX_FRAME,
+        transfer_ceiling: int = TRANSFER_CEILING,
     ) -> None:
-        self._host = ByteStreamMockHost(rows, max_frame_bytes=max_frame_bytes)
+        self._host = ByteStreamMockHost(
+            rows,
+            max_frame_bytes=max_frame_bytes,
+            transfer_ceiling=transfer_ceiling,
+        )
 
     async def transfer(self, transaction: dict[str, Any], context: Any) -> dict[str, Any]:
         return await self._host.transfer(transaction, context)
@@ -91,10 +103,16 @@ class _SerialLeg:
     name = "serial_backend"
 
     def __init__(
-        self, replies: dict[bytes, bytes], *, max_frame_bytes: int = _MAX_FRAME
+        self,
+        replies: dict[bytes, bytes],
+        *,
+        max_frame_bytes: int = _MAX_FRAME,
+        transfer_ceiling: int = TRANSFER_CEILING,
     ) -> None:
         self._port = _ReplyPort(replies)
-        self._link = SerialLink(self._port, quiet_s=0.05)
+        self._link = SerialLink(
+            self._port, quiet_s=0.05, transfer_ceiling=transfer_ceiling
+        )
         self._services = SerialCaptureServices(self._link, max_frame_bytes=max_frame_bytes)
 
     async def transfer(self, transaction: dict[str, Any], context: Any) -> dict[str, Any]:
@@ -541,6 +559,217 @@ def test_r1_fifty_poll_cycles_repeat_the_exact_frame_sequence() -> None:
             assert reply == {"data": b"2.5\n"}, f"cycle {cycle}"
         assert host.plays >= 51
         await host.close_transport(context)
+
+    asyncio.run(flow())
+
+
+# --- issue #404: the receive bound is MODE-scoped ---------------------------
+#
+# A terminator-mode receive IS a frame, so the descriptor's
+# ``max_frame_bytes`` bounds it (unchanged). An ``exact_bytes`` receive is
+# transfer-scale — "give me N bytes, framing is mine" — so only the
+# transfer ceiling bounds it. Before the fix one clamped ceiling served
+# both modes, and a plugin declaring a small honest frame size could not
+# pull a bulk transfer at all.
+
+_FEED_FRAME = 23
+_FEED_FRAMES = 13_356
+#: One second at the 3 Mbps 8N1 byte rate (#393's class): 13,356 frames of
+#: 23 B = 307,188 B, under the 512 KiB ring so nothing is dropped.
+_FEED = b"0123456789ABCDEFGHIJKLM" * _FEED_FRAMES
+#: The terminator-mode feed: 22 data bytes + lf = one 23 B frame, so a
+#: terminator-mode receive at ``max_bytes`` equal to the frame length
+#: returns exactly one frame per call.
+_TERM_FEED = (b"0123456789ABCDEFGHIJKL" + b"\n") * _FEED_FRAMES
+
+
+def _burst(
+    leg: Any,
+    max_frame_bytes: int,
+    data: bytes,
+    *,
+    transfer_ceiling: int = TRANSFER_CEILING,
+) -> Any:
+    """A leg whose wire carries ``data`` before the first receive."""
+
+    async def build() -> Any:
+        if leg is _MockLeg:
+            surface = leg(
+                [FrameRow("burst", None, data)],
+                max_frame_bytes=max_frame_bytes,
+                transfer_ceiling=transfer_ceiling,
+            )
+        else:
+            surface = leg(
+                {},
+                max_frame_bytes=max_frame_bytes,
+                transfer_ceiling=transfer_ceiling,
+            )
+            await surface.feed(data)  # a no-op on the mock: its burst is the row
+        return surface
+
+    return build()
+
+
+def test_404_a1_a_bulk_receive_is_bounded_by_the_transfer_ceiling(leg: Any) -> None:
+    """A1: max_frame_bytes=23 does not cap an exact_bytes receive."""
+
+    async def flow() -> None:
+        surface = await _burst(leg, 23, b"x" * 1472)
+        try:
+            reply = await surface.transfer(
+                _receive(max_bytes=1472, exact_bytes=1472), _context()
+            )
+            assert reply == {"data": b"x" * 1472}
+        finally:
+            await surface.close()
+
+    asyncio.run(flow())
+
+
+def test_404_a2_a_terminator_receive_keeps_the_frame_bound(leg: Any) -> None:
+    """A2: the same size in terminator mode is still a frame and still refuses."""
+
+    async def flow() -> None:
+        if leg is _MockLeg:
+            surface = leg([FrameRow("term", None, b"x" * 1472 + b"\n")], max_frame_bytes=23)
+        else:
+            surface = leg({}, max_frame_bytes=23)
+        try:
+            with pytest.raises(ValueError, match="max_bytes must be 1..23"):
+                await surface.transfer(_receive(max_bytes=1472), _context())
+        finally:
+            await surface.close()
+
+    asyncio.run(flow())
+
+
+def test_404_a3_the_transfer_ceiling_still_bounds_a_bulk_receive(leg: Any) -> None:
+    """A3: relaxing the frame bound does not remove the 64 KiB transfer bound."""
+
+    async def flow() -> None:
+        surface = (
+            leg([FrameRow("unused", b"\x00", b"")], max_frame_bytes=65536)
+            if leg is _MockLeg
+            else leg({}, max_frame_bytes=65536)
+        )
+        try:
+            with pytest.raises(ValueError, match="max_bytes must be 1..65536"):
+                await surface.transfer(
+                    _receive(max_bytes=70_000, exact_bytes=70_000), _context()
+                )
+        finally:
+            await surface.close()
+
+    asyncio.run(flow())
+
+
+@pytest.mark.parametrize("repeat", range(3))
+def test_404_a4_a_bulk_drain_pulls_transfer_scale_chunks(leg: Any, repeat: int) -> None:
+    """A4: 307,188 B of wire in at most 209 receives (1472 B each)."""
+
+    async def flow() -> None:
+        surface = await _burst(leg, 23, _FEED)
+        try:
+            context = _context(timeout_ms=120_000)
+            chunks: list[bytes] = []
+            remaining = len(_FEED)
+            while remaining:
+                want = min(1472, remaining)
+                reply = await surface.transfer(
+                    _receive(max_bytes=1472, exact_bytes=want), context
+                )
+                assert reply["data"], "a bulk receive inside the feed must deliver"
+                chunks.append(reply["data"])
+                remaining -= len(reply["data"])
+            assert b"".join(chunks) == _FEED
+            assert len(chunks) <= 209, f"bulk drain took {len(chunks)} receives"
+        finally:
+            await surface.close()
+
+    asyncio.run(flow())
+
+
+@pytest.mark.parametrize("repeat", range(3))
+def test_404_a5_a_frame_scale_bulk_drain_is_the_unchanged_control(
+    leg: Any, repeat: int
+) -> None:
+    """A5 (the BULK count control): one ``exact_bytes`` receive per frame
+    is 13,356 receives either way — the call count at the clamp's only
+    shape, which this slice must not move. This arm receives in BULK mode
+    (a valid positive ``exact_bytes``); the terminator-mode control is its
+    sibling arm below."""
+
+    async def flow() -> None:
+        surface = await _burst(leg, 23, _FEED)
+        try:
+            context = _context(timeout_ms=120_000)
+            chunks: list[bytes] = []
+            remaining = len(_FEED)
+            while remaining:
+                reply = await surface.transfer(
+                    _receive(max_bytes=_FEED_FRAME, exact_bytes=_FEED_FRAME), context
+                )
+                assert reply["data"], "a frame receive inside the feed must deliver"
+                chunks.append(reply["data"])
+                remaining -= len(reply["data"])
+            assert b"".join(chunks) == _FEED
+            assert len(chunks) == _FEED_FRAMES
+        finally:
+            await surface.close()
+
+    asyncio.run(flow())
+
+
+@pytest.mark.parametrize("repeat", range(3))
+def test_404_a5_b_a_terminator_drain_is_one_receive_per_frame(
+    leg: Any, repeat: int
+) -> None:
+    """A5's terminator half (the fold's correction): frames that each end
+    in a terminator, received with ``max_bytes`` equal to the frame length
+    and no ``exact_bytes`` — exactly one receive per frame, and the
+    reassembled bytes equal the feed. The former A5 arm received with
+    ``exact_bytes`` — bulk mode — while the build commit's message called
+    terminator mode "guarded by the A2/A5 control arms"; this arm is the
+    real terminator-mode count control."""
+
+    async def flow() -> None:
+        surface = await _burst(leg, 23, _TERM_FEED)
+        try:
+            context = _context(timeout_ms=120_000)
+            chunks: list[bytes] = []
+            remaining = len(_TERM_FEED)
+            while remaining:
+                reply = await surface.transfer(
+                    _receive(max_bytes=_FEED_FRAME), context
+                )
+                assert reply["data"], "a terminator receive inside the feed must deliver"
+                chunks.append(reply["data"])
+                remaining -= len(reply["data"])
+            assert b"".join(chunks) == _TERM_FEED
+            assert len(chunks) == _FEED_FRAMES
+        finally:
+            await surface.close()
+
+    asyncio.run(flow())
+
+
+def test_404_fold_both_hosts_carry_a_configured_transfer_ceiling(leg: Any) -> None:
+    """The fold's parity gap: only the serial backend could express a
+    transfer ceiling above the 64 KiB default, so a serial link at 128 KiB
+    accepted a 70000-byte bulk receive the mock refused naming 1..65536 —
+    parity was not statable above the default. Both legs constructed at
+    the same non-default ceiling agree: the receive succeeds on both."""
+
+    async def flow() -> None:
+        surface = await _burst(leg, 23, b"x" * 70_000, transfer_ceiling=131_072)
+        try:
+            reply = await surface.transfer(
+                _receive(max_bytes=70_000, exact_bytes=70_000), _context(timeout_ms=30_000)
+            )
+            assert reply == {"data": b"x" * 70_000}
+        finally:
+            await surface.close()
 
     asyncio.run(flow())
 

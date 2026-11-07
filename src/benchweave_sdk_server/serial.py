@@ -98,16 +98,29 @@ _BOOT_BAUD_DEFAULT = 115200
 _IDLE_POLL_S = 0.005
 
 
-def _stream_receive_bounds(t: dict[str, Any], ceiling: int) -> tuple[int, bytes, int]:
-    """The section 8.1 receive bounds against one ceiling, the shared
-    definition the serial backend and the byte-stream mock both validate
-    through (issue #394: outcome parity is pinned, not hoped — one
-    definition cannot drift). The A02 clamp: the ceiling itself is
-    ``min(transfer_ceiling, descriptor max_frame_bytes)`` — the plugin's
-    own declared bound governs."""
+def _stream_receive_bounds(
+    t: dict[str, Any], *, frame_ceiling: int, transfer_ceiling: int
+) -> tuple[int, bytes, int]:
+    """The section 8.1 receive bounds against a MODE-SCOPED ceiling, the
+    shared definition the serial backend, the byte-stream mock and the
+    replay host all validate through (issue #394: outcome parity is pinned,
+    not hoped — one definition cannot drift).
+
+    A terminator-mode receive is frame-scale — it returns at the first
+    terminator, so it is bounded by the A02 clamp, ``min(transfer_ceiling,
+    descriptor max_frame_bytes)``: the plugin's own declared bound governs.
+    An ``exact_bytes`` receive is transfer-scale — "give me N bytes,
+    framing is mine" — so the frame bound does not apply and only the
+    transfer ceiling does (issue #404).
+
+    ``bulk`` is computed from a VALID positive int, so a malformed
+    ``exact_bytes`` stays in frame mode and earns the ``exact_bytes``
+    refusal below, not a wider ceiling's message."""
     max_bytes = t["max_bytes"]
     termination = t["termination"]
     exact = t["exact_bytes"]
+    bulk = isinstance(exact, int) and not isinstance(exact, bool) and exact > 0
+    ceiling = transfer_ceiling if bulk else frame_ceiling
     if (
         not isinstance(max_bytes, int)
         or isinstance(max_bytes, bool)
@@ -165,8 +178,9 @@ class SerialLink:
         rate (200 kB/s), so a stalled consumer keeps more than
         a full negotiation window of the wire while the parser catches up.
         The services clamp the per-receive ceiling with the descriptor's
-        ``max_frame_bytes`` — the plugin's own declared bound governs
-        (A02 posture).
+        ``max_frame_bytes`` — the declaration governs only up to the
+        link's transfer ceiling (64 KiB by default): a larger declaration
+        silently clamps to it (A02 posture).
     """
 
     def __init__(
@@ -206,6 +220,18 @@ class SerialLink:
         ):
             raise ValueError(
                 "standalone_serial_link_quiet_s: must be a finite nonnegative number of seconds"
+            )
+        # The #404 fold's pairing rule: a bulk receive may ask for up to
+        # transfer_ceiling bytes in ONE take, and a take only completes once
+        # that many bytes sit in the ring together — the overflow dropper
+        # caps the ring at ring_capacity (discarding the oldest bytes), so a
+        # ceiling above the ring can never be served: the caller would wait
+        # out the deadline on bytes that were already dropped.
+        if transfer_ceiling > ring_capacity:
+            raise ValueError(
+                "standalone_serial_link_transfer_ceiling_above_ring: "
+                "transfer_ceiling must not exceed ring_capacity — the ring "
+                "cannot hold one ceiling-sized bulk receive"
             )
         self._transport = transport
         self._ring_capacity = ring_capacity
@@ -735,6 +761,9 @@ class SerialCaptureServices(WriterBackedCaptureServices):
         self._link = link
         self._max_frame_bytes = max_frame_bytes
         self._ceiling = min(link.transfer_ceiling, max_frame_bytes)
+        # The bulk-mode bound (issue #404): kept separate, never collapsed
+        # into the frame ceiling above.
+        self._transfer_ceiling = link.transfer_ceiling
         # The write refusals name the transport that actually short-wrote
         # (refute lane A's observation): the serial default keeps the
         # historical wording byte-identical on the two label lines; the
@@ -791,9 +820,12 @@ class SerialCaptureServices(WriterBackedCaptureServices):
             raise TimeoutError("operation cancelled or expired")
 
     def _receive_bounds(self, t: dict[str, Any]) -> tuple[int, bytes, int]:
-        """The receive bounds against this link's clamped ceiling (the
-        shared ``_stream_receive_bounds`` definition — see its docstring)."""
-        return _stream_receive_bounds(t, self._ceiling)
+        """The receive bounds against this link's frame ceiling and transfer
+        ceiling (the shared ``_stream_receive_bounds`` definition — see its
+        docstring)."""
+        return _stream_receive_bounds(
+            t, frame_ceiling=self._ceiling, transfer_ceiling=self._transfer_ceiling
+        )
 
     async def transfer(self, transaction: dict[str, Any], context: Any) -> dict[str, Any]:
         """One bounded exchange over the link, the guide's §8.1 discipline:
