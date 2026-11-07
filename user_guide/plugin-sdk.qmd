@@ -59,6 +59,15 @@ Moving a project to a newer template: `benchweave-sdk upgrade` (from the project
 
 The `upgrade` command reads and writes only two sets of files: the files that git tracks, and the files that the update itself changed. The command does not read ignore rules. The command never reads through a symlink. It never writes through a symlink. On Windows, the command also never reads through a junction. It never writes through a junction. The command does not touch ignored and untracked directories, such as a project virtualenv. It produces no output for them. If a tracked file is a symlink, the command skips the file and prints one notice line.
 
+After you commit an upgrade, do the four steps of the **upgrade checkpoint**, in this order:
+
+1. **Pin.** Run `benchweave-sdk doctor` to compare the project pin with the installed SDK.
+2. **Migrate.** Run `benchweave-sdk migrate-ui` to re-stamp the plugin-ui contract artifacts to the active version.
+3. **Derive.** If the migrate refuses with `migrate_ui_ledger_drift:`, run `benchweave-sdk derive-ui --force`, and then run the migrate step again. A version write cannot repair ledger drift.
+4. **Gates.** Run `benchweave-sdk check`, `check-ui` and `check-preset`. All three checks must pass.
+
+The section "Contract-version migration (`migrate-ui`)" gives the command arguments and the full list of the `migrate_ui_*` refusal codes.
+
 Replace `acme/model100` with your manufacturer and device or plugin name. The destination controls the directory hierarchy. The `--package` option controls the Python import package. The SDK creates missing parent directories and refuses to overwrite an existing project. A destination that you reach through a symlinked directory is canonicalized before any write. On macOS, `/tmp/...` is such a symlink. Messages report the real path.
 
 ```text
