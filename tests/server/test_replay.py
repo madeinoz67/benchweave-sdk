@@ -1177,3 +1177,23 @@ def test_the_replay_hosts_transfer_ceiling_is_configuration(
                 context,
             )
         )
+
+
+def test_stream_grammar_refusal_carries_a_machine_prefix(
+    tmp_path: Path, plugin
+) -> None:
+    """The replay serve gate refuses a non-stream kind with the same bare
+    prose, and the seam forwards that text to the wire verbatim — so the
+    refusal is un-branchable here too (STD-4)."""
+    from benchweave_sdk.testing import MockContext
+
+    path = _write(tmp_path, _acceptance_journal())
+    parsed = load_replay_journal(path, plugin)
+    host = ReplayHost(parsed)
+    with pytest.raises(ValueError, match="^unsupported_transaction_kind:"):
+        asyncio.run(
+            host.transfer(
+                {"kind": "i2c_transfer"},
+                MockContext("op-kind", deadline_monotonic=host.monotonic() + 1),
+            )
+        )

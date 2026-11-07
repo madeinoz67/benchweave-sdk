@@ -404,6 +404,7 @@ class ByteStreamMockHost(WriterBackedCaptureServices, MockHost):
         kind = transaction.get("kind")
         if kind not in _FIELDS or set(transaction) != _FIELDS[kind]:
             raise ValueError(
+                "unsupported_transaction_kind: "
                 f"not a section 8.1 stream transaction: {sorted(transaction)}"
             )
         # The backend's own ladder (critic F2, lane 1 F9 — refuse before ANY

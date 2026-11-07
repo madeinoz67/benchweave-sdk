@@ -1075,6 +1075,7 @@ class ReplayHost(WriterBackedCaptureServices, MockHost):
             kind not in _FIELDS or set(transaction) != _FIELDS[kind]
         ):
             raise ValueError(
+                "unsupported_transaction_kind: "
                 f"not a section 8.1 stream transaction: {sorted(transaction)}"
             )
         if provider_kind:
