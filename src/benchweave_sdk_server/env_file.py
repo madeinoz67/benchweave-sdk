@@ -57,7 +57,7 @@ def _refuse(path: Path, lineno: int, detail: str) -> NoReturn:
     raise EnvFileError(f"{ENV_FILE_REFUSAL_PREFIX} {path}: line {lineno}: {detail}")
 
 
-def _strip_one_quote_layer(value: str, path: Path, lineno: int, key: str) -> str:
+def _strip_one_quote_layer(value: str, path: Path, lineno: int, shown: str) -> str:
     """Strip ONE layer of matching single or double quotes (systemd
     ``EnvironmentFile`` compatibility for operators copying shell-export
     lines). No escape sequences, no variable expansion — a value that
@@ -67,7 +67,7 @@ def _strip_one_quote_layer(value: str, path: Path, lineno: int, key: str) -> str
         return value
     if len(value) >= 2 and value[-1] == first:
         return value[1:-1]
-    _refuse(path, lineno, f"{key}: mismatched quotes")
+    _refuse(path, lineno, f"{shown}: mismatched quotes")
 
 
 def _check_owner_only(path: Path) -> None:
@@ -86,6 +86,23 @@ def _check_owner_only(path: Path) -> None:
             " group or other access — the file carries a live secret;"
             " restrict it to the owner (chmod 0600)"
         )
+
+
+def _display_key(key: str, allowed: frozenset[str], excluded: Mapping[str, str] | None) -> str:
+    """The key as it may appear in a refusal — a KNOWN key, or a description.
+
+    A refusal that echoes an unknown key name can echo a SECRET. The key pattern
+    is ``[A-Za-z_][A-Za-z0-9_]*`` and a base64url signing secret matches it, so
+    "the key validated" does NOT make it safe to print: a corrupt or mangled file
+    can put the secret in key position and reach almost every refusal here. Only
+    a key this server's own rules already name is echoed — the allowlist and the
+    exclusion table are public constants — and anything else is described by its
+    length, which is enough to find the line (issue #626). Shared verbatim with
+    the gateway loader's twin.
+    """
+    if key in allowed or (excluded is not None and key in excluded):
+        return key
+    return f"a name of {len(key)} characters"
 
 
 def parse_env_file(
@@ -128,38 +145,39 @@ def parse_env_file(
         if "=" not in line:
             _refuse(path, lineno, 'no "=" in line — expected KEY=VALUE')
         key, _, value = line.partition("=")
+        shown = _display_key(key, allowed, excluded)
         if _KEY_PATTERN.fullmatch(key) is None:
             # A BOM lands here too: it corrupts the first key into an
             # invalid key name and refuses (the exact-byte decoder's
             # posture).
-            _refuse(path, lineno, f"key name {key!r} does not match [A-Za-z_][A-Za-z0-9_]*")
+            _refuse(path, lineno, f"key name {shown!r} does not match [A-Za-z_][A-Za-z0-9_]*")
         if excluded is not None and key in excluded:
-            _refuse(path, lineno, f"{key} may not come from the env file — {excluded[key]}")
+            _refuse(path, lineno, f"{shown} may not come from the env file — {excluded[key]}")
         if key not in allowed:
             _refuse(
                 path,
                 lineno,
-                f"{key} is not allowlisted for the serve env file — allowed"
+                f"{shown} is not allowlisted for the serve env file — allowed"
                 " keys: " + ", ".join(sorted(allowed)),
             )
         if value[:1] in (" ", "\t"):
-            _refuse(path, lineno, f'{key}: value starts with whitespace after "="')
-        value = _strip_one_quote_layer(value, path, lineno, key)
+            _refuse(path, lineno, f'{shown}: value starts with whitespace after "="')
+        value = _strip_one_quote_layer(value, path, lineno, shown)
         if not value.strip():
-            _refuse(path, lineno, f"{key} is set but empty")
+            _refuse(path, lineno, f"{shown} is set but empty")
         control = _CONTROL_CHARS.search(value)
         if control is not None:
             _refuse(
                 path,
                 lineno,
-                f"{key}: value contains a control character"
+                f"{shown}: value contains a control character"
                 f" (0x{ord(control.group()):02x})",
             )
         if key in first_line:
             _refuse(
                 path,
                 lineno,
-                f"{key} appears twice (first at line {first_line[key]})"
+                f"{shown} appears twice (first at line {first_line[key]})"
                 " — one value per key",
             )
         first_line[key] = lineno
