@@ -37,8 +37,10 @@ policy is host policy (a publish hop inside the adapter is a second authority th
 drifts); the gateway's dispatch-time requirement is a trap (it fires after accepting a
 descriptor that promised host-admission); the dataset is already typed by the
 measurement schema (a second publish is ceremony that can disagree with its payload).
-The plugin's `adapter.py:1216-1217` promise stands as written and is now the standard's
-rule. The plugin does not change.
+The plugin's own generated `adapter.py` declares host-admission (`:1216-1217` observed in
+one plugin; the scaffold generates that file, so this pins an observation and not a path
+in this repository). That promise stands as written and is now the standard's rule. The
+plugin does not change.
 
 The ruling carries one condition, discharged by this record: **define admission** —
 (a) where the bytes land, (b) who may read them afterwards, (c) what `dataset_id` is
