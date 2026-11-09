@@ -54,14 +54,21 @@ def test_s3_a_db_key_in_an_sdk_env_file_refuses_as_unknown(
     starter_project: Path, tmp_path: Path, clean_benchweave_env: None
 ) -> None:
     """The SDK serve has no store: ``BENCHWEAVE_DB`` is not in its
-    allowlist, and the refusal teaches that."""
+    allowlist, and the refusal teaches the SDK's own keys.
+
+    The unknown name is NOT echoed (issue #626): a base64url secret matches
+    the key pattern, so a mangled file can put one in key position, and a
+    refusal that prints it prints the secret. It is described by length —
+    enough to find the line — and the allowlist is still named in full.
+    """
     path = _env_file(tmp_path, "BENCHWEAVE_DB=/elsewhere/state.sqlite\n")
     result = CliRunner().invoke(
         cli, ["serve", str(starter_project), "--no-open", "--env-file", str(path)]
     )
     assert result.exit_code == 2, result.output
     assert "env_file:" in result.output
-    assert "BENCHWEAVE_DB" in result.output
+    assert "BENCHWEAVE_DB" not in result.output
+    assert f"a name of {len('BENCHWEAVE_DB')} characters" in result.output
     assert "allowlisted" in result.output
     # The refusal names the SDK's own allowlist, not the gateway's.
     assert "BENCHWEAVE_STANDALONE_BINDINGS" in result.output
