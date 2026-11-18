@@ -21,7 +21,25 @@ jobs:
         # already runs there, so the unit suite should too.
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    # A hang detector, and at 15m it was not detecting hangs. The windows-latest
+    # leg across 89 consecutive successful sdk jobs (2026-10-26 .. 2026-11-13,
+    # each read off its own run page): min 7m15s, median 12m22s, p90 14m30s,
+    # max 14m59s. A ceiling one second over the observed healthy maximum is a
+    # lottery, not a detector — 33 of those 89 runs finished inside two
+    # minutes of it, and the 2026-11-09 #257 merge was killed at 15m11s mid
+    # "Installed-wheel smoke", with no test verdict, which is the red main
+    # carried. 25m holds the whole observed spread and still cuts a hang at
+    # under half the runner's 6h default.
+    #
+    # Gateway #402 refused this same bump on 2026-10-05 — "if it hits 15
+    # minutes it is already too long", headroom hides the cost — and took
+    # -n auto instead. That landed the leg at 5m37s. It measures 12m22s
+    # median now, so the parallelisation win has been consumed by suite
+    # growth, and #402's own discriminator has fired: a red at the ceiling
+    # means the Windows suite cost is real and becomes its own issue. That
+    # cost is filed and tracked as cost, not as a red job. This change does
+    # NOT make the lane cheaper — unworked, the same wall returns at 25m.
+    timeout-minutes: 25
     defaults:
       run:
         # bash on every OS. pwsh, the Windows default, reports only the LAST
@@ -64,7 +82,10 @@ jobs:
         # serial suite outgrew the 15m job ceiling on windows-latest (Tests
         # step alone >14m35s, killed mid-suite, on a 40-line merge) — a suite
         # that needs 15 minutes is the defect, so the suite parallelises
-        # rather than the ceiling rising. Timing-marked tests (the AR-2 soak
+        # rather than the ceiling rising. That call held until the lane's own
+        # growth consumed the win — see the job's timeout comment for the
+        # 2026-11-18 measurement and the ruling that followed. Timing-marked
+        # tests (the AR-2 soak
         # asserts wall-clock structural bounds) run serial and unloaded after
         # the parallel leg — the gateway's #247/#280 pattern: order-dependence
         # and load-sensitivity surface HERE first, at PR time, in every lane.
