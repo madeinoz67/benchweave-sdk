@@ -138,26 +138,22 @@ Pin classification follows that state, under stable refusal prefixes:
 
 ### Unreleased standards changes: the batch path {#unreleased-standards}
 
-The SDK carries released standards bytes only. Every `standards-lock.json` row has a three-part version, for example, 0.2.4. A version with a `-dev` or `-rc` suffix is not a lock row. The SDK refuses such a version as a pin. The SDK's version grammar is exactly three numerals.
+The SDK carries released standards bytes only. Every `standards-lock.json` row has a three-part version. A version with a `-dev` or `-rc` suffix is not a lock row and is never served. The SDK's version grammar is exactly three numerals.
 
 An unreleased standards change lives in the gateway as a dev head. A plugin opts in to a dev head in `contracts/constraints.json`, in the `opt_in` map. The value is content-addressed and has the form `"<target>-dev@<40-hex git sha>"`. Two rules apply:
 
 - The entry is an override, not a replacement. The same standard must still carry its released interval in the `standards` block of the same file. An opt-in entry without the released interval is a malformed file.
 - The gateway resolves the pin by reading the bytes from the git object store at the recorded sha. A built wheel or any context without that store refuses with `dev_head_unresolvable:`. A dev pin works in a repository checkout. It does not travel inside a built wheel.
 
-The descriptor's `otdp_version` must equal the `const` in the descriptor schema of the version that the pin resolves to. Read the value from that head. Do not assume the released value. Today the active schema carries `const "0.2.4"`.
+The descriptor's `otdp_version` must equal the `const` in the descriptor schema of the version that the pin resolves to. Read the value from that head. Do not assume the released value.
 
 The SDK release happens one time, after promotion. The release number follows the highest change class in the batch. The standards side gives the change class. The release-review matrix gives the SDK number. A batch takes the highest change class that it contains, not one bump for each file.
 
-The pin bump is one edit. When a descriptor pins a version that the SDK does not carry, the refusal `version_not_served:` fires. The refusal names the supported range and the nearest move-to version. It marks the move-to as the recommended re-target. Example output:
-
-```text
-version_not_served: otdp pin 0.1.0 (supported range >=0.2.0,<0.3.0; move-to 0.2.4 — the highest served version, the recommended re-target; migration guidance pending (per-version migration notes land from adoption, issue #203 slice 5); the dependency_policy mirror in this lock names the yank or retirement record) — otdp 0.1.0 is not carried by this SDK (out of the declared range >=0.2.0,<0.3.0 or never retained here)
-```
+The pin bump is one edit. When a descriptor pins a version that the SDK does not carry, the `version_not_served:` refusal above names the supported range and the nearest move-to version. It marks the move-to as the recommended re-target. Set the descriptor's `otdp_version` to that value.
 
 The SDK refuses a content change to a vendored standard that has no version increment. It never re-vendors such a change silently. The refusal text is `standards_version_required:`.
 
-After the release, `benchweave-sdk upgrade` moves the project template and the SDK pin. It does not move the descriptor pin. Use the pin bump step above for the descriptor pin. `benchweave-sdk migrate-ui` re-stamps the plugin-ui contract artifacts when the plugin-ui standard moves.
+After the release, `benchweave-sdk upgrade` moves the project template and the SDK pin. It does not move the descriptor pin. Use the pin bump above for the descriptor pin. `benchweave-sdk migrate-ui` re-stamps the plugin-ui contract artifacts when the plugin-ui standard moves.
 
 ### Transport providers (custom transports) {#transport-providers}
 
