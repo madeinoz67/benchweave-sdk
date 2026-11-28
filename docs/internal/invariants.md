@@ -101,7 +101,20 @@ the invariants below anchor there.
   and moved the verb check BEFORE the capture-services duck-check:
   declaration precedes host capability) — anchors:
   `benchweave_sdk_server/dataset_admission.py`,
-  `benchweave_sdk_server/seam.py`. The format path (issue #589 PR-4)
+  `benchweave_sdk_server/seam.py`.
+  The dataset identity binding (ADR 0606, gateway issue #606) adds four
+  more, all `ValueError` at the services member and each raised before any
+  admission or index write: `standalone_dataset_id_mismatch:` (the context
+  carries a dataset id the active invoke did not mint),
+  `standalone_dataset_operation_mismatch:` (the context names an operation
+  that is not the invoke the call was made in),
+  `standalone_dataset_invoke_closed:` (the invoke has closed — it finished,
+  errored or was cancelled — and its dispatch record is history, not
+  authority) and `standalone_dataset_not_dispatched:` (no invoke of this
+  controller is active for the operation in the calling dispatch context)
+  — anchor: `benchweave_sdk_server/dataset_admission.py`, pinned by the T3
+  and T4 arms of `tests/server/test_dataset_identity_binding.py`.
+  The format path (issue #589 PR-4)
   adds one more, `standalone_capture_format_unknown:`
   (`SeamError("invalid_request", …)` at BOTH capture-family doors — a
   format outside `catalogue._FORMAT_SPECS`: at `_op_capture_start` on a
@@ -310,8 +323,10 @@ dot-directory survives the wheel. The generated plugin runtime has **no dependen
   shape — the entry point that cannot hold state cannot become the second one.*
 - **[SRF-6]** (the #589 PR-3 design record's new row; the maintainer assigns
   the final ID at landing) The standalone dataset admission path validates
-  what the gateway's `dataset_publish` validates — identity (the manifest's
-  `dataset_id` equals the host-minted `"ds:" + operation_id`, minted per
+  what the gateway's `dataset_publish` validates — identity (for the
+  explicit publisher, only as the amendment below states it: **for ACTIVE
+  host invokes only**; the manifest's `dataset_id` equals the host-minted
+  `"ds:" + operation_id`, minted per
   invoke dispatch at context construction), idempotency (a byte-identical
   manifest under a used id returns the admitted manifest; a divergent one
   refuses naming immutability), the pinned measurement schema (read through
@@ -329,6 +344,66 @@ dot-directory survives the wheel. The generated plugin runtime has **no dependen
   design record §9. *The parity arms pin the gateway code as read at the
   design; the decisive cross-repo control is GW-1's main-side test (a
   named pairing row, not an SDK prerequisite).*
+  **Amendment (ADR 0606, gateway issue #606) — admission identity binding
+  for ACTIVE host invokes only.** Before it, the identity clause above was
+  true of the explicit publisher only in the sense that the id had been
+  minted by the host: `dataset_publish` read it from `context.dataset_id`,
+  a plain attribute the adapter can rewrite. The clause now claims exactly
+  what the arms enforce, and no more:
+  1. `dataset_publish` takes its admission identity from the active host
+     invoke the call is made in, never from the context object the adapter
+     holds. The scope carries the operation id, the minted dataset id, the
+     action id and the dispatched input, recorded before the adapter runs,
+     the input as a private copy —
+     `test_t3_a_rewritten_context_dataset_id_is_refused`,
+     `test_t3_the_scope_carries_the_invoke_input_captured_before_adapter_entry`.
+  2. The context's `operation_id` and `dataset_id` are correlation checks
+     against that scope, never authority. A rewritten dataset id, another
+     operation's id, an operation never dispatched, a closed invoke, and
+     an invoke active on another controller of this process each refuse.
+     One operation can no longer take another's mint and deny it its own
+     dataset — `test_t3_another_operations_id_is_refused`,
+     `test_t3_an_undispatched_operation_is_refused`,
+     `test_t3_a_closed_scope_is_refused`,
+     `test_t3_a_forged_mint_cannot_deny_its_operation_its_own_dataset`,
+     `test_t3_another_controllers_invoke_grants_no_authority_here`.
+  3. Every such refusal precedes any admission or index write: the
+     this-run registry, the persisted manifests and the library index are
+     byte-identical before and after the refused call —
+     `test_t4_no_state_on_refusal`, with
+     `test_t4_the_snapshot_is_stable_at_rest_and_sees_one_admission` as
+     the snapshot's own control.
+  4. The scope is local to its dispatch, not a last-dispatch slot: two
+     scopes open on one controller at once each resolve only their own
+     mint — `test_t2_overlapping_admission_scopes_each_see_only_their_own_mint`.
+  5. The scope closes when the adapter span ends — on success, on error
+     and on cancellation — and a task that inherited it loses publishing
+     authority then, even when it presents the ids of an invoke that is
+     still active — `test_t3_a_closed_scope_is_refused`,
+     `test_t3_an_inherited_scope_cannot_borrow_the_active_invoke`.
+  6. The binding changes admission only. The per-seam mutex still
+     serializes the public invoke and preset-apply paths, and the honest
+     publication still admits —
+     `test_t1_a_second_public_invoke_waits_for_the_first`,
+     `test_t3_the_control_publishes_under_its_own_mint`.
+  Every test named above is in `tests/server/test_dataset_identity_binding.py`.
+  What this amendment does NOT claim. It is not process isolation: the
+  binding holds at the services boundary, inside one host process, and
+  does not reach code that bypasses `dataset_publish`. The dispatch record
+  (`dispatch_state`) is correlation history, never authority. The inline
+  admission path is unchanged: it admits the result against the mint the
+  host captured before the adapter ran, so it already refused a rewritten
+  context (`test_t3_pin_the_inline_result_already_refused_a_rewritten_context`
+  is a pin — green before the binding — as are the module's other
+  `test_pin_...` arms; a pin guards behaviour and is no evidence for the
+  binding). And it is a statement about the standalone host alone: it
+  claims nothing about the gateway's publish path or its selection policy
+  (gateway issue #608 is the gateway's own record). Anchors:
+  `benchweave_sdk_server/dataset_admission.py` (`record_dispatch`,
+  `close_dispatch`, `active_invoke`),
+  `benchweave_sdk_server/session.py::PluginSession.execute` (the adapter
+  span's `finally`), `benchweave_sdk_server/seam.py::_invoke_core` (the
+  observe hook that opens the scope and returns its closer).
 - **[TWO-1]** **Two-repo discipline**: an SDK change lands as a commit in this repository
   (pushed), then a pointer commit in the main repository; the main repository's
   `make sync-sdk-standards` refuses to run against a submodule HEAD that differs from the
