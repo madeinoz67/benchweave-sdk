@@ -6,6 +6,15 @@
       "headers": {
         "Authorization": "Bearer ${MUNINN_BENCHWEAVE_KEY}"
       }
+    },
+    "codanna": {
+      "command": "codanna",
+      "args": [
+        "--config",
+        ".codanna/settings.toml",
+        "serve",
+        "--watch"
+      ]
     }
   }
 }

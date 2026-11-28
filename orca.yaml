@@ -1,0 +1,21 @@
+# orca.yaml (repo root) — Orca project config with Codanna bootstrap (Bun scripts)
+# author: Stephen Eaton
+#
+# setup   runs in each new worktree right after Orca creates it.
+# archive runs before Orca deletes a worktree.
+# Script env: ORCA_ROOT_PATH (primary checkout), ORCA_WORKTREE_PATH, ORCA_WORKSPACE_NAME.
+# Requires bun and codanna on PATH.
+#
+# Do NOT add .codanna (or .codanna/index) to worktree.sharedDirectories.
+# Shared directories are symlinked, so every worktree would read and write ONE
+# index built from the primary checkout's files, which is wrong for every branch.
+
+scripts:
+  setup: |
+    bun "$ORCA_ROOT_PATH/.orca/codanna-setup.ts"
+  archive: |
+    bun "$ORCA_ROOT_PATH/.orca/codanna-archive.ts"
+
+# worktree:
+#   sharedDirectories:      # optional: share heavy, branch-independent caches only
+#     - node_modules
