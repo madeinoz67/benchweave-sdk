@@ -12,7 +12,11 @@
 
 scripts:
   setup: |
-    bun "$ORCA_ROOT_PATH/.orca/codanna-setup.ts"
+    # Prefer the worktree's copy so the script matches the branch; fall back to the
+    # primary checkout for a worktree checked out before the pack landed there.
+    SETUP="$ORCA_WORKTREE_PATH/.orca/codanna-setup.ts"
+    [ -f "$SETUP" ] || SETUP="$ORCA_ROOT_PATH/.orca/codanna-setup.ts"
+    bun "$SETUP"
   archive: |
     bun "$ORCA_ROOT_PATH/.orca/codanna-archive.ts"
 
