@@ -397,7 +397,8 @@ def _build_seam(
             return base_hooks.open_url(resolved_url)
 
         # A factory reaches the session only when this seam injects a driver:
-        # a caller's factory, or hooks whose open is not the real one. A
+        # a caller's factory, or hooks. Either is an injection by presence,
+        # so hooks whose open is the real one still read as injected. A
         # production serve injects neither, so its connections open through
         # the default driver: the full verifier on every connection, and no
         # rehearsal marker on live hardware.

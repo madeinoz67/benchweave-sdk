@@ -1519,11 +1519,13 @@ def test_a_missing_backend_does_not_mask_a_contract_refusal(
 
 # --------------------------------------------------------------------------
 # ADR 0001 (gateway #597): the pyftdi backend is a requirement of the LIVE
-# paths, not of the plugin contract. A connection over an injected driver
-# factory validates the current plugin's contract and never reaches the one
-# pyftdi import site, so the generated provider suite runs on the plain SDK
-# pin. The verifier, discovery, the default-driver connection and CLI serve
-# construction keep the backend preflight and its prefixed install hint.
+# paths, not of the plugin contract. An injected connection validates the
+# current plugin's contract through a validator that never reaches the one
+# pyftdi import site; what the injected opener imports is the opener's own.
+# The generated provider suite injects a double, so it runs on the plain SDK
+# pin. The verifier, discovery and every default-driver connection, which a
+# production-shaped CLI serve is, keep the backend preflight and its
+# prefixed install hint.
 # --------------------------------------------------------------------------
 
 
@@ -1902,6 +1904,25 @@ def test_an_injected_driver_keeps_the_contract_only_path_through_the_cli(
         assert asyncio.run(seam.call("host_info"))["rehearsal"] is True, name
         assert reached == [], f"{name}: the connection reached the pyftdi import site"
         asyncio.run(seam.session.close())
+
+
+def test_hooks_count_as_an_injection_even_when_their_open_is_the_real_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The CLI's injection rule is presence. A hooks object makes the seam an
+    injected one whatever its open is, so the session takes the contract-only
+    validator and carries the rehearsal marker. No production caller passes
+    hooks. The rule is pinned so that a change to it is a decision and not an
+    accident (the #597 delta refute, finding F1). This arm was green when it
+    was written."""
+    import benchweave_sdk_server.ftdi as ftdi_module
+
+    hooks = ftdi_module.FtdiDeviceHooks(
+        enumerate_urls=lambda: [], open_url=ftdi_module.open_ftdi
+    )
+    assert hooks.open_url is ftdi_module.open_ftdi
+    seam = _cli_seam_with_a_present_backend(monkeypatch, device=_URL, driver_hooks=hooks)
+    assert seam.rehearsal is True
 
 
 def test_the_stream_reply_wakes_the_reader_not_the_sleep_quantum(
