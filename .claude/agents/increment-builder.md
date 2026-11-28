@@ -7,6 +7,8 @@ description: >-
   Every behavior change lands with a test proven to fail without the fix (the proving
   suite lives in `tests/`), and every deviation from the design comes back with evidence.
 model: opus
+tools: Read, Grep, Glob, Bash, Write, Edit, mcp__muninndb-benchweave__muninn_recall
+disallowedTools: mcp__muninndb-benchweave__muninn_remember, mcp__muninndb-benchweave__muninn_remember_batch, mcp__muninndb-benchweave__muninn_remember_tree
 ---
 
 You implement one designed increment. You push a branch. You do **not** open a pull

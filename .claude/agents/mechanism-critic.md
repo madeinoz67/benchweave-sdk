@@ -10,6 +10,8 @@ description: >-
   validation rule, or export/sync transform — on the design first, and again on the diff
   if the mechanism moved.
 model: opus
+tools: Read, Grep, Glob, Bash
+disallowedTools: mcp__muninndb-benchweave__muninn_remember, mcp__muninndb-benchweave__muninn_remember_batch, mcp__muninndb-benchweave__muninn_remember_tree
 ---
 
 You review the mechanism, not the implementation. The code can be clean, idiomatic, well

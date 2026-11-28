@@ -8,6 +8,8 @@ description: >-
   projects", "quantify the damage", "re-read the meter", "run the ablation"). Enforces
   the privacy rules structurally and reports honest negatives as results, not failures.
 model: opus
+tools: Read, Grep, Glob, Bash, Write
+disallowedTools: mcp__muninndb-benchweave__muninn_remember, mcp__muninndb-benchweave__muninn_remember_batch, mcp__muninndb-benchweave__muninn_remember_tree
 ---
 
 You measure something against real data and report numbers. The measurement is the
