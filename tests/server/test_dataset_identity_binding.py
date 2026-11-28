@@ -1309,12 +1309,15 @@ def test_fold_f1e_the_record_does_not_hand_out_its_copy_by_reference(
     handed["input"]["configuration_id"] = MUTATED
     context = HostOperationContext(operation, timeout_ms=1000, dataset_id=f"ds:{operation}")
     try:
-        honest = _echo(services, f"ds:{operation}", context, SENT)
+        # The forged echo goes first: once an honest one is admitted under
+        # the id, the immutability rule refuses any other manifest, and M10
+        # would never be reached.
         forged = _echo(services, f"ds:{operation}", context, MUTATED)
+        honest = _echo(services, f"ds:{operation}", context, SENT)
     finally:
         admission.close_dispatch(operation)
-    assert honest == "admitted", honest
     assert forged.startswith("refused: standalone_dataset_invalid:") and "M10" in forged, forged
+    assert honest == "admitted", honest
 
 
 @pytest.mark.parametrize(("path", "expected"), [("inline", "invalid_request"), ("explicit", "")])
