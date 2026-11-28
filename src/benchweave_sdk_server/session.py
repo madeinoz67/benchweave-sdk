@@ -989,6 +989,13 @@ class HostOperationContext:
         self.dispatched = True
 
 
+#: The host's observe hook for one dispatch. It receives the freshly minted
+#: context immediately before the adapter runs, and returns the hook that
+#: closes whatever it opened; ``PluginSession.execute`` calls that closer
+#: when the adapter span ends, on every exit.
+ObserveContext = Callable[[HostOperationContext], Callable[[], None] | None]
+
+
 class PluginSession:
     """One adapter session over a per-connection transport (SW-04's shape).
 
@@ -1202,7 +1209,7 @@ class PluginSession:
         *,
         timeout_ms: int | None = None,
         mint_dataset_id: bool = False,
-        observe_context: Callable[[HostOperationContext], None] | None = None,
+        observe_context: ObserveContext | None = None,
     ) -> dict[str, Any]:
         """Run one operation envelope through the open adapter.
 
@@ -1222,6 +1229,10 @@ class PluginSession:
         before the adapter dispatch — the host's one hook to record the
         dispatch (the operation id is minted here, and the caller that
         needs it for correlation gets it atomically with the dispatch).
+        Whatever the hook returns is called when the adapter span ends, on a
+        return, a raise and a cancellation alike: it is how the host closes
+        what the hook opened for this dispatch (the dataset admission scope,
+        issue #606), so nothing the adapter left running can outlive it.
         """
         if self._adapter is None or not self.connected:
             raise RuntimeError("standalone_session_not_open")
@@ -1232,10 +1243,13 @@ class PluginSession:
             deadline,
             dataset_id=f"ds:{operation_id}" if mint_dataset_id else None,
         )
-        if observe_context is not None:
-            observe_context(context)
+        close_context = observe_context(context) if observe_context is not None else None
         request = {"operation_id": operation_id, "verb": verb, "arguments": arguments}
-        return await self._adapter.execute(request, context)
+        try:
+            return await self._adapter.execute(request, context)
+        finally:
+            if close_context is not None:
+                close_context()
 
     def begin_verb(
         self, verb: str, arguments: dict[str, Any]

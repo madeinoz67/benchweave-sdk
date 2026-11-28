@@ -70,6 +70,7 @@ from .retention import (
 )
 from .session import (
     HostOperationContext,
+    ObserveContext,
     PluginLoadError,
     PluginSession,
     evict_plugin_modules,
@@ -976,24 +977,34 @@ class StandaloneSeam:
             int(row["timeout_ms"]) if isinstance(row, dict) else 0
         )
         admission = self._dataset_admission
-        # The mint and the dispatch recording are ONE motion (issue #589
-        # §2c): the observe hook fires inside ``execute`` immediately after
-        # the context is constructed (``dataset_id = "ds:" + operation_id``,
-        # per dispatch) and before the adapter runs — the adapter reads the
-        # id DURING execute, and the controller records {dataset_id,
-        # action_id, input} against the operation for the explicit member's
-        # M10 correlation, mirroring the bridge's mint_dataset_id recording.
+        # The mint, the dispatch recording and the active scope are ONE
+        # motion (issue #589 §2c, ADR 0606): the observe hook fires inside
+        # ``execute`` immediately after the context is constructed
+        # (``dataset_id = "ds:" + operation_id``, per dispatch) and before
+        # the adapter runs. The adapter reads the id DURING execute; the
+        # controller records {dataset_id, action_id, input} against the
+        # operation for the explicit member's M10 correlation, mirroring the
+        # bridge's mint_dataset_id recording; and it opens the dispatch's
+        # active scope, which the explicit member resolves its identity
+        # from. The host keeps its own copy of the mint here — ``minted`` —
+        # so the inline admission below never reads the adapter's context.
         minted: dict[str, Any] = {}
 
-        def _observe(context: HostOperationContext) -> None:
+        def _observe(context: HostOperationContext) -> Callable[[], None] | None:
             minted["dataset_id"] = context.dataset_id
-            if admission is not None:
-                admission.record_dispatch(
-                    context.operation_id,
-                    dataset_id=context.dataset_id,
-                    action_id=action_id,
-                    input=value,
-                )
+            if admission is None:
+                return None
+            controller = admission
+            controller.record_dispatch(
+                context.operation_id,
+                dataset_id=context.dataset_id,
+                action_id=action_id,
+                input=value,
+            )
+            # The scope closes with the adapter span: ``execute`` calls this
+            # in a ``finally``, so success, error and cancellation all revoke
+            # it before this core's own result gates run.
+            return lambda: controller.close_dispatch(context.operation_id)
 
         data = await self._execute(
             "invoke",
@@ -4067,7 +4078,7 @@ class StandaloneSeam:
         *,
         timeout_ms: int | None = None,
         mint_dataset_id: bool = False,
-        observe_context: Callable[[HostOperationContext], None] | None = None,
+        observe_context: ObserveContext | None = None,
     ) -> dict[str, Any]:
         """Run one adapter envelope and map its outcome honestly.
 
