@@ -98,8 +98,10 @@
     "codanna": {
       "source": {
         "source": "github",
-        "repo": "bartolli/codanna"
-      }
+        "repo": "bartolli/codanna",
+        "ref": "d18ccc5fa71931acd7d998f04f2c48b8e0acb23e"
+      },
+      "autoUpdate": false
     }
   },
   "enabledPlugins": {
