@@ -207,9 +207,12 @@ def test_concurrent_waiters_all_wake_on_a_fault() -> None:
         thread.start()
     time.sleep(0.05)
     assert link.ring_length() == 0
-    deadline = time.monotonic() + 5
-    while link.ring_length() == 0 and time.monotonic() < deadline:
-        time.sleep(0.01)
+    # Issue #637 (suite-cost): this arm used to poll ring_length() here "until
+    # the fault propagated" — but a fault never lands bytes in the ring, so
+    # the poll could only burn its full deadline (a disguised 5 s sleep; the
+    # waiters themselves wake within the first parked check). The join IS the
+    # wait: a waiter that missed the fault wake sits until its own deadline
+    # and the join timeout below expires, reddening the alive assert.
     for thread in threads:
         thread.join(timeout=5)
     assert all(thread.is_alive() is False for thread in threads)
@@ -268,7 +271,10 @@ def test_a_closed_link_drains_complete_frames_and_refuses_a_partial_fast() -> No
     port = LoopbackPort(b"ok\n3.3")  # one complete frame, one partial
     link = _link(port, quiet_s=0.02)
     deadline = time.monotonic() + 5
-    while link.ring_length() < 7 and time.monotonic() < deadline:
+    # Issue #637 (suite-cost): the fill bound was 7 bytes, but the scripted
+    # inbound is 6 (b"ok\n3.3") — the wait could only burn its full 5 s
+    # deadline before closing over a full ring that had already arrived.
+    while link.ring_length() < 6 and time.monotonic() < deadline:
         time.sleep(0.005)
     link.close()
     assert _take(link, max_bytes=8) == b"ok\n", "a complete frame drains after close"

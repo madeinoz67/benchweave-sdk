@@ -13,7 +13,9 @@ unwatched).
 
 from __future__ import annotations
 
+import contextlib
 import sys
+import threading
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -178,3 +180,49 @@ def _the_committed_tree_is_never_written(
     monkeypatch.setattr(Path, "open", guarded_path_open)
     monkeypatch.setattr("builtins.open", guarded_open)
     yield
+
+
+@pytest.fixture(autouse=True)
+def _reap_serial_links(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Close every SerialLink a test mints and leaves open (issue #637).
+
+    A serial test host's link is closed by the ADAPTER CONTEXT teardown
+    (the lifespan path), which unit tests never run — and the port
+    fixtures' idle read naps 5 ms, so every leaked reader thread is a
+    ~200 Hz waker for the REST of the process. Measured on the suite-cost
+    profile: the mcp-shim census (500+ HTTP roundtrips) runs 4.5 s
+    standalone and ran 26 s late in the serial suite purely on
+    accumulated wakers, and every later timing-sensitive arm pays the
+    same tax (the loopback port's own comment warned the class). The
+    seam's close() does not reach the link (it releases the capture
+    library only), so the reaper records links at construction — the
+    ftdi subclass rides the same init — and closes what the test did
+    not. Idempotent per link: a test's own close() makes this a no-op,
+    and a port's close counter is only touched for links the test
+    genuinely abandoned.
+    """
+    from benchweave_sdk_server import serial as serial_module
+
+    minted: list[Any] = []
+    real_init = serial_module.SerialLink.__init__
+
+    def recording_init(link: Any, *args: Any, **kwargs: Any) -> None:
+        real_init(link, *args, **kwargs)
+        minted.append(link)
+
+    monkeypatch.setattr(serial_module.SerialLink, "__init__", recording_init)
+    yield minted
+    for link in minted:
+        with contextlib.suppress(Exception):
+            if not link.is_closed:
+                # Wake a reader blocked inside a port read FIRST: the
+                # loopback ports unblock on close, so the join inside
+                # link.close() completes immediately. A reader inside a
+                # plain idle sleep (the ftdi quantum arm patches it to
+                # 5 s) cannot be woken at all — the close finishes in a
+                # daemon thread with a short join instead of burning the
+                # sleep's remainder at teardown.
+                link._transport.close()  # noqa: SLF001 - test reaper
+                closer = threading.Thread(target=link.close, daemon=True)
+                closer.start()
+                closer.join(0.25)
