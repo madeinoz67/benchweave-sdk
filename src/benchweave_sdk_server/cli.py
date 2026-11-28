@@ -396,6 +396,13 @@ def _build_seam(
                 return driver_factory(resolved_url)
             return base_hooks.open_url(resolved_url)
 
+        # A factory reaches the session only when this seam injects a driver:
+        # a caller's factory, or hooks whose open is not the real one. A
+        # production serve injects neither, so its connections open through
+        # the default driver: the full verifier on every connection, and no
+        # rehearsal marker on live hardware.
+        injected = driver_factory is not None or driver_hooks is not None
+
         effective_hooks = FtdiDeviceHooks(
             enumerate_urls=base_hooks.enumerate_urls,
             open_url=open_resolved,
@@ -422,7 +429,7 @@ def _build_seam(
                 ftdi_plugin_session(
                     plugin,
                     endpoint_any,
-                    driver_factory=open_resolved,
+                    driver_factory=open_resolved if injected else None,
                     capture_root=capture_root,
                     record_path=record,
                 ),

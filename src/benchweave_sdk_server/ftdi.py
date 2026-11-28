@@ -2093,10 +2093,11 @@ def ftdi_plugin_session(
     device per connection — a fresh conversation over a fresh driver and
     link (the M1 fold's per-connection law). ``driver_factory`` is the
     injection axis for a caller-supplied driver (the ``open_port``
-    precedent): an injected connection validates the plugin contract alone
-    and never imports pyftdi, so it runs where the ``[server]`` extra is not
-    installed. Without a factory the driver is :func:`open_ftdi`, and each
-    connection also runs the backend preflight, before the endpoint
+    precedent). An injected connection validates the plugin contract alone:
+    the validator never imports pyftdi, so a scripted driver runs where the
+    ``[server]`` extra is not installed. What an injected opener imports is
+    the opener's own. Without a factory the driver is :func:`open_ftdi`, and
+    each connection also runs the backend preflight, before the endpoint
     resolves. ``record_path`` arms the live journal recorder (row b): the
     session's exchanges emit a #564-format journal at close."""
     injected = driver_factory is not None
@@ -2150,10 +2151,10 @@ def ftdi_plugin_session(
 
     session: PluginSession = PluginSession(plugin, factory)
     # The rehearsal marker (the acceptance review's A): a session over an
-    # INJECTED driver factory runs the shipped scripted double, and every
-    # surface that speaks "ftdi" must disclose it. Embedded hosts and
-    # generated test suites inject the double and must not read as hardware.
-    # The CLI's serve path passes a factory too — its endpoint-resolving
-    # open wrapper — so a CLI-served session carries the marker as well.
+    # INJECTED driver factory runs a caller-supplied driver, and every
+    # surface that speaks "ftdi" must disclose it. Embedded hosts, generated
+    # test suites and a CLI serve with an injected driver supply a double or
+    # a hook, and must not read as hardware. A production-shaped CLI serve
+    # injects nothing, so live hardware carries no marker.
     session.rehearsal = injected
     return session

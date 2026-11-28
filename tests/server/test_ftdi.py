@@ -1806,25 +1806,102 @@ def test_discovery_keeps_the_backend_refusal(
     assert scanned == [], "the scan ran before the backend refusal"
 
 
-def test_a_cli_served_connection_refuses_a_backend_that_goes_missing(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The CLI passes its own open wrapper as the driver factory on every
-    ftdi serve, so a CLI-served connection takes the contract-only validator
-    like any injected factory. The backend refusal for that path therefore
-    lives in serve construction (the arm above) and in ``open_ftdi``'s own
-    import. This arm is the second: construction passed, the backend then
-    goes missing, and the connection still refuses with the prefix and the
-    install command."""
+def _cli_seam_with_a_present_backend(monkeypatch: pytest.MonkeyPatch, **kwargs: Any) -> Any:
+    """An ftdi seam from the CLI's own composition, built with the backend
+    seam stubbed so construction needs no real pyftdi: serve construction
+    preflights the backend, and that is all the stub has to satisfy."""
     import benchweave_sdk_server.ftdi as ftdi_module
 
     monkeypatch.setattr(ftdi_module, "_BACKEND", lambda: (object(),) * 6)
-    seam, _ = _build_seam(FIXTURE_ROOT, transport="ftdi", device=_URL)
+    seam, _ = _build_seam(FIXTURE_ROOT, transport="ftdi", **kwargs)
+    return seam
+
+
+def _backend_goes_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """After a construction that stubbed the backend: put the real import
+    site back and make it refuse, as an install without the extra does."""
+    import benchweave_sdk_server.ftdi as ftdi_module
+
     monkeypatch.setattr(ftdi_module, "_BACKEND", None)
     _remove_pyftdi(monkeypatch)
+
+
+def test_a_cli_served_connection_refuses_a_backend_that_goes_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A production-shaped serve with ``--device`` is a default-driver
+    connection. Construction passed with the backend present. The backend
+    then goes missing, and the connection still refuses with the prefix and
+    the install command."""
+    seam = _cli_seam_with_a_present_backend(monkeypatch, device=_URL)
+    _backend_goes_missing(monkeypatch)
     with pytest.raises(RuntimeError) as raised:
         asyncio.run(seam.session.connect())
     _assert_backend_refusal(raised.value)
+
+
+def test_a_binding_pending_cli_connection_refuses_a_missing_backend_first(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A production-shaped serve without ``--device`` is binding-pending:
+    the endpoint resolves through the binding store at connect time. The
+    connection is a default-driver connection all the same. With the backend
+    missing it refuses on the backend first, with the prefix and the install
+    command, and never reaches the binding refusal. While the CLI passed a
+    factory on every serve, this connection refused ``BindingAbsent:``
+    instead (the #597 refute, lane 1 finding F1)."""
+    seam = _cli_seam_with_a_present_backend(
+        monkeypatch, bindings=tmp_path / "device-bindings.json"
+    )
+    _backend_goes_missing(monkeypatch)
+    with pytest.raises(RuntimeError) as raised:
+        asyncio.run(seam.session.connect())
+    _assert_backend_refusal(raised.value)
+
+
+def test_a_production_shaped_cli_serve_is_not_a_rehearsal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The rehearsal marker belongs to a session over an injected driver. A
+    production-shaped serve injects nothing, no factory and no hooks, and
+    opens live hardware, so no surface may read it as a scripted double.
+    From 31ac11b the CLI passed a factory on every serve, and a live session
+    carried the marker (the #597 refute, lane 1 finding F3)."""
+    seam = _cli_seam_with_a_present_backend(monkeypatch, device=_URL)
+    assert seam.rehearsal is False
+    assert asyncio.run(seam.call("host_info"))["rehearsal"] is False
+
+
+def test_an_injected_driver_keeps_the_contract_only_path_through_the_cli(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Both injection paths keep their behaviour: a caller's factory, and
+    hooks whose open is not the real one. Each is still an injected
+    connection. With the backend import site refusing, each connects and
+    reaches that site zero times, and each still carries the rehearsal
+    marker."""
+    import benchweave_sdk_server.ftdi as ftdi_module
+
+    injected = {
+        "factory": {"driver_factory": lambda url: _double()},
+        "hooks": {
+            "driver_hooks": ftdi_module.FtdiDeviceHooks(
+                enumerate_urls=lambda: [], open_url=lambda url: _double()
+            )
+        },
+    }
+    for name, kwargs in injected.items():
+        seam = _cli_seam_with_a_present_backend(
+            monkeypatch, device=_URL, capture_root=tmp_path / f"caps-{name}", **kwargs
+        )
+        reached = _refuse_backend_import(monkeypatch)
+
+        asyncio.run(seam.call("device_connect", {"device_id": seam.session.device_id}))
+
+        assert seam.rehearsal is True, name
+        assert asyncio.run(seam.call("host_info"))["rehearsal"] is True, name
+        assert reached == [], f"{name}: the connection reached the pyftdi import site"
+        asyncio.run(seam.session.close())
 
 
 def test_the_stream_reply_wakes_the_reader_not_the_sleep_quantum(
