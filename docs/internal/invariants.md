@@ -280,7 +280,13 @@ needs it. That move is pinned by
 matters. The rendered pin is pinned byte-exact against the fixture by
 `tests/test_scaffold_copier.py::test_new_project_tree_matches_fixture_provider`;
 `::test_the_generated_provider_suite_runs` pins only that the suite runs, in a
-development environment where pyftdi is installed. The workflow and the lint set by
+development environment where pyftdi is installed. The plain-pin claim itself
+is pinned offline by
+`tests/server/test_ftdi.py::test_the_generated_provider_suite_runs_without_the_server_extra`,
+which runs the committed provider suite with the `[server]` extra's own
+top-level modules refused. What that arm does not block: those distributions'
+own dependencies, pyusb among them. CI's plain-environment provider leg is the
+backstop. The workflow and the lint set by
 `tests/test_scaffold_copier.py::test_the_generated_workflow_carries_the_lint_and_test_jobs`
 and `::test_each_arm_passes_the_lint_set_its_pyproject_declares`; end-to-end
 by `tests/test_standalone_dev_loop.py`, whose installed-wheel scaffold asserts a
