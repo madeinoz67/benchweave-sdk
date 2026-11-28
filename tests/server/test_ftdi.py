@@ -1925,6 +1925,98 @@ def test_hooks_count_as_an_injection_even_when_their_open_is_the_real_one(
     assert seam.rehearsal is True
 
 
+def test_the_generated_provider_suite_runs_without_the_server_extra(tmp_path: Path) -> None:
+    """The plain-pin claim, offline and on every OS. CI proves it by execution
+    on ubuntu only. The other arms here run where pyftdi is installed and
+    intercept one seam, the ``_BACKEND`` probe, so a direct pyftdi import
+    added elsewhere would pass them. This arm copies the committed provider
+    fixture and runs its own suite in a subprocess with every top-level
+    module of the ``[server]`` extra's distributions made unimportable, by a
+    finder that refuses them. The set is derived from the installed
+    metadata, never written out. Pytest plugin autoload is off in the child.
+    What it does not block: those distributions' own dependencies, pyusb
+    among them. This arm was green when it was written, so it is a pin. On
+    the unfixed SDK the same suite fails 3 of 8."""
+    import importlib.util
+    import os
+    import re
+    import shutil
+    import subprocess
+    import sys
+    from importlib.metadata import packages_distributions, requires
+
+    def normalize(name: str) -> str:
+        return re.sub(r"[-_.]+", "-", name).lower()
+
+    def marker_of(requirement: str) -> str:
+        return requirement.partition(";")[2].strip().replace(" ", "").replace("'", "")
+
+    extra = "server"
+    wanted: set[str] = set()
+    for requirement in requires("benchweave-sdk") or []:
+        if marker_of(requirement) == f"extra=={extra}":
+            # The distribution NAME alone: no version specifier, no extras.
+            name = re.match(r"[A-Za-z0-9][A-Za-z0-9._-]*", requirement)
+            assert name is not None, requirement
+            wanted.add(normalize(name.group(0)))
+    assert "pyftdi" in wanted, sorted(wanted)
+    blocked = sorted(
+        module
+        for module, distributions in packages_distributions().items()
+        if wanted & {normalize(dist) for dist in distributions}
+    )
+    assert "pyftdi" in blocked, f"the server extra is not installed here; blocked={blocked}"
+
+    project = tmp_path / "provider"
+    provider_fixture = Path(__file__).resolve().parents[1] / "fixtures" / "scaffold_expected"
+    shutil.copytree(provider_fixture / "provider", project)
+    # Plugin autoload is off in the child: one distribution of the extra
+    # ships a pytest plugin, and a plain install has no such plugin to load.
+    environment = dict(
+        os.environ,
+        PYTHONPATH=str(project / "src"),
+        PYTHONDONTWRITEBYTECODE="1",
+        PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+    )
+    child = "\n".join(
+        [
+            "import importlib, importlib.abc, sys",
+            "BLOCKED = frozenset(sys.argv[1:])",
+            "class Absent(importlib.abc.MetaPathFinder):",
+            "    def find_spec(self, fullname, path=None, target=None):",
+            "        if fullname.partition('.')[0] in BLOCKED:",
+            "            raise ModuleNotFoundError(f'No module named {fullname!r}', name=fullname)",
+            "        return None",
+            "# A None entry in sys.modules would break pytest's own start-up, which",
+            "# reads __loader__ from every entry: the finder refuses instead.",
+            "sys.meta_path.insert(0, Absent())",
+            "try:",
+            '    importlib.import_module("pyftdi")',
+            "except ImportError:",
+            "    pass",
+            "else:",
+            '    raise SystemExit("the block did not take")',
+            "import pytest",
+            'sys.exit(int(pytest.main(["-q", "-p", "no:cacheprovider", "tests/test_plugin.py"])))',
+        ]
+    )
+    # The block below must have something to block: this arm runs in an
+    # environment where the server extra is installed.
+    assert importlib.util.find_spec("pyftdi") is not None
+
+    result = subprocess.run(
+        [sys.executable, "-c", child, *blocked],
+        cwd=project,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+
+    assert result.returncode == 0, f"blocked={blocked}\n{result.stdout}{result.stderr}"
+    assert "8 passed" in result.stdout, result.stdout
+
+
 def test_the_stream_reply_wakes_the_reader_not_the_sleep_quantum(
     tmp_path: Path, plugin, monkeypatch
 ) -> None:
