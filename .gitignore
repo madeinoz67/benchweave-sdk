@@ -60,5 +60,9 @@ dist/
 # over this tree)
 .claim-lane/
 
+# Verification-skill proof artifacts (`.claude/skills/verify-benchweave-sdk/`) — transcripts,
+# exit codes and captured streams from a real CLI drive. Evidence, never committed.
+.verify/
+
 # parallel-lane worktrees (2026-09-28 owner directive; gateway repo convention)
 .wt/
