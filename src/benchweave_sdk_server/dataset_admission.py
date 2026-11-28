@@ -38,9 +38,10 @@ explicit member ``dataset_publish`` and the inline admission of a
 dataset-shaped invoke result — read ONE captured value per dispatch: the
 operation id, the minted dataset id, the action id and the input as a
 private copy, all taken before the adapter runs
-(:meth:`DatasetAdmission.record_dispatch`). Neither path reads anything the
-adapter holds or can rewrite. The context's ids are correlation checks
-against that capture; the capture is the authority, and the dispatch RECORD
+(:meth:`DatasetAdmission.record_dispatch`). Neither path reads the context
+object, nor the input object the adapter is handed. The context's ids are
+correlation checks against that capture; the capture is the authority, and
+the dispatch RECORD
 (:meth:`DatasetAdmission.dispatch_state`) is correlation history.
 
 - The explicit member resolves the capture through the ACTIVE scope, bound
@@ -62,7 +63,10 @@ against that capture; the capture is the authority, and the dispatch RECORD
 The guarantee's extent, stated plainly: it holds at the services boundary,
 inside one host process and one dispatch context, for what the host
 captured before adapter entry. It is not process isolation, and it does not
-reach code that bypasses ``dataset_publish``. A publication from a bare
+reach code that bypasses ``dataset_publish`` or reads host internals: the
+controller is reachable from the services object the adapter is handed, as
+``services._admission``, and its record holds the capture. A publication
+from a bare
 worker thread has no dispatch context, so it refuses; ``asyncio.to_thread``
 copies the context into the worker, so a publication through it does not.
 """
@@ -233,8 +237,11 @@ class _Captured:
 
     One object serves the dispatch record and the active scope, so the
     explicit member and the inline admission cannot read different values.
-    ``input`` is a private copy, or ``None`` when the host could not make
-    one. Nothing here is an object the caller or the adapter holds.
+    ``input`` is a private copy, or ``None`` when there is none. Nothing here
+    is the caller's input object. An adapter that reads the controller's
+    internals through the services object it is handed
+    (``services._admission``) does reach this object. That is outside the
+    guarantee.
     """
 
     __slots__ = ("action_id", "dataset_id", "input", "operation_id")

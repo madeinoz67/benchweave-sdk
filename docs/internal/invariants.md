@@ -366,15 +366,29 @@ dot-directory survives the wheel. The generated plugin runtime has **no dependen
      `test_fold_f1a_the_inline_result_cannot_move_m10_by_mutating_the_input`,
      `test_fold_f1b_the_inline_result_echoing_the_original_input_stands_under_mutation`,
      `test_fold_f3_an_awkward_value_does_not_move_the_echo_check_on_either_path`.
-  2. The capture is a copy that neither the caller nor the adapter can
-     reach, for an input JSON cannot express as well (NaN, Infinity, bytes,
-     a plain object). When the host cannot copy the input at all there is no
-     capture: admission refuses with `standalone_dataset_input_absent:` and
-     never falls back to the caller's object —
+  2. The capture is a copy the caller cannot reach, and the adapter
+     cannot reach through the public services members it is handed (they
+     return copies: true by inspection, not by an arm), for an input JSON
+     cannot express as well (NaN, Infinity, bytes, a plain object). Reaching
+     the controller's internals is outside the guarantee; see "What this
+     amendment does NOT claim". The arms cited here pin the caller's object
+     and the `dispatch_state` reader. None of them pins that the adapter
+     cannot reach the capture. An adapter that reads
+     `services._admission._dispatch[<its own operation>].input` holds the
+     capture, moves the echo check, and is admitted. There is no capture
+     when copying the input raises an Exception (the handler catches
+     `Exception`: a `MemoryError` included; a `KeyboardInterrupt` or
+     `SystemExit` is not caught), or when the copy is the input itself.
+     Admission then refuses with `standalone_dataset_input_absent:` and never
+     falls back to the caller's object —
      `test_fold_f3_an_awkward_value_does_not_put_the_explicit_publisher_back_on_the_live_object`,
      `test_fold_f3_an_input_the_host_cannot_copy_refuses_with_a_typed_prefix`,
      `test_fold_f1e_the_dispatch_record_holds_a_copy_the_caller_cannot_reach`,
-     `test_fold_f1e_the_record_does_not_hand_out_its_copy_by_reference`.
+     `test_fold_f1e_the_record_does_not_hand_out_its_copy_by_reference`,
+     `test_fold_w3_a_dict_that_copies_to_itself_leaves_no_capture`.
+     The limit is stated by one pin,
+     `test_pin_the_documented_limit_code_that_reads_host_internals_moves_the_echo_check`.
+     It asserts the admission. It is no evidence of a guarantee.
   3. With no dispatch record for the operation, the inline admission
      refuses with `standalone_dataset_not_dispatched:` before any write —
      `test_fold_f1c_with_no_dispatch_record_the_inline_result_is_refused`.
@@ -431,15 +445,21 @@ dot-directory survives the wheel. The generated plugin runtime has **no dependen
   **What this amendment does NOT claim.** It is not process isolation: the
   binding holds at the services boundary, inside one host process and one
   dispatch context, and does not reach code that bypasses
-  `dataset_publish` or reads host internals. The dispatch record
-  (`dispatch_state`) is correlation history, never authority. That ONE
-  captured object serves the record and the scope is true by construction
-  (`record_dispatch` builds it once); no arm can tell it from two equal
-  copies, and none claims to. `close_dispatch` resetting the variable from
-  a context other than the one that opened the scope is guarded, not
-  tested. And it is a statement about the standalone host alone: it claims
-  nothing about the gateway's publish path or its selection policy
-  (gateway issue #608 is the gateway's own record).
+  `dataset_publish` or reads host internals. Reading host internals is one
+  attribute chain: the controller is reachable from the services object the
+  adapter is handed, as `services._admission`, and its record holds the
+  capture. Python is not a sandbox, and the ADR excludes that reach. The
+  dispatch record (`dispatch_state`) is correlation history, never
+  authority. That ONE captured object serves the record and the scope is
+  true by construction (`record_dispatch` builds it once); no arm can tell
+  it from two equal copies, and none claims to. `close_dispatch` is not
+  guarded against a different `Context` that holds the same scope: called
+  from a child task that inherited the scope, its variable reset raises
+  `ValueError`, and by then the scope is already closed and removed. That
+  cannot happen on the host path, where the closer runs in the context that
+  opened the scope, and no arm tests it. And it is a statement about the
+  standalone host alone: it claims nothing about the gateway's publish path
+  or its selection policy (gateway issue #608 is the gateway's own record).
   **The record of this binding's own review.** The first version of it
   closed the explicit member and left two paths open, and its wording here
   read as though the inline path were safe. The inline admission ran its
