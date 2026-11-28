@@ -21,3 +21,7 @@ Stop shipping the affected SDK candidate if either admission path regresses. Pre
 
 ## Approval
 AC-2 split approved on Orca item 29. Design and public SDK ADR PR approved by Stephen Eaton on Orca item 29.
+
+## Erratum (2026-11-28)
+
+SDK [PR #279](https://github.com/madeinoz67/benchweave-sdk/pull/279) binds both explicit publication and the inline result’s echo check to the same host-captured invoke input. The adapter can reach that capture through the private `services._admission` attribute, so the guarantee applies at the SDK services boundary.
