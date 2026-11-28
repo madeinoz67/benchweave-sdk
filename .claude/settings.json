@@ -116,7 +116,6 @@
       "Bash(codanna init)",
       "Bash(codanna dump:*)",
       "Bash(rg:*)",
-      "Bash(sed -n:*)",
       "mcp__codanna__analyze_impact",
       "mcp__codanna__find_callers",
       "mcp__codanna__find_symbol",
