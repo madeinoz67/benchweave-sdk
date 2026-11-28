@@ -12,8 +12,9 @@ You work in your own git worktree. The `mcp__codanna__*` tools are disabled beca
 Run from the worktree root:
 ```bash
 test -f .codanna/settings.toml || codanna init
-codanna index . --no-progress
+codanna index --no-progress
 ```
+Pass no path argument: a path makes Codanna rewrite the tracked `.codanna/settings.toml`.
 If indexing takes more than a few minutes, mention it in your report. Don't skip it.
 
 ## Phase 1: explore (same loop as the x-ray skill)
@@ -23,11 +24,11 @@ If indexing takes more than a few minutes, mention it in your report. Don't skip
 4. Traverse relationships: `codanna retrieve describe symbol_id:N`, `codanna mcp find_callers <Name> --json`, `codanna retrieve calls <Name>`.
 5. Before changing any public symbol, signature or shared function: `codanna mcp analyze_impact <Name> --json`. Write down every caller you'll update.
 6. Use `rg` for exact strings, config, HTML/CSS/templates and languages Codanna doesn't index.
-7. Exit code 7 means the index is stale: run `codanna index . --no-progress` and retry.
+7. Exit code 7 means the index is stale: run `codanna index --no-progress` and retry.
 
 ## Phase 2: implement
 1. Confirm the current file content before every edit.
-2. A hook re-indexes each file you edit in this worktree. If results look inconsistent, run `codanna index . --no-progress`.
+2. A hook re-indexes each file you edit in this worktree. If results look inconsistent, run `codanna index --no-progress`.
 3. Re-run `analyze_impact` on changed symbols and check that no callers are missed.
 4. Run the project's tests and linters in the worktree.
 5. Commit on the worktree branch with a clear message. Do not push or merge.

@@ -41,14 +41,14 @@ digests and refusal paths, scaffold output, packaging): read the real implementa
 ### Rules
 - Codanna results are navigation hints, not ground truth. Confirm against the file before editing.
 - Before renaming or changing a signature, list every caller in your plan.
-- If a Codanna command exits with code 7 (stale index), run `codanna index .` in the current checkout and retry.
+- If a Codanna command exits with code 7 (stale index), run `codanna index` in the current checkout and retry. Pass no path argument: a path rewrites the tracked `.codanna/settings.toml`.
 - Generated files (`CHANGELOG_AUTO.md`, `.docs-assembly/`, `site/`, vendored standards trees) are never hand-edited — regenerated via their tool.
 - Guessing `pytest -k` filters is the anti-pattern this section replaces — `analyze_impact` names the affected symbols.
 
 ### Orca worktrees and subagents
 - In Orca, each agent is a full Claude Code session in its own worktree; `scripts.setup` builds that worktree's index and `serve` reads it, so `mcp__codanna__*` is correct there.
 - Never share `.codanna/` between worktrees (symlink or `sharedDirectories`).
-- A subagent in `.claude/worktrees/*` must **not** use `mcp__codanna__*` — those tools read the main checkout's index. Build the worktree's own index first (`codanna index .` from the worktree root), then use the CLI.
+- A subagent in `.claude/worktrees/*` must **not** use `mcp__codanna__*` — those tools read the main checkout's index. Build the worktree's own index first (`codanna index` from the worktree root, no path argument), then use the CLI.
 - Delegate read-only investigation to `codanna-explorer` and isolated edits to `codanna-implementer`.
 
 ---
