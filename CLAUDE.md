@@ -47,6 +47,7 @@ digests and refusal paths, scaffold output, packaging): read the real implementa
 
 ### Orca worktrees and subagents
 - In Orca, each agent is a full Claude Code session in its own worktree; `scripts.setup` builds that worktree's index and `serve` reads it, so `mcp__codanna__*` is correct there.
+- Worktree setup indexes **code only**. Document collections are not built per worktree (they cost minutes on a large repo), so `search_documents` returns "no collections indexed" there. Use `rg` for prose, or run `codanna documents index --collection <name> --no-progress` once in the worktree when a doc search is genuinely needed. The primary checkout keeps its document index.
 - Never share `.codanna/` between worktrees (symlink or `sharedDirectories`).
 - A subagent in `.claude/worktrees/*` must **not** use `mcp__codanna__*` — those tools read the main checkout's index. Build the worktree's own index first (`codanna index` from the worktree root, no path argument), then use the CLI.
 - Delegate read-only investigation to `codanna-explorer` and isolated edits to `codanna-implementer`.
