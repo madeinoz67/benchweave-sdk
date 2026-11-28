@@ -505,8 +505,8 @@ def test_the_commit_sha_shape_is_exact(ref: str, is_a_sha: bool) -> None:
 # ---- arm 5: every agent declares its tools (issue #669) ------------------------------
 
 # The agents that held a ``tools:`` list and no ``disallowedTools:`` before issue #669, which
-# left them alone. Arms 6 and 7 skip them by name. A new agent is not in the tuple, so both
-# arms read it.
+# left them alone. Arm 6 and the table of arm 7 skip them by name. A new agent is not in the
+# tuple, so both read it.
 _TOOLS_ONLY = ("codanna-explorer.md", "code-reviewer.md")
 
 
