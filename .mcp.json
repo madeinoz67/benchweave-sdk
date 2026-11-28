@@ -8,12 +8,9 @@
       }
     },
     "codanna": {
-      "command": "codanna",
+      "command": "/bin/sh",
       "args": [
-        "--config",
-        ".codanna/settings.toml",
-        "serve",
-        "--watch"
+        ".orca/codanna-mcp.sh"
       ]
     }
   }

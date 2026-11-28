@@ -128,5 +128,8 @@
       "mcp__codanna__semantic_search_docs",
       "mcp__codanna__semantic_search_with_context"
     ]
+  },
+  "env": {
+    "MCP_TIMEOUT": "240000"
   }
 }
