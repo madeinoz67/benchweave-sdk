@@ -384,8 +384,9 @@ dot-directory survives the wheel. The generated plugin runtime has **no dependen
   6. The binding changes admission only. The per-seam mutex still
      serializes the public invoke and preset-apply paths, and the honest
      publication still admits —
-     `test_t1_a_second_public_invoke_waits_for_the_first`,
-     `test_t3_the_control_publishes_under_its_own_mint`.
+     `test_t1_a_second_public_invoke_waits_for_the_first` (a pin, green
+     before the binding: removing the mutex from either path turns it red),
+     `test_t3_the_control_publishes_under_its_own_mint` (a control).
   Every test named above is in `tests/server/test_dataset_identity_binding.py`.
   What this amendment does NOT claim. It is not process isolation: the
   binding holds at the services boundary, inside one host process, and

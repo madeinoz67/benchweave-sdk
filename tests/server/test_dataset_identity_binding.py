@@ -23,9 +23,12 @@ The arms, by ADR 0606 "Verification and tasks":
   Nothing here edits them; ``test_a1`` (inline) and ``test_a18`` (lookup)
   are the named arms.
 
-Some arms are pins, not proofs: each passes on the tree before the binding
-and says so in its docstring. A pin guards behaviour; it is never
-RED-then-GREEN evidence.
+Nine arms pass on the tree before the binding. They are pins and controls,
+not proofs, and each says so in its docstring: T1 (the mutex predates the
+binding; it is alive because removing the mutex turns it red), the
+explicit-publisher control, the inline-result pin, publish-then-raise, the
+T4 snapshot control, a nested-dispatch pin and a record_dispatch pin. A pin
+guards behaviour; it is never RED-then-GREEN evidence.
 """
 
 from __future__ import annotations
@@ -408,7 +411,12 @@ def test_t1_a_second_public_invoke_waits_for_the_first(
     the adapter until the first releases the seam, and must then run
     second. Both public paths that dispatch an invoke are covered: a direct
     invoke, and a preset apply whose settings are the configure action's
-    input."""
+    input.
+
+    A pin, green before the binding: the mutex is older than this change.
+    It stays a live guard — with the mutex removed from either path, the
+    cells that use that path go red — but it is no evidence for the
+    binding."""
     seam, adapter = _load(action_lane_project, tmp_path / "captures")
     (held, second_done), results, entries = asyncio.run(
         asyncio.wait_for(_two_public_calls(seam, adapter, first, second), WAIT)
@@ -741,7 +749,8 @@ def test_t3_the_control_publishes_under_its_own_mint(
     identity_project: Path, tmp_path: Path
 ) -> None:
     """The control: an unchanged context and the matching host-minted id
-    succeed, and the admission changes exactly what one admission changes."""
+    succeed, and the admission changes exactly what one admission changes.
+    Green before the binding too: a control, not evidence for it."""
     seam, adapter = _load(identity_project, tmp_path / "captures")
     before = _state(seam)
     adapter.PLANS.append([("publish", "own", "context", "own")])
@@ -933,8 +942,9 @@ def test_t4_no_state_on_refusal(
 def test_t4_the_snapshot_is_stable_at_rest_and_sees_one_admission(
     identity_project: Path, tmp_path: Path
 ) -> None:
-    """T4's own control. A snapshot that cannot change proves nothing, and
-    one that changes at rest would fail every arm for the wrong reason."""
+    """T4's own control, green before the binding. A snapshot that cannot
+    change proves nothing, and one that changes at rest would fail every
+    arm for the wrong reason."""
     seam, adapter = _load(identity_project, tmp_path / "captures")
     at_rest = _snapshot(seam)
     assert _snapshot(seam) == at_rest, "at rest the snapshot is byte-identical"
