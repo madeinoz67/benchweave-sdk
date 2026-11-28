@@ -84,7 +84,7 @@ for line in ({BANNER_OK_HEAD!r}, {BANNER_TOTAL_TIME!r}, {BANNER_SITE_READY!r}):
     sys.stdout.write(line + "\\n")
 sys.stdout.flush()
 open(sys.argv[1], "w").write(str(os.getpgrp()))
-time.sleep(2.5)
+time.sleep(1.0)
 sys.stdout.write({BANNER_FAIL!r} + "\\n")
 sys.stdout.flush()
 time.sleep(3600)
@@ -159,7 +159,12 @@ time.sleep(3600)
 # The load-shape extreme of the CI failure (run 39209775675): a grandchild
 # that IGNORES SIGTERM. Polite members die at SIGTERM; this one must be
 # SIGKILLed through the group, which the reclaim's escalation has to reach
-# on its own (the leader is not the group).
+# on its own (the leader is not the group). The module's 10s
+# TERM→KILL politeness window is tightened per-arm (issue #637 suite-cost):
+# the property is the ESCALATION and the empty group, not the width of the
+# politeness ceiling, so the arm patches RECLAIM_TERM_TO_KILL_S down — a
+# pre-fix reclaim that never escalates still fails the emptiness assert
+# (after the property poll's own ceiling) either way.
 _CHILD_SIGTERM_IGNORE = f"""
 import os, subprocess, sys, time
 sys.stdout.reconfigure(encoding="utf-8")
@@ -216,7 +221,10 @@ def test_ok_banner_hang_ends_at_the_banner_and_reclaims_the_group(
     """Acceptance §8 item 1: the banner-then-hang child (holding two
     grandchildren) ends via E2 — success within grace+5s, the disclosure log
     present, the banner forwarded live, and the child's whole process group
-    empty afterwards (no orphans). Three trials, all passing."""
+    empty afterwards (no orphans). Three trials, all passing. The grace is
+    1s (issue #637 suite-cost): E2's property is banner-then-grace-then-
+    reclaim, not the width of the grace, and the ceiling keeps the
+    acceptance formula (grace + 5s)."""
     mod = _load()
     for trial in range(3):
         pgid_file = tmp_path / f"ok-hang-pgid-{trial}"
@@ -225,14 +233,14 @@ def test_ok_banner_hang_ends_at_the_banner_and_reclaims_the_group(
             [sys.executable, "-c", _CHILD_OK_HANG, str(pgid_file)],
             cwd=tmp_path,
             done_marker=True,
-            grace=3.0,
+            grace=1.0,
             timeout=60.0,
         )
         elapsed = time.monotonic() - started
         assert out == "", f"trial {trial}: the guarded path must return ''"
         assert pgid_file.exists(), f"trial {trial}: the child never wrote its pgid"
         assert _group_is_empty(pgid_file), f"trial {trial}: orphans survived reclamation"
-        assert elapsed < 8.0, f"trial {trial}: reclaim took {elapsed:.1f}s (grace is 3s)"
+        assert elapsed < 6.0, f"trial {trial}: reclaim took {elapsed:.1f}s (grace is 1s)"
         captured = capsys.readouterr()
         assert BANNER_OK_HEAD in captured.out, f"trial {trial}: banner not forwarded live"
         assert "reclaimed after" in captured.out, f"trial {trial}: no E2 disclosure log"
@@ -272,9 +280,12 @@ def test_clean_exit_child_pays_no_grace_and_honors_the_real_code(
 def test_an_ok_banner_then_a_fail_banner_still_fails(tmp_path: Path) -> None:
     """F3 (fold wave): a sighted FAIL banner prohibits E2 outright — the
     earlier OK's grace deadline must not win the race. Both markers land
-    inside one grace window here (OK at ~0s, FAIL at ~2.5s, grace 6s): the
-    pre-fix code returned SUCCESS at the OK deadline with the FAIL banner
-    never gated; the fix waits out the fail grace and ends E3."""
+    inside one grace window here (OK at ~0s, FAIL at ~1s, grace 3s —
+    tightened with its child's delay, issue #637 suite-cost; the
+    both-inside-one-window shape and the OK-deadline-loses race are
+    unchanged): the pre-fix code returned SUCCESS at the OK deadline with
+    the FAIL banner never gated; the fix waits out the fail grace and ends
+    E3."""
     mod = _load()
     pgid_file = tmp_path / "ok-then-fail-pgid"
     with pytest.raises(SystemExit, match=r"command failed \(banner\)"):
@@ -282,7 +293,7 @@ def test_an_ok_banner_then_a_fail_banner_still_fails(tmp_path: Path) -> None:
             [sys.executable, "-c", _CHILD_OK_THEN_FAIL, str(pgid_file)],
             cwd=tmp_path,
             done_marker=True,
-            grace=6.0,  # both markers sighted inside this window
+            grace=3.0,  # both markers sighted inside this window
             timeout=60.0,
         )
     assert _group_is_empty(pgid_file)
@@ -301,7 +312,7 @@ def test_fail_banner_hang_fails_loudly_naming_the_command(tmp_path: Path) -> Non
             [sys.executable, "-c", _CHILD_FAIL_HANG, str(pgid_file)],
             cwd=tmp_path,
             done_marker=True,
-            grace=3.0,
+            grace=1.0,
             timeout=60.0,
         )
     assert sys.executable in str(excinfo.value), "the failure must name the command"
@@ -332,16 +343,18 @@ def test_a_lone_site_ready_line_does_not_complete_the_marker(tmp_path: Path) -> 
     """R3: the OK marker is a CONJUNCTION — "[OK] Build complete" and a
     following "Site ready" line. A child emitting only the second half (any
     build output quoting the banner's last line) must NOT end the step early:
-    with grace below the timeout there is no E2, only the E4 bound."""
+    with grace below the timeout there is no E2, only the E4 bound (windows
+    tightened together, issue #637 suite-cost — a false-positive marker
+    still ends before the timeout: 1.0 + poll < 2.5)."""
     mod = _load()
     pgid_file = tmp_path / "site-only-pgid"
-    with pytest.raises(SystemExit, match=r"command timed out after 4s"):
+    with pytest.raises(SystemExit, match=r"command timed out after 2.5s"):
         mod.run(
             [sys.executable, "-c", _CHILD_SITE_READY_ONLY, str(pgid_file)],
             cwd=tmp_path,
             done_marker=True,
-            grace=1.5,  # a false-positive marker would end here first, via E2
-            timeout=4.0,
+            grace=1.0,  # a false-positive marker would end here first, via E2
+            timeout=2.5,
         )
     assert _group_is_empty(pgid_file)
 
@@ -429,7 +442,8 @@ def test_reclaim_reaps_a_zombie_leader_instead_of_stranding_it(
 
 @POSIX_ONLY
 def test_reclaim_kills_a_sigterm_ignoring_grandchild(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The load-shape extreme of CI run 39209775675 (ubuntu, -n auto): a
     grandchild that IGNORES SIGTERM. Two sibling defects let it survive:
@@ -439,8 +453,13 @@ def test_reclaim_kills_a_sigterm_ignoring_grandchild(
     done" — on Linux a reap-pending zombie answers exactly the same way, so
     a merely-draining group also read as survivors. The arm's contract is
     the property: the group is empty AFTERWARDS (polled to a deadline), and
-    no false survivor warning is logged on the way there."""
+    no false survivor warning is logged on the way there. The 10s
+    TERM→KILL politeness ceiling tightens to 1s here (issue #637
+    suite-cost): the ignorer still outlives the SIGTERM rung — that is the
+    escalation this arm exists to force — and a reclaim that never
+    escalates still fails the emptiness assert, whatever the ceiling."""
     mod = _load()
+    monkeypatch.setattr(mod, "RECLAIM_TERM_TO_KILL_S", 1.0)
     pgid_file = tmp_path / "term-ignore-pgid"
     with pytest.raises(SystemExit, match=r"command failed \(banner\)"):
         mod.run(

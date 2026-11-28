@@ -154,9 +154,16 @@ def test_s2_wedge_ladder_bounded_wait_then_one_sigkill(
     expires → ONE audited SIGKILL (`sigkill_sent`, reason
     `wedge_wait_exceeded`), the CLI exits non-zero disclosing the kill.
     The wedge is a real subprocess with SIG_IGN on SIGTERM; the bounded
-    wait is tightened via the module constant the CLI reads at call time
-    (a service parameter, not a bench envelope — no commissioned window
-    exists on this surface)."""
+    waits are tightened via the module constants the CLI reads at call
+    time (service parameters, not bench envelopes — no commissioned
+    window exists on this surface)."""
+    # Issue #637 (suite-cost): the wedge answers neither channel, so BOTH
+    # bounded windows burn to their full extent — the verdict wait (15s at
+    # rest) is not the property this arm pins (the unobserved verdict is),
+    # so it tightens with the wedge wait it precedes. The ladder's shape is
+    # unchanged: unobserved verdict → expired wedge wait → one audited
+    # SIGKILL row.
+    monkeypatch.setattr(lifecycle, "VERDICT_WAIT_S", 1.0)
     monkeypatch.setattr(lifecycle, "WEDGE_WAIT_S", 2.0)
     wedge = subprocess.Popen(
         [
