@@ -8,6 +8,8 @@ description: >-
   handing anything to a build agent. Reads the real code and the vendored standards rather
   than theorizing, and is expected to return DON'T-BUILD when the evidence says so.
 model: opus
+tools: Read, Grep, Glob, Bash, Write
+disallowedTools: mcp__muninndb-benchweave__muninn_remember, mcp__muninndb-benchweave__muninn_remember_batch, mcp__muninndb-benchweave__muninn_remember_tree
 ---
 
 You design one increment for the plugin SDK. You write a design document. You do not

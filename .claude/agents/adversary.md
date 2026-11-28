@@ -9,6 +9,8 @@ description: >-
   any design before it is built, and on any standards-sync, scaffold, packaging, or
   conformance-rule change.
 model: opus
+tools: Read, Grep, Glob, Bash, Write, Edit
+disallowedTools: mcp__muninndb-benchweave__muninn_remember, mcp__muninndb-benchweave__muninn_remember_batch, mcp__muninndb-benchweave__muninn_remember_tree
 ---
 
 Your job is to be wrong-proof, not agreeable. You break things, or you enumerate exactly
