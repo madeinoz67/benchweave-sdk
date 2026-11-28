@@ -231,7 +231,7 @@ jobs:
           case "$err" in *Traceback*)
             echo "::error::preview-ui refusal printed a traceback"; exit 1;; esac
 
-      - name: Generated workflow — A0 green legs and A7 earned-[server] control (issue #596)
+      - name: Generated workflow — A0 green legs and A7 plain-pin provider control (issues #596, #597)
         # The design record's §8 execution arms, run at PR time because no
         # release is scheduled (a proof parked at a release gate is parked
         # indefinitely):
@@ -243,12 +243,25 @@ jobs:
         #       live_provider_backend_missing, and base (9/9) and ui (10/10)
         #       already passed — those two are the must-not-regress baseline,
         #       not a red to manufacture.
-        #   A7  the provider arm's [server] pin is EARNED, proven by execution
-        #       in both directions. The stripped-pin leg is a STANDING
-        #       EXPECTED-FAILURE control (the R-5c planted-violation pattern):
-        #       it reds the day the stripped run goes green, which is the day
-        #       D1 lands and the template pin must narrow to the bare form.
-        # Ubuntu only: four scaffolded projects, each resolving its own
+        #   A7  re-cut by #597 (ADR 0001). It WAS a standing expected-failure
+        #       control (the R-5c planted-violation pattern): the provider arm
+        #       with [server] stripped from its pin had to fail as findings
+        #       with live_provider_backend_missing, and it reddened the day
+        #       the stripped run went green. That day is this change. The
+        #       scripted connection path now validates the plugin contract
+        #       without importing pyftdi and the template renders the plain
+        #       pin, so the control is positive: the provider test leg carries
+        #       three assertions that each red on their own —
+        #       (i)   the generated test extra is EXACTLY the plain pin,
+        #             benchweave-sdk==<version>, with no extras clause;
+        #       (ii)  the pin resolves to the wheel THIS lane built (run_job's
+        #             lock-source assertion, unchanged);
+        #       (iii) pyftdi is NOT importable in the environment the suite
+        #             ran in, so "8 passed" was earned without the backend and
+        #             never beside it.
+        #       What the leg does not catch: a generated suite that reaches
+        #       the backend on a path its own tests never take.
+        # Ubuntu only: three scaffolded projects, each resolving its own
         # environment. The ui lint leg also runs on every lane in the step
         # above; here it completes A0's 3 x 2 denominator.
         if: matrix.os == 'ubuntu-latest'
@@ -262,20 +275,26 @@ jobs:
           uv run benchweave-sdk new "$ROOT/base" --package example_plugin
           uv run benchweave-sdk new "$ROOT/ui" --package example_plugin --with-ui
           uv run benchweave-sdk new "$ROOT/provider" --package example_plugin --provider-transport
-          uv run benchweave-sdk new "$ROOT/provider-stripped" --package example_plugin --provider-transport
-          # A7's one mutated variable, and nothing else. UV_FIND_LINKS makes
-          # the wheel built above resolvable, but it is NOT the only source
-          # whenever the dev version equals the latest published release (PyPI
-          # served 0.24.0 while this branch was built on it). With no lock,
-          # uv prefers the flat index; the export therefore precedes every
-          # sync below, and each sync is followed by a lock-source assertion
-          # so the legs cannot silently exercise PyPI's bytes instead.
-          sed 's/benchweave-sdk\[server\]==/benchweave-sdk==/' \
-            "$ROOT/provider-stripped/pyproject.toml" > "$ROOT/provider-stripped/pyproject.toml.tmp"
-          mv "$ROOT/provider-stripped/pyproject.toml.tmp" "$ROOT/provider-stripped/pyproject.toml"
-          grep -qF 'test = ["benchweave-sdk==' "$ROOT/provider-stripped/pyproject.toml" \
-            || { echo "::error::the [server] strip did not apply — the control would run the wrong project"; exit 1; }
+          # UV_FIND_LINKS makes the wheel built above resolvable, but it is
+          # NOT the only source whenever the dev version equals the latest
+          # published release (PyPI served 0.24.0 while this branch was built
+          # on it). With no lock, uv prefers the flat index; the export
+          # therefore precedes every sync below, and each sync is followed by
+          # a lock-source assertion so the legs cannot silently exercise
+          # PyPI's bytes instead.
           export UV_FIND_LINKS="$DIST"
+
+          # A7 (i): the provider arm's generated test extra is EXACTLY the
+          # plain pin. The expected line is built from the version under test,
+          # so a version bump cannot make this check stale or spell it wrong.
+          SDK_VERSION="$(uv run python -c 'import benchweave_sdk; print(benchweave_sdk.__version__)')"
+          EXPECTED_PIN="test = [\"benchweave-sdk==${SDK_VERSION}\", \"pytest>=8.0\"]"
+          grep -qxF "$EXPECTED_PIN" "$ROOT/provider/pyproject.toml" || {
+            echo "::error::provider: the generated test extra is not exactly the plain pin; expected: ${EXPECTED_PIN}; generated:"
+            grep -n '^test = ' "$ROOT/provider/pyproject.toml" || true
+            exit 1
+          }
+          echo "provider: the generated test extra is exactly the plain pin (${EXPECTED_PIN})"
 
           # Exit-code law (design record §8): 0 is green, 1 is findings, 2 is
           # the TOOLING class (uv usage error, undefined extra, spawn failure)
@@ -302,7 +321,8 @@ jobs:
 
           run_job() {
             # $1 = project dir, $2 = extra, $3 = passed floor ("" for lint),
-            # rest = the workflow job's command, verbatim.
+            # rest = the workflow job's command, verbatim. NO_PYFTDI=1 adds
+            # the A7 (iii) probe between the sync and the job.
             local dir="$1" extra="$2" floor="$3" passed
             shift 3
             capture_in "$dir" uv sync --extra "$extra"
@@ -320,6 +340,20 @@ jobs:
             if ! grep -qF "registry = \"$DIST\"" "$dir/uv.lock"; then
               echo "::error::$dir: uv.lock does not resolve benchweave-sdk from $DIST — this leg would exercise PyPI's bytes, not the wheel under test"
               exit 1
+            fi
+            if [ "${NO_PYFTDI:-}" = 1 ]; then
+              # A7 (iii): the suite has to pass WITHOUT the backend. The probe
+              # must refuse the way a missing module does: exit 1 naming the
+              # module. Exit 0 means the backend is in the environment and
+              # this leg proves nothing; exit 2 is the tooling class.
+              capture_in "$dir" uv run python -c "import pyftdi"
+              if [ "$CODE" -ne 1 ] || \
+                ! printf '%s\n' "$OUT" | grep -qF "ModuleNotFoundError: No module named 'pyftdi'"; then
+                printf '%s\n' "$OUT"
+                echo "::error::$dir: the pyftdi-absence probe did not fail as a missing module does ($(classify "$CODE")) — the plain-pin leg would run beside the backend, or prove nothing"
+                exit 1
+              fi
+              echo "$dir: pyftdi is not importable"
             fi
             capture_in "$dir" uv run "$@"
             if [ "$CODE" -ne 0 ]; then
@@ -345,36 +379,12 @@ jobs:
           run_job "$ROOT/provider" lint "" ruff check .
           run_job "$ROOT/base" test 9 pytest -q
           run_job "$ROOT/ui" test 10 pytest -q
-          run_job "$ROOT/provider" test 8 pytest -q
 
-          # A7 (i): the stripped-pin control MUST fail as findings with the
-          # backend refusal. Green here means the [server] pin stopped earning
-          # its place; exit 2 here means the control proved nothing.
-          capture_in "$ROOT/provider-stripped" uv sync --extra test
-          if [ "$CODE" -ne 0 ]; then
-            printf '%s\n' "$OUT"
-            echo "::error::provider-stripped: uv sync --extra test failed — $(classify "$CODE")"
-            exit 1
-          fi
-          grep -qF "registry = \"$DIST\"" "$ROOT/provider-stripped/uv.lock" || {
-            echo "::error::provider-stripped: uv.lock does not resolve benchweave-sdk from $DIST — the control would prove the wrong wheel"
-            exit 1
-          }
-          capture_in "$ROOT/provider-stripped" uv run pytest -q
-          printf '%s\n' "$OUT"
-          if [ "$CODE" -eq 0 ]; then
-            echo "::error::the [server]-stripped provider suite PASSED. The template pin is no longer earned: drop the extras clause from the generated test extra in template/pyproject.toml.jinja (design record §2.2), regenerate the fixtures, and re-cut the record's A7."
-            exit 1
-          fi
-          if [ "$CODE" -ne 1 ]; then
-            echo "::error::the [server]-stripped provider suite failed as $(classify "$CODE"), not as findings — the control proves nothing outside exit 1"
-            exit 1
-          fi
-          if ! printf '%s\n' "$OUT" | grep -qF "live_provider_backend_missing"; then
-            echo "::error::the [server]-stripped provider suite failed without live_provider_backend_missing — the pin may be required for a different reason, or the refusal changed"
-            exit 1
-          fi
-          echo "provider-stripped: exit 1 with live_provider_backend_missing — the [server] pin is earned"
+          # A7: the provider test leg is the plain-pin control. (i) is the
+          # exact-pin check above, (ii) run_job's lock-source assertion and
+          # (iii) the NO_PYFTDI probe — three assertions that each red alone.
+          NO_PYFTDI=1 run_job "$ROOT/provider" test 8 pytest -q
+          echo "provider: the plain pin is proven by execution — exact requirement, wheel from $DIST, pyftdi absent, suite green"
 
       - name: Server smoke — preview-ui over the installed wheel (publish's ubuntu arm, at PR time)
         # #308: publish.yml's ubuntu-only [server] smoke (spawn preview-ui,

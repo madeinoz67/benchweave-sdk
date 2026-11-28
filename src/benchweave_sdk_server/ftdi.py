@@ -1555,19 +1555,16 @@ class FtdiContract:
     byte_answer_ops: set[str] = field(default_factory=set)
 
 
-def verify_ftdi_plugin(plugin: LoadedPlugin) -> FtdiContract:
-    """The serve-construction check the CLI runs fail-fast and every
-    connection re-runs over the CURRENT plugin (the late-bound
-    ``replay_plugin_session`` shape: a reload that re-pins a different
-    contract revision refuses the reconnect). Returns the verified
-    contract — grammar, provider triple, limits. The CONTRACT checks run
-    first and the deployment check (pyftdi present) last: a missing extra
-    is a deployment error and must never mask a contract refusal at serve
-    (refute lane A's ordering observation)."""
+def _validate_ftdi_contract(plugin: LoadedPlugin) -> FtdiContract:
+    """The contract half of :func:`verify_ftdi_plugin`, and nothing about the
+    deployment: the pin, the feature gate, the grammar probe, the limits and
+    the executor, over the plugin as it is NOW. Raises the same contract
+    refusals and never imports pyftdi, so a connection over an injected
+    driver re-runs it where the ``[server]`` extra is not installed (ADR
+    0001)."""
     pinned, digest = _ftdi_pinned_contract(plugin)
     _require_ftdi_feature(pinned, digest)
     grammar = _probe_grammar(pinned)
-    _require_backend()
     provider = {
         "feature_id": str(pinned["feature_id"]),
         "id": str(pinned["id"]),
@@ -1587,6 +1584,23 @@ def verify_ftdi_plugin(plugin: LoadedPlugin) -> FtdiContract:
         ops=dict(executor.ops),
         byte_answer_ops=set(executor.byte_answer_ops),
     )
+
+
+def verify_ftdi_plugin(plugin: LoadedPlugin) -> FtdiContract:
+    """The serve-construction check the CLI runs fail-fast and every
+    default-driver connection re-runs over the CURRENT plugin (the
+    late-bound ``replay_plugin_session`` shape: a reload that re-pins a
+    different contract revision refuses the reconnect). Returns the verified
+    contract — grammar, provider triple, limits. The CONTRACT checks run
+    first (:func:`_validate_ftdi_contract`) and the deployment check (pyftdi
+    present) last: a missing extra is a deployment error and must never mask
+    a contract refusal at serve (refute lane A's ordering observation). No
+    contract check can refuse after the grammar probe — the executor is the
+    one the probe already asserted, and the limits are dictionary merges —
+    so the first refusal is the one the unsplit verifier raised."""
+    contract = _validate_ftdi_contract(plugin)
+    _require_backend()
+    return contract
 
 
 class _JournalState:
@@ -2078,11 +2092,20 @@ def ftdi_plugin_session(
     conversation against a contract it was not admitted on) and opens the
     device per connection — a fresh conversation over a fresh driver and
     link (the M1 fold's per-connection law). ``driver_factory`` is the
-    injection axis for tests (the ``open_port`` precedent); production
-    uses :func:`open_ftdi` and its one bounded open attempt.
-    ``record_path`` arms the live journal recorder (row b): the session's
-    exchanges emit a #564-format journal at close."""
-    open_driver = driver_factory or open_ftdi
+    injection axis for a caller-supplied driver (the ``open_port``
+    precedent). An injected connection validates the plugin contract alone:
+    the validator never imports pyftdi, so a scripted driver runs where the
+    ``[server]`` extra is not installed. What an injected opener imports is
+    the opener's own. Without a factory the driver is :func:`open_ftdi`, and
+    each connection also runs the backend preflight, before the endpoint
+    resolves. ``record_path`` arms the live journal recorder (row b): the
+    session's exchanges emit a #564-format journal at close."""
+    injected = driver_factory is not None
+    open_driver = driver_factory if injected else open_ftdi
+    # One presence check drives three decisions: the opener, the validator
+    # and the rehearsal marker (ADR 0001). The backend preflight stays with
+    # the default driver, the connection that opens real hardware.
+    verify = _validate_ftdi_contract if injected else verify_ftdi_plugin
     # The endpoint (row a): a bare URL wraps as the constant resolver; an
     # FtdiEndpoint or callable resolves AT CONNECT TIME (the serial lane's
     # late-bound shape — a rebind redirects the next connection).
@@ -2092,7 +2115,7 @@ def ftdi_plugin_session(
     journal = _JournalState(record_path, {}) if record_path is not None else None
 
     def factory() -> FtdiCaptureServices:
-        contract = verify_ftdi_plugin(session.plugin)
+        contract = verify(session.plugin)
         # A3 (the mechanism refute): resolve the endpoint ONCE — the
         # driver opens the URL this call returns and last_resolution
         # records the SAME value. The double call was an executed desync
@@ -2128,9 +2151,10 @@ def ftdi_plugin_session(
 
     session: PluginSession = PluginSession(plugin, factory)
     # The rehearsal marker (the acceptance review's A): a session over an
-    # INJECTED driver factory runs the shipped scripted double, and every
-    # surface that speaks "ftdi" must disclose it. The CLI never injects
-    # (production is always live); embedded hosts and generated test
-    # suites do, and they must not read as hardware.
-    session.rehearsal = driver_factory is not None
+    # INJECTED driver factory runs a caller-supplied driver, and every
+    # surface that speaks "ftdi" must disclose it. Embedded hosts, generated
+    # test suites and a CLI serve with an injected driver supply a double or
+    # a hook, and must not read as hardware. A production-shaped CLI serve
+    # injects nothing, so live hardware carries no marker.
+    session.rehearsal = injected
     return session

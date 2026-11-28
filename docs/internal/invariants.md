@@ -249,25 +249,46 @@ with permanent planted-violation arms R-5c). Since gateway issue #596 the
 interface also carries the generated `.github/workflows/ci.yml` (jobs `lint` and
 `tests`; expression-free and byte-identical across every arm — rendered by
 verbatim copy, never jinja), the `lint` extra carrying the explicitly-selected
-minimal ruff set, and an arm-conditional `test` extra. **Each arm's generated
-`test` extra must install everything that arm's generated suite imports** — the
-provider arm pins `benchweave-sdk[server]` because its shipped-double tests
-import `benchweave_sdk_server.ftdi`, whose backend import is unconditional. That
-pin is EXECUTED at PR time by this repository's `ci.yml` generated-workflow
-step (ubuntu-only, every push, against the wheel under test via
-`UV_FIND_LINKS`): a fresh scaffold of each arm must pass BOTH job commands its
-own workflow ships (3 arms × 2 jobs), and the provider arm as rendered must be
-green with ≥8 passed. The pin is EARNED, not assumed: the same provider project
-with `[server]` stripped from its pin — the one mutated variable — must fail as
-findings (exit 1) with `live_provider_backend_missing`, and that stripped-pin
-leg is a STANDING expected-failure control which reds the day the stripped run
-goes green (the day the deep `verify_ftdi_plugin` fix lands), signalling that
-the pin must narrow to the bare form. What the control does not catch: WHICH
-dependency inside `[server]` the suite needs — a narrower extra (D2) could
-suffice, and no offline import-graph arm exists, so executing the suite is the
-honest pin. Pinned offline by
+minimal ruff set, and a `test` extra. **Each arm's generated `test` extra must
+install everything that arm's generated suite imports.** Since gateway issue #597
+(ADR 0001) every arm renders the same plain pin, `benchweave-sdk==<version>`: the
+provider arm's shipped-double tests drive `ftdi_plugin_session` through an
+injected driver factory, and that connection path validates the plugin contract
+without importing pyftdi. The pyftdi preflight stays on `verify_ftdi_plugin`:
+at serve construction, in discovery, and on every default-driver connection. A
+production-shaped CLI serve IS a default-driver connection — the CLI hands the
+session a factory only when the seam injects a driver, a caller's factory or
+hooks — so it refuses there with `live_provider_backend_missing` and the
+`[server]` install command, before the endpoint resolves, bound or
+binding-pending (its arms are the ADR 0001 section of
+`tests/server/test_ftdi.py`). The plain pin is
+EXECUTED at PR time by this repository's `ci.yml` generated-workflow step
+(ubuntu-only, every push, against the wheel under test via `UV_FIND_LINKS`): a
+fresh scaffold of each arm must pass BOTH job commands its own workflow ships
+(3 arms × 2 jobs), and the provider test leg carries three assertions that each
+red on their own — the generated test extra is EXACTLY the plain pin, the pin
+resolves to the wheel under test, and pyftdi is not importable in the
+environment the suite ran in, so its ≥8 passed were earned without the backend.
+What the step does not catch: a generated suite that reaches the backend on a
+path its own tests never take. The template and the wheel ship together, and the
+pin names the version that FIRST rendered the project: `upgrade` never rewrites
+`pyproject.toml` (`_skip_if_exists` in `copier.yml`), so a project scaffolded
+from a version without the split keeps its `[server]` pin and the wheel that
+needs it. That move is pinned by
+`tests/test_scaffold_update.py::test_upgrade_keeps_an_older_provider_test_pin`;
+`::test_skip_list_is_load_bearing_on_update` pins that the skip list itself
+matters. The rendered pin is pinned byte-exact against the fixture by
+`tests/test_scaffold_copier.py::test_new_project_tree_matches_fixture_provider`;
+`::test_the_generated_provider_suite_runs` pins only that the suite runs, in a
+development environment where pyftdi is installed. The plain-pin claim itself
+is pinned offline by
+`tests/server/test_ftdi.py::test_the_generated_provider_suite_runs_without_the_server_extra`,
+which runs the committed provider suite with the `[server]` extra's own
+top-level modules refused. What that arm does not block: those distributions'
+own dependencies, pyusb among them. CI's plain-environment provider leg is the
+backstop. The workflow and the lint set by
 `tests/test_scaffold_copier.py::test_the_generated_workflow_carries_the_lint_and_test_jobs`
-and `::test_each_arm_passes_the_lint_set_its_pyproject_declares`, and end-to-end
+and `::test_each_arm_passes_the_lint_set_its_pyproject_declares`; end-to-end
 by `tests/test_standalone_dev_loop.py`, whose installed-wheel scaffold asserts a
 dot-directory survives the wheel. The generated plugin runtime has **no dependency on this SDK**. *A defect
   here multiplies across every plugin authored from the scaffold, and downstream repos
