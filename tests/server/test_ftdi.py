@@ -46,8 +46,10 @@ from benchweave_sdk.testing import ConformanceError, MockContext
 from benchweave_sdk_server.cli import _build_seam
 from benchweave_sdk_server.ftdi import (
     FtdiCaptureServices,
+    FtdiDeviceHooks,
     FtdiStreamAdapter,
     ScriptedFtdiDriver,
+    discover_ftdi_devices,
     ftdi_plugin_session,
     open_ftdi,
     verify_ftdi_plugin,
@@ -1513,6 +1515,316 @@ def test_a_missing_backend_does_not_mask_a_contract_refusal(
     unpinned = load_plugin_project(starter_project)
     with pytest.raises(ValueError, match="live_provider_plugin_unpinned:"):
         verify_ftdi_plugin(unpinned)
+
+
+# --------------------------------------------------------------------------
+# ADR 0001 (gateway #597): the pyftdi backend is a requirement of the LIVE
+# paths, not of the plugin contract. A connection over an injected driver
+# factory validates the current plugin's contract and never reaches the one
+# pyftdi import site, so the generated provider suite runs on the plain SDK
+# pin. The verifier, discovery, the default-driver connection and CLI serve
+# construction keep the backend preflight and its prefixed install hint.
+# --------------------------------------------------------------------------
+
+
+#: What every live path keeps on a missing backend: the refusal prefix
+#: (STD-4, the API) and the install command it names. The prose after the
+#: command is not part of the pin.
+_BACKEND_REFUSAL = "live_provider_backend_missing: install 'benchweave-sdk[server]'"
+
+
+def _assert_backend_refusal(error: BaseException) -> None:
+    assert str(error).startswith(_BACKEND_REFUSAL), str(error)
+
+
+def _refuse_backend_import(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Make the ONE pyftdi import site fail the test when a path reaches it,
+    and return the record of reaches. The seam is called outside
+    ``_backend``'s ``except ImportError``, so the probe surfaces as itself
+    and never as the backend refusal."""
+    import benchweave_sdk_server.ftdi as ftdi_module
+
+    reached: list[str] = []
+
+    def probe() -> tuple[Any, ...]:
+        reached.append("pyftdi import site")
+        raise AssertionError("a path reached the pyftdi import site")
+
+    monkeypatch.setattr(ftdi_module, "_BACKEND", probe)
+    return reached
+
+
+def _remove_pyftdi(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make every module of the pyftdi backend unimportable, as on an
+    install without the ``[server]`` extra. The real import site then runs
+    and refuses with its own prefixed hint."""
+    import sys
+
+    for name in ("usb", "usb.core", "usb.util", "pyftdi", "pyftdi.ftdi", "pyftdi.usbtools"):
+        monkeypatch.setitem(sys.modules, name, None)
+
+
+def _unpinned(plugin: Any) -> Any:
+    """The fixture plugin with its provider object removed: a contract
+    refusal (``live_provider_plugin_unpinned:``), the C6 shape."""
+    return dataclasses.replace(
+        plugin,
+        descriptor={
+            **plugin.descriptor,
+            "transport": {
+                key: value
+                for key, value in plugin.descriptor["transport"].items()
+                if key != "provider"
+            },
+        },
+    )
+
+
+def test_a_scripted_connection_never_reaches_the_backend_import(
+    tmp_path: Path, plugin, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The #597 defect as a test. A connection over an injected driver
+    factory called the full verifier, whose backend preflight imports
+    pyftdi. It now validates the contract and opens the injected driver; the
+    import site is never reached, which is what lets the generated provider
+    suite run on the plain SDK pin."""
+    reached = _refuse_backend_import(monkeypatch)
+    driver = _double()
+    session = ftdi_plugin_session(
+        plugin, _URL, driver_factory=lambda url: driver, capture_root=tmp_path / "caps"
+    )
+
+    asyncio.run(session.connect())
+    read = asyncio.run(session.execute("read", {"parameter": "line_status"}))
+    asyncio.run(session.close())
+
+    assert read["status"] == "ok", read
+    assert reached == [], "the scripted connection reached the pyftdi import site"
+    assert session.rehearsal is True
+
+
+def test_a_scripted_connection_refuses_a_refused_contract_before_the_driver_opens(
+    tmp_path: Path, plugin, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The contract-only validator keeps every contract refusal, and keeps
+    it first: the CURRENT plugin is validated before the endpoint resolves
+    and before the factory is called. A refused contract opens no driver."""
+    reached = _refuse_backend_import(monkeypatch)
+    driver = _double()
+    opened: list[str] = []
+
+    def factory(url: str) -> ScriptedFtdiDriver:
+        opened.append(url)
+        return driver
+
+    session = ftdi_plugin_session(
+        _unpinned(plugin), _URL, driver_factory=factory, capture_root=tmp_path / "caps"
+    )
+    with pytest.raises(RuntimeError) as raised:
+        asyncio.run(session.connect())
+
+    assert "live_provider_plugin_unpinned:" in str(raised.value)
+    assert opened == [], "a refused contract opened a driver"
+    assert driver.calls == []
+    assert reached == []
+
+
+def test_a_scripted_reconnect_rechecks_the_current_contract(
+    tmp_path: Path, plugin, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The per-connection re-validation survives the split. A reload that
+    re-pins a lookalike contract refuses the NEXT connection and opens no
+    driver for it. A reload back to the admitted contract reconnects over a
+    fresh driver. No connection reaches the backend import."""
+    reached = _refuse_backend_import(monkeypatch)
+    opened: list[str] = []
+
+    def factory(url: str) -> ScriptedFtdiDriver:
+        opened.append(url)
+        return _double()
+
+    session = ftdi_plugin_session(
+        plugin, _URL, driver_factory=factory, capture_root=tmp_path / "caps"
+    )
+    asyncio.run(session.connect())
+    asyncio.run(session.close())
+
+    lookalike = load_plugin_project(
+        _lookalike_plugin(tmp_path, feature_tail="1.0.0", widen=True)
+    )
+    asyncio.run(session.reload_plugin(lookalike))
+    with pytest.raises(RuntimeError) as raised:
+        asyncio.run(session.connect())
+    assert "live_provider_feature_unsupported:" in str(raised.value)
+    assert opened == [_URL], "the refused reconnect opened a driver"
+
+    asyncio.run(session.reload_plugin(plugin))
+    asyncio.run(session.connect())
+    asyncio.run(session.close())
+    assert opened == [_URL, _URL], "the admitted reconnect opened no fresh driver"
+    assert reached == []
+
+
+class _FalsyFactory:
+    """A driver factory that is callable but not truthy. The three decisions
+    that hang on factory presence (the opener, the validator, the rehearsal
+    marker) must read one explicit ``is not None`` check, never truthiness."""
+
+    def __init__(self, driver: ScriptedFtdiDriver) -> None:
+        self.driver = driver
+        self.calls: list[str] = []
+
+    def __bool__(self) -> bool:
+        return False
+
+    def __call__(self, url: str) -> ScriptedFtdiDriver:
+        self.calls.append(url)
+        return self.driver
+
+
+def test_a_falsy_factory_is_still_an_injected_driver(
+    tmp_path: Path, plugin, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One presence check for all three decisions: a factory that is not
+    truthy is still the injected driver. Before the split the opener fell
+    back to the live ``open_ftdi`` while the marker still said rehearsal."""
+    reached = _refuse_backend_import(monkeypatch)
+    factory = _FalsyFactory(_double())
+    session = ftdi_plugin_session(
+        plugin, _URL, driver_factory=factory, capture_root=tmp_path / "caps"
+    )
+
+    asyncio.run(session.connect())
+    asyncio.run(session.close())
+
+    assert factory.calls == [_URL], "the opener ignored the injected factory"
+    assert session.rehearsal is True
+    assert reached == []
+
+
+def test_the_live_verifier_refuses_the_contract_before_the_backend(
+    tmp_path: Path, starter_project: Path, plugin, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The live verifier is the contract validator plus the backend
+    preflight, in that order. With the backend missing, each contract
+    refusal still wins: the pin, and both faces of the feature gate. The
+    admitted plugin then refuses on the backend alone."""
+    _remove_pyftdi(monkeypatch)
+    unpinned = load_plugin_project(starter_project)
+    lookalike = load_plugin_project(
+        _lookalike_plugin(tmp_path, feature_tail="1.0.0", widen=True)
+    )
+    unbanked = load_plugin_project(
+        _lookalike_plugin(tmp_path, feature_tail="2.0.0", widen=True)
+    )
+    for refused, prefix in (
+        (unpinned, "live_provider_plugin_unpinned:"),
+        (lookalike, "live_provider_feature_unsupported:"),
+        (unbanked, "live_provider_feature_unsupported:"),
+    ):
+        with pytest.raises(ValueError, match=prefix):
+            verify_ftdi_plugin(refused)
+    with pytest.raises(RuntimeError) as raised:
+        verify_ftdi_plugin(plugin)
+    _assert_backend_refusal(raised.value)
+
+
+def test_a_default_driver_connection_keeps_the_backend_preflight(
+    plugin, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A connection over the DEFAULT driver keeps the full verifier. With
+    the backend missing it refuses with the prefix and the install command,
+    before the endpoint resolves."""
+    _remove_pyftdi(monkeypatch)
+    resolved: list[str] = []
+
+    def endpoint() -> str:
+        resolved.append(_URL)
+        return _URL
+
+    session = ftdi_plugin_session(plugin, endpoint)
+    with pytest.raises(RuntimeError) as raised:
+        asyncio.run(session.connect())
+
+    _assert_backend_refusal(raised.value)
+    assert resolved == [], "the endpoint resolved before the backend refusal"
+    assert session.rehearsal is False
+
+
+def test_a_default_driver_connection_refuses_the_contract_before_the_backend(
+    plugin, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """On the default-driver connection the contract refusal also comes
+    first, and it also precedes the endpoint: the same order the live
+    verifier keeps."""
+    _remove_pyftdi(monkeypatch)
+    resolved: list[str] = []
+
+    def endpoint() -> str:
+        resolved.append(_URL)
+        return _URL
+
+    session = ftdi_plugin_session(_unpinned(plugin), endpoint)
+    with pytest.raises(RuntimeError) as raised:
+        asyncio.run(session.connect())
+
+    assert "live_provider_plugin_unpinned:" in str(raised.value)
+    assert resolved == [], "the endpoint resolved before the contract refusal"
+
+
+def test_cli_serve_construction_keeps_the_backend_refusal(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Serve construction runs the full verifier before a port binds. A
+    missing backend still exits 2 with the prefix and the install command."""
+    _remove_pyftdi(monkeypatch)
+    with pytest.raises(SystemExit) as raised:
+        _build_seam(FIXTURE_ROOT, transport="ftdi", device=_URL)
+    assert raised.value.code == 2
+    assert _BACKEND_REFUSAL in capsys.readouterr().err
+
+
+def test_discovery_keeps_the_backend_refusal(
+    plugin, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Discovery verifies through the full verifier: a missing backend
+    refuses with the prefix and the install command, before any scan. The
+    scan imports the backend too and refuses the same way, so the arm holds
+    the scan back and reads whether it ran."""
+    _remove_pyftdi(monkeypatch)
+    scanned: list[str] = []
+
+    def enumerate() -> list[str]:
+        scanned.append("scan")
+        return []
+
+    hooks = FtdiDeviceHooks(enumerate_urls=enumerate, open_url=open_ftdi)
+    with pytest.raises(RuntimeError) as raised:
+        asyncio.run(discover_ftdi_devices(plugin, hooks=hooks))
+
+    _assert_backend_refusal(raised.value)
+    assert scanned == [], "the scan ran before the backend refusal"
+
+
+def test_a_cli_served_connection_refuses_a_backend_that_goes_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The CLI passes its own open wrapper as the driver factory on every
+    ftdi serve, so a CLI-served connection takes the contract-only validator
+    like any injected factory. The backend refusal for that path therefore
+    lives in serve construction (the arm above) and in ``open_ftdi``'s own
+    import. This arm is the second: construction passed, the backend then
+    goes missing, and the connection still refuses with the prefix and the
+    install command."""
+    import benchweave_sdk_server.ftdi as ftdi_module
+
+    monkeypatch.setattr(ftdi_module, "_BACKEND", lambda: (object(),) * 6)
+    seam, _ = _build_seam(FIXTURE_ROOT, transport="ftdi", device=_URL)
+    monkeypatch.setattr(ftdi_module, "_BACKEND", None)
+    _remove_pyftdi(monkeypatch)
+    with pytest.raises(RuntimeError) as raised:
+        asyncio.run(seam.session.connect())
+    _assert_backend_refusal(raised.value)
 
 
 def test_the_stream_reply_wakes_the_reader_not_the_sleep_quantum(
