@@ -25,6 +25,9 @@ The step vocabulary
     Make this context ``SAVED["context"]``.
 ``("rewrite", dataset_id)``
     Assign ``context.dataset_id``: the forgery the issue describes.
+``("rewrite_operation", operation_id)``
+    Assign ``context.operation_id``: the other plain attribute the adapter
+    holds, which the host must never read late.
 ``("mutate_input", field, value)``
     Assign into the dispatched input object IN PLACE
     (``request["arguments"]["input"]``).
@@ -38,6 +41,12 @@ The step vocabulary
 ``("publish_foreign", key)``
     The same publication (own mint, own context) through
     ``FOREIGN_SERVICES`` instead of this adapter's services.
+``("publish_in_thread", key)``
+    The same publication, made from a worker thread of the adapter's own
+    and joined. A bare thread starts with no dispatch context.
+``("publish_via_to_thread", key)``
+    The same publication, made through ``asyncio.to_thread``, which copies
+    the dispatch context into the worker.
 ``("publish_cross",)``
     The forgery under overlap: rewrite this context's dataset id to the
     OTHER remembered operation's mint, publish a manifest that carries it,
@@ -61,6 +70,7 @@ The step vocabulary
 
 import asyncio
 import copy
+import threading
 
 #: The manifest template every publication copies; ``dataset_id`` is filled
 #: per step, never by the test.
@@ -228,6 +238,8 @@ class _ScriptedAdapter:
                 SAVED["context"] = context
             elif kind == "rewrite":
                 context.dataset_id = args[0]
+            elif kind == "rewrite_operation":
+                context.operation_id = args[0]
             elif kind == "mutate_input":
                 arguments["input"][args[0]] = args[1]
             elif kind == "publish":
@@ -235,6 +247,17 @@ class _ScriptedAdapter:
             elif kind == "publish_foreign":
                 await self._publish(context, outcomes, args[0], "context", "own",
                                     services=FOREIGN_SERVICES)
+            elif kind == "publish_in_thread":
+                thread = threading.Thread(
+                    target=asyncio.run,
+                    args=(self._publish(context, outcomes, args[0], "context", "own"),),
+                )
+                thread.start()
+                thread.join()
+            elif kind == "publish_via_to_thread":
+                await asyncio.to_thread(
+                    asyncio.run, self._publish(context, outcomes, args[0], "context", "own")
+                )
             elif kind == "publish_cross":
                 await self._publish_cross(context, outcomes)
             elif kind == "spawn":

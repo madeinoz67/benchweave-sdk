@@ -23,6 +23,17 @@ The arms, by ADR 0606 "Verification and tasks":
   Nothing here edits them; ``test_a1`` (inline) and ``test_a18`` (lookup)
   are the named arms.
 
+Fold wave 1 — three findings from the review of `426d269`, each proved RED
+there first. F1: the inline path ran its M10 echo check against the
+dispatched input OBJECT, which the adapter can mutate in place. F2: the
+scope closer read ``context.operation_id`` late, so a rewrite of that
+attribute kept a scope alive after its invoke closed. F3: the capture fell
+back to the caller's live object for any input that is not JSON data. The
+``test_fold_...`` arms enforce that both admission paths read one captured
+value per dispatch, that the closer closes on the operation id captured
+before the adapter ran, and that with no record, or no captured input,
+admission refuses and never falls back to a caller's object.
+
 Nine arms pass on the tree before the binding. They are pins and controls,
 not proofs, and each says so in its docstring: T1 (the mutex predates the
 binding; it is alive because removing the mutex turns it red), the
@@ -34,6 +45,7 @@ guards behaviour; it is never RED-then-GREEN evidence.
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
 import json
 import sys
@@ -965,6 +977,616 @@ def test_t4_the_snapshot_is_stable_at_rest_and_sees_one_admission(
         f"datasets/{segment}/metadata.json",
     } <= set(after["files"]), after["files"]
     assert _snapshot(seam) == _canonical(after), "at rest again the snapshot is stable"
+
+
+# --- fold wave 1: both admission paths read what the host captured -----------
+#
+# Three findings from the review of `426d269`. Every arm is RED there unless
+# its name says control or pin.
+#
+# F1  The INLINE admission path ran its M10 echo check against the dispatched
+#     input OBJECT, which the adapter is handed and can mutate in place.
+# F2  The scope closer read ``context.operation_id`` LATE, when it ran. An
+#     adapter that rewrote that attribute made the span's ``finally`` close
+#     the wrong scope: its own stayed open, so a task that inherited it kept
+#     its publishing authority after the invoke had closed.
+# F3  The capture fell back to the caller's LIVE object for any input that is
+#     not JSON data (one NaN anywhere in it was enough), which put the
+#     explicit publisher back on a mutable object for every field.
+#
+# What the arms enforce after the fold: both admission paths read ONE
+# captured value per dispatch (the operation id, the minted dataset id, the
+# action id and the input as a private copy), taken before the adapter ran;
+# the closer closes on the operation id captured then; and with no dispatch
+# record, or no captured input, admission refuses before any write and never
+# falls back to a caller's object.
+
+#: What the caller sends, and what the adapter mutates it to.
+SENT = "cfg-7"
+MUTATED = "cfg-forged"
+#: The adapter's in-place mutation of the dispatched input object.
+_MUTATE = [("mutate_input", "configuration_id", MUTATED)]
+#: An input that passes an open object schema and that JSON cannot express.
+_NOT_JSON = {"tag": {"not", "json"}}
+#: Operation ids the arms pin the mint to.
+OWN = "op-11111111"
+OTHER = "op-22222222"
+FORGED_OPERATION = "op-forged01"
+#: An action that declares ``configuration_id`` (so M10 is armed) and leaves
+#: the rest of its input open, so an awkward value can travel beside it.
+OPEN_CORRELATED = "demo.correlated_open/1.0.0"
+
+
+class _Opaque:
+    """A value JSON cannot express and ``copy.deepcopy`` can."""
+
+    def __init__(self) -> None:
+        self.parts = [1, 2, 3]
+
+
+def _uncopyable() -> Any:
+    """A value the host cannot copy at all."""
+    return (str(index) for index in range(3))
+
+
+AWKWARD = [
+    pytest.param(float("nan"), id="nan"),
+    pytest.param(float("inf"), id="infinity"),
+    pytest.param(b"bytes", id="bytes"),
+    pytest.param(_Opaque(), id="opaque-object"),
+]
+#: The awkward values a schema that types a field as ``number`` still admits:
+#: jsonschema takes NaN and Infinity for numbers.
+AWKWARD_NUMBER = AWKWARD[:2]
+
+
+def _with_open_correlated_action(project: Path) -> Path:
+    """Add ``OPEN_CORRELATED`` to a built project: its catalog action and
+    descriptor row, and the catalog pin's digest."""
+    package = project / "src" / PACKAGE
+    catalog = json.loads((package / "profile-catalog.json").read_text())
+    catalog["actions"][OPEN_CORRELATED] = {
+        "description": (
+            "Synthetic fetch action that declares the configuration_id echo "
+            "field and leaves the rest of the input open (the F3 arms)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {"configuration_id": {"type": "string", "minLength": 1}},
+            "required": ["configuration_id"],
+        },
+        "output_schema": {"type": "object"},
+        "side_effect": "none",
+        "lifecycle": "direct",
+    }
+    payload = (json.dumps(catalog, indent=2) + "\n").encode()
+    (package / "profile-catalog.json").write_bytes(payload)
+    descriptor = json.loads((package / "descriptor.json").read_text())
+    for pin in descriptor["contracts"]:
+        if pin["path"] == "profile-catalog.json":
+            pin["sha256"] = hashlib.sha256(payload).hexdigest()
+    descriptor["actions"][OPEN_CORRELATED] = {
+        "binding": {"kind": "adapter", "key": OPEN_CORRELATED},
+        "input_constraints": {},
+        "timeout_ms": 30000,
+        "side_effect": "none",
+        "cancellable": True,
+        "retry": "never",
+    }
+    (package / "descriptor.json").write_bytes((json.dumps(descriptor, indent=2) + "\n").encode())
+    return project
+
+
+@pytest.fixture(scope="module")
+def open_identity_project(invoke_project_builder, tmp_path_factory) -> Path:
+    """The identity project plus the open correlated action. Built once."""
+    project = invoke_project_builder(
+        tmp_path_factory.mktemp("identity-open") / "proj", catalog_with_correlated_fetch=True
+    )
+    (project / "src" / PACKAGE / "adapter.py").write_bytes(ADAPTER)
+    return _with_open_correlated_action(project)
+
+
+def _divergence_free(message: str) -> str:
+    """A refusal without the D10 divergence sentence (the same in each)."""
+    return message.split(" The standalone host")[0]
+
+
+def _admitted_echoes(seam: StandaloneSeam) -> set[Any]:
+    admission = seam._dataset_admission
+    assert admission is not None
+    return {manifest.get("configuration_id") for manifest in admission._admitted.values()}
+
+
+def _open_scopes(seam: StandaloneSeam) -> list[str]:
+    """The operations whose scope is still open on the controller."""
+    admission = seam._dataset_admission
+    assert admission is not None
+    return sorted(admission._open)
+
+
+def _dispatch_input(action: str, value: Any = None) -> dict[str, Any]:
+    """What the caller sends: the echo field, and beside it an awkward value
+    for the actions that leave the rest of the input open."""
+    sent: dict[str, Any] = {"configuration_id": SENT}
+    if value is not None:
+        sent["payload"] = value
+    return invoke_args(action, sent)
+
+
+def _run_arm(
+    seam: StandaloneSeam,
+    adapter: Any,
+    *,
+    path: str,
+    plan: list[tuple],
+    echo: str,
+    action: str = CORRELATED,
+    value: Any = None,
+) -> dict[str, Any]:
+    """One arm on one path. The adapter mutates the dispatched input as the
+    plan says, then answers a dataset-shaped result (inline) or publishes
+    (explicit) a manifest that carries ``echo``. Answers what the seam said,
+    what was admitted, whether the admission state is unchanged, and what
+    the caller's input reads now."""
+    adapter.MANIFEST["configuration_id"] = echo
+    if path == "inline":
+        step = ("dataset_result", "context")
+    else:
+        step = ("publish", "own", "context", "own")
+    adapter.PLANS.append([*plan, step])
+    dispatch = _dispatch_input(action, value)
+    before = _snapshot(seam)
+    if path == "inline":
+        try:
+            call(seam, "invoke", dispatch)
+        except SeamError as exc:
+            outcome = f"refused: {exc.code}: {_divergence_free(exc.message)}"
+        else:
+            outcome = "returned"
+    else:
+        call(seam, "invoke", dispatch)
+        outcome = _sole(adapter.OUTCOMES)
+    return {
+        "outcome": outcome,
+        "admitted": _admitted_echoes(seam),
+        "unchanged": _snapshot(seam) == before,
+        "sent_now": dispatch["input"]["configuration_id"],
+    }
+
+
+def _refused_by_m10(record: dict[str, Any], *, inline: bool) -> None:
+    """The seam answers an inline refusal as ``invalid_request``; the
+    explicit publisher's refusal reaches the adapter without a seam code."""
+    outcome = str(record["outcome"])
+    prefix = "refused: invalid_request: " if inline else "refused: "
+    assert outcome.startswith(prefix + "standalone_dataset_invalid:"), record
+    assert "M10" in outcome and f"'{SENT}'" in outcome, record
+    assert record["admitted"] == set(), "nothing may be admitted"
+    assert record["unchanged"], "the refusal precedes any admission or index write"
+
+
+def _echo(services: Any, dataset_id: str, context: Any, echo: str) -> str:
+    """One ``dataset_publish`` from the test's own task, with a manifest that
+    carries ``echo``."""
+    manifest = _manifest(dataset_id=dataset_id, configuration_id=echo)
+    try:
+        asyncio.run(services.dataset_publish(manifest, context))
+    except ValueError as exc:
+        return f"refused: {exc}"
+    return "admitted"
+
+
+def test_fold_f1a_the_inline_result_cannot_move_m10_by_mutating_the_input(
+    identity_project: Path, tmp_path: Path
+) -> None:
+    """F1-a. The adapter mutates the dispatched input object in place, then
+    answers a dataset-shaped result that echoes the mutated value. The
+    invoke must be refused by M10 and nothing admitted. RED on `426d269`:
+    the invoke returned and the forged echo was admitted."""
+    seam, adapter = _load(identity_project, tmp_path / "captures")
+    record = _run_arm(seam, adapter, path="inline", plan=_MUTATE, echo=MUTATED)
+    assert record["sent_now"] == MUTATED, "the adapter did mutate the dispatched input object"
+    _refused_by_m10(record, inline=True)
+
+
+def test_fold_f1b_the_inline_result_echoing_the_original_input_stands_under_mutation(
+    identity_project: Path, tmp_path: Path
+) -> None:
+    """F1-b. The same in-place mutation, but the result echoes the input as
+    the host RECEIVED it. That one must be admitted: the comparison base is
+    the captured copy, not the object the adapter moved. RED on `426d269`:
+    the honest echo was refused because the stored object had moved."""
+    seam, adapter = _load(identity_project, tmp_path / "captures")
+    record = _run_arm(seam, adapter, path="inline", plan=_MUTATE, echo=SENT)
+    assert record["sent_now"] == MUTATED, "the adapter did mutate the dispatched input object"
+    assert record["outcome"] == "returned", record
+    assert record["admitted"] == {SENT}, record
+    assert not record["unchanged"], "one admission changes the state"
+
+
+@pytest.mark.parametrize(
+    ("path", "plan", "echo"),
+    [
+        ("inline", [], SENT),
+        ("inline", [], MUTATED),
+        ("explicit", _MUTATE, MUTATED),
+        ("explicit", _MUTATE, SENT),
+    ],
+    ids=["inline-honest", "inline-forged-echo", "explicit-mutated", "explicit-original"],
+)
+def test_fold_control_the_repro_arms_keep_their_outcomes(
+    identity_project: Path, tmp_path: Path, path: str, plan: list[tuple], echo: str
+) -> None:
+    """F1-d, CONTROLS: green on `426d269` and after the fold. An honest echo
+    is admitted on either path. A forged echo is refused by M10 when the
+    input was not mutated (inline), and when the mutation meets the explicit
+    publisher's captured copy."""
+    seam, adapter = _load(identity_project, tmp_path / "captures")
+    record = _run_arm(seam, adapter, path=path, plan=plan, echo=echo)
+    if plan:
+        assert record["sent_now"] == MUTATED, "the mutation reached the caller's object"
+    if echo == SENT:
+        # The inline path answers with the invoke's return; the explicit
+        # publisher's outcome is the publication's own.
+        expected = "returned" if path == "inline" else "admitted"
+        assert record["outcome"] == expected, record
+        assert record["admitted"] == {SENT}, record
+    else:
+        _refused_by_m10(record, inline=path == "inline")
+
+
+@pytest.mark.parametrize("mutate", [False, True], ids=["honest-result", "forged-result"])
+def test_fold_f1c_with_no_dispatch_record_the_inline_result_is_refused(
+    identity_project: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutate: bool
+) -> None:
+    """F1-c. The host has no dispatch record for the operation, because the
+    recording never happened. The inline admission must refuse with its own
+    prefix, before any state, whether the result is honest or forged: it
+    never falls back to the caller's input object. RED on `426d269`: both
+    results were admitted."""
+    seam, adapter = _load(identity_project, tmp_path / "captures")
+    admission = seam._dataset_admission
+    assert admission is not None
+    monkeypatch.setattr(admission, "record_dispatch", lambda *args, **kwargs: None)
+    plan = _MUTATE if mutate else []
+    record = _run_arm(
+        seam, adapter, path="inline", plan=plan, echo=MUTATED if mutate else SENT
+    )
+    assert record["outcome"].startswith(
+        "refused: invalid_request: standalone_dataset_not_dispatched:"
+    ), record
+    assert record["admitted"] == set(), record
+    assert record["unchanged"], record
+
+
+@pytest.mark.parametrize("awkward", ["none", "not-json-data"])
+def test_fold_f1e_the_dispatch_record_holds_a_copy_the_caller_cannot_reach(
+    identity_project: Path, tmp_path: Path, awkward: str
+) -> None:
+    """F1-e at the record. The caller mutates its input object AFTER the
+    record was written. The record must still carry the input as the host
+    received it, as a copy. The JSON cell is a control, green on `426d269`.
+    RED on `426d269` for the other cell: the record WAS the caller's object,
+    because an input JSON cannot express got the live reference."""
+    seam, _ = _load(identity_project, tmp_path / "captures")
+    admission = seam._dataset_admission
+    assert admission is not None
+    sent: dict[str, Any] = {"configuration_id": SENT}
+    if awkward == "not-json-data":
+        sent.update(_NOT_JSON)
+    original = copy.deepcopy(sent)
+    admission.record_dispatch(
+        "op-fold0001", dataset_id="ds:op-fold0001", action_id=CORRELATED, input=sent
+    )
+    sent["configuration_id"] = MUTATED
+    admission.close_dispatch("op-fold0001")
+    stored = admission.dispatch_state("op-fold0001")
+    assert stored is not None and _open_scopes(seam) == []
+    assert stored["input"] == original, f"the record carries the caller's mutation: {stored}"
+    assert stored["input"] is not sent
+
+
+def test_fold_f1e_the_record_does_not_hand_out_its_copy_by_reference(
+    identity_project: Path, tmp_path: Path
+) -> None:
+    """F1-e at the record's reader. A host-side reader mutates the input it
+    was handed by ``dispatch_state``. The publisher must still compare
+    against what the host captured. RED on `426d269`: the record handed out
+    its own copy, so the reader's edit moved the comparison base."""
+    seam, _ = _load(identity_project, tmp_path / "captures")
+    admission, services = seam._dataset_admission, seam.session.services
+    assert admission is not None and services is not None
+    operation = "op-fold0001"
+    admission.record_dispatch(
+        operation,
+        dataset_id=f"ds:{operation}",
+        action_id=CORRELATED,
+        input={"configuration_id": SENT},
+    )
+    handed = admission.dispatch_state(operation)
+    assert handed is not None
+    handed["input"]["configuration_id"] = MUTATED
+    context = HostOperationContext(operation, timeout_ms=1000, dataset_id=f"ds:{operation}")
+    try:
+        honest = _echo(services, f"ds:{operation}", context, SENT)
+        forged = _echo(services, f"ds:{operation}", context, MUTATED)
+    finally:
+        admission.close_dispatch(operation)
+    assert honest == "admitted", honest
+    assert forged.startswith("refused: standalone_dataset_invalid:") and "M10" in forged, forged
+
+
+@pytest.mark.parametrize(("path", "expected"), [("inline", "invalid_request"), ("explicit", "")])
+def test_fold_f1e_an_input_the_host_cannot_copy_refuses_admission(
+    open_identity_project: Path, tmp_path: Path, path: str, expected: str
+) -> None:
+    """F1-e at the seam, with F3's rule. An input the host cannot copy at all
+    leaves no captured input, so there is nothing to check an echo field
+    against. Both admission paths refuse, before any state, with the typed
+    prefix; neither falls back to the caller's object. RED on `426d269`:
+    both admitted."""
+    seam, adapter = _load(open_identity_project, tmp_path / "captures")
+    record = _run_arm(
+        seam, adapter, path=path, plan=[], echo=SENT, action=OPEN_CORRELATED, value=_uncopyable()
+    )
+    refused = f"refused: {expected + ': ' if expected else ''}standalone_dataset_input_absent:"
+    assert record["outcome"].startswith(refused), record
+    assert record["admitted"] == set(), record
+    assert record["unchanged"], record
+
+
+@pytest.mark.parametrize("restore", [True, False], ids=["restore", "tamper"])
+@pytest.mark.parametrize("exit_class", EXIT_CLASSES)
+def test_fold_f2_a_rewritten_operation_id_cannot_keep_the_scope_alive(
+    identity_project: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    exit_class: str,
+    restore: str,
+) -> None:
+    """F2-a to F2-d. The adapter starts a task that inherits its scope, then
+    rewrites ``context.operation_id`` and the invoke exits by success, error
+    or cancellation. The inherited task publishes after the invoke closed.
+    With the real id put back on the context (restore) that was ADMITTED on
+    `426d269`; without it (tamper) it was refused for the wrong reason. In
+    both the scope stayed open. The task must be refused ``invoke_closed``
+    and no scope may remain."""
+    seam, adapter = _load(identity_project, tmp_path / "captures")
+    monkeypatch.setattr(session_module, "uuid", _CannedUuid("11111111"))
+    adapter.ORPHANS["late"] = ([("rewrite_operation", OWN)] if restore else []) + [
+        ("publish", "late", "context", "own")
+    ]
+    plan: list[tuple] = [("spawn", "late"), ("rewrite_operation", FORGED_OPERATION)]
+    if exit_class == "cancel":
+        plan.append(("hold", "span"))
+    elif exit_class == "error":
+        plan.append(("raise", "the adapter failed"))
+    adapter.PLANS.append(plan)
+    entered = adapter.gate("span")[0]
+    before = _snapshot(seam)
+
+    async def scenario() -> dict[str, Any]:
+        task = asyncio.create_task(seam.call("invoke", invoke_args(PROBE)))
+        if exit_class == "cancel":
+            await entered.wait()
+            task.cancel()
+        try:
+            await task
+        except SeamError as exc:
+            exit_seen = f"seam_error:{exc.code}"
+        except asyncio.CancelledError:
+            exit_seen = "cancelled"
+        else:
+            exit_seen = "returned"
+        # The invoke has closed here: the adapter span's finally has run.
+        still_open = _open_scopes(seam)
+        adapter.release_orphan("late")
+        await asyncio.gather(*adapter.TASKS)
+        return {
+            "exit": exit_seen,
+            "still_open": still_open,
+            "outcome": adapter.ORPHAN_OUTCOMES["late"]["late"],
+        }
+
+    record = asyncio.run(asyncio.wait_for(scenario(), WAIT))
+    record["unchanged"] = _snapshot(seam) == before
+    assert record["exit"] == EXIT_SEEN[exit_class], record
+    assert (record["outcome"].startswith(INVOKE_CLOSED), record["still_open"]) == (True, []), (
+        f"the inherited task must lose its authority and the scope must be closed: {record}"
+    )
+    assert record["unchanged"] and _open_scopes(seam) == [], record
+
+
+def test_fold_f2e_a_rewritten_operation_id_cannot_close_another_operation(
+    identity_project: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """F2-e, cross-denial. Two scopes are live on one controller. The first
+    adapter rewrites its operation id to the OTHER operation's real id. The
+    other operation must still publish its own dataset, and the first
+    operation's scope must not survive its own invoke. RED on `426d269`: the
+    first closer closed the OTHER scope, which refused its own publication,
+    and the first scope stayed open and admitted its inherited task."""
+    seam, adapter = _load(identity_project, tmp_path / "captures")
+    monkeypatch.setattr(session_module, "uuid", _CannedUuid("11111111", "22222222"))
+    adapter.ORPHANS["late"] = [("rewrite_operation", OWN), ("publish", "late", "context", "own")]
+    adapter.PLANS.extend(
+        [
+            [("remember",), ("barrier", 2), ("spawn", "late"), ("rewrite_operation", OTHER)],
+            [("remember",), ("barrier", 2), ("hold", "b"), ("publish", "own", "context", "own")],
+        ]
+    )
+    held, release = adapter.gate("b")
+
+    async def scenario() -> dict[str, Any]:
+        # The seam mutex serializes public dispatches (T1); the lock-free
+        # core from two tasks is the only way to hold two scopes open at once.
+        first = asyncio.create_task(seam._invoke_core(invoke_args(PROBE, {"party": "a"}), "f2e-a"))
+        second = asyncio.create_task(seam._invoke_core(invoke_args(PROBE, {"party": "b"}), "f2e-b"))
+        await asyncio.wait_for(first, WAIT)  # the first span's finally has run
+        open_after_first = _open_scopes(seam)
+        release.set()
+        await asyncio.wait_for(second, WAIT)
+        other_own = adapter.OUTCOMES[OTHER]["own"]
+        adapter.release_orphan("late")
+        await asyncio.gather(*adapter.TASKS)
+        return {
+            "open_after_first": open_after_first,
+            "other_own": other_own,
+            "inherited": adapter.ORPHAN_OUTCOMES["late"]["late"],
+        }
+
+    record = asyncio.run(asyncio.wait_for(scenario(), WAIT))
+    record["open_at_end"] = _open_scopes(seam)
+    assert record["open_after_first"] == [OTHER], (
+        f"after the first span closed, only the other scope may be open: {record}"
+    )
+    assert (record["other_own"], record["inherited"].startswith(INVOKE_CLOSED)) == (
+        "admitted",
+        True,
+    ), record
+    assert record["open_at_end"] == [], record
+    admission = seam._dataset_admission
+    assert admission is not None
+    assert sorted(admission._admitted) == [f"ds:{OTHER}"], (
+        "exactly the other operation's own dataset is admitted"
+    )
+
+
+@pytest.mark.parametrize("value", AWKWARD)
+def test_fold_f3_an_awkward_value_does_not_put_the_explicit_publisher_back_on_the_live_object(
+    identity_project: Path, tmp_path: Path, value: Any
+) -> None:
+    """F3 at the record and the explicit publisher. The input carries an
+    awkward value beside the JSON echo field, and the dispatched object is
+    mutated in place after the record was written. A manifest echoing the
+    mutated value must be refused and one echoing the original admitted.
+    RED on `426d269`: the capture failed on the awkward value, kept the live
+    object, and so admitted the mutated echo and refused the honest one."""
+    seam, _ = _load(identity_project, tmp_path / "captures")
+    admission, services = seam._dataset_admission, seam.session.services
+    assert admission is not None and services is not None
+    operation = "op-fold0001"
+    sent = {"configuration_id": SENT, "payload": value}
+    admission.record_dispatch(
+        operation, dataset_id=f"ds:{operation}", action_id=CORRELATED, input=sent
+    )
+    sent["configuration_id"] = MUTATED
+    context = HostOperationContext(operation, timeout_ms=1000, dataset_id=f"ds:{operation}")
+    try:
+        forged = _echo(services, f"ds:{operation}", context, MUTATED)
+        honest = _echo(services, f"ds:{operation}", context, SENT)
+    finally:
+        admission.close_dispatch(operation)
+    assert (forged.startswith("refused: standalone_dataset_invalid:"), "M10" in forged) == (
+        True,
+        True,
+    ), forged
+    assert honest == "admitted", honest
+    assert _admitted_echoes(seam) == {SENT}
+
+
+def test_fold_f3_an_input_the_host_cannot_copy_refuses_with_a_typed_prefix(
+    identity_project: Path, tmp_path: Path
+) -> None:
+    """F3, the copy that cannot be made. When the host cannot copy the input
+    at all, admission refuses with the typed prefix for any echo, and admits
+    nothing. It never degrades to the caller's object. RED on `426d269`: the
+    mutated echo was admitted and the honest one refused."""
+    seam, _ = _load(identity_project, tmp_path / "captures")
+    admission, services = seam._dataset_admission, seam.session.services
+    assert admission is not None and services is not None
+    operation = "op-fold0001"
+    sent = {"configuration_id": SENT, "payload": _uncopyable()}
+    before = _snapshot(seam)
+    admission.record_dispatch(
+        operation, dataset_id=f"ds:{operation}", action_id=CORRELATED, input=sent
+    )
+    sent["configuration_id"] = MUTATED
+    context = HostOperationContext(operation, timeout_ms=1000, dataset_id=f"ds:{operation}")
+    try:
+        forged = _echo(services, f"ds:{operation}", context, MUTATED)
+        honest = _echo(services, f"ds:{operation}", context, SENT)
+    finally:
+        admission.close_dispatch(operation)
+    assert "standalone_dataset_input_absent:" in forged, forged
+    assert "standalone_dataset_input_absent:" in honest, honest
+    assert _snapshot(seam) == before, "the refusals precede any admission or index write"
+
+
+@pytest.mark.parametrize("echo", [MUTATED, SENT], ids=["forged-echo", "original-echo"])
+@pytest.mark.parametrize("value", AWKWARD_NUMBER)
+def test_fold_f3_an_awkward_number_in_a_real_action_input_does_not_move_the_explicit_publisher(
+    action_lane_project: Path, tmp_path: Path, value: Any, echo: str
+) -> None:
+    """F3 through the public invoke and the pinned corpus action, whose input
+    schema declares ``configuration_id`` and types a field as ``number``. A
+    NaN or an Infinity passes that gate. The adapter mutates the dispatched
+    input in place and publishes through the explicit member. RED on
+    `426d269` for every cell. Bytes and an opaque object cannot pass a typed
+    field; the open-action and record arms carry them."""
+    seam, adapter = _load(action_lane_project, tmp_path / "captures")
+    adapter.MANIFEST["configuration_id"] = echo
+    adapter.PLANS.append([*_MUTATE, ("publish", "own", "context", "own"), ("echo_configuration",)])
+    sent = {**SETTINGS, "configuration_id": SENT, "sample_rate_hz": value}
+    dispatch = invoke_args(CONFIGURE, sent)
+    before = _snapshot(seam)
+    call(seam, "invoke", dispatch)
+    record = {
+        "outcome": _sole(adapter.OUTCOMES),
+        "admitted": _admitted_echoes(seam),
+        "unchanged": _snapshot(seam) == before,
+        "sent_now": dispatch["input"]["configuration_id"],
+    }
+    assert record["sent_now"] == MUTATED, "the adapter did mutate the dispatched input object"
+    if echo == MUTATED:
+        _refused_by_m10(record, inline=False)
+    else:
+        assert record["outcome"] == "admitted", record
+        assert record["admitted"] == {SENT}, record
+
+
+@pytest.mark.parametrize("echo", [MUTATED, SENT], ids=["forged-echo", "original-echo"])
+@pytest.mark.parametrize("path", ["inline", "explicit"])
+@pytest.mark.parametrize("value", AWKWARD)
+def test_fold_f3_an_awkward_value_does_not_move_the_echo_check_on_either_path(
+    open_identity_project: Path, tmp_path: Path, path: str, echo: str, value: Any
+) -> None:
+    """F3 through the public invoke on BOTH paths, M10 armed. RED on
+    `426d269` for every cell: inline read the live object; explicit fell back
+    to it when the capture failed on the awkward value."""
+    seam, adapter = _load(open_identity_project, tmp_path / "captures")
+    record = _run_arm(
+        seam, adapter, path=path, plan=_MUTATE, echo=echo, action=OPEN_CORRELATED, value=value
+    )
+    assert record["sent_now"] == MUTATED, "the adapter did mutate the dispatched input object"
+    if echo == MUTATED:
+        _refused_by_m10(record, inline=path == "inline")
+    else:
+        expected = "returned" if path == "inline" else "admitted"
+        assert record["outcome"] == expected, record
+        assert record["admitted"] == {SENT}, record
+
+
+@pytest.mark.parametrize(
+    ("step", "expected"),
+    [("publish_in_thread", OPERATION_MISMATCH), ("publish_via_to_thread", "admitted")],
+    ids=["bare-thread", "to-thread"],
+)
+def test_pin_publishing_from_a_bare_worker_thread_fails_closed(
+    identity_project: Path, tmp_path: Path, step: str, expected: str
+) -> None:
+    """A pin, true on `426d269` and after the fold, and a compatibility
+    fact. The active invoke travels with the dispatch CONTEXT. A bare worker
+    thread starts with none, so a publication from one is refused: while the
+    invoke is open it is ``operation_mismatch``, because that call is not
+    made in the active invoke. ``asyncio.to_thread`` copies the context into
+    the worker, so a publication through it is the invoke's own. No thread
+    support is added."""
+    seam, adapter = _load(identity_project, tmp_path / "captures")
+    adapter.PLANS.append([(step, "own")])
+    call(seam, "invoke", invoke_args(PROBE))
+    assert _sole(adapter.OUTCOMES).startswith(expected), adapter.OUTCOMES
 
 
 # --- pins: behaviour the binding must preserve ---------------------------------
