@@ -254,10 +254,14 @@ install everything that arm's generated suite imports.** Since gateway issue #59
 (ADR 0001) every arm renders the same plain pin, `benchweave-sdk==<version>`: the
 provider arm's shipped-double tests drive `ftdi_plugin_session` through an
 injected driver factory, and that connection path validates the plugin contract
-without importing pyftdi. The pyftdi preflight stays on `verify_ftdi_plugin` —
-serve construction, discovery and the default-driver connection — and refuses
-with `live_provider_backend_missing` and the `[server]` install command (its
-arms are the ADR 0001 section of `tests/server/test_ftdi.py`). The plain pin is
+without importing pyftdi. The pyftdi preflight stays on `verify_ftdi_plugin`:
+at serve construction, in discovery, and on every default-driver connection. A
+production-shaped CLI serve IS a default-driver connection — the CLI hands the
+session a factory only when the seam injects a driver, a caller's factory or
+hooks — so it refuses there with `live_provider_backend_missing` and the
+`[server]` install command, before the endpoint resolves, bound or
+binding-pending (its arms are the ADR 0001 section of
+`tests/server/test_ftdi.py`). The plain pin is
 EXECUTED at PR time by this repository's `ci.yml` generated-workflow step
 (ubuntu-only, every push, against the wheel under test via `UV_FIND_LINKS`): a
 fresh scaffold of each arm must pass BOTH job commands its own workflow ships
@@ -267,14 +271,16 @@ resolves to the wheel under test, and pyftdi is not importable in the
 environment the suite ran in, so its ≥8 passed were earned without the backend.
 What the step does not catch: a generated suite that reaches the backend on a
 path its own tests never take. The template and the wheel ship together, and the
-pin names the version that rendered it: `upgrade` never rewrites `pyproject.toml`
-(`_skip_if_exists` in `copier.yml`, pinned by
-`tests/test_scaffold_update.py::test_skip_list_is_load_bearing_on_update`), so a
-project scaffolded from a version without the split keeps its `[server]` pin and
-the wheel that needs it. Pinned offline by
-`tests/test_scaffold_copier.py::test_new_project_tree_matches_fixture_provider`
-(the rendered pin, byte-exact against the fixture) and
-`::test_the_generated_provider_suite_runs`; the workflow and the lint set by
+pin names the version that FIRST rendered the project: `upgrade` never rewrites
+`pyproject.toml` (`_skip_if_exists` in `copier.yml`), so a project scaffolded
+from a version without the split keeps its `[server]` pin and the wheel that
+needs it. That move is pinned by
+`tests/test_scaffold_update.py::test_upgrade_keeps_an_older_provider_test_pin`;
+`::test_skip_list_is_load_bearing_on_update` pins that the skip list itself
+matters. The rendered pin is pinned byte-exact against the fixture by
+`tests/test_scaffold_copier.py::test_new_project_tree_matches_fixture_provider`;
+`::test_the_generated_provider_suite_runs` pins only that the suite runs, in a
+development environment where pyftdi is installed. The workflow and the lint set by
 `tests/test_scaffold_copier.py::test_the_generated_workflow_carries_the_lint_and_test_jobs`
 and `::test_each_arm_passes_the_lint_set_its_pyproject_declares`; end-to-end
 by `tests/test_standalone_dev_loop.py`, whose installed-wheel scaffold asserts a
