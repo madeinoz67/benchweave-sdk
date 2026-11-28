@@ -977,34 +977,43 @@ class StandaloneSeam:
             int(row["timeout_ms"]) if isinstance(row, dict) else 0
         )
         admission = self._dataset_admission
-        # The mint, the dispatch recording and the active scope are ONE
-        # motion (issue #589 §2c, ADR 0606): the observe hook fires inside
+        # The mint, the dispatch record and the active scope are ONE motion
+        # (issue #589 §2c, ADR 0606): the observe hook fires inside
         # ``execute`` immediately after the context is constructed
         # (``dataset_id = "ds:" + operation_id``, per dispatch) and before
-        # the adapter runs. The adapter reads the id DURING execute; the
-        # controller records {dataset_id, action_id, input} against the
-        # operation for the explicit member's M10 correlation, mirroring the
-        # bridge's mint_dataset_id recording; and it opens the dispatch's
-        # active scope, which the explicit member resolves its identity
-        # from. The host keeps its own copy of the mint here — ``minted`` —
-        # so the inline admission below never reads the adapter's context.
-        minted: dict[str, Any] = {}
+        # the adapter runs, so everything it binds is what the host saw
+        # before any adapter code. The adapter reads the id DURING execute;
+        # the controller records the operation id, the minted dataset id,
+        # the action id and the dispatched input as a private copy, mirroring
+        # the bridge's mint_dataset_id recording; and it opens the dispatch's
+        # active scope.
+        #
+        # The hook reads each context attribute ONCE, here. The operation id
+        # it keeps is the one the record is found by, the one the inline
+        # admission below looks up, and the one the scope's closer closes on:
+        # ``operation_id`` and ``dataset_id`` are plain attributes the
+        # adapter can rewrite inside execute, so a later read of the context
+        # could name another operation's scope or move the echo check.
+        dispatched: dict[str, Any] = {}
 
         def _observe(context: HostOperationContext) -> Callable[[], None] | None:
-            minted["dataset_id"] = context.dataset_id
+            operation_id = context.operation_id
+            dispatched["operation_id"] = operation_id
             if admission is None:
                 return None
             controller = admission
             controller.record_dispatch(
-                context.operation_id,
+                operation_id,
                 dataset_id=context.dataset_id,
                 action_id=action_id,
                 input=value,
             )
             # The scope closes with the adapter span: ``execute`` calls this
             # in a ``finally``, so success, error and cancellation all revoke
-            # it before this core's own result gates run.
-            return lambda: controller.close_dispatch(context.operation_id)
+            # it before this core's own result gates run. It closes on the
+            # operation id captured above, never on a context attribute as
+            # it reads when the span ends.
+            return lambda: controller.close_dispatch(operation_id)
 
         data = await self._execute(
             "invoke",
@@ -1056,11 +1065,13 @@ class StandaloneSeam:
                     reason="dataset_admission_absent",
                 )
             try:
-                admitted = admission.admit(
+                # Against the dispatch record, by the operation id the host
+                # captured before the adapter ran: never against ``value``,
+                # which is the object the adapter was handed and may have
+                # mutated in place.
+                admitted = admission.admit_result(
                     payload,
-                    dataset_id=minted.get("dataset_id"),
-                    action_id=action_id,
-                    invoke_input=value,
+                    operation_id=dispatched.get("operation_id") or "",
                     surface=_SURFACE.get(),
                 )
             except ValueError as exc:
