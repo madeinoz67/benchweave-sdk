@@ -5,8 +5,8 @@
 // `codanna serve --watch`, so the hook does nothing there.
 // Skips silently when the worktree has no Codanna config yet. Always exits 0.
 //
-// Runs under bun (its interpreter in .claude/settings.json) and under node (the hooks
-// CI lane has no bun). Use node: modules only, never a Bun-only API.
+// Runs under bun (its interpreter in .claude/settings.json) and under node, which the
+// committed suites run it under. Use node: modules only, never a Bun-only API.
 // author: Stephen Eaton
 
 import { spawnSync } from "node:child_process";

@@ -10,8 +10,8 @@
 // A nudge that nags is a hook people disable, so: once per session, and never for a
 // tool that is not a search.
 //
-// Runs under bun (its interpreter in .claude/settings.json) and under node (the hooks
-// CI lane has no bun). Use node: modules only, never a Bun-only API.
+// Runs under bun (its interpreter in .claude/settings.json) and under node, which the
+// committed suites run it under. Use node: modules only, never a Bun-only API.
 // author: Stephen Eaton
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
