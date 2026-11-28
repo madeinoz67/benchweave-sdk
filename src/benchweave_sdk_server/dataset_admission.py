@@ -32,10 +32,49 @@ The D10 disclosure: the gateway still requires ``dataset_publish`` at
 dispatch until GW-1 (gateway task #9). Every ``standalone_dataset_invalid:``
 refusal carries the divergence sentence, and ``host_info`` carries the
 ``dataset_admission`` block (the design record §5's three places).
+
+The identity binding (ADR 0606, issue #606): BOTH admission paths — the
+explicit member ``dataset_publish`` and the inline admission of a
+dataset-shaped invoke result — read ONE captured value per dispatch: the
+operation id, the minted dataset id, the action id and the input as a
+private copy, all taken before the adapter runs
+(:meth:`DatasetAdmission.record_dispatch`). Neither path reads the context
+object, nor the input object the adapter is handed. The context's ids are
+correlation checks against that capture; the capture is the authority, and
+the dispatch RECORD
+(:meth:`DatasetAdmission.dispatch_state`) is correlation history.
+
+- The explicit member resolves the capture through the ACTIVE scope, bound
+  to the dispatch context with a ``ContextVar``
+  (:meth:`DatasetAdmission.active_invoke`): a call is an invoke's own only
+  while that invoke is open and the call runs in it.
+- The inline admission resolves it through the dispatch record, by the
+  operation id the host captured in the same hook
+  (:meth:`DatasetAdmission.admit_result`).
+- The scope closes on that captured operation id when the adapter span ends
+  (:meth:`DatasetAdmission.close_dispatch`, from the span's ``finally``): a
+  rewritten ``context.operation_id`` cannot divert the close to another
+  operation's scope or leave this one open, and a task that inherited the
+  scope loses its authority then.
+- With no dispatch record, or with no captured input (the dispatch had
+  none, or the host could not copy it), admission refuses with a typed
+  prefix before any write. No path falls back to a caller's object.
+
+The guarantee's extent, stated plainly: it holds at the services boundary,
+inside one host process and one dispatch context, for what the host
+captured before adapter entry. It is not process isolation, and it does not
+reach code that bypasses ``dataset_publish`` or reads host internals: the
+controller is reachable from the services object the adapter is handed, as
+``services._admission``, and its record holds the capture. A publication
+from a bare
+worker thread has no dispatch context, so it refuses; ``asyncio.to_thread``
+copies the context into the worker, so a publication through it does not.
 """
 
 from __future__ import annotations
 
+import contextvars
+import copy
 import datetime
 import getpass
 import json
@@ -100,6 +139,79 @@ def _private_copy(manifest: dict[str, Any]) -> dict[str, Any]:
     return copy
 
 
+def _deep_copy_or_none(value: Any) -> Any:
+    """A private deep copy of ``value``, or ``None`` when there is none.
+
+    The adapter is handed the dispatched input object and may mutate it in
+    place, so nothing the admission paths compare against may hold it. A
+    deep copy keeps the values JSON cannot express (NaN, Infinity, bytes,
+    plain objects), so one such value does not put the echo check back on
+    the live object.
+
+    There is no copy in two cases, and the answer is ``None`` in both,
+    never the caller's object. ``copy.deepcopy`` raised an ``Exception``
+    (this handler catches ``Exception``: a ``MemoryError`` included; a
+    ``KeyboardInterrupt`` or ``SystemExit`` is not caught). Or it handed
+    back the input itself, because it trusts ``__deepcopy__``. An immutable
+    value comes back as itself too and takes the same road: the admission
+    paths take a dict or nothing. Admission for that dispatch then refuses
+    (``standalone_dataset_input_absent:``)."""
+    try:
+        copied = copy.deepcopy(value)
+    except Exception:  # noqa: BLE001 - an object that cannot be copied has no copy
+        return None
+    if copied is value:
+        # A copy that IS the input is no copy: a dict whose __deepcopy__
+        # hands itself back would otherwise put the live object on both
+        # admission paths.
+        return None
+    return copied
+
+
+def _closed(operation_id: object) -> ValueError:
+    return ValueError(
+        f"standalone_dataset_invoke_closed: the invoke for operation "
+        f"{operation_id!r} has closed (it finished, errored or was "
+        "cancelled): its dispatch record is history, not publishing authority"
+    )
+
+
+def _foreign_operation(operation_id: object, made_in: str) -> ValueError:
+    return ValueError(
+        f"standalone_dataset_operation_mismatch: the operation context names "
+        f"operation {operation_id!r}, but {made_in}: a context's ids are "
+        "correlation checks against the dispatch making the call, never its "
+        "authority"
+    )
+
+
+def _not_dispatched(operation_id: object) -> ValueError:
+    return ValueError(
+        f"standalone_dataset_not_dispatched: this controller has no active "
+        f"host invoke for operation {operation_id!r}: it never dispatched "
+        "the operation, so there is no mint to publish under"
+    )
+
+
+def _input_absent(operation_id: object) -> ValueError:
+    return ValueError(
+        f"standalone_dataset_input_absent: the dispatch record for operation "
+        f"{operation_id!r} carries no captured input (the dispatch had none, "
+        "or the host could not copy it), so there is nothing to check the "
+        "manifest's echo fields against; a caller's object is never used in "
+        "its place"
+    )
+
+
+def _id_mismatch(context_id: object, operation_id: str, minted: object) -> ValueError:
+    return ValueError(
+        f"standalone_dataset_id_mismatch: the operation context carries "
+        f"dataset_id {context_id!r}, but the active invoke for operation "
+        f"{operation_id!r} minted {minted!r}: the context's id is a "
+        "correlation check, never the admission identity"
+    )
+
+
 def _write_dataset_manifest(event: Any, manifest: dict[str, Any]) -> None:
     """Write ``manifest.json`` atomically (temp + rename, the capture
     writer's own publication-marker posture). ``allow_nan=False`` matches
@@ -120,6 +232,61 @@ def _write_dataset_metadata(event: Any, metadata: dict[str, Any]) -> None:
     os.replace(temp, event / "metadata.json")
 
 
+class _Captured:
+    """What the host bound for one dispatch before the adapter ran.
+
+    One object serves the dispatch record and the active scope, so the
+    explicit member and the inline admission cannot read different values.
+    ``input`` is a private copy, or ``None`` when there is none. Nothing here
+    is the caller's input object. An adapter that reads the controller's
+    internals through the services object it is handed
+    (``services._admission``) does reach this object. That is outside the
+    guarantee.
+    """
+
+    __slots__ = ("action_id", "dataset_id", "input", "operation_id")
+
+    def __init__(
+        self,
+        *,
+        operation_id: str,
+        dataset_id: str | None,
+        action_id: str | None,
+        input: Any,
+    ) -> None:
+        self.operation_id = operation_id
+        self.dataset_id = dataset_id
+        self.action_id = action_id
+        self.input = input
+
+
+class _ActiveInvoke:
+    """One invoke dispatch's open scope: what the host bound before the
+    adapter ran, and the state that ends its authority.
+
+    The scope object is shared by every task that inherited the dispatch
+    context, so ``closed`` is what revokes them all at once — resetting the
+    variable reaches only the context that opened the scope.
+    """
+
+    __slots__ = ("captured", "closed", "controller", "token")
+
+    def __init__(self, *, controller: DatasetAdmission, captured: _Captured) -> None:
+        self.controller = controller
+        self.captured = captured
+        self.closed = False
+        self.token: contextvars.Token[_ActiveInvoke | None] | None = None
+
+
+#: The active host invoke of the CURRENT dispatch context (ADR 0606). One
+#: value per task context, never one slot per controller: scopes that
+#: overlap — two seams, or a dispatch nested inside another — must not see
+#: each other's mints.
+_ACTIVE_INVOKE: contextvars.ContextVar[_ActiveInvoke | None] = contextvars.ContextVar(
+    "bws_dataset_active_invoke", default=None
+)
+
+
 class DatasetAdmission:
     """The admission core: validation, the this-run admitted registry and
     the capture-root persistence, over one resolved contract set.
@@ -128,6 +295,8 @@ class DatasetAdmission:
     controller rebuilds — a reload rebuilds the validation surfaces (the
     incoming plugin's contracts and channels) but the manifests the host
     process admitted stay lookable up, exactly as the persisted files do.
+    The open scopes are the controller's own: a scope opened on one
+    controller is no authority on another.
     """
 
     def __init__(
@@ -147,10 +316,15 @@ class DatasetAdmission:
         self._admitted: dict[str, dict[str, Any]] = (
             admitted if admitted is not None else {}
         )
-        # operation_id -> {dataset_id, action_id, input} — the M10
-        # correlation source, mirroring the gateway controller's
-        # mint_dataset_id(..., action_id=..., input=...) recording.
-        self._dispatch: dict[str, dict[str, Any]] = {}
+        # operation_id -> what the host captured for the dispatch (the
+        # mint, the action and the input as a private copy): the M10
+        # correlation source and what BOTH admission paths read, mirroring
+        # the gateway controller's mint_dataset_id(..., action_id=...,
+        # input=...) recording.
+        self._dispatch: dict[str, _Captured] = {}
+        # operation_id -> the dispatch's OPEN scope (ADR 0606). Keyed by
+        # operation, never one slot: a last-dispatch slot mixes scopes.
+        self._open: dict[str, _ActiveInvoke] = {}
 
     # --- the dispatch-state recording (the seam's observe hook) -------------
 
@@ -162,16 +336,141 @@ class DatasetAdmission:
         action_id: str | None,
         input: Any,
     ) -> None:
-        """Record one invoke dispatch's mint, action and resolved input —
-        the correlation source for the explicit member's M10 check."""
-        self._dispatch[operation_id] = {
-            "dataset_id": dataset_id,
-            "action_id": action_id,
-            "input": input,
-        }
+        """Record one invoke dispatch — the mint, the action and the input
+        as a private copy — and, in the same motion, open that dispatch's
+        active scope (ADR 0606).
+
+        The capture is what both admission paths read while the invoke is
+        open and after it: nothing downstream reads the caller's input
+        object. It binds to the calling dispatch context, so record it where
+        the adapter will run (the mint's observe hook, before adapter entry)
+        and close the scope with :meth:`close_dispatch` when the adapter
+        span ends. Call it once per dispatch, with the id the host minted:
+        it is the key the record and the scope are both found by.
+        """
+        captured = _Captured(
+            operation_id=operation_id,
+            dataset_id=dataset_id,
+            action_id=action_id,
+            input=_deep_copy_or_none(input),
+        )
+        self._dispatch[operation_id] = captured
+        self.close_dispatch(operation_id)
+        scope = _ActiveInvoke(controller=self, captured=captured)
+        scope.token = _ACTIVE_INVOKE.set(scope)
+        self._open[operation_id] = scope
+
+    def close_dispatch(self, operation_id: str) -> None:
+        """Close the active scope of ``operation_id`` — the adapter span's
+        ``finally``, so a return, a raise and a cancellation all revoke it.
+
+        Closing marks the scope closed, which reaches every task that
+        inherited it, and takes the opening context off the scope (a scope
+        the dispatch was nested in comes back). Idempotent: an operation
+        with no open scope is left alone. ``operation_id`` must be the one
+        the host captured before the adapter ran, never one read from the
+        context afterwards: the adapter can rewrite that attribute.
+        """
+        scope = self._open.pop(operation_id, None)
+        if scope is None:
+            return
+        scope.closed = True
+        token = scope.token
+        if token is not None and _ACTIVE_INVOKE.get() is scope:
+            _ACTIVE_INVOKE.reset(token)
 
     def dispatch_state(self, operation_id: str) -> dict[str, Any] | None:
-        return self._dispatch.get(operation_id)
+        """The dispatch record of ``operation_id`` — ``{dataset_id,
+        action_id, input}`` — or ``None``.
+
+        Correlation history, never authority. The input is handed out as a
+        copy, so a reader of the record cannot move what the admission paths
+        compare against."""
+        captured = self._dispatch.get(operation_id)
+        if captured is None:
+            return None
+        return {
+            "dataset_id": captured.dataset_id,
+            "action_id": captured.action_id,
+            "input": _deep_copy_or_none(captured.input),
+        }
+
+    def active_invoke(self, context: Any) -> _ActiveInvoke:
+        """The active host invoke a ``dataset_publish`` call is made in.
+
+        Authority comes from WHERE the call is made — the dispatch context
+        of the invoke the caller runs in — never from the context object the
+        caller holds. That object's ``operation_id`` and ``dataset_id`` are
+        correlation checks against the scope found there. Every refusal is
+        a typed ``standalone_dataset_...:`` ``ValueError`` (STD-4), raised
+        before any admission or index write.
+        """
+        operation_id = getattr(context, "operation_id", None)
+        scope = _ACTIVE_INVOKE.get()
+        if scope is None or scope.controller is not self:
+            # No invoke of THIS controller is open in the calling dispatch
+            # context. The operation the context names says which refusal
+            # that is: active here, but the caller is not that invoke; run
+            # here, and closed; or never dispatched here.
+            named = operation_id if isinstance(operation_id, str) else None
+            if named is not None and named in self._open:
+                raise _foreign_operation(
+                    named, "this call was not made in that active invoke"
+                )
+            if named is not None and named in self._dispatch:
+                raise _closed(named)
+            raise _not_dispatched(operation_id)
+        bound = scope.captured
+        if scope.closed:
+            raise _closed(bound.operation_id)
+        if operation_id != bound.operation_id:
+            raise _foreign_operation(
+                operation_id, f"this call was made in the invoke {bound.operation_id!r}"
+            )
+        context_id = getattr(context, "dataset_id", None)
+        if context_id != bound.dataset_id:
+            raise _id_mismatch(context_id, bound.operation_id, bound.dataset_id)
+        return scope
+
+    def admit_active(self, manifest: Any, context: Any) -> dict[str, Any]:
+        """The explicit publisher's admission: resolved from the active host
+        invoke the call is made in (:meth:`active_invoke`)."""
+        return self._admit_captured(
+            manifest, self.active_invoke(context).captured, surface=self.current_surface()
+        )
+
+    def admit_result(
+        self, manifest: Any, *, operation_id: str, surface: str | None
+    ) -> dict[str, Any]:
+        """The inline admission: the host admits a dataset-shaped invoke
+        RESULT against its own dispatch record for ``operation_id``.
+
+        ``operation_id`` must be the one the host captured before the adapter
+        ran, never one read from the context afterwards. With no record for
+        the operation, or no captured input in it, this refuses before any
+        admission or index write. It never falls back to the caller's input
+        object."""
+        captured = self._dispatch.get(operation_id)
+        if captured is None:
+            raise _not_dispatched(operation_id)
+        return self._admit_captured(manifest, captured, surface=surface)
+
+    def _admit_captured(
+        self, manifest: Any, captured: _Captured, *, surface: str | None
+    ) -> dict[str, Any]:
+        """Where both admission paths end. The identity, the action and the
+        input are what the host captured before the adapter ran. With no
+        captured input there is nothing to check the manifest's echo fields
+        against, so the publication refuses before any write."""
+        if not isinstance(captured.input, dict):
+            raise _input_absent(captured.operation_id)
+        return self.admit(
+            manifest,
+            dataset_id=captured.dataset_id,
+            action_id=captured.action_id,
+            invoke_input=captured.input,
+            surface=surface,
+        )
 
     # --- the admission core (both paths share it) ---------------------------
 
@@ -523,9 +822,18 @@ class _DatasetServicesView:
     async def dataset_publish(
         self, manifest: dict[str, Any], context: Any
     ) -> dict[str, Any]:
-        """Validate and admit one manifest for the CONTEXT's operation —
-        the explicit surface pre-ruling plugins and upload actions use; the
-        inline result path shares the same core."""
+        """Validate and admit one manifest for the ACTIVE host invoke this
+        call is made in — the explicit surface pre-ruling plugins and upload
+        actions use; the inline result path shares the same core.
+
+        Everything admission compares against is what the host captured for
+        that invoke before the adapter ran (ADR 0606). The ``context`` the
+        caller supplies two correlation checks — its ``operation_id`` and
+        its ``dataset_id`` — and nothing else: a rewritten id, another
+        operation's id, an operation that was never dispatched, a closed
+        invoke and a dispatch with no captured input each refuse here,
+        before any admission or index write.
+        """
         dataset_id = getattr(context, "dataset_id", None)
         if not isinstance(dataset_id, str) or not dataset_id:
             raise ValueError(
@@ -533,15 +841,7 @@ class _DatasetServicesView:
                 "carries no host-minted dataset_id (a non-invoke dispatch); "
                 "a null value forbids publishing a dataset"
             )
-        operation_id = str(getattr(context, "operation_id", ""))
-        state = self._admission.dispatch_state(operation_id)
-        return self._admission.admit(
-            manifest,
-            dataset_id=dataset_id,
-            action_id=state.get("action_id") if state is not None else None,
-            invoke_input=state.get("input") if state is not None else None,
-            surface=self._admission.current_surface(),
-        )
+        return self._admission.admit_active(manifest, context)
 
     async def dataset_lookup(self, dataset_id: str, context: Any) -> dict[str, Any]:
         """The admitted manifest for ``dataset_id``, THIS host process's
