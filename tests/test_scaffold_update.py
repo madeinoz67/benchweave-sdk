@@ -831,6 +831,64 @@ def test_upgrade_keeps_author_bytes_when_seeds_are_unchanged(tmp_path: Path) -> 
         assert (project / relative).read_bytes() == content, relative
 
 
+def test_upgrade_keeps_an_older_provider_test_pin(tmp_path: Path) -> None:
+    """A provider project scaffolded before gateway #597 pins
+    ``benchweave-sdk[server]`` in its test extra, because the wheel of that
+    version needs the extra for its scripted suite. ``upgrade`` to a template
+    that renders the plain pin leaves ``pyproject.toml`` byte-unchanged: the
+    pin names a version, and a rewritten pin would install a wheel the
+    project was not scaffolded against. The older template is SYNTHESISED.
+    The committed base already renders the plain pin, so the committed
+    history never makes this move. This arm is a pin, not a proof: it was
+    green when it was written, and it guards the move against a future
+    template. Deleting ``_skip_if_exists`` from ``copier.yml`` turns it
+    red."""
+    from copier import run_copy
+
+    from benchweave_sdk.scaffold import recorded_sdk_version
+    from benchweave_sdk.scaffold_update import upgrade_project
+
+    base = _base_members(tmp_path)
+    assert base is not None
+    target = dict(_target_members() or {})
+    assert target
+    template = "template/pyproject.toml.jinja"
+    plain = b'test = ["benchweave-sdk=={{ sdk_version }}", "pytest>=8.0"]'
+    pinned = b'test = ["benchweave-sdk[server]=={{ sdk_version }}", "pytest>=8.0"]'
+    assert base[template].count(plain) == 1, "the base renders the plain pin once"
+    base[template] = base[template].replace(plain, pinned)
+    repo = _build_tagged_template_repo(base, target)
+    project = tmp_path / "P-older-provider-pin"
+    run_copy(
+        str(_materialized(base, "older-provider")),
+        str(project),
+        data={
+            "package_name": PACKAGE,
+            "with_ui": False,
+            "provider_transport": True,
+            "sdk_version": __version__,
+            "otdp_version": active_version("otdp"),
+        },
+        defaults=True,
+        quiet=True,
+    )
+    _enforce_lf(project)
+    _pin_local_answers(project, repo, _git_out(repo, "rev-parse", BASE_TAG))
+    pyproject = project / "pyproject.toml"
+    before = pyproject.read_bytes()
+    assert f'test = ["benchweave-sdk[server]=={__version__}", "pytest>=8.0"]'.encode() in before
+    assert recorded_sdk_version(project) is not None, "the extras-clause pin still reads"
+    _author_commit(project)
+
+    conflicted, _restored, _skipped = upgrade_project(project, target_ref=TARGET_TAG)
+
+    assert conflicted == []
+    assert pyproject.read_bytes() == before, "upgrade rewrote the project's SDK pin"
+    assert recorded_sdk_version(project) is not None
+    answers = (project / ".copier-answers.yml").read_text(encoding="utf-8")
+    assert f"_commit: {TARGET_TAG}" in answers, "the upgrade did reach the new template"
+
+
 def test_upgrade_refuses_without_answers_pointing_at_adopt(tmp_path: Path) -> None:
     from benchweave_sdk.scaffold_update import upgrade_project
 
