@@ -33,10 +33,14 @@ async function main(): Promise<void> {
   if (!top.replaceAll("\\", "/").includes("/.claude/worktrees/")) return;
   if (!existsSync(join(top, ".codanna", "settings.toml"))) return;
 
-  // Index just the changed file. Never use -f here: with a path, -f clears the whole index.
+  // Index just the changed file. The flags come first, then `--`, then the path: after `--`
+  // the CLI reads every token as a path, so a file named like a flag cannot be read as one.
+  // Never use -f here, and never move `--no-progress` behind the path: measured on codanna
+  // 0.18.0, `index -f <path>` is the force flag and rebuilds the index from its configured
+  // roots, and a flag after `--` is read as a path.
   // Errors (unsupported file type, index not built yet, codanna not installed) are ignored;
   // the agent re-indexes on exit code 7 if the index goes stale.
-  spawnSync("codanna", ["index", file, "--no-progress"], { cwd: top, stdio: "ignore" });
+  spawnSync("codanna", ["index", "--no-progress", "--", file], { cwd: top, stdio: "ignore" });
 }
 
 try { await main(); } catch { /* never fail the tool call */ }
