@@ -41,7 +41,6 @@ indexed_paths = [
     "tests",
     "scripts",
     "template",
-    "standalone",
     "website",
     "docs",
     "user_guide",
