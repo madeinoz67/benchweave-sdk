@@ -40,6 +40,12 @@ binding; it is alive because removing the mutex turns it red), the
 explicit-publisher control, the inline-result pin, publish-then-raise, the
 T4 snapshot control, a nested-dispatch pin and a record_dispatch pin. A pin
 guards behaviour; it is never RED-then-GREEN evidence.
+
+Fold wave 2 — the reachability limit, and a copy that is the input. The
+capture is a separate object, but an adapter that reads the controller's
+internals through ``services._admission`` reaches it and is admitted. That
+is the host's documented limit, and a pin states it; it is not a guarantee.
+A dict whose ``__deepcopy__`` hands itself back must leave no capture.
 """
 
 from __future__ import annotations
@@ -1590,6 +1596,120 @@ def test_pin_publishing_from_a_bare_worker_thread_fails_closed(
     adapter.PLANS.append([(step, "own")])
     call(seam, "invoke", invoke_args(PROBE))
     assert _sole(adapter.OUTCOMES).startswith(expected), adapter.OUTCOMES
+
+
+# --- fold wave 2: the reachability limit, and a copy that is the input ---------
+
+
+class _CopiesToItself(dict):
+    """A dict whose ``__deepcopy__`` hands back the dict itself.
+
+    JSON cannot express it, and every pinned action's input decodes to plain
+    types, so it is not reachable through the JSON invoke path. It is the one
+    shape a copy function must not trust."""
+
+    def __deepcopy__(self, memo: dict) -> _CopiesToItself:
+        return self
+
+
+#: The typed refusal for a dispatch with no captured input.
+ABSENT = "standalone_dataset_input_absent:"
+
+
+def test_fold_w3_a_dict_that_copies_to_itself_leaves_no_capture(
+    identity_project: Path, tmp_path: Path
+) -> None:
+    """W3. ``copy.deepcopy`` trusts ``__deepcopy__``. For a dict that hands
+    itself back, the "private copy" was the caller's own object, on both
+    admission paths. It must leave no capture at all: the record holds none,
+    and every admission for that dispatch refuses with the typed prefix.
+    Not reachable through JSON. RED on `2c113ce`: the forged echo was
+    admitted against the caller's object, on both paths."""
+    seam, _ = _load(identity_project, tmp_path / "captures")
+    admission, services = seam._dataset_admission, seam.session.services
+    assert admission is not None and services is not None
+    operations = {"explicit": "op-fold0001", "inline": "op-fold0002"}
+    mints = {path: f"ds:{operation}" for path, operation in operations.items()}
+    sent = {path: _CopiesToItself(configuration_id=SENT) for path in operations}
+    before = _snapshot(seam)
+    # The inline path reads the record only, so its scope closes at once: one
+    # scope is open in this context, the explicit path's.
+    admission.record_dispatch(
+        operations["inline"],
+        dataset_id=mints["inline"],
+        action_id=CORRELATED,
+        input=sent["inline"],
+    )
+    admission.close_dispatch(operations["inline"])
+    admission.record_dispatch(
+        operations["explicit"],
+        dataset_id=mints["explicit"],
+        action_id=CORRELATED,
+        input=sent["explicit"],
+    )
+    # The caller's objects, after the records were written.
+    for value in sent.values():
+        value["configuration_id"] = MUTATED
+
+    def inline(echo: str) -> str:
+        manifest = _manifest(dataset_id=mints["inline"], configuration_id=echo)
+        try:
+            admission.admit_result(
+                manifest, operation_id=operations["inline"], surface=None
+            )
+        except ValueError as exc:
+            return f"refused: {exc}"
+        return "admitted"
+
+    context = HostOperationContext(
+        operations["explicit"], timeout_ms=1000, dataset_id=mints["explicit"]
+    )
+    try:
+        observed = {
+            "explicit forged": _echo(services, mints["explicit"], context, MUTATED),
+            "explicit honest": _echo(services, mints["explicit"], context, SENT),
+            "inline forged": inline(MUTATED),
+            "inline honest": inline(SENT),
+            "record input": {
+                path: admission.dispatch_state(operation)["input"]
+                for path, operation in operations.items()
+            },
+        }
+    finally:
+        admission.close_dispatch(operations["explicit"])
+    for path in ("explicit", "inline"):
+        for echo in ("forged", "honest"):
+            assert observed[f"{path} {echo}"].startswith(f"refused: {ABSENT}"), observed
+        assert observed["record input"][path] is None, observed
+    assert _snapshot(seam) == before, "the refusals precede any admission or index write"
+
+
+def test_pin_the_documented_limit_code_that_reads_host_internals_moves_the_echo_check(
+    identity_project: Path, tmp_path: Path
+) -> None:
+    """A PIN, true on `2c113ce` and after, and NOT a guarantee. The capture
+    is a separate object, and the adapter cannot reach it through the
+    request, the context or the public services members. But the controller
+    is reachable from the services object the adapter is handed, as
+    ``services._admission``, and its record holds the capture. An adapter
+    that goes there moves the echo check, and its forged result is ADMITTED.
+    That reach is outside the host's guarantee (Python is not a sandbox), and
+    the invariants say so. This arm states the limit, so the wording cannot
+    drift from the code: if it ever refuses, the limit has moved and
+    `docs/internal/invariants.md` must say so."""
+    seam, adapter = _load(identity_project, tmp_path / "captures")
+    adapter.MANIFEST["configuration_id"] = MUTATED
+    adapter.PLANS.append(
+        [("reach_capture", "configuration_id", MUTATED), ("dataset_result", "context")]
+    )
+    dispatch = invoke_args(CORRELATED, {"configuration_id": SENT})
+    result = call(seam, "invoke", dispatch)
+    assert adapter.REACHED == {"is_dict": True, "is_request_object": False}, (
+        "the capture is a dict, and a different object from the request's"
+    )
+    assert dispatch["input"]["configuration_id"] == SENT, "the caller's object was not touched"
+    assert result["result"]["configuration_id"] == MUTATED
+    assert _admitted_echoes(seam) == {MUTATED}, "ADMITTED: the documented limit, not a guarantee"
 
 
 # --- pins: behaviour the binding must preserve ---------------------------------

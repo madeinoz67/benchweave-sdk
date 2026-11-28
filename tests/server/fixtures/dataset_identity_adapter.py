@@ -28,6 +28,12 @@ The step vocabulary
 ``("rewrite_operation", operation_id)``
     Assign ``context.operation_id``: the other plain attribute the adapter
     holds, which the host must never read late.
+``("reach_capture", field, value)``
+    Assign ``value`` into ``field`` of the captured input, reached through
+    the controller's internals: ``services._admission._dispatch[<own
+    operation>].input``. This is OUTSIDE the host's guarantee and the arm
+    that uses it says so; it exists to state that limit, never to assert it.
+    ``REACHED`` records what the adapter found.
 ``("mutate_input", field, value)``
     Assign into the dispatched input object IN PLACE
     (``request["arguments"]["input"]``).
@@ -126,6 +132,10 @@ ENTRIES = []
 #: Every spawned orphan task, for the test to await.
 TASKS = []
 
+#: What a ``reach_capture`` step found: whether the captured input is a
+#: dict, and whether it is the very object the request carried.
+REACHED = {}
+
 
 def reset():
     """Clear every knob (a project loaded twice keeps its first module)."""
@@ -141,6 +151,7 @@ def reset():
     ORPHAN_OUTCOMES.clear()
     ENTRIES.clear()
     TASKS.clear()
+    REACHED.clear()
     global FOREIGN_SERVICES, NESTED
     FOREIGN_SERVICES = None
     NESTED = None
@@ -240,6 +251,14 @@ class _ScriptedAdapter:
                 context.dataset_id = args[0]
             elif kind == "rewrite_operation":
                 context.operation_id = args[0]
+            elif kind == "reach_capture":
+                # Outside the guarantee: the controller is reachable from the
+                # services object the adapter is handed, and its record holds
+                # the capture itself.
+                captured = self._services._admission._dispatch[str(context.operation_id)].input
+                REACHED["is_dict"] = isinstance(captured, dict)
+                REACHED["is_request_object"] = captured is arguments["input"]
+                captured[args[0]] = args[1]
             elif kind == "mutate_input":
                 arguments["input"][args[0]] = args[1]
             elif kind == "publish":
