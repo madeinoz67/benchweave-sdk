@@ -1,6 +1,7 @@
 ---
 name: codanna-explorer
 description: Read-only code exploration, impact analysis and review using the Codanna CLI (x-ray skill). Use for "where is X", "what calls Y", "what breaks if I change Z", architecture questions and pre-change investigations. Never edits files.
+model: sonnet
 tools: Read, Grep, Glob, Bash
 skills:
   - codanna-toolset:x-ray
