@@ -45,10 +45,12 @@ test module only.
 from __future__ import annotations
 
 import fnmatch
+import hashlib
 import io
 import shutil
 import subprocess
 import tarfile
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -66,6 +68,41 @@ PACKAGE = "example_plugin"
 AUTHOR_LINE = "AUTHOR NOTE: my device-specific line\n"
 BASE_TAG = "v0.9.0"
 TARGET_TAG = "v0.9.1"
+
+# --- shared stages (issue #637, suite-cost) ------------------------------------
+#
+# Everything below is a pure function of the repository's committed bytes —
+# the git-archive BASE snapshot, the working-tree target snapshot, the
+# throwaway tagged template repos built from member dicts, and the
+# materialized render sources — so the module builds each distinct state
+# ONCE and hands every test its own shallow copy to mutate. The repos are
+# read-only after construction (rev-parse and copier's clone both read),
+# which is what makes sharing safe. Per-test state (the scaffolded project,
+# its author edits, its .git) stays per-test.
+
+
+_STAGE_ROOT: Path | None = None
+_BASE_CACHE: dict[str, bytes] | None = None
+_TARGET_CACHE: dict[str, bytes] | None = None
+_REPO_CACHE: dict[tuple[str, str], Path] = {}
+_TREE_CACHE: dict[str, Path] = {}
+_BOUNDARY_REPO: Path | None = None
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _stage_root(tmp_path_factory: pytest.TempPathFactory) -> Iterator[None]:
+    """One scratch root per module (per xdist worker) for the shared stages."""
+    global _STAGE_ROOT
+    _STAGE_ROOT = tmp_path_factory.mktemp("r4-stages")
+    yield
+    _STAGE_ROOT = None
+
+
+def _members_hash(members: dict[str, bytes]) -> str:
+    digest = hashlib.sha256()
+    for relative in sorted(members):
+        digest.update(relative.encode("utf-8") + b"\0" + members[relative] + b"\0")
+    return digest.hexdigest()
 
 
 def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -159,25 +196,47 @@ def _write_tree(root: Path, members: dict[str, bytes]) -> None:
 
 
 def _base_members(tmp: Path) -> dict[str, bytes] | None:
-    """The repository's template at its newest template-touching ancestor."""
-    if shutil.which("git") is None:
-        pytest.skip("git unavailable — the R-4 lane is held, not passed")
-    history = _git_out(REPO, "rev-list", "-n", "1", "HEAD", "--", "template/", "copier.yml")
-    if not history:
-        pytest.skip("no template history in this checkout — the R-4 lane is held, not passed")
-    archive = subprocess.run(
-        ["git", "-C", str(REPO), "archive", history, "--", "template/", "copier.yml"],
-        capture_output=True,
-        check=True,
-    ).stdout
-    members: dict[str, bytes] = {}
-    with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
-        for entry in tar.getmembers():
-            if entry.isfile():
-                extracted = tar.extractfile(entry)
-                assert extracted is not None
-                members[entry.name] = extracted.read()
-    return members
+    """The repository's template at its newest template-touching ancestor.
+
+    Computed once per module and handed out as a shallow copy — callers
+    mutate the result (test_skip_list edits copier.yml in place), so the
+    cached bytes are never shared mutable state."""
+    global _BASE_CACHE
+    if _BASE_CACHE is None:
+        if shutil.which("git") is None:
+            pytest.skip("git unavailable — the R-4 lane is held, not passed")
+        history = _git_out(
+            REPO, "rev-list", "-n", "1", "HEAD", "--", "template/", "copier.yml"
+        )
+        if not history:
+            pytest.skip(
+                "no template history in this checkout — the R-4 lane is held, not passed"
+            )
+        archive = subprocess.run(
+            ["git", "-C", str(REPO), "archive", history, "--", "template/", "copier.yml"],
+            capture_output=True,
+            check=True,
+        ).stdout
+        members: dict[str, bytes] = {}
+        with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
+            for entry in tar.getmembers():
+                if entry.isfile():
+                    extracted = tar.extractfile(entry)
+                    assert extracted is not None
+                    members[entry.name] = extracted.read()
+        _BASE_CACHE = members
+    return dict(_BASE_CACHE)
+
+
+def _target_members() -> dict[str, bytes] | None:
+    """The working tree's template members, once per module, shallow-copied
+    per call (the same copy discipline as _base_members)."""
+    global _TARGET_CACHE
+    if _TARGET_CACHE is None:
+        loaded = _repo_template_members()
+        if loaded is not None:
+            _TARGET_CACHE = loaded
+    return dict(_TARGET_CACHE) if _TARGET_CACHE is not None else None
 
 
 def _pin_local_answers(project: Path, src: Path, commit: str) -> None:
@@ -191,9 +250,19 @@ def _pin_local_answers(project: Path, src: Path, commit: str) -> None:
 
 
 def _build_tagged_template_repo(
-    tmp: Path, base: dict[str, bytes], target: dict[str, bytes]
+    base: dict[str, bytes], target: dict[str, bytes]
 ) -> Path:
-    repo = tmp / "template-repo"
+    """The tagged two-state template repo — one per DISTINCT (base, target)
+    content pair, shared across the tests that ask for the same bytes (the
+    plain-update pair serves three tests, the upgrade-stage pair six). The
+    repo is read-only once built: tests rev-parse it and copier clones it;
+    nobody writes to it."""
+    key = (_members_hash(base), _members_hash(target))
+    shared = _REPO_CACHE.get(key)
+    if shared is not None:
+        return shared
+    assert _STAGE_ROOT is not None, "the module stage root must be active"
+    repo = _STAGE_ROOT / f"template-repo-{len(_REPO_CACHE)}"
     repo.mkdir()
     _git_init(repo)
     _write_tree(repo, base)
@@ -207,20 +276,34 @@ def _build_tagged_template_repo(
     _git(repo, "-c", "user.email=r4@benchweave", "-c", "user.name=r4", "commit",
          "--allow-empty", "-qm", "target")
     _git(repo, "tag", TARGET_TAG)
+    _REPO_CACHE[key] = repo
     return repo
+
+
+def _materialized(members: dict[str, bytes], name: str) -> Path:
+    """A NON-GIT render source for ``members`` — shared per content (copier
+    only reads the source; the destination project carries the answers)."""
+    key = _members_hash(members)
+    shared = _TREE_CACHE.get(key)
+    if shared is not None:
+        return shared
+    assert _STAGE_ROOT is not None, "the module stage root must be active"
+    shared = _STAGE_ROOT / f"materialized-{name}-{len(_TREE_CACHE)}"
+    _write_tree(shared, members)
+    _TREE_CACHE[key] = shared
+    return shared
 
 
 @pytest.fixture()
 def update_stage(tmp_path: Path) -> tuple[Path, Path, dict[str, bytes], dict[str, bytes]]:
     base = _base_members(tmp_path)
-    target = _repo_template_members()
+    target = _target_members()
     assert base is not None and target is not None
-    repo = _build_tagged_template_repo(tmp_path, base, target)
+    repo = _build_tagged_template_repo(base, target)
     # The `new`-shaped render source: a NON-GIT materialized copy of BASE —
     # the same shape create_project renders from, so the answers arrive
     # unpinned and the test applies the pin itself.
-    materialized = tmp_path / "materialized-base"
-    _write_tree(materialized, base)
+    materialized = _materialized(base, "base")
     return repo, materialized, base, target
 
 
@@ -401,8 +484,7 @@ def test_update_without_the_answers_pin_cannot_resolve_base(tmp_path: Path) -> N
 
     base = _base_members(tmp_path)
     assert base is not None
-    materialized = tmp_path / "materialized-base"
-    _write_tree(materialized, base)
+    materialized = _materialized(base, "unpinned")
     project = tmp_path / "P-unpinned"
     run_copy(
         str(materialized),
@@ -438,7 +520,7 @@ def test_wrong_base_provenance_never_silently_loses_author_bytes(tmp_path: Path)
 
     base = _base_members(tmp_path)
     assert base is not None
-    target = _repo_template_members()
+    target = _target_members()
     assert target is not None
     # A third state A0: the base with a DIFFERENT AI-GUIDE first line, so the
     # pinned base cannot explain the project's AI-GUIDE bytes.
@@ -458,8 +540,7 @@ def test_wrong_base_provenance_never_silently_loses_author_bytes(tmp_path: Path)
     _git(repo, "-c", "user.email=r4@benchweave", "-c", "user.name=r4", "commit", "-qm", "target")
     _git(repo, "tag", TARGET_TAG)
 
-    materialized = tmp_path / "materialized-a0"
-    _write_tree(materialized, a0)
+    materialized = _materialized(a0, "a0")
     project = tmp_path / "P-wrongbase"
     run_copy(
         str(materialized),
@@ -503,7 +584,7 @@ def _upgrade_stage(tmp_path: Path) -> tuple[Path, Path, dict[str, bytes]]:
     AI-GUIDE and one owned seed, so the upgrade visibly moves bytes."""
     base = _base_members(tmp_path)
     assert base is not None
-    target = dict(_repo_template_members() or {})
+    target = dict(_target_members() or {})
     assert target
     # Deltas on three vehicles: the managed AI-GUIDE (never in the skip
     # list — it must MOVE), the exact-name owned README, and the src/**
@@ -519,9 +600,8 @@ def _upgrade_stage(tmp_path: Path) -> tuple[Path, Path, dict[str, bytes]]:
     target[adapter_key] = target[adapter_key].replace(
         b"def create_plugin():", b"def create_plugin_v2():"
     )
-    repo = _build_tagged_template_repo(tmp_path, base, target)
-    materialized = tmp_path / "materialized-upg-base"
-    _write_tree(materialized, base)
+    repo = _build_tagged_template_repo(base, target)
+    materialized = _materialized(base, "upg")
     return repo, materialized, target
 
 
@@ -604,7 +684,7 @@ def test_upgrade_conflicts_loudly_on_an_author_edited_managed_skill(tmp_path: Pa
     survival assertions are the teeth.)"""
     from benchweave_sdk.scaffold_update import upgrade_project
 
-    base = dict(_repo_template_members() or {})
+    base = dict(_target_members() or {})
     assert base
     skill_member = "template/.claude/skills/benchweave-descriptor/SKILL.md.jinja"
     assert skill_member in base, "the template must carry the managed skill"
@@ -612,9 +692,8 @@ def test_upgrade_conflicts_loudly_on_an_author_edited_managed_skill(tmp_path: Pa
     target[skill_member] = base[skill_member].replace(
         b"# Descriptor authoring", b"# Descriptor authoring (template moved)"
     )
-    repo = _build_tagged_template_repo(tmp_path, base, target)
-    materialized = tmp_path / "materialized-skill"
-    _write_tree(materialized, base)
+    repo = _build_tagged_template_repo(base, target)
+    materialized = _materialized(base, "skill")
     project = tmp_path / "P-skill-conflict"
     _scaffold_offline(materialized, repo, project)
     skill = project / ".claude" / "skills" / "benchweave-descriptor" / "SKILL.md"
@@ -649,13 +728,12 @@ def test_upgrade_renders_managed_assets_with_the_installed_stamp(tmp_path: Path)
     from benchweave_sdk.scaffold_update import upgrade_project
 
     old = "0.0.1-old"
-    base = dict(_repo_template_members() or {})
+    base = dict(_target_members() or {})
     assert base
     # No template delta beyond the tag: the only moving bytes are the version
     # stamps, which is exactly what this test isolates.
-    repo = _build_tagged_template_repo(tmp_path, base, base)
-    materialized = tmp_path / "materialized-aged"
-    _write_tree(materialized, base)
+    repo = _build_tagged_template_repo(base, base)
+    materialized = _materialized(base, "aged")
     project = tmp_path / "P-aged"
     run_copy(
         str(materialized),
@@ -700,7 +778,7 @@ def test_skip_list_is_load_bearing_on_update(tmp_path: Path) -> None:
 
     base = _base_members(tmp_path)
     assert base is not None
-    target = dict(_repo_template_members() or {})
+    target = dict(_target_members() or {})
     assert target
     for members in (base, target):
         members["copier.yml"] = b"".join(
@@ -712,9 +790,8 @@ def test_skip_list_is_load_bearing_on_update(tmp_path: Path) -> None:
     target["template/README.md"] = base["template/README.md"].replace(
         b"# Device plugin starter", b"# Device plugin starter v2"
     )
-    repo = _build_tagged_template_repo(tmp_path, base, target)
-    materialized = tmp_path / "materialized-noskip"
-    _write_tree(materialized, base)
+    repo = _build_tagged_template_repo(base, target)
+    materialized = _materialized(base, "noskip")
     project = tmp_path / "P-noskip"
     _scaffold_offline(materialized, repo, project)
     readme = project / "README.md"
@@ -735,11 +812,10 @@ def test_upgrade_keeps_author_bytes_when_seeds_are_unchanged(tmp_path: Path) -> 
 
     base = _base_members(tmp_path)
     assert base is not None
-    target = dict(_repo_template_members() or {})
+    target = dict(_target_members() or {})
     assert target
-    repo = _build_tagged_template_repo(tmp_path, base, target)
-    materialized = tmp_path / "materialized-upg-clean"
-    _write_tree(materialized, base)
+    repo = _build_tagged_template_repo(base, target)
+    materialized = _materialized(base, "upg-clean")
     project = tmp_path / "P-upgrade-clean"
     _scaffold_offline(materialized, repo, project)
     for relative in ("README.md", "CLAUDE.md", f"src/{PACKAGE}/adapter.py"):
@@ -884,13 +960,12 @@ def test_upgrade_restores_skip_protected_files_the_template_dropped(tmp_path: Pa
 
     base = _base_members(tmp_path)
     assert base is not None
-    target = dict(_repo_template_members() or {})
+    target = dict(_target_members() or {})
     assert target
     del target["template/tests/test_plugin.py.jinja"]
     del target["template/src/{{ package_name }}/adapter.py.jinja"]
-    repo = _build_tagged_template_repo(tmp_path, base, target)
-    materialized = tmp_path / "materialized-dropped"
-    _write_tree(materialized, base)
+    repo = _build_tagged_template_repo(base, target)
+    materialized = _materialized(base, "dropped")
     project = tmp_path / "P-dropped"
     _scaffold_offline(materialized, repo, project)
     for relative in ("tests/test_plugin.py", f"src/{PACKAGE}/adapter.py"):
@@ -960,7 +1035,7 @@ def test_adopted_project_first_upgrade_conflicts_honestly_on_managed_edits(
 
     base = _base_members(tmp_path)
     assert base is not None
-    target = dict(_repo_template_members() or {})
+    target = dict(_target_members() or {})
     assert target
     repo = tmp_path / "template-repo-pre"
     repo.mkdir()
@@ -1281,28 +1356,36 @@ def _boundary_project(tmp_path: Path) -> tuple[Path, Path, bool]:
     target[f"template/{CRLF_MEMBER}"] = CRLF_MEMBER_BYTES
     # Local template repo: the BASE commit rides the shared helpers (base
     # members are LF), but the TARGET commit must keep the CRLF bytes raw,
-    # so its add/commit bypass _git's per-command autocrlf=input pin.
-    repo = tmp_path / "template-repo-boundary"
-    repo.mkdir()
-    _git_init(repo)
-    _write_tree(repo, base)
-    _git(repo, "add", "-A")
-    _git(repo, "-c", "user.email=r4@benchweave", "-c", "user.name=r4", "commit", "-qm", "base")
-    _git(repo, "tag", BASE_TAG)
-    _write_tree(repo, target)
-    for args in (  # raw git, autocrlf=false: the blob keeps the CRLF bytes
-        ("add", "-A"),
-        ("-c", "user.email=r4@benchweave", "-c", "user.name=r4",
-         "commit", "--allow-empty", "-qm", "target"),
-    ):
-        subprocess.run(
-            ["git", "-c", "core.autocrlf=false", "-C", str(repo), *args],
-            check=True,
-            capture_output=True,
-        )
-    _git(repo, "tag", TARGET_TAG)
-    materialized = tmp_path / "materialized-boundary"
-    _write_tree(materialized, base)
+    # so its add/commit bypass _git's per-command autocrlf=input pin. The
+    # raw-CRLF target commit is repo-constant, so the built repo is shared
+    # across this fixture's two callers (content-keyed like the others).
+    global _BOUNDARY_REPO
+    if _BOUNDARY_REPO is None:
+        assert _STAGE_ROOT is not None, "the module stage root must be active"
+        repo = _STAGE_ROOT / "template-repo-boundary"
+        repo.mkdir()
+        _git_init(repo)
+        _write_tree(repo, base)
+        _git(repo, "add", "-A")
+        _git(repo, "-c", "user.email=r4@benchweave", "-c", "user.name=r4",
+             "commit", "-qm", "base")
+        _git(repo, "tag", BASE_TAG)
+        _write_tree(repo, target)
+        for args in (  # raw git, autocrlf=false: the blob keeps the CRLF bytes
+            ("add", "-A"),
+            ("-c", "user.email=r4@benchweave", "-c", "user.name=r4",
+             "commit", "--allow-empty", "-qm", "target"),
+        ):
+            subprocess.run(
+                ["git", "-c", "core.autocrlf=false", "-C", str(repo), *args],
+                check=True,
+                capture_output=True,
+            )
+        _git(repo, "tag", TARGET_TAG)
+        _BOUNDARY_REPO = repo
+    else:
+        repo = _BOUNDARY_REPO
+    materialized = _materialized(base, "boundary")
     project = tmp_path / "P-boundary"
     _scaffold_offline(materialized, repo, project)
     # The author's own ignore (the template ships none) — the repro shape.
