@@ -9,6 +9,10 @@ Arms over ``.claude/settings.json`` and ``.claude/agents/*.md``:
 2. The implementer declares its ``tools:`` and refuses the memory writes. An agent without
    the key inherits every tool of the session, MCP servers included.
 3. No agent's declared ``tools:`` list reaches a memory write.
+4. The ``codanna`` marketplace is pinned to one reviewed commit. A marketplace entry with
+   no ``ref`` follows the upstream default branch, so a clone takes whatever that branch
+   holds on the day. The pin is a full lowercase commit SHA in ``ref``, which is the only
+   field of a marketplace source that holds one, with ``autoUpdate`` false.
 
 Each arm has a tamper arm that feeds it the bad shape, so a green arm is a measured zero
 and not a scanner that cannot see.
@@ -32,6 +36,10 @@ What this test does NOT catch:
 - That a declared ``tools:`` list is the list a running session resolved. The frontmatter
   is the only evidence here.
 - The main session's own allow entries. The memory arms cover ``.claude/agents/*.md``.
+- Which commit arm 4's ``ref`` names. The arm reads the SHA's shape, so a reviewed bump
+  touches the settings file alone. That the commit still exists upstream, and that a
+  given Claude Code build loads the entry, needs the network or a session; neither is
+  read here.
 """
 
 from __future__ import annotations
@@ -77,6 +85,13 @@ _MEMORY_READ_VERBS = frozenset(
 # The three write tools the gateway's agents name when they refuse the writes.
 _MEMORY_WRITE_REFUSALS = ("muninn_remember", "muninn_remember_batch", "muninn_remember_tree")
 _WILDCARD_SUFFIX = ":*"
+
+# The one marketplace the project settings declare, and the repository it is cloned from.
+_PINNED_MARKETPLACE = "codanna"
+_MARKETPLACE_SOURCE = {"source": "github", "repo": "bartolli/codanna"}
+# A full lowercase commit SHA: 40 hex digits and nothing else. Not a branch, not a tag,
+# not a short SHA.
+_COMMIT_SHA = re.compile(r"[0-9a-f]{40}")
 
 
 # ---- readers -----------------------------------------------------------------------
@@ -346,3 +361,123 @@ def test_frontmatter_lists_read_every_shape_the_agents_use() -> None:
     assert _names(fields["tools"]) == ["Read", "Grep"]
     assert _names(_frontmatter("---\nname: a\n---\n").get("tools", "")) == []
     assert _names("Read, Grep, Glob, Bash") == ["Read", "Grep", "Glob", "Bash"]
+
+
+# ---- arm 4: the codanna marketplace is pinned to one reviewed commit -----------------
+
+# Any full lowercase SHA, for the shapes below. The committed value is not read here.
+_ANY_SHA = "0123456789abcdef0123456789abcdef01234567"
+_NO_REF = "no ref: the marketplace follows the upstream default branch"
+_SHA_KEY = "a sha key, which is not a field of a marketplace source and pins nothing"
+
+
+def _marketplace_entry(path: Path) -> dict[str, Any] | None:
+    """The ``codanna`` entry of one settings file's ``extraKnownMarketplaces``, or ``None``
+    when the file does not declare it."""
+    marketplaces = _load(path).get("extraKnownMarketplaces", {})
+    assert isinstance(marketplaces, dict), f"{path.name}: extraKnownMarketplaces is not an object"
+    entry = marketplaces.get(_PINNED_MARKETPLACE)
+    if entry is None:
+        return None
+    assert isinstance(entry, dict), f"{path.name}: the {_PINNED_MARKETPLACE} entry is not an object"
+    return entry
+
+
+def _pin_faults(entry: dict[str, Any] | None) -> list[str]:
+    """What keeps a marketplace entry from being a pin on one reviewed commit. An entry
+    that is a pin reads as an empty list."""
+    if entry is None:
+        return [f"no {_PINNED_MARKETPLACE} marketplace entry"]
+    faults: list[str] = []
+    source = entry.get("source")
+    if not isinstance(source, dict):
+        return [f"source is {source!r}, not an object"]
+    declared = {key: source.get(key) for key in _MARKETPLACE_SOURCE}
+    if declared != _MARKETPLACE_SOURCE:
+        faults.append(f"source is {declared!r}")
+    ref = source.get("ref")
+    if ref is None:
+        faults.append(_NO_REF)
+    elif not isinstance(ref, str) or _COMMIT_SHA.fullmatch(ref) is None:
+        faults.append(f"ref is {ref!r}, not a full lowercase commit SHA")
+    if "sha" in source:
+        faults.append(_SHA_KEY)
+    if entry.get("autoUpdate") is not False:
+        faults.append(f"autoUpdate is {entry.get('autoUpdate')!r}, not false")
+    return faults
+
+
+def test_codanna_marketplace_is_pinned_to_one_reviewed_commit() -> None:
+    unpinned = {
+        path.name: faults
+        for path in _settings_files()
+        if (faults := _pin_faults(_marketplace_entry(path)))
+    }
+    assert not unpinned, (
+        "the codanna marketplace entry is not a pin on one reviewed commit (issue #664, "
+        f"HIGH-1): {unpinned}"
+    )
+
+
+def test_tamper_every_shape_that_is_not_a_pin_names_what_is_wrong() -> None:
+    """Arm 4's detection power. A pin reads as no fault. Each other shape names its fault:
+    the entry as it was before the pin, a ref that is a branch, a tag, a short SHA, an
+    uppercase SHA, a number or empty, a `sha` key, an autoUpdate that is not the Boolean
+    false, a missing entry, and an entry for another repository."""
+    pinned = {"source": {**_MARKETPLACE_SOURCE, "ref": _ANY_SHA}, "autoUpdate": False}
+    assert _pin_faults(pinned) == []
+
+    before_the_pin = {"source": dict(_MARKETPLACE_SOURCE)}
+    assert _pin_faults(before_the_pin) == [_NO_REF, "autoUpdate is None, not false"]
+
+    for ref in ("main", "v0.18.0", _ANY_SHA[:12], _ANY_SHA.upper(), 1234, ""):
+        entry = {"source": {**_MARKETPLACE_SOURCE, "ref": ref}, "autoUpdate": False}
+        assert _pin_faults(entry) == [f"ref is {ref!r}, not a full lowercase commit SHA"], ref
+
+    sha_key = {"source": {**_MARKETPLACE_SOURCE, "sha": _ANY_SHA}, "autoUpdate": False}
+    assert _pin_faults(sha_key) == [_NO_REF, _SHA_KEY]
+
+    for auto_update in (True, None, "false", 0):
+        entry = {"source": {**_MARKETPLACE_SOURCE, "ref": _ANY_SHA}, "autoUpdate": auto_update}
+        assert _pin_faults(entry) == [f"autoUpdate is {auto_update!r}, not false"], auto_update
+
+    assert _pin_faults(None) == [f"no {_PINNED_MARKETPLACE} marketplace entry"]
+    other_repository = {
+        "source": {"source": "github", "repo": "someone/else", "ref": _ANY_SHA},
+        "autoUpdate": False,
+    }
+    assert _pin_faults(other_repository) == [
+        "source is {'source': 'github', 'repo': 'someone/else'}"
+    ]
+
+
+@pytest.mark.parametrize(
+    ("ref", "is_a_sha"),
+    [
+        (_ANY_SHA, True),
+        ("0000000000000000000000000000000000000000", True),
+        ("f" * 40, True),
+        (_ANY_SHA[:39], False),
+        (_ANY_SHA + "0", False),
+        (_ANY_SHA.upper(), False),
+        ("g" * 40, False),
+        (f" {_ANY_SHA}", False),
+        (f"{_ANY_SHA}\n", False),
+        ("", False),
+    ],
+    ids=[
+        "sha",
+        "all-zero",
+        "all-f",
+        "39-hex",
+        "41-hex",
+        "uppercase",
+        "not-hex",
+        "leading-space",
+        "trailing-newline",
+        "empty",
+    ],
+)
+def test_the_commit_sha_shape_is_exact(ref: str, is_a_sha: bool) -> None:
+    """Forty lowercase hex digits and nothing else."""
+    assert (_COMMIT_SHA.fullmatch(ref) is not None) is is_a_sha
