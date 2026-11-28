@@ -9,6 +9,9 @@
 //
 // A nudge that nags is a hook people disable, so: once per session, and never for a
 // tool that is not a search.
+//
+// Runs under bun (its interpreter in .claude/settings.json) and under node (the hooks
+// CI lane has no bun). Use node: modules only, never a Bun-only API.
 // author: Stephen Eaton
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -63,7 +66,8 @@ function save(path: string, state: SessionState): void {
 async function main(): Promise<number> {
   let event: HookEvent;
   try {
-    event = (await Bun.stdin.json()) as HookEvent;
+    // The whole of stdin, then one parse. Empty or malformed input lands in the catch.
+    event = JSON.parse(readFileSync(0, "utf8")) as HookEvent;
   } catch {
     return 0;
   }
