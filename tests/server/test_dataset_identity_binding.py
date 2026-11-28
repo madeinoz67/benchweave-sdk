@@ -312,7 +312,11 @@ def _canonical(value: Any) -> bytes:
 def _state(seam: StandaloneSeam, *controllers: DatasetAdmission) -> dict[str, Any]:
     """Admission state as plain data: each controller's this-run registry,
     every file under the capture root (the persisted manifests and sidecars,
-    the library index and its lock), and the library's dataset rows."""
+    the library index and its lock), and the library's dataset rows.
+
+    A file's key is its path under the root in POSIX form (``a/b.json``) on
+    every platform. ``str()`` of a relative path gives ``a\\b.json`` on
+    Windows, and the arms compare these keys with forward-slash literals."""
     admissions = [seam._dataset_admission, *controllers]
     assert all(admission is not None for admission in admissions), "the lane is armed"
     library = seam._capture_library
@@ -320,7 +324,7 @@ def _state(seam: StandaloneSeam, *controllers: DatasetAdmission) -> dict[str, An
     files: dict[str, str] = {}
     if root.is_dir():
         files = {
-            str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest()
+            path.relative_to(root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
             for path in sorted(root.rglob("*"))
             if path.is_file()
         }
