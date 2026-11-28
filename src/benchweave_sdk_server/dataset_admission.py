@@ -136,19 +136,32 @@ def _private_copy(manifest: dict[str, Any]) -> dict[str, Any]:
 
 
 def _deep_copy_or_none(value: Any) -> Any:
-    """A private deep copy of ``value``, or ``None`` when it cannot be made.
+    """A private deep copy of ``value``, or ``None`` when there is none.
 
     The adapter is handed the dispatched input object and may mutate it in
     place, so nothing the admission paths compare against may hold it. A
     deep copy keeps the values JSON cannot express (NaN, Infinity, bytes,
     plain objects), so one such value does not put the echo check back on
-    the live object. When no copy can be made there is no private copy at
-    all: the answer is ``None``, never the caller's object, and admission
-    for that dispatch refuses (``standalone_dataset_input_absent:``)."""
+    the live object.
+
+    There is no copy in two cases, and the answer is ``None`` in both,
+    never the caller's object. ``copy.deepcopy`` raised an ``Exception``
+    (this handler catches ``Exception``: a ``MemoryError`` included; a
+    ``KeyboardInterrupt`` or ``SystemExit`` is not caught). Or it handed
+    back the input itself, because it trusts ``__deepcopy__``. An immutable
+    value comes back as itself too and takes the same road: the admission
+    paths take a dict or nothing. Admission for that dispatch then refuses
+    (``standalone_dataset_input_absent:``)."""
     try:
-        return copy.deepcopy(value)
+        copied = copy.deepcopy(value)
     except Exception:  # noqa: BLE001 - an object that cannot be copied has no copy
         return None
+    if copied is value:
+        # A copy that IS the input is no copy: a dict whose __deepcopy__
+        # hands itself back would otherwise put the live object on both
+        # admission paths.
+        return None
+    return copied
 
 
 def _closed(operation_id: object) -> ValueError:
