@@ -2,28 +2,54 @@
 
 Building a plugin or new here? `README.md` has the five-step workflow; the rendered walkthrough is https://sdk.benchweave.dev/docs/user-guide/getting-started.html
 
-Calibration: the graph narrows scope, it does not replace reading the implementation. For
-the symbol you are about to change or depend on, read its full body with
-`read(target:{symbol:…})` or `read(operation:"file", …)` — never act on a one-line summary
-alone, and be deliberate with behavior-critical code (standards-sync digests and refusal
-paths, scaffold output, packaging): read the real implementation, no compressed bodies.
-The full per-tool catalog and workflow load via `tools/list` at session start; until this
-checkout is tracked, fall back to `Read` and say so — do not start a daemon.
+<!-- Codanna section for CLAUDE.md — author: Stephen Eaton -->
 
-### Edit routing — which write path applies
+## Code navigation: Codanna
 
-One decision point, not a per-edit judgment call. The mandate binds the main
-session's own edits, not only dispatched agents.
+This repo is indexed by Codanna (local symbol graph + semantic search).
 
-| Situation | Path |
-|---|---|
-| File indexed, primary checkout | `mcp__gortex__edit` — `change(operation:"impact")` before, `change(operation:"detect")` after; signatures also `verify` |
-| Linked worktree overlay | gortex single-file edit when freshness reports `exact: true` with `actual_view` naming the worktree; otherwise native Edit, and the bypass names the caveat |
-| Branch-new / untracked file | native Write; visible to the graph after the next index pass |
-| Generated files (`CHANGELOG_AUTO.md`, `.docs-assembly/`, `site/`, vendored standards trees) | never hand-edited — regenerated via their tool |
+If the location of a symbol or the shape of a module is not already known, find it with
+Codanna before reading files or grepping. A file already named in the issue or the error
+is not a search: read it. A hook nudges once per session when a search starts with `rg` or `grep`
+before Codanna has been used, so the rule is not something to remember.
 
-Every native bypass states which row covers it. Guessing `pytest -k` filters is
-the anti-pattern this table replaces — `change(operation:"tests")` names the files.
+### Which interface
+- **Main session:** use the `mcp__codanna__*` tools. The server runs `serve --watch` from the main checkout and stays current as files change.
+- **Subagents:** use the `codanna` CLI through Bash (the `x-ray` skill wraps it). The CLI reads the index in its current directory, so it stays correct inside worktrees.
+- **Whole-codebase shape** (module map, hubs, which modules talk to each other, history): use the `graph` skill.
+
+### Workflow
+1. **Rephrase first.** Search for what is meant, not the literal words.
+2. **Locate:** semantic search with context, limit 5. Focus on results with score > 0.6. Use `find_symbol` for exact names and `search_symbols` for partial ones.
+3. **Read narrowly:** read only the returned line range (`sed -n 'A,Bp' file` or Read with offset/limit).
+4. **Expand:** follow 1–2 important relationships per result (`retrieve describe`, callers, calls). Run `analyze_impact` **before** changing any public symbol, signature, or shared function.
+5. **Docs:** `search_documents` for project docs and markdown.
+6. **Refine or fall back:** if the scores are weak, rephrase once. Use `rg` for exact strings, config keys, templates, and anything Codanna doesn't parse.
+
+CLI equivalents:
+- `codanna mcp semantic_search_with_context query:"..." limit:5 --json`
+- `codanna mcp find_symbol <Name> --json`
+- `codanna mcp find_callers <Name> --json`
+- `codanna mcp analyze_impact <Name> --json`
+
+### Calibration: the graph narrows scope, it does not replace reading the implementation
+
+For the symbol you are about to change or depend on, read its full body — never act on a
+one-line summary alone, and be deliberate with behavior-critical code (standards-sync
+digests and refusal paths, scaffold output, packaging): read the real implementation.
+
+### Rules
+- Codanna results are navigation hints, not ground truth. Confirm against the file before editing.
+- Before renaming or changing a signature, list every caller in your plan.
+- If a Codanna command exits with code 7 (stale index), run `codanna index .` in the current checkout and retry.
+- Generated files (`CHANGELOG_AUTO.md`, `.docs-assembly/`, `site/`, vendored standards trees) are never hand-edited — regenerated via their tool.
+- Guessing `pytest -k` filters is the anti-pattern this section replaces — `analyze_impact` names the affected symbols.
+
+### Orca worktrees and subagents
+- In Orca, each agent is a full Claude Code session in its own worktree; `scripts.setup` builds that worktree's index and `serve` reads it, so `mcp__codanna__*` is correct there.
+- Never share `.codanna/` between worktrees (symlink or `sharedDirectories`).
+- A subagent in `.claude/worktrees/*` must **not** use `mcp__codanna__*` — those tools read the main checkout's index. Build the worktree's own index first (`codanna index .` from the worktree root), then use the CLI.
+- Delegate read-only investigation to `codanna-explorer` and isolated edits to `codanna-implementer`.
 
 ---
 
